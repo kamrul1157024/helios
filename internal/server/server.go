@@ -48,13 +48,8 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 
 	mux := http.NewServeMux()
 
-	// Hook endpoints (Claude hooks — no auth, localhost only)
-	mux.HandleFunc("POST /hooks/permission", s.handlePermissionHook)
-	mux.HandleFunc("POST /hooks/stop", s.handleStopHook)
-	mux.HandleFunc("POST /hooks/stop-failure", s.handleStopFailureHook)
-	mux.HandleFunc("POST /hooks/notification", s.handleNotificationHook)
-	mux.HandleFunc("POST /hooks/session-start", s.handleSessionStartHook)
-	mux.HandleFunc("POST /hooks/session-end", s.handleSessionEndHook)
+	// Hook endpoint (generic — dispatches by type, e.g. POST /hooks/claude/permission)
+	mux.HandleFunc("POST /hooks/{hookType...}", s.handleHook)
 
 	// Internal admin API (CLI — no auth, localhost only)
 	mux.HandleFunc("GET /internal/health", s.handleInternalHealth)
@@ -109,10 +104,8 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
-		case r.Method == "POST" && strings.HasSuffix(path, "/approve"):
-			s.handleApproveNotification(w, r)
-		case r.Method == "POST" && strings.HasSuffix(path, "/deny"):
-			s.handleDenyNotification(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/action"):
+			s.handleNotificationAction(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/dismiss"):
 			s.handleDismissNotification(w, r)
 		default:

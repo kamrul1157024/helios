@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
+	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -47,6 +48,10 @@ func Start(cfg *Config) error {
 	defer db.Close()
 
 	mgr := notifications.NewManager(db)
+	mgr.StartCleanup()
+
+	// Register providers
+	claude.Register()
 
 	// Initialize Web Push
 	vapidKeys, err := push.LoadOrGenerateVAPID(HeliosDir())

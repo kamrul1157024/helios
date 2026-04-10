@@ -126,32 +126,18 @@ class SSEService extends ChangeNotifier {
     _reconnectTimer = Timer(const Duration(seconds: 3), _connect);
   }
 
-  /// Approve a notification.
-  Future<bool> approveNotification(String id) async {
+  /// Send an action for any notification type.
+  /// The body is type-specific — each card widget builds it.
+  Future<bool> sendAction(String id, Map<String, dynamic> body) async {
     if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/notifications/$id/approve');
+      final resp = await _auth!.authPost('/api/notifications/$id/action', body: body);
       if (resp.statusCode == 200) {
         await fetchNotifications();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to approve: $e');
-    }
-    return false;
-  }
-
-  /// Deny a notification.
-  Future<bool> denyNotification(String id) async {
-    if (_auth == null) return false;
-    try {
-      final resp = await _auth!.authPost('/api/notifications/$id/deny');
-      if (resp.statusCode == 200) {
-        await fetchNotifications();
-        return true;
-      }
-    } catch (e) {
-      debugPrint('Failed to deny: $e');
+      debugPrint('Failed to send action: $e');
     }
     return false;
   }
@@ -171,8 +157,8 @@ class SSEService extends ChangeNotifier {
     return false;
   }
 
-  /// Batch approve/deny.
-  Future<bool> batchAction(List<String> ids, String action) async {
+  /// Batch action — sends the same action body to multiple notifications.
+  Future<bool> batchAction(List<String> ids, Map<String, dynamic> action) async {
     if (_auth == null) return false;
     try {
       final resp = await _auth!.authPost('/api/notifications/batch', body: {
@@ -184,7 +170,7 @@ class SSEService extends ChangeNotifier {
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to batch $action: $e');
+      debugPrint('Failed to batch action: $e');
     }
     return false;
   }

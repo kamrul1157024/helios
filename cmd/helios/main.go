@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -40,6 +41,8 @@ func main() {
 		handleAuth(os.Args[2:])
 	case "hooks":
 		handleHooks(os.Args[2:])
+	case "cleanup":
+		handleCleanup(os.Args[2:])
 	case "logs":
 		handleLogs(os.Args[2:])
 	case "version":
@@ -605,6 +608,48 @@ func handleLogs(args []string) {
 	}
 }
 
+func handleCleanup(args []string) {
+	target := "all"
+	if len(args) > 0 {
+		target = args[0]
+	}
+
+	heliosDir := daemon.HeliosDir()
+
+	switch target {
+	case "db":
+		dbPath := filepath.Join(heliosDir, "helios.db")
+		if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error removing database: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Database removed:", dbPath)
+
+	case "logs":
+		logsDir := filepath.Join(heliosDir, "logs")
+		if err := os.RemoveAll(logsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error removing logs: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Logs removed:", logsDir)
+
+	case "all":
+		// Stop daemon first if running
+		_ = daemon.Stop()
+
+		if err := os.RemoveAll(heliosDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error removing helios data: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("All helios data removed:", heliosDir)
+		fmt.Println("Run 'helios start' to set up fresh.")
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown cleanup target: %s\nUsage: helios cleanup [db|logs|all]\n", target)
+		os.Exit(1)
+	}
+}
+
 func handleHooks(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove>")
@@ -669,6 +714,11 @@ Commands:
   hooks install --local Install hooks for current project
   hooks show            Print hook config JSON
   hooks remove          Remove helios hooks
+
+  cleanup [target]      Remove helios data and start fresh
+                        db     Remove database only
+                        logs   Remove logs only
+                        all    Remove everything (default)
 
   version               Show version
   help                  Show this help`)

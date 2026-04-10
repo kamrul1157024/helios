@@ -4,21 +4,25 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/auth"
+	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
 // ==================== Public Server API ====================
 
 func (s *PublicServer) handleListNotifications(w http.ResponseWriter, r *http.Request) {
+	source := r.URL.Query().Get("source")
 	status := r.URL.Query().Get("status")
 	nType := r.URL.Query().Get("type")
 
-	notifs, err := s.shared.Mgr.ListNotifications(status, nType)
+	notifs, err := s.shared.Mgr.ListNotifications(source, status, nType)
 	if err != nil {
 		jsonError(w, "failed to list notifications", http.StatusInternalServerError)
 		return
@@ -29,10 +33,42 @@ func (s *PublicServer) handleListNotifications(w http.ResponseWriter, r *http.Re
 	})
 }
 
-func (s *PublicServer) handleApproveNotification(w http.ResponseWriter, r *http.Request) {
-	id := extractPathParam(r.URL.Path, "/api/notifications/", "/approve")
+// ==================== Unified Action Endpoint ====================
+
+func (s *PublicServer) handleNotificationAction(w http.ResponseWriter, r *http.Request) {
+	id := extractPathParam(r.URL.Path, "/api/notifications/", "/action")
 	if id == "" {
 		jsonError(w, "missing notification id", http.StatusBadRequest)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	notif, err := s.shared.Mgr.GetNotification(id)
+	if err != nil || notif == nil {
+		jsonError(w, "notification not found", http.StatusNotFound)
+		return
+	}
+	if notif.Status != "pending" {
+		jsonResponse(w, http.StatusGone, map[string]interface{}{
+			"success": false, "error": "already_resolved",
+		})
+		return
+	}
+
+	handler := provider.GetActionHandler(notif.Type)
+	if handler == nil {
+		jsonError(w, fmt.Sprintf("no action handler for type: %s", notif.Type), http.StatusBadRequest)
+		return
+	}
+
+	decision, err := handler(notif, json.RawMessage(body))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -41,64 +77,23 @@ func (s *PublicServer) handleApproveNotification(w http.ResponseWriter, r *http.
 		source = "device:" + kid
 	}
 
-	if err := s.shared.Mgr.Resolve(id, "approved", source); err != nil {
+	if err := s.shared.Mgr.Resolve(id, decision, source); err != nil {
 		if _, ok := err.(*store.AlreadyResolvedError); ok {
 			jsonResponse(w, http.StatusGone, map[string]interface{}{
-				"success": false,
-				"error":   "already_resolved",
-				"message": "This notification was already resolved",
+				"success": false, "error": "already_resolved",
 			})
 			return
 		}
-		jsonError(w, "failed to approve", http.StatusInternalServerError)
+		jsonError(w, "failed to process action", http.StatusInternalServerError)
 		return
 	}
 
 	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "notification_resolved",
-		Data: map[string]string{"id": id, "action": "approved", "source": source},
+		Data: map[string]string{"id": id, "action": decision.Status, "source": source},
 	})
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": fmt.Sprintf("Notification %s approved", id),
-	})
-}
-
-func (s *PublicServer) handleDenyNotification(w http.ResponseWriter, r *http.Request) {
-	id := extractPathParam(r.URL.Path, "/api/notifications/", "/deny")
-	if id == "" {
-		jsonError(w, "missing notification id", http.StatusBadRequest)
-		return
-	}
-
-	source := "browser"
-	if kid, ok := r.Context().Value(deviceKIDKey).(string); ok {
-		source = "device:" + kid
-	}
-
-	if err := s.shared.Mgr.Resolve(id, "denied", source); err != nil {
-		if _, ok := err.(*store.AlreadyResolvedError); ok {
-			jsonResponse(w, http.StatusGone, map[string]interface{}{
-				"success": false,
-				"error":   "already_resolved",
-				"message": "This notification was already resolved",
-			})
-			return
-		}
-		jsonError(w, "failed to deny", http.StatusInternalServerError)
-		return
-	}
-
-	s.shared.SSE.Broadcast(SSEEvent{
-		Type: "notification_resolved",
-		Data: map[string]string{"id": id, "action": "denied", "source": source},
-	})
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": fmt.Sprintf("Notification %s denied", id),
-	})
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 func (s *PublicServer) handleDismissNotification(w http.ResponseWriter, r *http.Request) {
@@ -108,41 +103,33 @@ func (s *PublicServer) handleDismissNotification(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if err := s.shared.Mgr.Resolve(id, "dismissed", "browser"); err != nil {
+	source := "browser"
+	if kid, ok := r.Context().Value(deviceKIDKey).(string); ok {
+		source = "device:" + kid
+	}
+
+	decision := notifications.Decision{Status: "dismissed"}
+	if err := s.shared.Mgr.Resolve(id, decision, source); err != nil {
 		jsonError(w, "failed to dismiss", http.StatusInternalServerError)
 		return
 	}
 
 	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "notification_resolved",
-		Data: map[string]string{"id": id, "action": "dismissed"},
+		Data: map[string]string{"id": id, "action": "dismissed", "source": source},
 	})
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-	})
-}
-
-type batchRequest struct {
-	NotificationIDs []string `json:"notification_ids"`
-	Action          string   `json:"action"`
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 func (s *PublicServer) handleBatchNotifications(w http.ResponseWriter, r *http.Request) {
-	var req batchRequest
+	var req struct {
+		NotificationIDs []string        `json:"notification_ids"`
+		Action          json.RawMessage `json:"action"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
-	}
-
-	if req.Action != "approve" && req.Action != "deny" {
-		jsonError(w, "action must be 'approve' or 'deny'", http.StatusBadRequest)
-		return
-	}
-
-	status := "approved"
-	if req.Action == "deny" {
-		status = "denied"
 	}
 
 	source := "browser"
@@ -153,14 +140,39 @@ func (s *PublicServer) handleBatchNotifications(w http.ResponseWriter, r *http.R
 	var results []map[string]interface{}
 	for _, id := range req.NotificationIDs {
 		result := map[string]interface{}{"id": id}
-		if err := s.shared.Mgr.Resolve(id, status, source); err != nil {
+
+		notif, err := s.shared.Mgr.GetNotification(id)
+		if err != nil || notif == nil || notif.Status != "pending" {
+			result["success"] = false
+			result["error"] = "not_found_or_resolved"
+			results = append(results, result)
+			continue
+		}
+
+		handler := provider.GetActionHandler(notif.Type)
+		if handler == nil {
+			result["success"] = false
+			result["error"] = "no_action_handler"
+			results = append(results, result)
+			continue
+		}
+
+		decision, err := handler(notif, req.Action)
+		if err != nil {
+			result["success"] = false
+			result["error"] = err.Error()
+			results = append(results, result)
+			continue
+		}
+
+		if err := s.shared.Mgr.Resolve(id, decision, source); err != nil {
 			result["success"] = false
 			result["error"] = "already_resolved"
 		} else {
 			result["success"] = true
 			s.shared.SSE.Broadcast(SSEEvent{
 				Type: "notification_resolved",
-				Data: map[string]string{"id": id, "action": req.Action, "source": source},
+				Data: map[string]string{"id": id, "action": decision.Status, "source": source},
 			})
 		}
 		results = append(results, result)

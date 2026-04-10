@@ -37,13 +37,15 @@ func (s *Store) migrate() error {
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS notifications (
 			id TEXT PRIMARY KEY,
-			claude_session_id TEXT NOT NULL,
-			cwd TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'claude',
+			source_session TEXT NOT NULL,
+			cwd TEXT NOT NULL DEFAULT '',
 			type TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'pending',
-			tool_name TEXT,
-			tool_input TEXT,
+			title TEXT,
 			detail TEXT,
+			payload TEXT,
+			response TEXT,
 			resolved_at TEXT,
 			resolved_source TEXT,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -69,7 +71,7 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS _migrations (id TEXT PRIMARY KEY)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type)`,
-		`CREATE INDEX IF NOT EXISTS idx_notifications_claude_session ON notifications(claude_session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_source_session ON notifications(source_session)`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)`,
 		`CREATE TABLE IF NOT EXISTS push_subscriptions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

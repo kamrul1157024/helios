@@ -6,24 +6,26 @@ import (
 )
 
 type Notification struct {
-	ID               string  `json:"id"`
-	ClaudeSessionID  string  `json:"claude_session_id"`
-	CWD              string  `json:"cwd"`
-	Type             string  `json:"type"`
-	Status           string  `json:"status"`
-	ToolName         *string `json:"tool_name,omitempty"`
-	ToolInput        *string `json:"tool_input,omitempty"`
-	Detail           *string `json:"detail,omitempty"`
-	ResolvedAt       *string `json:"resolved_at,omitempty"`
-	ResolvedSource   *string `json:"resolved_source,omitempty"`
-	CreatedAt        string  `json:"created_at"`
+	ID             string  `json:"id"`
+	Source         string  `json:"source"`
+	SourceSession  string  `json:"source_session"`
+	CWD            string  `json:"cwd"`
+	Type           string  `json:"type"`
+	Status         string  `json:"status"`
+	Title          *string `json:"title,omitempty"`
+	Detail         *string `json:"detail,omitempty"`
+	Payload        *string `json:"payload,omitempty"`
+	Response       *string `json:"response,omitempty"`
+	ResolvedAt     *string `json:"resolved_at,omitempty"`
+	ResolvedSource *string `json:"resolved_source,omitempty"`
+	CreatedAt      string  `json:"created_at"`
 }
 
 func (s *Store) CreateNotification(n *Notification) error {
 	_, err := s.db.Exec(
-		`INSERT INTO notifications (id, claude_session_id, cwd, type, status, tool_name, tool_input, detail)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.ClaudeSessionID, n.CWD, n.Type, n.Status, n.ToolName, n.ToolInput, n.Detail,
+		`INSERT INTO notifications (id, source, source_session, cwd, type, status, title, detail, payload)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Source, n.SourceSession, n.CWD, n.Type, n.Status, n.Title, n.Detail, n.Payload,
 	)
 	return err
 }
@@ -31,20 +33,28 @@ func (s *Store) CreateNotification(n *Notification) error {
 func (s *Store) GetNotification(id string) (*Notification, error) {
 	n := &Notification{}
 	err := s.db.QueryRow(
-		`SELECT id, claude_session_id, cwd, type, status, tool_name, tool_input, detail, resolved_at, resolved_source, created_at
+		`SELECT id, source, source_session, cwd, type, status, title, detail, payload, response,
+		        resolved_at, resolved_source, created_at
 		 FROM notifications WHERE id = ?`, id,
-	).Scan(&n.ID, &n.ClaudeSessionID, &n.CWD, &n.Type, &n.Status, &n.ToolName, &n.ToolInput, &n.Detail, &n.ResolvedAt, &n.ResolvedSource, &n.CreatedAt)
+	).Scan(&n.ID, &n.Source, &n.SourceSession, &n.CWD, &n.Type, &n.Status,
+		&n.Title, &n.Detail, &n.Payload, &n.Response,
+		&n.ResolvedAt, &n.ResolvedSource, &n.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return n, err
 }
 
-func (s *Store) ListNotifications(status, nType string) ([]Notification, error) {
-	query := `SELECT id, claude_session_id, cwd, type, status, tool_name, tool_input, detail, resolved_at, resolved_source, created_at
-			  FROM notifications WHERE 1=1`
+func (s *Store) ListNotifications(source, status, nType string) ([]Notification, error) {
+	query := `SELECT id, source, source_session, cwd, type, status, title, detail, payload, response,
+	                 resolved_at, resolved_source, created_at
+	          FROM notifications WHERE 1=1`
 	args := []interface{}{}
 
+	if source != "" {
+		query += " AND source = ?"
+		args = append(args, source)
+	}
 	if status != "" {
 		query += " AND status = ?"
 		args = append(args, status)
@@ -54,7 +64,7 @@ func (s *Store) ListNotifications(status, nType string) ([]Notification, error) 
 		args = append(args, nType)
 	}
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY created_at DESC LIMIT 200"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -65,7 +75,9 @@ func (s *Store) ListNotifications(status, nType string) ([]Notification, error) 
 	var result []Notification
 	for rows.Next() {
 		var n Notification
-		if err := rows.Scan(&n.ID, &n.ClaudeSessionID, &n.CWD, &n.Type, &n.Status, &n.ToolName, &n.ToolInput, &n.Detail, &n.ResolvedAt, &n.ResolvedSource, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Source, &n.SourceSession, &n.CWD, &n.Type, &n.Status,
+			&n.Title, &n.Detail, &n.Payload, &n.Response,
+			&n.ResolvedAt, &n.ResolvedSource, &n.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, n)
@@ -73,11 +85,16 @@ func (s *Store) ListNotifications(status, nType string) ([]Notification, error) 
 	return result, rows.Err()
 }
 
-func (s *Store) LastSessionDetail(sessionID string) string {
+func (s *Store) UpdateNotificationResponse(id, response string) error {
+	_, err := s.db.Exec(`UPDATE notifications SET response = ? WHERE id = ?`, response, id)
+	return err
+}
+
+func (s *Store) LastSessionDetail(sourceSession string) string {
 	var detail string
 	err := s.db.QueryRow(
-		`SELECT detail FROM notifications WHERE claude_session_id = ? AND type = 'permission' AND detail IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
-		sessionID,
+		`SELECT detail FROM notifications WHERE source_session = ? AND type LIKE '%.permission' AND detail IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+		sourceSession,
 	).Scan(&detail)
 	if err != nil {
 		return ""
@@ -99,6 +116,19 @@ func (s *Store) ResolveNotification(id, status, source string) error {
 		return ErrAlreadyResolved
 	}
 	return nil
+}
+
+func (s *Store) TruncateNotifications(keep int) error {
+	_, err := s.db.Exec(`
+		DELETE FROM notifications
+		WHERE id NOT IN (
+			SELECT id FROM notifications
+			ORDER BY created_at DESC
+			LIMIT ?
+		)
+		AND status != 'pending'
+	`, keep)
+	return err
 }
 
 type AlreadyResolvedError struct{}

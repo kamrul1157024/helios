@@ -8,7 +8,7 @@ import (
 )
 
 func hookConfig(port int) map[string]interface{} {
-	base := fmt.Sprintf("http://localhost:%d", port)
+	base := fmt.Sprintf("http://localhost:%d/hooks/claude", port)
 	return map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"PermissionRequest": []interface{}{
@@ -17,7 +17,31 @@ func hookConfig(port int) map[string]interface{} {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "http",
-							"url":     base + "/hooks/permission",
+							"url":     base + "/permission",
+							"timeout": 300,
+						},
+					},
+				},
+			},
+			"PreToolUse": []interface{}{
+				map[string]interface{}{
+					"matcher": "AskUserQuestion",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "http",
+							"url":     base + "/question",
+							"timeout": 300,
+						},
+					},
+				},
+			},
+			"Elicitation": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "http",
+							"url":     base + "/elicitation",
 							"timeout": 300,
 						},
 					},
@@ -29,7 +53,7 @@ func hookConfig(port int) map[string]interface{} {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type": "http",
-							"url":  base + "/hooks/stop",
+							"url":  base + "/stop",
 						},
 					},
 				},
@@ -40,7 +64,7 @@ func hookConfig(port int) map[string]interface{} {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type": "http",
-							"url":  base + "/hooks/stop-failure",
+							"url":  base + "/stop/failure",
 						},
 					},
 				},
@@ -51,7 +75,7 @@ func hookConfig(port int) map[string]interface{} {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type": "http",
-							"url":  base + "/hooks/notification",
+							"url":  base + "/notification",
 						},
 					},
 				},
@@ -62,7 +86,7 @@ func hookConfig(port int) map[string]interface{} {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type": "http",
-							"url":  base + "/hooks/session-start",
+							"url":  base + "/session/start",
 						},
 					},
 				},
@@ -73,7 +97,7 @@ func hookConfig(port int) map[string]interface{} {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type": "http",
-							"url":  base + "/hooks/session-end",
+							"url":  base + "/session/end",
 						},
 					},
 				},

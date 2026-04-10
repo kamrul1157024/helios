@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/notification.dart';
+import '../providers/card_registry.dart' as registry;
+import '../providers/claude/notification_ext.dart';
 import '../services/auth_service.dart';
 import '../services/sse_service.dart';
 import '../services/notification_service.dart';
@@ -30,10 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     _sse.fetchNotifications();
     _sse.start();
 
-    // Request notification permission
     NotificationService.instance.requestPermission();
-
-    // Listen to SSE events for local notifications
     NotificationService.instance.onAction = _handleNotificationAction;
     _eventSub = _sse.events.listen(_handleSSEEvent);
   }
@@ -51,17 +50,23 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final type = data['type']?.toString() ?? '';
       final id = data['id']?.toString() ?? '';
 
-      if (type == 'permission') {
+      if (type == 'claude.permission') {
         NotificationService.instance.showPermissionNotification(
           id: id,
-          toolName: data['tool_name']?.toString() ?? 'Unknown tool',
-          detail: data['detail']?.toString() ?? data['tool_input']?.toString() ?? 'Permission requested',
+          toolName: data['title']?.toString() ?? 'Unknown tool',
+          detail: data['detail']?.toString() ?? 'Permission requested',
         );
-      } else {
+      } else if (type == 'claude.question') {
         NotificationService.instance.showNotification(
           id: id,
-          title: 'helios',
-          body: data['detail']?.toString() ?? type,
+          title: 'Claude has a question',
+          body: data['detail']?.toString() ?? 'Answer required',
+        );
+      } else if (type.startsWith('claude.elicitation')) {
+        NotificationService.instance.showNotification(
+          id: id,
+          title: data['title']?.toString() ?? 'Input requested',
+          body: data['detail']?.toString() ?? 'Input required',
         );
       }
     }
@@ -69,9 +74,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   void _handleNotificationAction(String notificationId, String action) {
     if (action == 'approve') {
-      _sse.approveNotification(notificationId);
+      _sse.sendAction(notificationId, {'action': 'approve'});
     } else if (action == 'deny') {
-      _sse.denyNotification(notificationId);
+      _sse.sendAction(notificationId, {'action': 'deny'});
     }
   }
 
@@ -89,7 +94,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         title: const Text('helios'),
         centerTitle: true,
         actions: [
-          // Connection indicator
           Consumer<SSEService>(
             builder: (_, sse, _) => Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -124,17 +128,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         builder: (context, sse, _) {
           final notifications = sse.notifications;
 
-          final pendingPermissions = notifications
-              .where((n) => n.isPending && n.isPermission)
+          final pendingActions = notifications
+              .where((n) => registry.needsAction(n))
               .toList();
           final activeStatuses = notifications
-              .where((n) => n.isPending && !n.isPermission)
+              .where((n) => n.isPending && !registry.needsAction(n))
               .toList();
           final resolved = notifications
               .where((n) => !n.isPending)
               .toList();
 
-          if (pendingPermissions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
+          if (pendingActions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
             return _buildEmptyState();
           }
 
@@ -143,25 +147,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // Batch actions
-                if (pendingPermissions.isNotEmpty)
-                  _buildBatchActions(pendingPermissions),
+                if (pendingActions.isNotEmpty)
+                  _buildBatchActions(pendingActions),
 
-                // Pending permissions
-                if (pendingPermissions.isNotEmpty) ...[
-                  _sectionHeader('Pending Permissions (${pendingPermissions.length})'),
-                  ...pendingPermissions.map(_buildPermissionCard),
+                if (pendingActions.isNotEmpty) ...[
+                  _sectionHeader('Pending (${pendingActions.length})'),
+                  ...pendingActions.map(_buildNotificationCard),
                   const SizedBox(height: 16),
                 ],
 
-                // Active sessions
                 if (activeStatuses.isNotEmpty) ...[
                   _sectionHeader('Active Sessions'),
                   ...activeStatuses.map(_buildStatusCard),
                   const SizedBox(height: 16),
                 ],
 
-                // History
                 if (resolved.isNotEmpty) ...[
                   _sectionHeader('History'),
                   ...resolved.map(_buildHistoryCard),
@@ -173,6 +173,20 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       ),
     );
   }
+
+  // ==================== Card Routing ====================
+
+  Widget _buildNotificationCard(HeliosNotification n) {
+    final card = registry.buildCardForType(
+      notification: n,
+      sse: _sse,
+      selected: _selected,
+      onSelectionChanged: () => setState(() {}),
+    );
+    return card ?? _buildStatusCard(n);
+  }
+
+  // ==================== Shared Widgets ====================
 
   Widget _buildEmptyState() {
     return Center(
@@ -216,22 +230,23 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Widget _buildBatchActions(List<HeliosNotification> pending) {
+    final permissionIds = pending.where((n) => n.isClaudePermission).map((n) => n.id).toList();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          FilledButton.tonal(
-            onPressed: () {
-              final ids = pending.map((n) => n.id).toList();
-              _sse.batchAction(ids, 'approve');
-            },
-            child: Text('Approve All (${pending.length})'),
-          ),
+          if (permissionIds.isNotEmpty)
+            FilledButton.tonal(
+              onPressed: () {
+                _sse.batchAction(permissionIds, {'action': 'approve'});
+              },
+              child: Text('Approve All (${permissionIds.length})'),
+            ),
           if (_selected.isNotEmpty) ...[
             const SizedBox(width: 8),
             OutlinedButton(
               onPressed: () {
-                _sse.batchAction(_selected.toList(), 'approve');
+                _sse.batchAction(_selected.toList(), {'action': 'approve'});
                 setState(() => _selected.clear());
               },
               child: Text('Approve (${_selected.length})'),
@@ -242,127 +257,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  Widget _buildPermissionCard(HeliosNotification n) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Colors.orange.withValues(alpha: 0.3),
-          width: 1,
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Checkbox(
-                  value: _selected.contains(n.id),
-                  onChanged: (v) {
-                    setState(() {
-                      if (v == true) {
-                        _selected.add(n.id);
-                      } else {
-                        _selected.remove(n.id);
-                      }
-                    });
-                  },
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-                  ),
-                  child: const Text('permission', style: TextStyle(fontSize: 11, color: Colors.orange)),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    n.displayName,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              constraints: const BoxConstraints(maxHeight: 100),
-              child: SingleChildScrollView(
-                child: Text(
-                  n.displayDetail,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    n.cwd,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Text(
-                  n.timeAgo,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => _sse.approveNotification(n.id),
-                    child: const Text('Approve'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => _sse.denyNotification(n.id),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      foregroundColor: Theme.of(context).colorScheme.onError,
-                    ),
-                    child: const Text('Deny'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildStatusCard(HeliosNotification n) {
-    final isError = n.type == 'error';
+    final isError = n.type.endsWith('.error');
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
@@ -386,7 +282,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                n.displayName,
+                n.displayTitle,
                 style: TextStyle(
                   fontSize: 11,
                   color: isError
@@ -434,6 +330,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       case 'denied':
         badgeColor = Theme.of(context).colorScheme.error;
         break;
+      case 'answered':
+        badgeColor = Colors.blue;
+        break;
       default:
         badgeColor = Theme.of(context).colorScheme.outline;
     }
@@ -460,7 +359,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  n.displayName,
+                  n.displayTitle,
                   style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                   overflow: TextOverflow.ellipsis,
                 ),
