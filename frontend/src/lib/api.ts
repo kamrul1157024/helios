@@ -60,6 +60,16 @@ export async function batchAction(ids: string[], action: 'approve' | 'deny'): Pr
   });
 }
 
+export async function pairDevice(kid: string, publicKey: string): Promise<{ success: boolean; error?: string; message?: string }> {
+  const resp = await fetch(`${BASE}/api/auth/pair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kid, public_key: publicKey }),
+    credentials: 'same-origin',
+  });
+  return resp.json();
+}
+
 export async function login(token: string): Promise<{ success: boolean; kid: string }> {
   const resp = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',

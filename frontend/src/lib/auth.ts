@@ -1,6 +1,7 @@
 const DB_NAME = 'helios-auth';
 const STORE_NAME = 'keys';
 const KEY_ID = 'device-key';
+const DEVICE_ID_KEY = 'device-id';
 
 interface StoredKey {
   kid: string;
@@ -9,28 +10,56 @@ interface StoredKey {
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME);
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function storeKey(privateKeyBase64: string, kid: string): Promise<void> {
-  // Decode base64url to raw bytes (32-byte Ed25519 seed)
-  const raw = base64urlToBytes(privateKeyBase64);
+// Get or create the device's permanent unique ID (UUID stored in IndexedDB)
+export async function getDeviceId(): Promise<string> {
+  const db = await openDB();
 
-  // Import as Ed25519 signing key (PKCS8 format needed for Web Crypto)
-  // Ed25519 seed is 32 bytes, need to wrap in PKCS8
+  // Try to read existing device ID
+  const existing = await new Promise<string | null>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(DEVICE_ID_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+
+  if (existing) return existing;
+
+  // Generate new UUID
+  const deviceId = crypto.randomUUID();
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(deviceId, DEVICE_ID_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return deviceId;
+}
+
+// Import the private key from QR and store it with this device's kid
+export async function storeKey(privateKeyBase64: string): Promise<void> {
+  const kid = await getDeviceId();
+  const raw = base64urlToBytes(privateKeyBase64);
   const pkcs8 = wrapEd25519SeedInPKCS8(raw);
 
   const key = await crypto.subtle.importKey(
     'pkcs8',
     pkcs8,
     { name: 'Ed25519' },
-    false, // non-extractable
+    true, // extractable so we can export public key
     ['sign']
   );
 
@@ -41,6 +70,18 @@ export async function storeKey(privateKeyBase64: string, kid: string): Promise<v
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+// Export the public key as base64url for sending to backend.
+// Uses JWK export which includes the "x" (public key) parameter.
+export async function getPublicKeyBase64(): Promise<string> {
+  const stored = await getStoredKey();
+  if (!stored) throw new Error('No key stored');
+
+  const jwk = await crypto.subtle.exportKey('jwk', stored.key);
+  if (!jwk.x) throw new Error('No public key in JWK export');
+  // JWK "x" is already base64url-encoded 32-byte Ed25519 public key
+  return jwk.x;
 }
 
 export async function hasKey(): Promise<boolean> {
@@ -75,7 +116,7 @@ export async function signJWT(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iat: now,
-    exp: now + 3600, // 1 hour
+    exp: now + 3600,
     sub: 'helios-client',
   };
 
@@ -93,11 +134,6 @@ export async function signJWT(): Promise<string> {
   return `${signingInput}.${encodedSignature}`;
 }
 
-export async function getAuthHeader(): Promise<string> {
-  const token = await signJWT();
-  return `Bearer ${token}`;
-}
-
 export async function clearKey(): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -106,19 +142,6 @@ export async function clearKey(): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-}
-
-// Parse helios://setup?key=...&kid=...&v=1
-export function parseSetupPayload(input: string): { key: string; kid: string } | null {
-  try {
-    const url = new URL(input);
-    const key = url.searchParams.get('key');
-    const kid = url.searchParams.get('kid');
-    if (!key || !kid) return null;
-    return { key, kid };
-  } catch {
-    return null;
-  }
 }
 
 // Helper: base64url encode/decode
@@ -133,7 +156,6 @@ function bytesToBase64url(bytes: Uint8Array): string {
 }
 
 function base64urlToBytes(str: string): Uint8Array {
-  // Add padding
   const padded = str.replace(/-/g, '+').replace(/_/g, '/');
   const decoded = atob(padded);
   const bytes = new Uint8Array(decoded.length);
@@ -143,16 +165,7 @@ function base64urlToBytes(str: string): Uint8Array {
   return bytes;
 }
 
-// Wrap a 32-byte Ed25519 seed in PKCS8 DER format
 function wrapEd25519SeedInPKCS8(seed: Uint8Array): ArrayBuffer {
-  // PKCS8 header for Ed25519:
-  // 30 2e (SEQUENCE, 46 bytes)
-  //   02 01 00 (INTEGER 0 - version)
-  //   30 05 (SEQUENCE, 5 bytes)
-  //     06 03 2b 65 70 (OID 1.3.101.112 - Ed25519)
-  //   04 22 (OCTET STRING, 34 bytes)
-  //     04 20 (OCTET STRING, 32 bytes)
-  //       <32 bytes of seed>
   const header = new Uint8Array([
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
     0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,

@@ -65,7 +65,6 @@ type tunnelStarted struct {
 }
 
 type deviceCreated struct {
-	kid      string
 	key      string
 	setupURL string
 	err      error
@@ -105,11 +104,10 @@ type SetupModel struct {
 	installHint   string
 
 	// QR code state
-	qrString     string
-	setupURL     string
-	deviceKID    string
+	qrString      string
+	setupURL      string
 	waitingDevice bool
-	deviceName   string
+	deviceName    string
 
 	// Custom URL input
 	customURL string
@@ -174,7 +172,7 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if m.waitingDevice {
-			return m, tea.Batch(pollDevice(m.client, m.deviceKID), m.spinner.Tick)
+			return m, tea.Batch(pollNewDevice(m.client, m.deviceCount), m.spinner.Tick)
 		}
 		return m, nil
 	}
@@ -237,10 +235,14 @@ func (m SetupModel) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenStatusCheck:
 		if !m.daemonOK {
-			// Try to start daemon
-			m.errMsg = "Daemon not running. Start it with: helios daemon start -d"
+			m.errMsg = "Could not start daemon"
 			m.screen = screenError
 			return m, nil
+		}
+		// Auto-install hooks if missing
+		if !m.hooksOK {
+			installHooksQuietly()
+			m.hooksOK = true
 		}
 		if m.tunnelOK && m.deviceCount > 0 {
 			// Already fully set up
@@ -352,10 +354,9 @@ func (m SetupModel) handleDeviceCreated(msg deviceCreated) (tea.Model, tea.Cmd) 
 		m.screen = screenError
 		return m, nil
 	}
-	m.deviceKID = msg.kid
 	m.setupURL = msg.setupURL
 	if m.setupURL == "" {
-		m.setupURL = fmt.Sprintf("%s/#/setup?key=%s&kid=%s", m.tunnelURL, msg.key, msg.kid)
+		m.setupURL = fmt.Sprintf("%s/#/setup?key=%s", m.tunnelURL, msg.key)
 	}
 
 	// Generate QR
@@ -364,9 +365,9 @@ func (m SetupModel) handleDeviceCreated(msg deviceCreated) (tea.Model, tea.Cmd) 
 		m.qrString = qr.ToSmallString(false)
 	}
 
-	// Start polling for device connection
+	// Start polling for any new device connection
 	m.waitingDevice = true
-	return m, tea.Batch(m.spinner.Tick, pollDevice(m.client, m.deviceKID))
+	return m, tea.Batch(m.spinner.Tick, pollNewDevice(m.client, m.deviceCount))
 }
 
 func (m SetupModel) handleDevicePoll(msg devicePollResult) (tea.Model, tea.Cmd) {
@@ -389,11 +390,34 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 	return func() tea.Msg {
 		result := statusCheckDone{}
 
-		// Check daemon
+		// Check daemon — if not running, try to start it
 		h, err := c.health()
 		if err != nil {
-			result.err = fmt.Errorf("daemon not running on port %d", publicPort)
-			return result
+			// Auto-start daemon in background
+			exe, exeErr := os.Executable()
+			if exeErr != nil {
+				exe = "helios"
+			}
+			proc, startErr := os.StartProcess(exe, []string{exe, "daemon", "start"}, &os.ProcAttr{
+				Dir:   "/",
+				Env:   os.Environ(),
+				Files: []*os.File{os.Stdin, nil, nil},
+			})
+			if startErr == nil {
+				proc.Release()
+				// Wait for daemon to be ready
+				for i := 0; i < 20; i++ {
+					time.Sleep(250 * time.Millisecond)
+					h, err = c.health()
+					if err == nil {
+						break
+					}
+				}
+			}
+			if err != nil {
+				result.err = fmt.Errorf("could not start daemon")
+				return result
+			}
 		}
 		result.daemonOK = h.Status == "ok"
 
@@ -438,24 +462,33 @@ func createDevice(c *client) tea.Cmd {
 		if err != nil {
 			return deviceCreated{err: err}
 		}
-		return deviceCreated{kid: resp.KID, key: resp.Key, setupURL: resp.SetupURL}
+		return deviceCreated{key: resp.Key, setupURL: resp.SetupURL}
 	}
 }
 
-func pollDevice(c *client, kid string) tea.Cmd {
+// pollNewDevice checks if any new active device appeared since QR was shown.
+func pollNewDevice(c *client, previousCount int) tea.Cmd {
 	return func() tea.Msg {
 		dl, err := c.deviceList()
 		if err != nil {
 			return devicePollResult{connected: false}
 		}
+		var activeCount int
+		var latestName string
 		for _, d := range dl.Devices {
-			if d.KID == kid && d.Status == "active" {
-				name := d.Name
-				if name == "" {
-					name = d.KID
+			if d.Status == "active" {
+				activeCount++
+				if latestName == "" {
+					name := d.Name
+					if name == "" {
+						name = d.KID
+					}
+					latestName = name
 				}
-				return devicePollResult{connected: true, deviceName: name}
 			}
+		}
+		if activeCount > previousCount {
+			return devicePollResult{connected: true, deviceName: latestName}
 		}
 		return devicePollResult{connected: false}
 	}
@@ -468,6 +501,15 @@ func hooksInstalled() bool {
 		return false
 	}
 	return strings.Contains(string(data), "/hooks/permission")
+}
+
+func installHooksQuietly() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, "hooks", "install")
+	cmd.Run()
 }
 
 func providerBinary(provider string) string {

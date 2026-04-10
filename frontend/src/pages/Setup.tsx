@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
-import { storeKey, signJWT } from '../lib/auth';
-import { login, updateDeviceMe } from '../lib/api';
+import { storeKey, signJWT, getDeviceId, getPublicKeyBase64 } from '../lib/auth';
+import { pairDevice, login, updateDeviceMe } from '../lib/api';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 function detectPlatform(): string {
   const ua = navigator.userAgent;
@@ -34,49 +37,55 @@ export function Setup({ onComplete }: { onComplete: () => void }) {
   const [deviceName, setDeviceName] = useState('');
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
 
-  // Check URL params for auto-import (QR scan flow)
   useEffect(() => {
     const hash = window.location.hash;
-    const match = hash.match(/[?&]key=([^&]+).*[?&]kid=([^&]+)/);
+    // New format: just key, no kid
+    const match = hash.match(/[?&]key=([^&]+)/);
     if (match) {
-      autoSetup(match[1], match[2]);
+      autoSetup(match[1]);
     }
   }, []);
 
-  async function autoSetup(key: string, kid: string) {
+  async function autoSetup(key: string) {
     setStep('importing');
     setStatusMessages([]);
 
     try {
-      // 1. Store Ed25519 private key in IndexedDB
       setStatusMessages(prev => [...prev, 'Importing key...']);
-      await storeKey(key, kid);
-      setStatusMessages(prev => [...prev, '✓ Key imported']);
+      await storeKey(key);
+      setStatusMessages(prev => [...prev, 'Key imported']);
 
-      // 2. Sign JWT and login (sets HttpOnly cookie)
+      setStatusMessages(prev => [...prev, 'Registering device...']);
+      const kid = await getDeviceId();
+      const publicKey = await getPublicKeyBase64();
+
+      const pairResult = await pairDevice(kid, publicKey);
+      if (!pairResult.success) {
+        if (pairResult.error === 'key_already_claimed') {
+          throw new Error(pairResult.message || 'This QR code has already been used by another device. Generate a new QR from the terminal with: helios start');
+        }
+        throw new Error(pairResult.message || 'Failed to register device');
+      }
+      setStatusMessages(prev => [...prev, 'Device registered']);
+
       setStatusMessages(prev => [...prev, 'Authenticating...']);
       const jwt = await signJWT();
-      const result = await login(jwt);
-      if (!result.success) {
+      const loginResult = await login(jwt);
+      if (!loginResult.success) {
         throw new Error('Login failed — device may be revoked');
       }
-      setStatusMessages(prev => [...prev, '✓ Authenticated']);
+      setStatusMessages(prev => [...prev, 'Authenticated']);
 
-      // 3. Auto-detect device metadata
       setStatusMessages(prev => [...prev, 'Detecting device...']);
       const platform = detectPlatform();
       const browser = detectBrowser();
       const defaultName = `${platform} — ${browser}`;
       setDeviceName(defaultName);
 
-      // 4. Send initial metadata
       await updateDeviceMe(defaultName, platform, browser);
-      setStatusMessages(prev => [...prev, '✓ Device registered']);
+      setStatusMessages(prev => [...prev, 'Setup complete']);
 
-      // 5. Show naming step
       setStep('naming');
-
-      // Clean up URL params
       window.location.hash = '#/setup';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
@@ -90,15 +99,13 @@ export function Setup({ onComplete }: { onComplete: () => void }) {
     setLoading(true);
 
     try {
-      // Parse helios://setup?key=...&kid=... or just key=...&kid=...
-      const parsed = parseKeyParams(input.trim());
-      if (!parsed) {
-        setError('Invalid setup string. Expected: helios://setup?key=...&kid=...');
+      const key = parseKeyParam(input.trim());
+      if (!key) {
+        setError('Invalid setup string. Paste the URL or key from the terminal QR code.');
         setLoading(false);
         return;
       }
-
-      await autoSetup(parsed.key, parsed.kid);
+      await autoSetup(key);
     } catch (err) {
       setError(`Setup failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setLoading(false);
@@ -115,134 +122,194 @@ export function Setup({ onComplete }: { onComplete: () => void }) {
     onComplete();
   }
 
-  // Auto-import step
   if (step === 'importing') {
     return (
-      <div className="setup-page">
-        <div className="setup-card">
-          <h1>helios</h1>
-          <p className="subtitle">Setting up device...</p>
-          <div style={{ marginTop: '1.5rem' }}>
-            {statusMessages.map((msg, i) => (
-              <p key={i} style={{ marginBottom: '0.5rem', fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                {msg}
-              </p>
-            ))}
-          </div>
-        </div>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="text-2xl">helios</CardTitle>
+            <CardDescription>Setting up device...</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {statusMessages.map((msg, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm font-mono">
+                  <span className="text-primary">+</span>
+                  <span className="text-muted-foreground">{msg}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-2 text-sm">
+                <svg className="animate-spin h-4 w-4 text-primary" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="text-muted-foreground">Working...</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
-  // Device naming step
   if (step === 'naming') {
     return (
-      <div className="setup-page">
-        <div className="setup-card">
-          <h1>helios</h1>
-          <p className="subtitle">Connected!</p>
-
-          <div className="input-group">
-            <label htmlFor="device-name">Name this device:</label>
-            <input
-              id="device-name"
-              type="text"
-              value={deviceName}
-              onChange={(e) => setDeviceName(e.target.value)}
-              placeholder="My iPhone"
-              autoFocus
-            />
-          </div>
-
-          <button onClick={handleSaveName}>
-            Save & Continue
-          </button>
-        </div>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="text-2xl">helios</CardTitle>
+            <CardDescription>Connected! Name this device.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="device-name" className="text-sm text-muted-foreground">
+                Device name
+              </label>
+              <Input
+                id="device-name"
+                value={deviceName}
+                onChange={(e) => setDeviceName(e.target.value)}
+                placeholder="My iPhone"
+                autoFocus
+              />
+            </div>
+            <Button onClick={handleSaveName} className="w-full">
+              Save & Continue
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
-  // Error step
   if (step === 'error') {
+    const isKeyClaimedError = error.includes('already been used') || error.includes('key_already_claimed');
+
     return (
-      <div className="setup-page">
-        <div className="setup-card">
-          <h1>helios</h1>
-          <p className="subtitle">Setup Failed</p>
-
-          {error && <div className="error">{error}</div>}
-
-          <div style={{ marginTop: '1rem' }}>
-            {statusMessages.map((msg, i) => (
-              <p key={i} style={{ marginBottom: '0.5rem', fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                {msg}
-              </p>
-            ))}
-          </div>
-
-          <button onClick={() => { setStep('input'); setError(''); setStatusMessages([]); }}>
-            Try Again
-          </button>
-        </div>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="text-2xl">helios</CardTitle>
+            <CardDescription>Setup Failed</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {error && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+            {isKeyClaimedError && (
+              <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+                <p className="font-medium mb-1">What happened?</p>
+                <p>Another device already scanned this QR code. Each QR code can only be used by one device.</p>
+                <p className="mt-2">Run <code className="rounded bg-background px-1.5 py-0.5 text-xs">helios start</code> in your terminal to generate a new QR code.</p>
+              </div>
+            )}
+            <div className="space-y-1">
+              {statusMessages.map((msg, i) => (
+                <p key={i} className="text-sm font-mono text-muted-foreground">
+                  {msg}
+                </p>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => { setStep('input'); setError(''); setStatusMessages([]); }}
+            >
+              Try Again
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
-  // Manual input step (default — for when QR scan isn't used)
   return (
-    <div className="setup-page">
-      <div className="setup-card">
-        <h1>helios</h1>
-        <p className="subtitle">Device Setup</p>
+    <div className="flex items-center justify-center min-h-screen p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle className="text-2xl">helios</CardTitle>
+          <CardDescription>Device Setup</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleManualSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="setup-input" className="text-sm text-muted-foreground">
+                Paste your setup URL from the terminal:
+              </label>
+              <Input
+                id="setup-input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="https://.../#/setup?key=..."
+                autoFocus
+                disabled={loading}
+                className="font-mono text-sm"
+              />
+            </div>
 
-        <form onSubmit={handleManualSubmit}>
-          <div className="input-group">
-            <label htmlFor="setup-input">Paste your setup string from the terminal:</label>
-            <input
-              id="setup-input"
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="helios://setup?key=...&kid=..."
-              autoFocus
-              disabled={loading}
-            />
+            {error && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" disabled={loading || !input.trim()} className="w-full">
+              {loading ? 'Setting up...' : 'Connect'}
+            </Button>
+          </form>
+
+          <div className="mt-6 pt-6 border-t text-sm text-muted-foreground">
+            <p>
+              Run <code className="rounded bg-muted px-1.5 py-0.5 text-xs">helios start</code> in
+              your terminal to get a QR code, or paste the setup URL above.
+            </p>
           </div>
-
-          {error && <div className="error">{error}</div>}
-
-          <button type="submit" disabled={loading || !input.trim()}>
-            {loading ? 'Setting up...' : 'Connect'}
-          </button>
-        </form>
-
-        <div className="help-text">
-          <p>Run <code>helios auth init</code> in your terminal to get a setup string, or scan the QR code.</p>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-function parseKeyParams(input: string): { key: string; kid: string } | null {
+// Parse the key from various input formats:
+// - Full URL: https://example.com/#/setup?key=abc123
+// - helios URL: helios://setup?key=abc123
+// - Just the key: abc123
+function parseKeyParam(input: string): string | null {
+  // Try parsing as URL with hash
   try {
-    // Try as URL (helios://setup?key=...&kid=... or https://.../#/setup?key=...&kid=...)
-    const url = new URL(input);
-    const key = url.searchParams.get('key');
-    const kid = url.searchParams.get('kid');
-    if (key && kid) return { key, kid };
+    if (input.includes('#')) {
+      const hashPart = input.split('#')[1];
+      const params = new URLSearchParams(hashPart.includes('?') ? hashPart.split('?')[1] : '');
+      const key = params.get('key');
+      if (key) return key;
+    }
   } catch {
-    // Not a URL — try as query string
+    // Not a URL with hash
   }
 
-  // Try to parse as query params
+  // Try parsing as URL
+  try {
+    const url = new URL(input);
+    const key = url.searchParams.get('key');
+    if (key) return key;
+  } catch {
+    // Not a URL
+  }
+
+  // Try parsing as query string
   try {
     const params = new URLSearchParams(input.includes('?') ? input.split('?')[1] : input);
     const key = params.get('key');
-    const kid = params.get('kid');
-    if (key && kid) return { key, kid };
+    if (key) return key;
   } catch {
     // Ignore
+  }
+
+  // If it looks like a base64url string (the raw key), accept it directly
+  if (/^[A-Za-z0-9_-]{20,}$/.test(input)) {
+    return input;
   }
 
   return null;

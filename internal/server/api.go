@@ -208,6 +208,52 @@ func (s *PublicServer) handleRevokeDevice(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// handlePair registers or updates a device. Called before login.
+// The device sends its self-generated kid (UUID) and the public key derived from the QR seed.
+// If another device already uses this public key, returns an error.
+func (s *PublicServer) handlePair(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KID       string `json:"kid"`
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.KID == "" || req.PublicKey == "" {
+		jsonError(w, "missing kid or public_key", http.StatusBadRequest)
+		return
+	}
+
+	// Validate public key format (must be valid base64url-encoded 32-byte Ed25519 public key)
+	if _, err := auth.PublicKeyFromBase64(req.PublicKey); err != nil {
+		jsonError(w, "invalid public key format", http.StatusBadRequest)
+		return
+	}
+
+	// Check if this key is already used by a different device
+	existing, err := s.shared.DB.GetDeviceByPublicKey(req.PublicKey)
+	if err != nil {
+		jsonError(w, "failed to check key uniqueness", http.StatusInternalServerError)
+		return
+	}
+	if existing != nil && existing.KID != req.KID {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false,
+			"error":   "key_already_claimed",
+			"message": "This QR code has already been used by another device. Generate a new QR from the terminal with: helios start",
+		})
+		return
+	}
+
+	// Create or update the device
+	if err := s.shared.DB.UpsertDevice(req.KID, req.PublicKey); err != nil {
+		jsonError(w, "failed to register device", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"kid":     req.KID,
+	})
+}
+
 // handleLogin sets the HttpOnly cookie after verifying the JWT.
 func (s *PublicServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -321,6 +367,10 @@ var TunnelManager interface {
 	Stop() error
 }
 
+// OnTunnelConfigChanged is called when tunnel config should be persisted.
+// Set by daemon to save tunnel provider to config.yaml.
+var OnTunnelConfigChanged func(provider, customURL string)
+
 func (s *InternalServer) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	if TunnelManager == nil {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -354,6 +404,11 @@ func (s *InternalServer) handleTunnelStart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Persist tunnel config so it auto-starts on next daemon restart
+	if OnTunnelConfigChanged != nil {
+		OnTunnelConfigChanged(req.Provider, req.CustomURL)
+	}
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"public_url": url,
 	})
@@ -374,39 +429,72 @@ func (s *InternalServer) handleTunnelStop(w http.ResponseWriter, r *http.Request
 }
 
 func (s *InternalServer) handleDeviceCreate(w http.ResponseWriter, r *http.Request) {
-	count, _ := s.shared.DB.CountDevices()
-	kid := fmt.Sprintf("device-%03d", count+1)
-
-	kp, err := auth.GenerateKeypair(kid)
+	// Generate a keypair — no device record is created here.
+	// The device will self-register via POST /api/auth/pair with its own kid.
+	kp, err := auth.GenerateKeypair("")
 	if err != nil {
 		jsonError(w, "failed to generate keypair", http.StatusInternalServerError)
 		return
 	}
 
-	device := &store.Device{
-		KID:       kid,
-		PublicKey: kp.PublicKeyBase64(),
-		Status:    "pending",
-	}
-
-	if err := s.shared.DB.CreateDevice(device); err != nil {
-		jsonError(w, "failed to create device", http.StatusInternalServerError)
-		return
-	}
-
-	// Build setup URL
+	// Build setup URL (key only, no kid — device generates its own)
 	setupURL := ""
 	if TunnelManager != nil {
 		status := TunnelManager.Status()
 		if url, ok := status["public_url"].(string); ok && url != "" {
-			setupURL = fmt.Sprintf("%s/#/setup?key=%s&kid=%s", url, kp.PrivateKeyBase64(), kid)
+			setupURL = fmt.Sprintf("%s/#/setup?key=%s", url, kp.PrivateKeyBase64())
 		}
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"kid":       kid,
 		"key":       kp.PrivateKeyBase64(),
 		"setup_url": setupURL,
+	})
+}
+
+func (s *InternalServer) handleDeviceRekey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KID string `json:"kid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.KID == "" {
+		jsonError(w, "missing kid", http.StatusBadRequest)
+		return
+	}
+
+	// Check device exists
+	device, err := s.shared.DB.GetDevice(req.KID)
+	if err != nil || device == nil {
+		jsonError(w, "device not found", http.StatusNotFound)
+		return
+	}
+
+	// Generate new keypair
+	kp, err := auth.GenerateKeypair(req.KID)
+	if err != nil {
+		jsonError(w, "failed to generate keypair", http.StatusInternalServerError)
+		return
+	}
+
+	// Update public key and reset to pending (will activate on next login)
+	if err := s.shared.DB.RekeyDevice(req.KID, kp.PublicKeyBase64()); err != nil {
+		jsonError(w, "failed to rekey device", http.StatusInternalServerError)
+		return
+	}
+
+	// Build setup URL (key only, no kid)
+	setupURL := ""
+	if TunnelManager != nil {
+		status := TunnelManager.Status()
+		if url, ok := status["public_url"].(string); ok && url != "" {
+			setupURL = fmt.Sprintf("%s/#/setup?key=%s", url, kp.PrivateKeyBase64())
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"kid":       req.KID,
+		"key":       kp.PrivateKeyBase64(),
+		"setup_url": setupURL,
+		"rekeyed":   true,
 	})
 }
 

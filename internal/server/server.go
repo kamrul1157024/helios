@@ -63,6 +63,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("POST /internal/tunnel/start", s.handleTunnelStart)
 	mux.HandleFunc("POST /internal/tunnel/stop", s.handleTunnelStop)
 	mux.HandleFunc("POST /internal/device/create", s.handleDeviceCreate)
+	mux.HandleFunc("POST /internal/device/rekey", s.handleDeviceRekey)
 	mux.HandleFunc("GET /internal/device/list", s.handleDeviceList)
 	mux.HandleFunc("POST /internal/device/revoke", s.handleDeviceRevoke)
 
@@ -83,6 +84,7 @@ func NewPublicServer(port int, shared *Shared, frontendFS fs.FS) *PublicServer {
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/pair", s.handlePair)
 
 	// Auth-protected API endpoints
 	cookieAuth := cookieAuthMiddleware(shared.DB)

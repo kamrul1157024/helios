@@ -12,6 +12,7 @@ func PrintQR(payload string) error {
 		return fmt.Errorf("generate qr: %w", err)
 	}
 
-	fmt.Println(qr.ToSmallString(false))
+	// true = include quiet zone border (required for reliable scanning)
+	fmt.Println(qr.ToSmallString(true))
 	return nil
 }

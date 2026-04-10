@@ -11,14 +11,16 @@ import (
 
 // client wraps HTTP calls to the internal admin API.
 type client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL        string
+	httpClient     *http.Client // short timeout for health/list
+	longHTTPClient *http.Client // long timeout for tunnel start
 }
 
 func newClient(internalPort int) *client {
 	return &client{
-		baseURL:    fmt.Sprintf("http://127.0.0.1:%d", internalPort),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		baseURL:        fmt.Sprintf("http://127.0.0.1:%d", internalPort),
+		httpClient:     &http.Client{Timeout: 3 * time.Second},
+		longHTTPClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -74,7 +76,7 @@ func (c *client) tunnelStart(provider, customURL string, localPort int) (*tunnel
 		CustomURL: customURL,
 		LocalPort: localPort,
 	})
-	resp, err := c.httpClient.Post(c.baseURL+"/internal/tunnel/start", "application/json", bytes.NewReader(body))
+	resp, err := c.longHTTPClient.Post(c.baseURL+"/internal/tunnel/start", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +100,6 @@ func (c *client) tunnelStop() error {
 }
 
 type deviceCreateResponse struct {
-	KID      string `json:"kid"`
 	Key      string `json:"key"`
 	SetupURL string `json:"setup_url"`
 }

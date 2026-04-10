@@ -114,3 +114,35 @@ func (s *Store) CountActiveDevices() (int, error) {
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE status = 'active'`).Scan(&count)
 	return count, err
 }
+
+func (s *Store) RekeyDevice(kid, newPublicKey string) error {
+	_, err := s.db.Exec(
+		`UPDATE devices SET public_key = ?, status = 'pending' WHERE kid = ?`,
+		newPublicKey, kid,
+	)
+	return err
+}
+
+// GetDeviceByPublicKey finds a device using a specific public key.
+// Returns nil if no device uses this key.
+func (s *Store) GetDeviceByPublicKey(publicKey string) (*Device, error) {
+	d := &Device{}
+	err := s.db.QueryRow(
+		`SELECT kid, name, public_key, status, platform, browser, last_seen_at, created_at, 0 as push_enabled
+		 FROM devices WHERE public_key = ? AND status != 'revoked' LIMIT 1`, publicKey,
+	).Scan(&d.KID, &d.Name, &d.PublicKey, &d.Status, &d.Platform, &d.Browser, &d.LastSeenAt, &d.CreatedAt, &d.PushEnabled)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// UpsertDevice creates a new device or updates an existing one's public key.
+func (s *Store) UpsertDevice(kid, publicKey string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO devices (kid, name, public_key, status) VALUES (?, '', ?, 'pending')
+		 ON CONFLICT(kid) DO UPDATE SET public_key = ?, status = 'pending'`,
+		kid, publicKey, publicKey,
+	)
+	return err
+}

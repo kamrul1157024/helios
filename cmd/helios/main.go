@@ -29,6 +29,12 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "start":
+		handleStart()
+	case "stop":
+		handleStop()
+	case "show":
+		handleShow()
 	case "setup":
 		handleSetup()
 	case "devices":
@@ -142,7 +148,7 @@ func handleAuth(args []string) {
 
 	switch args[0] {
 	case "init":
-		// Create device via internal API
+		// Generate a new setup QR via internal API
 		resp, err := http.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: daemon not running? %v\n", err)
@@ -151,13 +157,10 @@ func handleAuth(args []string) {
 		defer resp.Body.Close()
 
 		var result struct {
-			KID      string `json:"kid"`
 			Key      string `json:"key"`
 			SetupURL string `json:"setup_url"`
 		}
 		json.NewDecoder(resp.Body).Decode(&result)
-
-		payload := fmt.Sprintf("helios://setup?key=%s&kid=%s&v=1", result.Key, result.KID)
 
 		fmt.Println()
 		fmt.Println("  Helios Device Setup")
@@ -167,14 +170,13 @@ func handleAuth(args []string) {
 		fmt.Println()
 
 		if result.SetupURL != "" {
-			// QR encodes the full HTTPS setup URL for the tunnel
 			if err := auth.PrintQR(result.SetupURL); err != nil {
 				fmt.Printf("  (QR generation failed: %v)\n", err)
 			}
 			fmt.Println()
 			fmt.Printf("  Setup URL: %s\n", result.SetupURL)
 		} else {
-			// No tunnel — encode the helios:// payload
+			payload := fmt.Sprintf("helios://setup?key=%s", result.Key)
 			if err := auth.PrintQR(payload); err != nil {
 				fmt.Printf("  (QR generation failed: %v)\n", err)
 			}
@@ -182,9 +184,6 @@ func handleAuth(args []string) {
 			fmt.Println("  Or copy this setup string:")
 			fmt.Printf("  %s\n", payload)
 		}
-
-		fmt.Println()
-		fmt.Printf("  Key ID: %s\n", result.KID)
 		fmt.Println()
 
 	case "devices":
@@ -265,6 +264,234 @@ func handleAuth(args []string) {
 	}
 }
 
+func handleStart() {
+	cfg, err := daemon.LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
+	// Check if already running
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(internalURL + "/internal/health")
+	if err == nil {
+		resp.Body.Close()
+		fmt.Println("helios is already running")
+		fmt.Printf("  internal: 127.0.0.1:%d\n", cfg.Server.InternalPort)
+		fmt.Printf("  public:   0.0.0.0:%d\n", cfg.Server.PublicPort)
+
+		// Show tunnel status
+		resp, err = client.Get(internalURL + "/internal/tunnel/status")
+		if err == nil {
+			defer resp.Body.Close()
+			var ts struct {
+				Active    bool   `json:"active"`
+				PublicURL string `json:"public_url"`
+				Provider  string `json:"provider"`
+			}
+			json.NewDecoder(resp.Body).Decode(&ts)
+			if ts.Active {
+				fmt.Printf("  tunnel:   %s (%s)\n", ts.PublicURL, ts.Provider)
+			} else {
+				fmt.Println("  tunnel:   not active")
+			}
+		}
+
+		// Show devices + QR
+		fmt.Println()
+		printDevices(client, internalURL)
+		return
+	}
+
+	// Start daemon in background
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	proc, err := os.StartProcess(exe, []string{exe, "daemon", "start"}, &os.ProcAttr{
+		Dir:   "/",
+		Env:   os.Environ(),
+		Files: []*os.File{os.Stdin, nil, nil},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
+		os.Exit(1)
+	}
+	proc.Release()
+
+	// Wait for daemon to be ready
+	for i := 0; i < 20; i++ {
+		time.Sleep(250 * time.Millisecond)
+		resp, err := client.Get(internalURL + "/internal/health")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+	}
+
+	// Install hooks if missing
+	daemon.InstallHooksIfMissing()
+
+	fmt.Println("helios started")
+	fmt.Printf("  internal: 127.0.0.1:%d\n", cfg.Server.InternalPort)
+	fmt.Printf("  public:   0.0.0.0:%d\n", cfg.Server.PublicPort)
+
+	// Check tunnel status
+	if cfg.Tunnel.Provider != "" {
+		// Give tunnel a moment to start
+		time.Sleep(2 * time.Second)
+		resp, err := client.Get(internalURL + "/internal/tunnel/status")
+		if err == nil {
+			defer resp.Body.Close()
+			var ts struct {
+				Active    bool   `json:"active"`
+				PublicURL string `json:"public_url"`
+				Provider  string `json:"provider"`
+			}
+			json.NewDecoder(resp.Body).Decode(&ts)
+			if ts.Active {
+				fmt.Printf("  tunnel:   %s (%s)\n", ts.PublicURL, ts.Provider)
+			} else {
+				fmt.Printf("  tunnel:   starting (%s)...\n", cfg.Tunnel.Provider)
+			}
+		}
+	}
+
+	// Show devices + QR
+	fmt.Println()
+	printDevices(client, internalURL)
+}
+
+func handleShow() {
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	// Daemon status
+	resp, err := client.Get(internalURL + "/internal/health")
+	if err != nil {
+		fmt.Println("helios is not running. Run: helios start")
+		return
+	}
+	resp.Body.Close()
+	fmt.Println("helios is running")
+	fmt.Printf("  internal: 127.0.0.1:%d\n", cfg.Server.InternalPort)
+	fmt.Printf("  public:   0.0.0.0:%d\n", cfg.Server.PublicPort)
+
+	// Tunnel status
+	resp, err = client.Get(internalURL + "/internal/tunnel/status")
+	if err == nil {
+		defer resp.Body.Close()
+		var ts struct {
+			Active    bool   `json:"active"`
+			PublicURL string `json:"public_url"`
+			Provider  string `json:"provider"`
+		}
+		json.NewDecoder(resp.Body).Decode(&ts)
+		if ts.Active {
+			fmt.Printf("  tunnel:   %s (%s)\n", ts.PublicURL, ts.Provider)
+		} else {
+			fmt.Println("  tunnel:   not active")
+		}
+	}
+
+	// Devices
+	fmt.Println()
+	printDevices(client, internalURL)
+}
+
+func printDevices(client *http.Client, internalURL string) {
+	resp, err := client.Get(internalURL + "/internal/device/list")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Could not fetch devices")
+		return
+	}
+	defer resp.Body.Close()
+
+	type deviceEntry struct {
+		KID         string  `json:"kid"`
+		Name        string  `json:"name"`
+		Status      string  `json:"status"`
+		Platform    string  `json:"platform"`
+		Browser     string  `json:"browser"`
+		PushEnabled bool    `json:"push_enabled"`
+		LastSeenAt  *string `json:"last_seen_at"`
+	}
+	var result struct {
+		Devices []deviceEntry `json:"devices"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	// Filter to non-revoked devices
+	var devices []deviceEntry
+	for _, d := range result.Devices {
+		if d.Status != "revoked" {
+			devices = append(devices, d)
+		}
+	}
+
+	if len(devices) > 0 {
+		fmt.Printf("  %d device(s):\n", len(devices))
+		for _, d := range devices {
+			name := d.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			lastSeen := "never"
+			if d.LastSeenAt != nil {
+				t, parseErr := time.Parse(time.RFC3339, *d.LastSeenAt)
+				if parseErr == nil {
+					lastSeen = humanDuration(time.Since(t))
+				}
+			}
+			pushStr := "off"
+			if d.PushEnabled {
+				pushStr = "on"
+			}
+			icon := "+"
+			if d.Status == "active" {
+				icon = "*"
+			}
+			fmt.Printf("    %s %-20s  %-8s  push:%s  seen:%s  [%s]\n", icon, name, d.Platform, pushStr, lastSeen, d.KID)
+		}
+	} else {
+		fmt.Println("  No devices registered.")
+	}
+
+	// Always show QR for adding a device
+	fmt.Println()
+	fmt.Println("  Scan this QR code to add a device:")
+	fmt.Println()
+	createAndShowQR(client, internalURL)
+}
+
+func createAndShowQR(client *http.Client, internalURL string) {
+	resp, err := client.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Could not generate setup QR")
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Key      string `json:"key"`
+		SetupURL string `json:"setup_url"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if result.SetupURL != "" {
+		auth.PrintQR(result.SetupURL)
+		fmt.Printf("  %s\n", result.SetupURL)
+	} else {
+		payload := fmt.Sprintf("helios://setup?key=%s", result.Key)
+		auth.PrintQR(payload)
+		fmt.Printf("  %s\n", payload)
+	}
+}
+
 func handleSetup() {
 	cfg, _ := daemon.LoadConfig()
 	if err := tui.RunSetup(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
@@ -276,6 +503,24 @@ func handleSetup() {
 func handleDevices() {
 	cfg, _ := daemon.LoadConfig()
 	if err := tui.RunDevices(cfg.Server.InternalPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func handleStop() {
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
+	// Stop tunnel if running
+	resp, err := http.Post(internalURL+"/internal/tunnel/stop", "application/json", bytes.NewBufferString("{}"))
+	if err == nil {
+		resp.Body.Close()
+		fmt.Println("Tunnel stopped")
+	}
+
+	// Stop daemon
+	if err := daemon.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -319,6 +564,9 @@ Usage:
   helios <command> [subcommand] [options]
 
 Commands:
+  start                 Start daemon, install hooks, show QR
+  stop                  Stop everything (tunnel + daemon)
+  show                  Show status, devices, and setup QR code
   setup                 Interactive setup wizard (TUI)
   devices               Device management (TUI)
 

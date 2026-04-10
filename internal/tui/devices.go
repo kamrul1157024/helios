@@ -141,6 +141,8 @@ func (m DevicesModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		if m.screen == devScreenConfirmRevoke && m.selected != nil {
 			kid := m.selected.KID
+			m.screen = devScreenList
+			m.loading = true
 			m.selected = nil
 			return m, revokeDevice(m.client, kid)
 		}
@@ -251,6 +253,9 @@ func (m DevicesModel) viewList() string {
 }
 
 func (m DevicesModel) viewDetail() string {
+	if m.selected == nil {
+		return m.viewList()
+	}
 	var b strings.Builder
 	d := m.selected
 
@@ -283,6 +288,9 @@ func (m DevicesModel) viewDetail() string {
 }
 
 func (m DevicesModel) viewConfirmRevoke() string {
+	if m.selected == nil {
+		return m.viewList()
+	}
 	var b strings.Builder
 	d := m.selected
 

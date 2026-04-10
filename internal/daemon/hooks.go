@@ -121,6 +121,25 @@ func InstallHooks(local bool) error {
 	return nil
 }
 
+func InstallHooksIfMissing() {
+	home, _ := os.UserHomeDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		InstallHooks(false)
+		return
+	}
+	if !json.Valid(data) {
+		InstallHooks(false)
+		return
+	}
+	var m map[string]interface{}
+	json.Unmarshal(data, &m)
+	if _, ok := m["hooks"]; !ok {
+		InstallHooks(false)
+	}
+}
+
 func ShowHooks() {
 	cfg := DefaultConfig()
 	hooks := hookConfig(cfg.Server.InternalPort)

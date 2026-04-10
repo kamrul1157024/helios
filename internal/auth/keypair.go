@@ -36,5 +36,5 @@ func (k *Keypair) PrivateKeyBase64() string {
 }
 
 func (k *Keypair) SetupPayload() string {
-	return fmt.Sprintf("helios://setup?key=%s&kid=%s&v=1", k.PrivateKeyBase64(), k.KID)
+	return fmt.Sprintf("helios://setup?key=%s", k.PrivateKeyBase64())
 }

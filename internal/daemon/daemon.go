@@ -49,6 +49,13 @@ func Start(cfg *Config) error {
 	tunnelMgr := tunnel.NewManager()
 	server.TunnelManager = tunnelMgr
 
+	// Persist tunnel config changes to config.yaml
+	server.OnTunnelConfigChanged = func(provider, customURL string) {
+		cfg.Tunnel.Provider = provider
+		cfg.Tunnel.CustomURL = customURL
+		SaveConfig(cfg)
+	}
+
 	// Create both servers
 	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
 	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared, FrontendFS)
