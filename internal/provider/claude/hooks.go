@@ -299,6 +299,13 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 
 	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "Stop")
 
+	// Resolve any pending notifications for this session (approved from CLI)
+	resolvedIDs, _ := ctx.DB.ResolveSessionNotifications(input.SessionID, "resolved", "claude")
+	for _, id := range resolvedIDs {
+		ctx.Mgr.CancelPendingFromClaude(id)
+		ctx.Notify("notification_resolved", map[string]string{"id": id, "action": "resolved", "source": "claude"})
+	}
+
 	notifID := notifications.GenerateNotificationID()
 	lastDetail := ctx.DB.LastSessionDetail(input.SessionID)
 	title := "Session completed"
@@ -426,7 +433,7 @@ func waitForDecision(ctx *provider.HookContext, notifID string, r *http.Request)
 		return &denied
 	case <-r.Context().Done():
 		ctx.Mgr.CancelPendingFromClaude(notifID)
-		ctx.Notify("notification_resolved", map[string]string{"id": notifID, "action": "dismissed", "source": "claude"})
+		ctx.Notify("notification_resolved", map[string]string{"id": notifID, "action": "resolved", "source": "claude"})
 		return nil
 	}
 }

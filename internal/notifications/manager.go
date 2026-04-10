@@ -102,7 +102,7 @@ func (m *Manager) CancelPending(notifID string) {
 }
 
 func (m *Manager) CancelPendingFromClaude(notifID string) {
-	m.cancelPendingWithStatus(notifID, "dismissed", "claude")
+	m.cancelPendingWithStatus(notifID, "resolved", "claude")
 }
 
 func (m *Manager) cancelPendingWithStatus(notifID, status, source string) {

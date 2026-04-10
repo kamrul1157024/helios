@@ -118,6 +118,36 @@ func (s *Store) ResolveNotification(id, status, source string) error {
 	return nil
 }
 
+func (s *Store) ResolveSessionNotifications(sourceSession, status, source string) ([]string, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	rows, err := s.db.Query(
+		`SELECT id FROM notifications WHERE source_session = ? AND status = 'pending'`,
+		sourceSession,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	if len(ids) > 0 {
+		s.db.Exec(
+			`UPDATE notifications SET status = ?, resolved_at = ?, resolved_source = ? WHERE source_session = ? AND status = 'pending'`,
+			status, now, source, sourceSession,
+		)
+	}
+
+	return ids, nil
+}
+
 func (s *Store) TruncateNotifications(keep int) error {
 	_, err := s.db.Exec(`
 		DELETE FROM notifications
