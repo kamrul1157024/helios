@@ -45,6 +45,8 @@ func main() {
 		handleAuth(os.Args[2:])
 	case "hooks":
 		handleHooks(os.Args[2:])
+	case "logs":
+		handleLogs(os.Args[2:])
 	case "version":
 		fmt.Printf("helios v%s\n", version)
 	case "help", "--help", "-h":
@@ -526,6 +528,80 @@ func handleStop() {
 	}
 }
 
+func handleLogs(args []string) {
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
+	tail := 50
+	source := "" // all
+	for i, a := range args {
+		switch a {
+		case "--tail", "-n":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					tail = n
+				}
+			}
+		case "--daemon":
+			source = "daemon"
+		case "--device", "--devices":
+			source = "device"
+		}
+	}
+
+	url := fmt.Sprintf("%s/internal/logs?tail=%d", internalURL, tail)
+	if source != "" {
+		url += "&source=" + source
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "helios is not running. Start it with: helios start")
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Daemon  []string            `json:"daemon"`
+		Devices map[string][]string `json:"devices"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(body, &result)
+
+	if result.Daemon != nil && len(result.Daemon) > 0 {
+		fmt.Println("=== Daemon Logs ===")
+		for _, line := range result.Daemon {
+			fmt.Println(line)
+		}
+	} else if source == "" || source == "daemon" {
+		fmt.Println("=== Daemon Logs ===")
+		fmt.Println("(no logs)")
+	}
+
+	if result.Devices != nil {
+		for kid, lines := range result.Devices {
+			fmt.Println()
+			name := kid
+			if len(name) > 12 {
+				name = name[:12] + "..."
+			}
+			fmt.Printf("=== Device: %s ===\n", name)
+			if len(lines) == 0 {
+				fmt.Println("(no logs)")
+			} else {
+				for _, line := range lines {
+					fmt.Println(line)
+				}
+			}
+		}
+	} else if source == "" || source == "device" {
+		fmt.Println()
+		fmt.Println("=== Device Logs ===")
+		fmt.Println("(no logs)")
+	}
+}
+
 func handleHooks(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove>")
@@ -580,6 +656,11 @@ Commands:
   auth init             Generate device keypair and show QR code
   auth devices          List trusted devices
   auth revoke <kid>     Revoke a device
+
+  logs [flags]          Show daemon and device logs
+                        --tail N, -n N  Show last N lines (default: 50)
+                        --daemon        Show only daemon logs
+                        --device        Show only device logs
 
   hooks install         Install Claude Code hooks (global)
   hooks install --local Install hooks for current project

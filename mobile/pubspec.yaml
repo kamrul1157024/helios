@@ -1,0 +1,42 @@
+name: helios
+description: Helios mobile app — orchestrate AI coding agents from your phone.
+publish_to: 'none'
+version: 0.2.0+1
+
+environment:
+  sdk: ^3.8.0
+  flutter: ^3.32.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # HTTP client
+  http: ^1.4.0
+  # QR code scanner
+  mobile_scanner: ^7.0.1
+  # Secure storage for keys
+  flutter_secure_storage: ^9.2.4
+  # Local notifications
+  flutter_local_notifications: ^19.1.0
+  # Foreground service (Android)
+  flutter_foreground_task: ^9.0.2
+  # Cryptography (Ed25519)
+  cryptography: ^2.7.0
+  # UUID generation
+  uuid: ^4.5.1
+  # URL launcher
+  url_launcher: ^6.3.1
+  # Permission handler
+  permission_handler: ^11.4.0
+  # State management
+  provider: ^6.1.4
+  # Shared preferences
+  shared_preferences: ^2.5.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

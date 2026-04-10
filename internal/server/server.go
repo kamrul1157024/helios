@@ -66,6 +66,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("POST /internal/device/rekey", s.handleDeviceRekey)
 	mux.HandleFunc("GET /internal/device/list", s.handleDeviceList)
 	mux.HandleFunc("POST /internal/device/revoke", s.handleDeviceRevoke)
+	mux.HandleFunc("GET /internal/logs", s.handleInternalLogs)
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
@@ -99,6 +100,7 @@ func NewPublicServer(port int, shared *Shared, frontendFS fs.FS) *PublicServer {
 	protectedMux.HandleFunc("POST /api/auth/device/me", s.handleUpdateDeviceMe)
 	protectedMux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
 	protectedMux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
+	protectedMux.HandleFunc("POST /api/device/logs", s.handleDeviceLogs)
 
 	// Dynamic path handlers
 	protectedMux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, r *http.Request) {

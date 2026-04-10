@@ -1,7 +1,9 @@
 /**
- * Register the service worker and subscribe to Web Push notifications.
- * Uses cookie-based auth — browser sends HttpOnly cookie automatically.
+ * Push notifications via SSE in the service worker.
+ * No FCM/Web Push — the SW holds an SSE connection and shows local notifications.
  */
+
+import { deviceLog } from './logger';
 
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!('serviceWorker' in navigator)) {
@@ -18,68 +20,55 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   }
 }
 
-export async function subscribeToPush(): Promise<boolean> {
-  if (!('PushManager' in window)) {
-    console.warn('Push API not supported');
-    return false;
+export async function subscribeToPush(): Promise<{ ok: boolean; error?: string }> {
+  if (!('serviceWorker' in navigator)) {
+    return fail('Service workers not supported');
+  }
+  if (!('Notification' in window)) {
+    return fail('Notifications not supported');
   }
 
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') {
-    console.warn('Notification permission denied');
-    return false;
+  try {
+    deviceLog.info('[1/3] registering service worker', 'push');
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    deviceLog.info(`[1/3] SW registered: state=${reg.active?.state ?? reg.installing?.state ?? 'unknown'}`, 'push');
+
+    deviceLog.info(`[2/3] requesting notification permission (current: ${Notification.permission})`, 'push');
+    const permission = await Notification.requestPermission();
+    deviceLog.info(`[2/3] permission result: ${permission}`, 'push');
+
+    if (permission !== 'granted') {
+      return fail(`Notification permission: ${permission}`);
+    }
+
+    // Tell the SW to start its SSE connection
+    deviceLog.info('[3/3] starting SSE in service worker', 'push');
+    const ready = await navigator.serviceWorker.ready;
+    ready.active?.postMessage('start-sse');
+
+    deviceLog.info('[3/3] SSE notifications enabled', 'push');
+    return { ok: true };
+  } catch (err) {
+    return fail(`${err}`);
   }
+}
 
-  const reg = await navigator.serviceWorker.ready;
-
-  // Fetch VAPID public key from daemon (cookie sent automatically)
-  const vapidResp = await fetch('/api/push/vapid-public-key', { credentials: 'same-origin' });
-  if (!vapidResp.ok) {
-    console.error('Failed to fetch VAPID key');
-    return false;
-  }
-  const { public_key } = await vapidResp.json();
-
-  const applicationServerKey = urlBase64ToUint8Array(public_key);
-
-  const subscription = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: applicationServerKey.buffer as ArrayBuffer,
-  });
-
-  const subJSON = subscription.toJSON();
-
-  // Send subscription to daemon (cookie sent automatically)
-  const resp = await fetch('/api/push/subscribe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    body: JSON.stringify({
-      endpoint: subJSON.endpoint,
-      keys: {
-        p256dh: subJSON.keys?.p256dh,
-        auth: subJSON.keys?.auth,
-      },
-    }),
-  });
-
-  if (!resp.ok) {
-    console.error('Failed to register push subscription with daemon');
-    return false;
-  }
-
-  return true;
+function fail(error: string): { ok: false; error: string } {
+  deviceLog.error(error, 'push');
+  return { ok: false, error };
 }
 
 export async function isPushSubscribed(): Promise<boolean> {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+  if (!('serviceWorker' in navigator) || !('Notification' in window)) {
+    return false;
+  }
+  if (Notification.permission !== 'granted') {
     return false;
   }
 
   try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    return sub !== null;
+    const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+    return reg !== undefined && reg !== null;
   } catch {
     return false;
   }
@@ -88,34 +77,10 @@ export async function isPushSubscribed(): Promise<boolean> {
 export async function unsubscribeFromPush(): Promise<boolean> {
   try {
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (!sub) return true;
-
-    const endpoint = sub.endpoint;
-    await sub.unsubscribe();
-
-    // Tell daemon to remove subscription (cookie sent automatically)
-    await fetch('/api/push/unsubscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ endpoint }),
-    });
-
+    reg.active?.postMessage('stop-sse');
     return true;
   } catch (err) {
     console.error('Unsubscribe failed:', err);
     return false;
   }
-}
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; i++) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
 }

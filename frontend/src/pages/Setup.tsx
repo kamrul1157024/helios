@@ -85,8 +85,8 @@ export function Setup({ onComplete }: { onComplete: () => void }) {
       await updateDeviceMe(defaultName, platform, browser);
       setStatusMessages(prev => [...prev, 'Setup complete']);
 
-      setStep('naming');
-      window.location.hash = '#/setup';
+      window.location.hash = '#/dashboard';
+      onComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
       setStep('error');

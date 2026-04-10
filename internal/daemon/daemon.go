@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/push"
@@ -26,6 +27,21 @@ func Start(cfg *Config) error {
 	if err := os.MkdirAll(HeliosDir(), 0755); err != nil {
 		return fmt.Errorf("create helios dir: %w", err)
 	}
+
+	// Set up logs directory and daemon log file
+	logsDir := filepath.Join(HeliosDir(), "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		return fmt.Errorf("create logs dir: %w", err)
+	}
+	server.LogsDir = logsDir
+
+	daemonLogPath := filepath.Join(logsDir, "daemon.log")
+	logFile, err := os.OpenFile(daemonLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open daemon log: %w", err)
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
 
 	db, err := store.Open(cfg.DB.Path)
 	if err != nil {
@@ -67,6 +83,9 @@ func Start(cfg *Config) error {
 	}
 	defer os.Remove(pidPath)
 
+	log.Printf("helios daemon starting")
+	log.Printf("  internal: 127.0.0.1:%d (hooks + admin)", cfg.Server.InternalPort)
+	log.Printf("  public:   0.0.0.0:%d (frontend + API)", cfg.Server.PublicPort)
 	fmt.Printf("helios daemon starting\n")
 	fmt.Printf("  internal: 127.0.0.1:%d (hooks + admin)\n", cfg.Server.InternalPort)
 	fmt.Printf("  public:   0.0.0.0:%d (frontend + API)\n", cfg.Server.PublicPort)
@@ -81,6 +100,7 @@ func Start(cfg *Config) error {
 			if err != nil {
 				log.Printf("tunnel auto-start failed: %v", err)
 			} else {
+				log.Printf("tunnel started: %s (%s)", url, cfg.Tunnel.Provider)
 				fmt.Printf("  tunnel:   %s (%s)\n", url, cfg.Tunnel.Provider)
 			}
 		}()
@@ -109,12 +129,15 @@ func Start(cfg *Config) error {
 		fmt.Printf("Server error: %v\n", err)
 	}
 
-	// Graceful shutdown
-	shutdownCtx := context.Background()
+	// Graceful shutdown (3 second timeout to avoid hanging on open SSE connections)
+	log.Printf("shutting down")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
 	tunnelMgr.Stop()
 	internalSrv.Shutdown(shutdownCtx)
 	publicSrv.Shutdown(shutdownCtx)
 
+	log.Printf("helios daemon stopped")
 	fmt.Println("helios daemon stopped")
 	return nil
 }
@@ -140,7 +163,22 @@ func Stop() error {
 		return fmt.Errorf("send signal: %w", err)
 	}
 
-	fmt.Printf("Sent stop signal to daemon (pid %d)\n", pid)
+	// Wait for the process to actually die (up to 5 seconds)
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			// Process is gone
+			os.Remove(pidPath)
+			fmt.Printf("helios daemon stopped (pid %d)\n", pid)
+			return nil
+		}
+	}
+
+	// Force kill if still alive
+	proc.Signal(syscall.SIGKILL)
+	time.Sleep(200 * time.Millisecond)
+	os.Remove(pidPath)
+	fmt.Printf("helios daemon killed (pid %d)\n", pid)
 	return nil
 }
 

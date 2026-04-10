@@ -22,6 +22,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
   const [theme, setThemeState] = useState(getTheme);
 
   const refresh = useCallback(async () => {
@@ -45,13 +46,17 @@ export function Dashboard() {
 
   async function handleTogglePush() {
     setPushLoading(true);
+    setPushError(null);
     try {
       if (pushEnabled) {
         await unsubscribeFromPush();
         setPushEnabled(false);
       } else {
-        const ok = await subscribeToPush();
-        setPushEnabled(ok);
+        const result = await subscribeToPush();
+        setPushEnabled(result.ok);
+        if (!result.ok && result.error) {
+          setPushError(result.error);
+        }
       }
     } finally {
       setPushLoading(false);
@@ -172,6 +177,15 @@ export function Dashboard() {
           )}
         </div>
       </header>
+
+      {/* Push error banner */}
+      {pushError && (
+        <div className="mb-4 rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
+          <p className="font-medium">Push notifications unavailable</p>
+          <p className="text-xs mt-1 opacity-80">{pushError}</p>
+          <p className="text-xs mt-1 opacity-60">Notifications still work when this tab is open.</p>
+        </div>
+      )}
 
       {/* Empty state */}
       {pendingPermissions.length === 0 && activeStatuses.length === 0 && resolved.length === 0 && (
