@@ -530,33 +530,35 @@ func (s *InternalServer) handleDeviceRevoke(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleAppDownload serves the APK from ~/.helios/helios.apk
+// handleAppDownload serves the APK — local file if available, otherwise redirects to GitHub release.
 func (s *PublicServer) handleAppDownload(w http.ResponseWriter, r *http.Request) {
-	if APKPath == "" {
-		jsonError(w, "APK path not configured", http.StatusNotFound)
+	// Try local APK first
+	if APKPath != "" {
+		if f, err := os.Open(APKPath); err == nil {
+			defer f.Close()
+			if stat, err := f.Stat(); err == nil {
+				w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+				w.Header().Set("Content-Disposition", "attachment; filename=\"helios.apk\"")
+				http.ServeContent(w, r, "helios.apk", stat.ModTime(), f)
+				return
+			}
+		}
+	}
+
+	// Fall back to GitHub release
+	if APKDownloadURL != "" {
+		http.Redirect(w, r, APKDownloadURL, http.StatusFound)
 		return
 	}
 
-	f, err := os.Open(APKPath)
-	if err != nil {
-		jsonError(w, "APK not available — build with: make apk", http.StatusNotFound)
-		return
-	}
-	defer f.Close()
-
-	stat, err := f.Stat()
-	if err != nil {
-		jsonError(w, "failed to read APK", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"helios.apk\"")
-	http.ServeContent(w, r, "helios.apk", stat.ModTime(), f)
+	jsonError(w, "APK not available — build with: make apk", http.StatusNotFound)
 }
 
-// APKPath is set by daemon to the path of the APK file.
+// APKPath is set by daemon to the path of the local APK file.
 var APKPath string
+
+// APKDownloadURL is the GitHub release URL for the APK. Set at build time via ldflags.
+var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/latest/download/helios.apk"
 
 // ==================== Helpers ====================
 

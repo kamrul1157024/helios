@@ -1,6 +1,9 @@
 .PHONY: build frontend clean dev install uninstall test
 .PHONY: apk apk-release apk-install apk-run apk-clean apk-device mobile
+.PHONY: release
 
+VERSION = 0.2.0
+REPO = kamrul1157024/helios
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
 
@@ -98,3 +101,19 @@ apk-clean:
 ## Full build: frontend + Go binary + APK
 mobile: build apk
 	@echo "All built: helios binary + mobile APK"
+
+# ─── Release ─────────────────────────────────────────────────────
+
+## Create a GitHub release with the APK attached
+release: apk-release
+	@echo "Creating GitHub release v$(VERSION)..."
+	cp $(APK_RELEASE) helios.apk
+	gh release create v$(VERSION) \
+		--repo $(REPO) \
+		--title "helios v$(VERSION)" \
+		--notes "Helios v$(VERSION) — orchestrate AI coding agents from your phone." \
+		helios.apk
+	rm -f helios.apk
+	@echo ""
+	@echo "Release created: https://github.com/$(REPO)/releases/tag/v$(VERSION)"
+	@echo "APK download:    https://github.com/$(REPO)/releases/download/v$(VERSION)/helios.apk"
