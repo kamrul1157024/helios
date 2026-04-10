@@ -67,6 +67,14 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_claude_session ON notifications(claude_session_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)`,
+		`CREATE TABLE IF NOT EXISTS push_subscriptions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			endpoint TEXT NOT NULL UNIQUE,
+			p256dh TEXT NOT NULL,
+			auth TEXT NOT NULL,
+			device_kid TEXT,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)`,
 	}
 
 	for _, m := range migrations {

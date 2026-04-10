@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="76.8" fill="#0a0a0a"/>
+  <circle cx="256" cy="194.56" r="92.16" fill="none" stroke="#4ade80" stroke-width="20.48"/>
+  <line x1="256" y1="286.72" x2="256" y2="384" stroke="#4ade80" stroke-width="20.48" stroke-linecap="round"/>
+  <line x1="179.2" y1="332.8" x2="332.8" y2="332.8" stroke="#4ade80" stroke-width="20.48" stroke-linecap="round"/>
+  <text x="256" y="471.04" text-anchor="middle" font-family="sans-serif" font-weight="bold" font-size="51.2" fill="#4ade80">helios</text>
+</svg>

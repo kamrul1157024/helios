@@ -73,6 +73,18 @@ func (s *Store) ListNotifications(status, nType string) ([]Notification, error) 
 	return result, rows.Err()
 }
 
+func (s *Store) LastSessionDetail(sessionID string) string {
+	var detail string
+	err := s.db.QueryRow(
+		`SELECT detail FROM notifications WHERE claude_session_id = ? AND type = 'permission' AND detail IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+		sessionID,
+	).Scan(&detail)
+	if err != nil {
+		return ""
+	}
+	return detail
+}
+
 func (s *Store) ResolveNotification(id, status, source string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := s.db.Exec(

@@ -1,6 +1,7 @@
 .PHONY: build frontend clean dev install uninstall test
 
 build: frontend
+	touch frontend.go
 	go build -o helios ./cmd/helios/
 
 install: build
@@ -12,6 +13,7 @@ uninstall:
 	@echo "helios removed from /usr/local/bin"
 
 frontend:
+	rm -rf frontend/dist
 	cd frontend && npm install && npm run build
 
 clean:

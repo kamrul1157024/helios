@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -69,6 +70,20 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 	// Desktop notification
 	go sendDesktopNotification(detail)
 
+	// Web Push notification
+	if s.pusher != nil {
+		go s.pusher.SendToAll(push.PushPayload{
+			Type:  "permission",
+			ID:    notifID,
+			Title: "Claude needs permission",
+			Body:  detail,
+			Actions: []push.PushAction{
+				{Action: "approve", Title: "Approve"},
+				{Action: "deny", Title: "Deny"},
+			},
+		})
+	}
+
 	// Block and wait for decision (up to 5 minutes)
 	timer := time.NewTimer(5 * time.Minute)
 	defer timer.Stop()
@@ -90,7 +105,11 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 		s.mgr.CancelPending(notifID)
 		decision = "denied"
 	case <-r.Context().Done():
-		s.mgr.CancelPending(notifID)
+		s.mgr.CancelPendingFromClaude(notifID)
+		s.sse.Broadcast(SSEEvent{
+			Type: "notification_resolved",
+			Data: map[string]string{"id": notifID, "action": "dismissed", "source": "claude"},
+		})
 		return
 	}
 
@@ -118,12 +137,18 @@ func (s *Server) handleStopHook(w http.ResponseWriter, r *http.Request) {
 	s.db.UpsertHookSession(input.SessionID, input.CWD, "Stop")
 
 	notifID := notifications.GenerateNotificationID()
+	lastDetail := s.db.LastSessionDetail(input.SessionID)
+	detail := "Claude session completed"
+	if lastDetail != "" {
+		detail = "Session completed — last action: " + lastDetail
+	}
 	notif := &store.Notification{
 		ID:              notifID,
 		ClaudeSessionID: input.SessionID,
 		CWD:             input.CWD,
 		Type:            "done",
 		Status:          "dismissed",
+		Detail:          &detail,
 	}
 	s.mgr.CreateNotification(notif)
 
@@ -146,12 +171,18 @@ func (s *Server) handleStopFailureHook(w http.ResponseWriter, r *http.Request) {
 	s.db.UpsertHookSession(input.SessionID, input.CWD, "StopFailure")
 
 	notifID := notifications.GenerateNotificationID()
+	lastDetail := s.db.LastSessionDetail(input.SessionID)
+	detail := "Claude session stopped with an error"
+	if lastDetail != "" {
+		detail = "Session error — last action: " + lastDetail
+	}
 	notif := &store.Notification{
 		ID:              notifID,
 		ClaudeSessionID: input.SessionID,
 		CWD:             input.CWD,
 		Type:            "error",
 		Status:          "pending",
+		Detail:          &detail,
 	}
 	s.mgr.CreateNotification(notif)
 
@@ -174,12 +205,18 @@ func (s *Server) handleNotificationHook(w http.ResponseWriter, r *http.Request) 
 	s.db.UpsertHookSession(input.SessionID, input.CWD, "Notification")
 
 	notifID := notifications.GenerateNotificationID()
+	lastDetail := s.db.LastSessionDetail(input.SessionID)
+	detail := "Claude is waiting for input"
+	if lastDetail != "" {
+		detail = "Waiting for input — last action: " + lastDetail
+	}
 	notif := &store.Notification{
 		ID:              notifID,
 		ClaudeSessionID: input.SessionID,
 		CWD:             input.CWD,
 		Type:            "idle",
 		Status:          "pending",
+		Detail:          &detail,
 	}
 	s.mgr.CreateNotification(notif)
 

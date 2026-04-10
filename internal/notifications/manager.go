@@ -83,6 +83,14 @@ func (m *Manager) PendingCount() int {
 }
 
 func (m *Manager) CancelPending(notifID string) {
+	m.cancelPendingWithStatus(notifID, "timeout", "system")
+}
+
+func (m *Manager) CancelPendingFromClaude(notifID string) {
+	m.cancelPendingWithStatus(notifID, "dismissed", "claude")
+}
+
+func (m *Manager) cancelPendingWithStatus(notifID, status, source string) {
 	m.mu.Lock()
 	ch, ok := m.pending[notifID]
 	if ok {
@@ -94,7 +102,7 @@ func (m *Manager) CancelPending(notifID string) {
 		close(ch)
 	}
 
-	m.db.ResolveNotification(notifID, "timeout", "system")
+	m.db.ResolveNotification(notifID, status, source)
 }
 
 func GenerateNotificationID() string {

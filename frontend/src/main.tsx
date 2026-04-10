@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
+import { registerServiceWorker } from './lib/push';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -8,3 +9,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
+
+// Register service worker for PWA + push notifications
+registerServiceWorker();

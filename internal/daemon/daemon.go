@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
 )
@@ -31,7 +32,15 @@ func Start(cfg *Config) error {
 	defer db.Close()
 
 	mgr := notifications.NewManager(db)
-	srv := server.New(cfg.Server.Bind, cfg.Server.Port, db, mgr, cfg.Auth.Enabled, cfg.Auth.SkipLocal, FrontendFS)
+
+	// Initialize Web Push
+	vapidKeys, err := push.LoadOrGenerateVAPID(HeliosDir())
+	if err != nil {
+		return fmt.Errorf("init VAPID keys: %w", err)
+	}
+	pusher := push.NewSender(db, vapidKeys)
+
+	srv := server.New(cfg.Server.Bind, cfg.Server.Port, db, mgr, cfg.Auth.Enabled, cfg.Auth.SkipLocal, FrontendFS, pusher)
 
 	// Write PID file
 	pidPath := filepath.Join(HeliosDir(), "daemon.pid")

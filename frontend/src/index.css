@@ -238,7 +238,7 @@ section h2 {
   color: var(--danger);
 }
 
-.badge-dismissed, .badge-timeout, .badge-done, .badge-error {
+.badge-dismissed, .badge-timeout {
   background: rgba(136, 136, 136, 0.15);
   color: var(--text-dim);
 }
@@ -313,6 +313,56 @@ section h2 {
 
 .btn-deny:hover:not(:disabled) {
   background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-push {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  padding: 0.4rem 0.75rem;
+}
+
+.btn-push.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-dismiss {
+  margin-left: auto;
+  width: auto;
+  padding: 0 0.5rem;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.btn-dismiss:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.notification-card.status-idle {
+  border-left: 3px solid var(--accent);
+}
+
+.notification-card.status-error {
+  border-left: 3px solid var(--danger);
+}
+
+.badge-idle {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--accent);
+}
+
+.badge-error {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--danger);
+}
+
+.badge-done {
+  background: rgba(136, 136, 136, 0.15);
+  color: var(--text-dim);
 }
 
 .loading {

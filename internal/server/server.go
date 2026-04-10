@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -16,13 +17,15 @@ type Server struct {
 	db         *store.Store
 	mgr        *notifications.Manager
 	sse        *SSEBroadcaster
+	pusher     *push.Sender
 }
 
-func New(bind string, port int, db *store.Store, mgr *notifications.Manager, authEnabled, skipLocal bool, frontendFS fs.FS) *Server {
+func New(bind string, port int, db *store.Store, mgr *notifications.Manager, authEnabled, skipLocal bool, frontendFS fs.FS, pusher *push.Sender) *Server {
 	s := &Server{
-		db:  db,
-		mgr: mgr,
-		sse: NewSSEBroadcaster(),
+		db:     db,
+		mgr:    mgr,
+		sse:    NewSSEBroadcaster(),
+		pusher: pusher,
 	}
 
 	mux := http.NewServeMux()
@@ -43,10 +46,13 @@ func New(bind string, port int, db *store.Store, mgr *notifications.Manager, aut
 	authMw := authMiddleware(db, authEnabled, skipLocal)
 
 	protectedMux := http.NewServeMux()
+	protectedMux.HandleFunc("GET /api/push/vapid-public-key", s.handleVAPIDPublicKey)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
 	protectedMux.Handle("GET /api/events", s.sse)
 	protectedMux.HandleFunc("GET /api/auth/devices", s.handleListDevices)
+	protectedMux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
+	protectedMux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
 
 	// Dynamic path handlers need manual routing
 	protectedMux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, r *http.Request) {
