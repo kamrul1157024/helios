@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/transcript"
 )
 
 // ==================== Public Server API ====================
@@ -221,41 +223,36 @@ func (s *PublicServer) handleRevokeDevice(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handlePair registers or updates a device. Called before login.
-// The device sends its self-generated kid (UUID) and the public key derived from the QR seed.
-// If another device already uses this public key, returns an error.
+// handlePair registers a device using a one-time pairing token.
+// The device sends its self-generated kid (UUID), public key, and the pairing token from the QR.
 func (s *PublicServer) handlePair(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Token     string `json:"token"`
 		KID       string `json:"kid"`
 		PublicKey string `json:"public_key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.KID == "" || req.PublicKey == "" {
-		jsonError(w, "missing kid or public_key", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" || req.KID == "" || req.PublicKey == "" {
+		jsonError(w, "missing token, kid, or public_key", http.StatusBadRequest)
 		return
 	}
 
-	// Validate public key format (must be valid base64url-encoded 32-byte Ed25519 public key)
+	// Validate public key format
 	if _, err := auth.PublicKeyFromBase64(req.PublicKey); err != nil {
 		jsonError(w, "invalid public key format", http.StatusBadRequest)
 		return
 	}
 
-	// Check if this key is already used by a different device
-	existing, err := s.shared.DB.GetDeviceByPublicKey(req.PublicKey)
-	if err != nil {
-		jsonError(w, "failed to check key uniqueness", http.StatusInternalServerError)
-		return
-	}
-	if existing != nil && existing.KID != req.KID {
-		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+	// Claim the pairing token (atomic: validates + burns in one query)
+	if err := s.shared.DB.ClaimPairingToken(req.Token, req.KID); err != nil {
+		jsonResponse(w, http.StatusUnauthorized, map[string]interface{}{
 			"success": false,
-			"error":   "key_already_claimed",
-			"message": "This QR code has already been used by another device. Generate a new QR from the terminal with: helios start",
+			"error":   "invalid_token",
+			"message": "Pairing token is invalid, expired, or already used. Generate a new QR from the terminal.",
 		})
 		return
 	}
 
-	// Create or update the device
+	// Create the device with the client-generated public key
 	if err := s.shared.DB.UpsertDevice(req.KID, req.PublicKey); err != nil {
 		jsonError(w, "failed to register device", http.StatusInternalServerError)
 		return
@@ -296,8 +293,7 @@ func (s *PublicServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Activate device if pending
-	s.shared.DB.ActivateDevice(kid)
+	// Device stays pending until CLI user approves via /internal/device/activate
 	s.shared.DB.UpdateDeviceLastSeen(kid)
 
 	// Set HttpOnly cookie
@@ -362,7 +358,332 @@ func (s *PublicServer) handleUpdateDeviceMe(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// ==================== Session API ====================
+
+func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.shared.DB.ListSessions()
+	if err != nil {
+		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"sessions": sessions,
+	})
+}
+
+func (s *PublicServer) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	// Get pending permission count for this session
+	pendingNotifs, _ := s.shared.DB.ListNotifications("claude", "pending", "")
+	pendingCount := 0
+	for _, n := range pendingNotifs {
+		if n.SourceSession == id {
+			pendingCount++
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"session":             session,
+		"pending_permissions": pendingCount,
+	})
+}
+
+func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Request) {
+	// Path: /api/sessions/<id>/transcript
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	id := strings.TrimSuffix(path, "/transcript")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if session.TranscriptPath == nil || *session.TranscriptPath == "" {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"messages": []interface{}{},
+			"total":    0,
+			"returned": 0,
+			"offset":   0,
+			"has_more": false,
+		})
+		return
+	}
+
+	// Parse limit/offset from query
+	limit := 200
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	result, err := transcript.ParseClaudeTranscript(*session.TranscriptPath, limit, offset)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to read transcript: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *PublicServer) handleListSubagents(w http.ResponseWriter, r *http.Request) {
+	// Path: /api/sessions/<id>/subagents
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	id := strings.TrimSuffix(path, "/subagents")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	subagents, err := s.shared.DB.ListSubagents(id)
+	if err != nil {
+		jsonError(w, "failed to list subagents", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"subagents": subagents,
+	})
+}
+
+// ==================== Session Control ====================
+
+func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request) {
+	id := extractSessionID(r.URL.Path, "/send")
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
+		jsonError(w, "missing message", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if session.Status == "active" || session.Status == "waiting_permission" {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_busy",
+		})
+		return
+	}
+
+	if session.Status == "ended" || session.Status == "suspended" {
+		// Resume in a new tmux pane
+		cmd := fmt.Sprintf("claude --resume %s", session.SessionID)
+		paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
+		if err != nil {
+			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
+			return
+		}
+		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
+		s.shared.DB.UpdateSessionStatus(id, "active", "RemoteResume")
+		// The prompt will be the --resume argument; for a new prompt we'd need to wait
+		// For now, respond success — the session will come alive via hooks
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success": true, "resumed": true, "tmux_pane": paneID,
+		})
+		return
+	}
+
+	// Session is idle — send keys
+	if session.TmuxPane == nil || *session.TmuxPane == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
+			"success": false, "error": "no_tmux_pane",
+		})
+		return
+	}
+
+	if err := s.shared.Tmux.SendKeys(*session.TmuxPane, req.Message); err != nil {
+		jsonError(w, fmt.Sprintf("failed to send: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request) {
+	id := extractSessionID(r.URL.Path, "/stop")
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if session.Status != "active" && session.Status != "waiting_permission" {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_not_active",
+		})
+		return
+	}
+
+	if session.TmuxPane == nil || *session.TmuxPane == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
+			"success": false, "error": "no_tmux_pane",
+		})
+		return
+	}
+
+	if err := s.shared.Tmux.SendEscape(*session.TmuxPane); err != nil {
+		jsonError(w, fmt.Sprintf("failed to stop: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *PublicServer) handleSessionSuspend(w http.ResponseWriter, r *http.Request) {
+	id := extractSessionID(r.URL.Path, "/suspend")
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if session.Status == "ended" {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_ended",
+		})
+		return
+	}
+
+	if session.TmuxPane == nil || *session.TmuxPane == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
+			"success": false, "error": "no_tmux_pane",
+		})
+		return
+	}
+
+	if err := s.shared.Tmux.Suspend(*session.TmuxPane); err != nil {
+		jsonError(w, fmt.Sprintf("failed to suspend: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.shared.DB.UpdateSessionStatus(id, "suspended", "RemoteSuspend")
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true, "status": "suspended",
+	})
+}
+
+func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Request) {
+	id := extractSessionID(r.URL.Path, "/resume")
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if session.Status == "active" {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_active",
+		})
+		return
+	}
+
+	cmd := fmt.Sprintf("claude --resume %s", session.SessionID)
+	paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
+	s.shared.DB.UpdateSessionStatus(id, "active", "RemoteResume")
+
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "session_status",
+		Data: map[string]interface{}{
+			"session_id": session.SessionID,
+			"status":     "active",
+			"tmux_pane":  paneID,
+		},
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true, "status": "active", "tmux_pane": paneID,
+	})
+}
+
+func extractSessionID(path, suffix string) string {
+	path = strings.TrimPrefix(path, "/api/sessions/")
+	path = strings.TrimSuffix(path, suffix)
+	return path
+}
+
 // ==================== Internal Server API ====================
+
+func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.shared.DB.ListSessions()
+	if err != nil {
+		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"sessions": sessions,
+	})
+}
+
+func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prompt string `json:"prompt"`
+		CWD    string `json:"cwd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
+		jsonError(w, "missing prompt", http.StatusBadRequest)
+		return
+	}
+
+	if req.CWD == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			jsonError(w, "failed to get cwd", http.StatusInternalServerError)
+			return
+		}
+		req.CWD = cwd
+	}
+
+	// Build the command — shell-escape the prompt by using -p flag
+	cmd := fmt.Sprintf("claude -p %q", req.Prompt)
+
+	paneID, err := s.shared.Tmux.CreateWindow(req.CWD, cmd)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to create tmux window: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"tmux_pane": paneID,
+		"cwd":       req.CWD,
+	})
+}
 
 func (s *InternalServer) handleInternalHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -442,26 +763,30 @@ func (s *InternalServer) handleTunnelStop(w http.ResponseWriter, r *http.Request
 }
 
 func (s *InternalServer) handleDeviceCreate(w http.ResponseWriter, r *http.Request) {
-	// Generate a keypair — no device record is created here.
-	// The device will self-register via POST /api/auth/pair with its own kid.
-	kp, err := auth.GenerateKeypair("")
+	token, err := auth.GeneratePairingToken()
 	if err != nil {
-		jsonError(w, "failed to generate keypair", http.StatusInternalServerError)
+		jsonError(w, "failed to generate pairing token", http.StatusInternalServerError)
 		return
 	}
 
-	// Build setup URL (key only, no kid — device generates its own)
+	expiresAt := time.Now().Add(2 * time.Minute)
+	if err := s.shared.DB.CreatePairingToken(token, expiresAt); err != nil {
+		jsonError(w, "failed to store pairing token", http.StatusInternalServerError)
+		return
+	}
+
 	setupURL := ""
 	if TunnelManager != nil {
 		status := TunnelManager.Status()
 		if url, ok := status["public_url"].(string); ok && url != "" {
-			setupURL = fmt.Sprintf("%s/#/setup?key=%s", url, kp.PrivateKeyBase64())
+			setupURL = fmt.Sprintf("helios://pair?url=%s&token=%s", url, token)
 		}
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"key":       kp.PrivateKeyBase64(),
-		"setup_url": setupURL,
+		"token":      token,
+		"expires_in": 120,
+		"setup_url":  setupURL,
 	})
 }
 
@@ -481,31 +806,36 @@ func (s *InternalServer) handleDeviceRekey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Generate new keypair
-	kp, err := auth.GenerateKeypair(req.KID)
-	if err != nil {
-		jsonError(w, "failed to generate keypair", http.StatusInternalServerError)
-		return
-	}
-
-	// Update public key and reset to pending (will activate on next login)
-	if err := s.shared.DB.RekeyDevice(req.KID, kp.PublicKeyBase64()); err != nil {
+	// Reset device to pending (device will generate new keys and re-pair)
+	if err := s.shared.DB.RekeyDevice(req.KID, ""); err != nil {
 		jsonError(w, "failed to rekey device", http.StatusInternalServerError)
 		return
 	}
 
-	// Build setup URL (key only, no kid)
+	// Generate pairing token for re-pairing
+	token, err := auth.GeneratePairingToken()
+	if err != nil {
+		jsonError(w, "failed to generate pairing token", http.StatusInternalServerError)
+		return
+	}
+
+	expiresAt := time.Now().Add(2 * time.Minute)
+	if err := s.shared.DB.CreatePairingToken(token, expiresAt); err != nil {
+		jsonError(w, "failed to store pairing token", http.StatusInternalServerError)
+		return
+	}
+
 	setupURL := ""
 	if TunnelManager != nil {
 		status := TunnelManager.Status()
 		if url, ok := status["public_url"].(string); ok && url != "" {
-			setupURL = fmt.Sprintf("%s/#/setup?key=%s", url, kp.PrivateKeyBase64())
+			setupURL = fmt.Sprintf("helios://pair?url=%s&token=%s", url, token)
 		}
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"kid":       req.KID,
-		"key":       kp.PrivateKeyBase64(),
+		"token":     token,
 		"setup_url": setupURL,
 		"rekeyed":   true,
 	})
@@ -520,6 +850,25 @@ func (s *InternalServer) handleDeviceList(w http.ResponseWriter, r *http.Request
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"devices": devices,
+	})
+}
+
+func (s *InternalServer) handleDeviceActivate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KID string `json:"kid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.KID == "" {
+		jsonError(w, "missing kid", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.shared.DB.ActivateDevice(req.KID); err != nil {
+		jsonError(w, "failed to activate device", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"activated": true,
 	})
 }
 

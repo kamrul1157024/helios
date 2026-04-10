@@ -100,8 +100,9 @@ func (c *client) tunnelStop() error {
 }
 
 type deviceCreateResponse struct {
-	Key      string `json:"key"`
-	SetupURL string `json:"setup_url"`
+	Token     string `json:"token"`
+	ExpiresIn int    `json:"expires_in"`
+	SetupURL  string `json:"setup_url"`
 }
 
 func (c *client) deviceCreate() (*deviceCreateResponse, error) {
@@ -138,6 +139,16 @@ func (c *client) deviceList() (*deviceListResponse, error) {
 	var r deviceListResponse
 	json.NewDecoder(resp.Body).Decode(&r)
 	return &r, nil
+}
+
+func (c *client) deviceActivate(kid string) error {
+	body, _ := json.Marshal(map[string]string{"kid": kid})
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/device/activate", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
 
 func (c *client) deviceRevoke(kid string) error {

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -38,14 +39,17 @@ var (
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
 			MarginTop(1)
+
+	warnStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214"))
 )
 
-func (m SetupModel) View() string {
+func (m StartModel) View() string {
 	switch m.screen {
-	case screenStatusCheck:
-		return m.viewStatusCheck()
-	case screenAlreadySetup:
-		return m.viewAlreadySetup()
+	case screenLoading:
+		return m.viewLoading()
+	case screenHooksInstall:
+		return m.viewHooksInstall()
 	case screenTunnelSelect:
 		return m.viewTunnelSelect()
 	case screenBinaryMissing:
@@ -54,27 +58,27 @@ func (m SetupModel) View() string {
 		return m.viewTunnelStarting()
 	case screenCustomURL:
 		return m.viewCustomURL()
-	case screenQRCode:
-		return m.viewQRCode()
-	case screenSuccess:
-		return m.viewSuccess()
+	case screenMain:
+		return m.viewMain()
+	case screenConfirmDevice:
+		return m.viewConfirmDevice()
 	case screenError:
 		return m.viewError()
 	}
 	return ""
 }
 
-func (m SetupModel) viewStatusCheck() string {
+func (m StartModel) viewLoading() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Setup"))
+	b.WriteString(titleStyle.Render("helios"))
 	b.WriteString("\n\n")
 
 	if !m.daemonOK && m.errMsg == "" {
 		b.WriteString(fmt.Sprintf("  Checking environment... %s\n", m.spinner.View()))
 	} else {
 		if m.daemonOK {
-			b.WriteString(check("Daemon running (7654/7655)"))
+			b.WriteString(check("Daemon running"))
 		} else {
 			b.WriteString(cross("Daemon not running"))
 		}
@@ -98,7 +102,8 @@ func (m SetupModel) viewStatusCheck() string {
 			}
 			b.WriteString(check(fmt.Sprintf("%d %s", m.deviceCount, label)))
 		} else {
-			b.WriteString(cross("No devices registered"))
+			b.WriteString(dimStyle.Render("  · No devices registered"))
+			b.WriteString("\n")
 		}
 
 		if m.errMsg != "" {
@@ -113,41 +118,23 @@ func (m SetupModel) viewStatusCheck() string {
 	return b.String()
 }
 
-func (m SetupModel) viewAlreadySetup() string {
+func (m StartModel) viewHooksInstall() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Setup"))
+	b.WriteString(titleStyle.Render("helios — Claude Hooks"))
 	b.WriteString("\n\n")
-
-	b.WriteString(check("Daemon running (7654/7655)"))
-	if m.hooksOK {
-		b.WriteString(check("Claude hooks installed"))
-	}
-	if m.tunnelOK {
-		b.WriteString(check(fmt.Sprintf("Tunnel active (%s)", m.tunnelProv)))
-	}
-	b.WriteString(check(fmt.Sprintf("%d device(s) connected", m.deviceCount)))
-
+	b.WriteString(cross("Claude hooks not installed"))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  What would you like to do?"))
-	b.WriteString("\n\n")
-
-	for i, opt := range setupMenuOptions {
-		cursor := "  "
-		style := dimStyle
-		if i == m.menuCursor {
-			cursor = "> "
-			style = selectedStyle
-		}
-		b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(opt)))
-	}
-
-	b.WriteString(helpStyle.Render("  ↑/↓ navigate  enter select"))
+	b.WriteString(subtitleStyle.Render("  Hooks let helios intercept Claude Code permission prompts"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  and forward them to your phone for approval."))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  enter install  s skip  q quit"))
 
 	return b.String()
 }
 
-func (m SetupModel) viewTunnelSelect() string {
+func (m StartModel) viewTunnelSelect() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("helios — Tunnel Setup"))
@@ -165,12 +152,12 @@ func (m SetupModel) viewTunnelSelect() string {
 		b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(p.label)))
 	}
 
-	b.WriteString(helpStyle.Render("  ↑/↓ navigate  enter select  q back"))
+	b.WriteString(helpStyle.Render("  ↑/↓ navigate  enter select  q quit"))
 
 	return b.String()
 }
 
-func (m SetupModel) viewBinaryMissing() string {
+func (m StartModel) viewBinaryMissing() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("helios — Tunnel Setup"))
@@ -180,12 +167,12 @@ func (m SetupModel) viewBinaryMissing() string {
 	b.WriteString(subtitleStyle.Render("  Install it:"))
 	b.WriteString("\n")
 	b.WriteString(fmt.Sprintf("    %s\n", urlStyle.Render(m.installHint)))
-	b.WriteString(helpStyle.Render("  enter retry  q back"))
+	b.WriteString(helpStyle.Render("  enter retry  q quit"))
 
 	return b.String()
 }
 
-func (m SetupModel) viewTunnelStarting() string {
+func (m StartModel) viewTunnelStarting() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("helios — Tunnel Setup"))
@@ -196,7 +183,7 @@ func (m SetupModel) viewTunnelStarting() string {
 	return b.String()
 }
 
-func (m SetupModel) viewCustomURL() string {
+func (m StartModel) viewCustomURL() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("helios — Custom Tunnel URL"))
@@ -210,25 +197,93 @@ func (m SetupModel) viewCustomURL() string {
 	return b.String()
 }
 
-func (m SetupModel) viewQRCode() string {
+func (m StartModel) viewMain() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Scan with your phone"))
+	b.WriteString(titleStyle.Render("helios"))
 	b.WriteString("\n\n")
 
-	if m.qrString == "" {
-		b.WriteString(fmt.Sprintf("  Creating device... %s\n", m.spinner.View()))
-	} else {
-		// Indent QR code
-		for _, line := range strings.Split(m.qrString, "\n") {
+	// Status
+	b.WriteString(check("Daemon running"))
+	if m.hooksOK {
+		b.WriteString(check("Claude hooks installed"))
+	}
+	if m.tunnelOK {
+		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
+	}
+
+	// Devices
+	b.WriteString("\n")
+	activeDevices := 0
+	for _, d := range m.devices {
+		if d.Status == "active" {
+			activeDevices++
+			name := d.Name
+			if name == "" {
+				name = d.KID
+			}
+			lastSeen := "never"
+			if d.LastSeenAt != nil {
+				t, err := time.Parse(time.RFC3339, *d.LastSeenAt)
+				if err == nil {
+					lastSeen = humanDuration(time.Since(t))
+				}
+			}
+			pushStr := "off"
+			if d.PushEnabled {
+				pushStr = "on"
+			}
+			b.WriteString(fmt.Sprintf("  %s %-20s  push:%s  %s\n",
+				checkStyle.Render("*"), name, pushStr, dimStyle.Render(lastSeen)))
+		}
+	}
+	if activeDevices == 0 {
+		b.WriteString(dimStyle.Render("  No devices connected yet."))
+		b.WriteString("\n")
+	}
+
+	// Download QR (landing page)
+	if m.downloadQR != "" {
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("  Download app:"))
+		b.WriteString("\n")
+		for _, line := range strings.Split(m.downloadQR, "\n") {
 			if line != "" {
 				b.WriteString("    " + line + "\n")
 			}
 		}
+		b.WriteString("  " + urlStyle.Render(m.tunnelURL))
 		b.WriteString("\n")
-		b.WriteString("  " + urlStyle.Render(m.setupURL))
-		b.WriteString("\n\n")
-		b.WriteString(fmt.Sprintf("  Waiting for device to connect... %s\n", m.spinner.View()))
+	}
+
+	// Pairing QR
+	if m.pairingQR != "" {
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("  Pair a new device:"))
+		b.WriteString("\n")
+		for _, line := range strings.Split(m.pairingQR, "\n") {
+			if line != "" {
+				b.WriteString("    " + line + "\n")
+			}
+		}
+
+		// Countdown
+		remaining := time.Until(m.tokenExpiresAt)
+		if remaining < 0 {
+			remaining = 0
+		}
+		mins := int(remaining.Minutes())
+		secs := int(remaining.Seconds()) % 60
+		countdown := fmt.Sprintf("%d:%02d", mins, secs)
+
+		if remaining < 15*time.Second {
+			b.WriteString(fmt.Sprintf("  %s  %s\n", warnStyle.Render("Expires in "+countdown), dimStyle.Render("(auto-refreshes)")))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s  %s\n", dimStyle.Render("Expires in "+countdown), dimStyle.Render("(auto-refreshes)")))
+		}
+	} else if m.pairingToken == "" {
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
 	}
 
 	b.WriteString(helpStyle.Render("  q quit"))
@@ -236,32 +291,34 @@ func (m SetupModel) viewQRCode() string {
 	return b.String()
 }
 
-func (m SetupModel) viewSuccess() string {
+func (m StartModel) viewConfirmDevice() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Setup Complete!"))
+	b.WriteString(titleStyle.Render("helios — New Device"))
 	b.WriteString("\n\n")
 
-	b.WriteString(check("Daemon running"))
-	if m.hooksOK {
-		b.WriteString(check("Claude hooks installed"))
+	b.WriteString("  A device wants to pair:\n\n")
+
+	if m.pendingDevice != nil {
+		name := m.pendingDevice.Name
+		if name == "" {
+			name = "(unnamed)"
+		}
+		b.WriteString(fmt.Sprintf("    Name:     %s\n", name))
+		if m.pendingDevice.Platform != "" {
+			b.WriteString(fmt.Sprintf("    Platform: %s\n", m.pendingDevice.Platform))
+		}
+		b.WriteString(fmt.Sprintf("    KID:      %s\n", m.pendingDevice.KID))
 	}
-	if m.tunnelOK {
-		b.WriteString(check(fmt.Sprintf("Tunnel active (%s)", m.tunnelProv)))
-	}
-	b.WriteString(check(fmt.Sprintf("Device connected (%s)", m.deviceName)))
 
 	b.WriteString("\n")
-	b.WriteString("  Your phone will now receive push\n")
-	b.WriteString("  notifications when Claude needs\n")
-	b.WriteString("  permission.\n")
-
-	b.WriteString(helpStyle.Render("  enter exit"))
+	b.WriteString("  Allow this device?\n")
+	b.WriteString(helpStyle.Render("  y approve  n reject"))
 
 	return b.String()
 }
 
-func (m SetupModel) viewError() string {
+func (m StartModel) viewError() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("helios — Error"))

@@ -30,11 +30,11 @@ func (k *Keypair) PublicKeyBase64() string {
 	return base64.RawURLEncoding.EncodeToString(k.PublicKey)
 }
 
-func (k *Keypair) PrivateKeyBase64() string {
-	// Ed25519 private key is 64 bytes (seed + public), we only need the 32-byte seed
-	return base64.RawURLEncoding.EncodeToString(k.PrivateKey.Seed())
-}
-
-func (k *Keypair) SetupPayload() string {
-	return fmt.Sprintf("helios://setup?key=%s", k.PrivateKeyBase64())
+// GeneratePairingToken creates a cryptographically random token string.
+func GeneratePairingToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate pairing token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

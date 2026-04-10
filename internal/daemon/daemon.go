@@ -108,6 +108,20 @@ func Start(cfg *Config) error {
 		}()
 	}
 
+	// Periodic cleanup of expired pairing tokens
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				db.CleanExpiredPairingTokens()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Start both servers
 	errCh := make(chan error, 2)
 

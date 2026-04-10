@@ -17,36 +17,23 @@ func InitDevice(name string) error {
 	}
 	defer db.Close()
 
-	count, err := db.CountDevices()
-	if err != nil {
-		return fmt.Errorf("count devices: %w", err)
-	}
-
-	kid := fmt.Sprintf("device-%03d", count+1)
-
-	kp, err := GenerateKeypair(kid)
+	token, err := GeneratePairingToken()
 	if err != nil {
 		return err
 	}
 
-	device := &store.Device{
-		KID:       kid,
-		Name:      name,
-		PublicKey: kp.PublicKeyBase64(),
-		Status:    "active",
+	expiresAt := time.Now().Add(2 * time.Minute)
+	if err := db.CreatePairingToken(token, expiresAt); err != nil {
+		return fmt.Errorf("store pairing token: %w", err)
 	}
 
-	if err := db.CreateDevice(device); err != nil {
-		return fmt.Errorf("store device: %w", err)
-	}
-
-	payload := kp.SetupPayload()
+	payload := fmt.Sprintf("helios://pair?token=%s", token)
 
 	fmt.Println()
-	fmt.Println("  Helios Device Setup")
-	fmt.Println("  -------------------")
+	fmt.Println("  Helios Device Pairing")
+	fmt.Println("  ---------------------")
 	fmt.Println()
-	fmt.Println("  Scan this QR code with your browser:")
+	fmt.Println("  Scan this QR code with the Helios app:")
 	fmt.Println()
 
 	if err := PrintQR(payload); err != nil {
@@ -54,11 +41,7 @@ func InitDevice(name string) error {
 	}
 
 	fmt.Println()
-	fmt.Println("  Or copy this setup string:")
-	fmt.Printf("  %s\n", payload)
-	fmt.Println()
-	fmt.Printf("  Key ID: %s\n", kid)
-	fmt.Printf("  Name:   %s\n", name)
+	fmt.Println("  Expires in 2 minutes.")
 	fmt.Println()
 
 	return nil

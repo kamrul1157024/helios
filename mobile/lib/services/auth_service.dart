@@ -16,6 +16,7 @@ class AuthService extends ChangeNotifier {
 
   bool _isLoading = true;
   bool _isAuthenticated = false;
+  bool _isPendingApproval = false;
   String? _serverUrl;
   String? _deviceId;
   String? _cookie;
@@ -23,6 +24,7 @@ class AuthService extends ChangeNotifier {
 
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _isAuthenticated;
+  bool get isPendingApproval => _isPendingApproval;
   String? get serverUrl => _serverUrl;
   String? get deviceId => _deviceId;
   String? get cookie => _cookie;
@@ -38,9 +40,14 @@ class AuthService extends ChangeNotifier {
 
       if (_serverUrl != null && _deviceId != null && _cookie != null && storedKey != null) {
         await _importPrivateKey(storedKey);
-        // Verify the cookie is still valid
-        final valid = await _verifyCookie();
-        _isAuthenticated = valid;
+        // Check device status — may be pending or active
+        final status = await _checkDeviceStatus();
+        if (status == 'active') {
+          _isAuthenticated = true;
+        } else if (status == 'pending') {
+          _isPendingApproval = true;
+        }
+        // revoked or null → not authenticated
       }
     } catch (e) {
       debugPrint('Failed to load credentials: $e');
@@ -50,12 +57,15 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Set up the device from a QR code payload.
-  /// [key] is the base64url-encoded Ed25519 seed from the QR.
+  /// [pairingToken] is the one-time pairing token from the QR.
   /// [serverUrl] is the base URL of the helios daemon.
-  Future<SetupResult> setup(String key, String serverUrl) async {
+  /// [onStatus] optional callback for progress updates.
+  Future<SetupResult> setup(String pairingToken, String serverUrl, {void Function(String)? onStatus}) async {
     try {
-      // 1. Import the private key
-      await _importPrivateKey(key);
+      // 1. Generate a new Ed25519 keypair locally (private key never leaves device)
+      onStatus?.call('Generating keys...');
+      final algorithm = Ed25519();
+      _keyPair = await algorithm.newKeyPair();
 
       // 2. Get or create device ID
       _deviceId = await _secureStorage.read(key: _deviceIdKey);
@@ -71,21 +81,27 @@ class AuthService extends ChangeNotifier {
       // 3. Get public key
       final publicKey = await _getPublicKeyBase64();
 
-      // 4. Pair device
+      // 4. Pair device with the one-time token
+      onStatus?.call('Registering device...');
       final pairResp = await http.post(
         Uri.parse('$serverUrl/api/auth/pair'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'kid': _deviceId, 'public_key': publicKey}),
+        body: jsonEncode({
+          'token': pairingToken,
+          'kid': _deviceId,
+          'public_key': publicKey,
+        }),
       );
       final pairData = jsonDecode(pairResp.body);
       if (pairData['success'] != true) {
-        if (pairData['error'] == 'key_already_claimed') {
-          return SetupResult.error('This QR code has already been used by another device. Generate a new QR from the terminal with: helios start');
+        if (pairData['error'] == 'invalid_token') {
+          return SetupResult.error('This QR code has expired or already been used. Generate a new QR from the terminal with: helios start');
         }
         return SetupResult.error(pairData['message'] ?? 'Failed to register device');
       }
 
       // 5. Sign JWT and login
+      onStatus?.call('Authenticating...');
       final jwt = await _signJWT();
       final loginResp = await http.post(
         Uri.parse('$serverUrl/api/auth/login'),
@@ -100,7 +116,6 @@ class AuthService extends ChangeNotifier {
       // Extract cookie from response
       final setCookie = loginResp.headers['set-cookie'];
       if (setCookie != null) {
-        // Parse the helios_token cookie value
         final match = RegExp(r'helios_token=([^;]+)').firstMatch(setCookie);
         if (match != null) {
           _cookie = match.group(1);
@@ -112,18 +127,60 @@ class AuthService extends ChangeNotifier {
       _cookie ??= jwt;
       await _secureStorage.write(key: _cookieKey, value: _cookie);
 
-      // 6. Store private key
-      await _secureStorage.write(key: _keyStorageKey, value: key);
+      // 6. Store private key seed
+      final extractedSeed = await _keyPair!.extractPrivateKeyBytes();
+      // Ed25519 private key bytes are 64 bytes (seed + public), take first 32 as seed
+      final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
+      await _secureStorage.write(key: _keyStorageKey, value: _base64urlEncode(seed));
 
       // 7. Update device metadata
       await _updateDeviceMetadata();
+
+      // 8. Wait for CLI user to approve the device
+      onStatus?.call('Waiting for approval on terminal...');
+      _isPendingApproval = true;
+      notifyListeners();
+
+      final approved = await _waitForApproval();
+      _isPendingApproval = false;
+
+      if (!approved) {
+        notifyListeners();
+        return SetupResult.error('Device was rejected by the terminal user.');
+      }
 
       _isAuthenticated = true;
       notifyListeners();
       return SetupResult.success();
     } catch (e) {
+      _isPendingApproval = false;
       return SetupResult.error('Setup failed: $e');
     }
+  }
+
+  /// Poll /api/auth/device/me until status becomes "active" or "revoked".
+  /// Returns true if approved, false if rejected or timed out.
+  Future<bool> _waitForApproval() async {
+    const maxAttempts = 150; // 5 minutes at 2s intervals
+    for (var i = 0; i < maxAttempts; i++) {
+      await Future.delayed(const Duration(seconds: 2));
+      try {
+        final resp = await authGet('/api/auth/device/me');
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body);
+          final status = data['status'] as String?;
+          if (status == 'active') return true;
+          if (status == 'revoked') return false;
+          // still "pending" — keep polling
+        } else if (resp.statusCode == 401 || resp.statusCode == 403) {
+          // Device was revoked / deleted
+          return false;
+        }
+      } catch (_) {
+        // Network error — keep trying
+      }
+    }
+    return false; // timed out
   }
 
   /// Make an authenticated HTTP request.
@@ -151,22 +208,35 @@ class AuthService extends ChangeNotifier {
     };
   }
 
+  /// Called externally when a pending device gets approved.
+  void markAuthenticated() {
+    _isPendingApproval = false;
+    _isAuthenticated = true;
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     await _secureStorage.delete(key: _keyStorageKey);
     await _secureStorage.delete(key: _cookieKey);
     _isAuthenticated = false;
+    _isPendingApproval = false;
     _cookie = null;
     _keyPair = null;
     notifyListeners();
   }
 
-  /// Verify the stored cookie is still valid by hitting the API.
-  Future<bool> _verifyCookie() async {
+  /// Check the device status by hitting the API.
+  /// Returns 'active', 'pending', 'revoked', or null if unreachable.
+  Future<String?> _checkDeviceStatus() async {
     try {
       final resp = await authGet('/api/auth/device/me');
-      return resp.statusCode == 200;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return data['status'] as String?;
+      }
+      return null;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 

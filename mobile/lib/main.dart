@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,7 +7,7 @@ import 'services/auth_service.dart';
 import 'services/sse_service.dart';
 import 'services/notification_service.dart';
 import 'screens/setup_screen.dart';
-import 'screens/dashboard_screen.dart';
+import 'screens/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,7 +57,7 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   late AppLinks _appLinks;
-  String? _deepLinkKey;
+  String? _deepLinkToken;
   String? _deepLinkServer;
   StreamSubscription<Uri>? _linkSub;
 
@@ -89,13 +90,13 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   void _processUri(Uri uri) {
-    if (uri.scheme == 'helios' && uri.host == 'setup') {
-      final key = uri.queryParameters['key'];
-      final server = uri.queryParameters['server'];
-      if (key != null && server != null) {
+    if (uri.scheme == 'helios' && uri.host == 'pair') {
+      final token = uri.queryParameters['token'];
+      final url = uri.queryParameters['url'];
+      if (token != null && url != null) {
         setState(() {
-          _deepLinkKey = key;
-          _deepLinkServer = server;
+          _deepLinkToken = token;
+          _deepLinkServer = url;
         });
       }
     }
@@ -111,13 +112,127 @@ class _AuthGateState extends State<AuthGate> {
           );
         }
         if (auth.isAuthenticated) {
-          return const DashboardScreen();
+          return const HomeScreen();
+        }
+        if (auth.isPendingApproval) {
+          return const _PendingApprovalScreen();
         }
         return SetupScreen(
-          deepLinkKey: _deepLinkKey,
+          deepLinkToken: _deepLinkToken,
           deepLinkServer: _deepLinkServer,
         );
       },
+    );
+  }
+}
+
+/// Shown when the app restores a device that is still pending approval.
+class _PendingApprovalScreen extends StatefulWidget {
+  const _PendingApprovalScreen();
+
+  @override
+  State<_PendingApprovalScreen> createState() => _PendingApprovalScreenState();
+}
+
+class _PendingApprovalScreenState extends State<_PendingApprovalScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _resumePolling();
+  }
+
+  Future<void> _resumePolling() async {
+    final auth = context.read<AuthService>();
+    // Poll until approved or rejected
+    while (mounted && auth.isPendingApproval) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+      try {
+        final resp = await auth.authGet('/api/auth/device/me');
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body);
+          final status = data['status'] as String?;
+          if (status == 'active') {
+            auth.markAuthenticated();
+            return;
+          }
+          if (status == 'revoked') {
+            auth.logout();
+            return;
+          }
+        } else if (resp.statusCode == 401 || resp.statusCode == 403) {
+          auth.logout();
+          return;
+        }
+      } catch (_) {
+        // Network error — keep trying
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'helios',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Waiting for approval...',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 24),
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.terminal, color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Press "y" in the terminal to approve this device.',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimaryContainer,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () {
+                      context.read<AuthService>().logout();
+                    },
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

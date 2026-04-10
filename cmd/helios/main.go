@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/auth"
@@ -29,12 +30,12 @@ func main() {
 		handleStart()
 	case "stop":
 		handleStop()
-	case "show":
-		handleShow()
-	case "setup":
-		handleSetup()
 	case "devices":
 		handleDevices()
+	case "new":
+		handleNew(os.Args[2:])
+	case "sessions":
+		handleSessions(os.Args[2:])
 	case "daemon":
 		handleDaemon(os.Args[2:])
 	case "auth":
@@ -148,22 +149,10 @@ func handleAuth(args []string) {
 
 	switch args[0] {
 	case "init":
-		// Generate a new pairing QR via internal API
-		client := &http.Client{Timeout: 3 * time.Second}
-		tunnelURL := getTunnelURL(client, internalURL)
-		if tunnelURL == "" {
-			fmt.Println()
-			fmt.Println("  No tunnel active. Start a tunnel to connect devices:")
-			fmt.Println("    helios tunnel start --provider ngrok")
-			fmt.Println()
-			return
+		if err := auth.InitDevice(""); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-		fmt.Println()
-		fmt.Println("  Helios Device Pairing")
-		fmt.Println("  ---------------------")
-		fmt.Println()
-		showPairingQR(client, internalURL, tunnelURL)
-		fmt.Println()
 
 	case "devices":
 		resp, err := http.Get(internalURL + "/internal/device/list")
@@ -249,260 +238,7 @@ func handleStart() {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-
-	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
-
-	// Check if already running
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(internalURL + "/internal/health")
-	if err == nil {
-		resp.Body.Close()
-		fmt.Println("helios is already running")
-		fmt.Printf("  internal: 127.0.0.1:%d\n", cfg.Server.InternalPort)
-		fmt.Printf("  public:   0.0.0.0:%d\n", cfg.Server.PublicPort)
-
-		// Show tunnel status
-		resp, err = client.Get(internalURL + "/internal/tunnel/status")
-		if err == nil {
-			defer resp.Body.Close()
-			var ts struct {
-				Active    bool   `json:"active"`
-				PublicURL string `json:"public_url"`
-				Provider  string `json:"provider"`
-			}
-			json.NewDecoder(resp.Body).Decode(&ts)
-			if ts.Active {
-				fmt.Printf("  tunnel:   %s (%s)\n", ts.PublicURL, ts.Provider)
-			} else {
-				fmt.Println("  tunnel:   not active")
-			}
-		}
-
-		// Show devices + QR
-		fmt.Println()
-		printDevices(client, internalURL)
-		return
-	}
-
-	// Start daemon in background
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	proc, err := os.StartProcess(exe, []string{exe, "daemon", "start"}, &os.ProcAttr{
-		Dir:   "/",
-		Env:   os.Environ(),
-		Files: []*os.File{os.Stdin, nil, nil},
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
-		os.Exit(1)
-	}
-	proc.Release()
-
-	// Wait for daemon to be ready
-	for i := 0; i < 20; i++ {
-		time.Sleep(250 * time.Millisecond)
-		resp, err := client.Get(internalURL + "/internal/health")
-		if err == nil {
-			resp.Body.Close()
-			break
-		}
-	}
-
-	// Install hooks if missing
-	daemon.InstallHooksIfMissing()
-
-	fmt.Println("helios started")
-	fmt.Printf("  internal: 127.0.0.1:%d\n", cfg.Server.InternalPort)
-	fmt.Printf("  public:   0.0.0.0:%d\n", cfg.Server.PublicPort)
-
-	// Check tunnel status
-	if cfg.Tunnel.Provider != "" {
-		// Give tunnel a moment to start
-		time.Sleep(2 * time.Second)
-		resp, err := client.Get(internalURL + "/internal/tunnel/status")
-		if err == nil {
-			defer resp.Body.Close()
-			var ts struct {
-				Active    bool   `json:"active"`
-				PublicURL string `json:"public_url"`
-				Provider  string `json:"provider"`
-			}
-			json.NewDecoder(resp.Body).Decode(&ts)
-			if ts.Active {
-				fmt.Printf("  tunnel:   %s (%s)\n", ts.PublicURL, ts.Provider)
-			} else {
-				fmt.Printf("  tunnel:   starting (%s)...\n", cfg.Tunnel.Provider)
-			}
-		}
-	}
-
-	// Show devices + QR
-	fmt.Println()
-	printDevices(client, internalURL)
-}
-
-func handleShow() {
-	cfg, _ := daemon.LoadConfig()
-	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
-	client := &http.Client{Timeout: 3 * time.Second}
-
-	// Daemon status
-	resp, err := client.Get(internalURL + "/internal/health")
-	if err != nil {
-		fmt.Println("helios is not running. Run: helios start")
-		return
-	}
-	resp.Body.Close()
-	fmt.Println("helios is running")
-	fmt.Printf("  internal: 127.0.0.1:%d\n", cfg.Server.InternalPort)
-	fmt.Printf("  public:   0.0.0.0:%d\n", cfg.Server.PublicPort)
-
-	// Tunnel status
-	resp, err = client.Get(internalURL + "/internal/tunnel/status")
-	if err == nil {
-		defer resp.Body.Close()
-		var ts struct {
-			Active    bool   `json:"active"`
-			PublicURL string `json:"public_url"`
-			Provider  string `json:"provider"`
-		}
-		json.NewDecoder(resp.Body).Decode(&ts)
-		if ts.Active {
-			fmt.Printf("  tunnel:   %s (%s)\n", ts.PublicURL, ts.Provider)
-		} else {
-			fmt.Println("  tunnel:   not active")
-		}
-	}
-
-	// Devices
-	fmt.Println()
-	printDevices(client, internalURL)
-}
-
-func printDevices(client *http.Client, internalURL string) {
-	resp, err := client.Get(internalURL + "/internal/device/list")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "  Could not fetch devices")
-		return
-	}
-	defer resp.Body.Close()
-
-	type deviceEntry struct {
-		KID         string  `json:"kid"`
-		Name        string  `json:"name"`
-		Status      string  `json:"status"`
-		Platform    string  `json:"platform"`
-		Browser     string  `json:"browser"`
-		PushEnabled bool    `json:"push_enabled"`
-		LastSeenAt  *string `json:"last_seen_at"`
-	}
-	var result struct {
-		Devices []deviceEntry `json:"devices"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-
-	// Filter to non-revoked devices
-	var devices []deviceEntry
-	for _, d := range result.Devices {
-		if d.Status != "revoked" {
-			devices = append(devices, d)
-		}
-	}
-
-	if len(devices) > 0 {
-		fmt.Printf("  %d device(s):\n", len(devices))
-		for _, d := range devices {
-			name := d.Name
-			if name == "" {
-				name = "(unnamed)"
-			}
-			lastSeen := "never"
-			if d.LastSeenAt != nil {
-				t, parseErr := time.Parse(time.RFC3339, *d.LastSeenAt)
-				if parseErr == nil {
-					lastSeen = humanDuration(time.Since(t))
-				}
-			}
-			pushStr := "off"
-			if d.PushEnabled {
-				pushStr = "on"
-			}
-			icon := "+"
-			if d.Status == "active" {
-				icon = "*"
-			}
-			fmt.Printf("    %s %-20s  %-8s  push:%s  seen:%s  [%s]\n", icon, name, d.Platform, pushStr, lastSeen, d.KID)
-		}
-	} else {
-		fmt.Println("  No devices registered.")
-	}
-
-	// Check tunnel status — QRs require an active tunnel
-	tunnelURL := getTunnelURL(client, internalURL)
-	if tunnelURL == "" {
-		fmt.Println()
-		fmt.Println("  No tunnel active. Start a tunnel to connect devices:")
-		fmt.Println("    helios tunnel start --provider ngrok")
-		return
-	}
-
-	// QR 1: Download page (tunnel URL)
-	fmt.Println()
-	fmt.Println("  Download the app:")
-	fmt.Println()
-	auth.PrintQR(tunnelURL)
-	fmt.Printf("  %s\n", tunnelURL)
-
-	// QR 2: Device pairing
-	fmt.Println()
-	fmt.Println("  Pair a new device:")
-	fmt.Println()
-	showPairingQR(client, internalURL, tunnelURL)
-}
-
-func getTunnelURL(client *http.Client, internalURL string) string {
-	resp, err := client.Get(internalURL + "/internal/tunnel/status")
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	var ts struct {
-		Active    bool   `json:"active"`
-		PublicURL string `json:"public_url"`
-	}
-	json.NewDecoder(resp.Body).Decode(&ts)
-	if ts.Active && ts.PublicURL != "" {
-		return ts.PublicURL
-	}
-	return ""
-}
-
-func showPairingQR(client *http.Client, internalURL string, tunnelURL string) {
-	resp, err := client.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "  Could not generate pairing QR")
-		return
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Key string `json:"key"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-
-	payload := fmt.Sprintf("helios://setup?key=%s&server=%s", result.Key, tunnelURL)
-	auth.PrintQR(payload)
-	fmt.Printf("  %s\n", payload)
-}
-
-
-func handleSetup() {
-	cfg, _ := daemon.LoadConfig()
-	if err := tui.RunSetup(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
+	if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -531,6 +267,114 @@ func handleStop() {
 	if err := daemon.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func handleNew(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: helios new \"prompt\" [--cwd /path/to/dir]")
+		os.Exit(1)
+	}
+
+	prompt := args[0]
+	cwd, _ := os.Getwd()
+
+	for i, a := range args {
+		if a == "--cwd" && i+1 < len(args) {
+			cwd = args[i+1]
+		}
+	}
+
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
+	body, _ := json.Marshal(map[string]string{
+		"prompt": prompt,
+		"cwd":    cwd,
+	})
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(internalURL+"/internal/sessions", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "helios is not running. Start it with: helios start")
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success  bool   `json:"success"`
+		TmuxPane string `json:"tmux_pane"`
+		CWD      string `json:"cwd"`
+		Message  string `json:"message"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if !result.Success {
+		fmt.Fprintf(os.Stderr, "Failed to create session: %s\n", result.Message)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Session started in tmux pane %s\n", result.TmuxPane)
+	fmt.Printf("  cwd: %s\n", result.CWD)
+	fmt.Println("  Attach with: tmux attach -t helios")
+}
+
+func handleSessions(args []string) {
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(internalURL + "/internal/sessions")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "helios is not running. Start it with: helios start")
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Sessions []struct {
+			SessionID   string  `json:"session_id"`
+			CWD         string  `json:"cwd"`
+			Status      string  `json:"status"`
+			Model       *string `json:"model"`
+			TmuxPane    *string `json:"tmux_pane"`
+			LastEvent   *string `json:"last_event"`
+			LastEventAt *string `json:"last_event_at"`
+			CreatedAt   string  `json:"created_at"`
+		} `json:"sessions"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if len(result.Sessions) == 0 {
+		fmt.Println("No sessions. Start one with: helios new \"your prompt\"")
+		return
+	}
+
+	fmt.Printf("%-10s %-12s %-40s %-8s %s\n", "Session", "Status", "CWD", "Pane", "Last Activity")
+	fmt.Println(strings.Repeat("-", 100))
+
+	for _, s := range result.Sessions {
+		sid := s.SessionID
+		if len(sid) > 10 {
+			sid = sid[:10]
+		}
+		cwdShort := s.CWD
+		if len(cwdShort) > 40 {
+			cwdShort = "..." + cwdShort[len(cwdShort)-37:]
+		}
+		pane := "-"
+		if s.TmuxPane != nil {
+			pane = *s.TmuxPane
+		}
+		lastActivity := ""
+		if s.LastEventAt != nil {
+			t, err := time.Parse(time.RFC3339, *s.LastEventAt)
+			if err == nil {
+				lastActivity = humanDuration(time.Since(t))
+			}
+		}
+
+		fmt.Printf("%-10s %-12s %-40s %-8s %s\n", sid, s.Status, cwdShort, pane, lastActivity)
 	}
 }
 
@@ -685,23 +529,24 @@ func printUsage() {
 	fmt.Println(`helios - orchestrates AI coding agents on your machine
 
 Usage:
-  helios <command> [subcommand] [options]
+  helios <command> [options]
 
 Commands:
-  start                 Start daemon, install hooks, show QR
-  stop                  Stop everything (tunnel + daemon)
-  show                  Show status, devices, and setup QR code
-  setup                 Interactive setup wizard (TUI)
+  start                 Start helios (daemon + tunnel + device pairing TUI)
+  stop                  Stop daemon and tunnel
   devices               Device management (TUI)
+  new "prompt" [flags]  Launch Claude in a managed tmux pane
+                        --cwd PATH  Working directory (default: current)
+  sessions              List all tracked sessions
 
-  daemon start [flags]  Start the helios daemon
+  daemon start [flags]  Start the helios daemon directly
                         -d                Run in background (daemonize)
                         --internal-port P Internal port (default: 7654)
                         --public-port P   Public port (default: 7655)
   daemon stop           Stop the running daemon
   daemon status         Show daemon status
 
-  auth init             Generate device keypair and show QR code
+  auth init             Generate pairing QR (non-interactive)
   auth devices          List trusted devices
   auth revoke <kid>     Revoke a device
 

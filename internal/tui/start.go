@@ -14,19 +14,19 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// Screens in the setup flow
+// Screens in the start flow
 type screen int
 
 const (
-	screenStatusCheck screen = iota
-	screenAlreadySetup
-	screenTunnelSelect
-	screenBinaryMissing
-	screenTunnelStarting
-	screenCustomURL
-	screenQRCode
-	screenSuccess
-	screenError
+	screenLoading        screen = iota // checking daemon, starting if needed
+	screenHooksInstall                 // prompt to install Claude hooks
+	screenTunnelSelect                 // first time only: pick tunnel provider
+	screenBinaryMissing                // tunnel binary not found
+	screenTunnelStarting               // starting tunnel...
+	screenCustomURL                    // custom URL input
+	screenMain                         // main dashboard: status + devices + QRs
+	screenConfirmDevice                // "Allow this device? y/n"
+	screenError                        // error
 )
 
 // Tunnel provider options
@@ -41,22 +41,16 @@ var tunnelProviders = []struct {
 	{"custom", "Custom URL"},
 }
 
-// Already-setup menu options
-var setupMenuOptions = []string{
-	"Add another device",
-	"Change tunnel provider",
-	"Exit",
-}
-
 // Messages
 type statusCheckDone struct {
-	daemonOK   bool
-	hooksOK    bool
-	tunnelOK   bool
-	tunnelURL  string
-	tunnelProv string
+	daemonOK    bool
+	hooksOK     bool
+	tunnelOK    bool
+	tunnelURL   string
+	tunnelProv  string
 	deviceCount int
-	err        error
+	devices     []deviceInfo
+	err         error
 }
 
 type tunnelStarted struct {
@@ -65,25 +59,35 @@ type tunnelStarted struct {
 }
 
 type deviceCreated struct {
-	key      string
-	setupURL string
-	err      error
+	token     string
+	expiresIn int
+	setupURL  string
+	err       error
 }
 
 type devicePollResult struct {
-	connected  bool
-	deviceName string
+	pendingDevice *deviceInfo
+	devices       []deviceInfo
+}
+
+type deviceActionDone struct {
+	err error
+}
+
+type hooksInstallDone struct {
+	err error
 }
 
 type tickMsg time.Time
+type tokenTickMsg time.Time
 
 // Model
-type SetupModel struct {
-	screen       screen
-	client       *client
-	spinner      spinner.Model
-	textInput    textinput.Model
-	publicPort   int
+type StartModel struct {
+	screen     screen
+	client     *client
+	spinner    spinner.Model
+	textInput  textinput.Model
+	publicPort int
 
 	// Status check results
 	daemonOK    bool
@@ -92,22 +96,26 @@ type SetupModel struct {
 	tunnelURL   string
 	tunnelProv  string
 	deviceCount int
+	devices     []deviceInfo
 
 	// Tunnel selection
 	tunnelCursor int
-
-	// Already-setup menu
-	menuCursor int
 
 	// Binary missing info
 	missingBinary string
 	installHint   string
 
-	// QR code state
-	qrString      string
-	setupURL      string
-	waitingDevice bool
-	deviceName    string
+	// Pairing QR state
+	pairingToken   string
+	tokenExpiresAt time.Time
+	pairingQR      string
+	setupURL       string
+
+	// Download QR (tunnel URL)
+	downloadQR string
+
+	// Device confirmation
+	pendingDevice *deviceInfo
 
 	// Custom URL input
 	customURL string
@@ -120,7 +128,7 @@ type SetupModel struct {
 	height int
 }
 
-func NewSetupModel(internalPort, publicPort int) SetupModel {
+func NewStartModel(internalPort, publicPort int) StartModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
@@ -130,8 +138,8 @@ func NewSetupModel(internalPort, publicPort int) SetupModel {
 	ti.CharLimit = 200
 	ti.Width = 50
 
-	return SetupModel{
-		screen:     screenStatusCheck,
+	return StartModel{
+		screen:     screenLoading,
 		client:     newClient(internalPort),
 		spinner:    s,
 		textInput:  ti,
@@ -139,11 +147,11 @@ func NewSetupModel(internalPort, publicPort int) SetupModel {
 	}
 }
 
-func (m SetupModel) Init() tea.Cmd {
+func (m StartModel) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, checkStatus(m.client, m.publicPort))
 }
 
-func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -170,11 +178,34 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case devicePollResult:
 		return m.handleDevicePoll(msg)
 
+	case hooksInstallDone:
+		if msg.err != nil {
+			m.errMsg = fmt.Sprintf("Failed to install hooks: %v", msg.err)
+			m.screen = screenError
+			return m, nil
+		}
+		m.hooksOK = true
+		return m.proceedAfterHooks()
+
+	case deviceActionDone:
+		return m.handleDeviceAction(msg)
+
 	case tickMsg:
-		if m.waitingDevice {
-			return m, tea.Batch(pollNewDevice(m.client, m.deviceCount), m.spinner.Tick)
+		if m.screen == screenMain && m.pendingDevice == nil {
+			return m, pollDevices(m.client)
 		}
 		return m, nil
+
+	case tokenTickMsg:
+		if m.screen == screenMain {
+			if time.Now().After(m.tokenExpiresAt) {
+				// Token expired — generate a new one
+				return m, createDevice(m.client)
+			}
+		}
+		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
+			return tokenTickMsg(t)
+		})
 	}
 
 	// Handle text input updates
@@ -187,88 +218,78 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m SetupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c":
-		return m, tea.Quit
-
-	case "q":
+	case "ctrl+c", "q":
 		switch m.screen {
-		case screenQRCode, screenBinaryMissing, screenError:
+		case screenMain:
 			return m, tea.Quit
-		case screenTunnelSelect:
+		case screenHooksInstall, screenTunnelSelect, screenBinaryMissing, screenError:
 			return m, tea.Quit
 		}
 
 	case "up", "k":
-		switch m.screen {
-		case screenTunnelSelect:
+		if m.screen == screenTunnelSelect {
 			if m.tunnelCursor > 0 {
 				m.tunnelCursor--
-			}
-		case screenAlreadySetup:
-			if m.menuCursor > 0 {
-				m.menuCursor--
 			}
 		}
 
 	case "down", "j":
-		switch m.screen {
-		case screenTunnelSelect:
+		if m.screen == screenTunnelSelect {
 			if m.tunnelCursor < len(tunnelProviders)-1 {
 				m.tunnelCursor++
-			}
-		case screenAlreadySetup:
-			if m.menuCursor < len(setupMenuOptions)-1 {
-				m.menuCursor++
 			}
 		}
 
 	case "enter":
 		return m.handleEnter()
+
+	case "y":
+		if m.screen == screenConfirmDevice && m.pendingDevice != nil {
+			kid := m.pendingDevice.KID
+			m.pendingDevice = nil
+			return m, activateDevice(m.client, kid)
+		}
+
+	case "n":
+		if m.screen == screenConfirmDevice && m.pendingDevice != nil {
+			kid := m.pendingDevice.KID
+			m.pendingDevice = nil
+			return m, rejectDevice(m.client, kid)
+		}
+
+	case "s":
+		if m.screen == screenHooksInstall {
+			return m.proceedAfterHooks()
+		}
 	}
 
 	return m, nil
 }
 
-func (m SetupModel) handleEnter() (tea.Model, tea.Cmd) {
+func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.screen {
-	case screenStatusCheck:
+	case screenLoading:
 		if !m.daemonOK {
 			m.errMsg = "Could not start daemon"
 			m.screen = screenError
 			return m, nil
 		}
-		// Auto-install hooks if missing
 		if !m.hooksOK {
-			installHooksQuietly()
-			m.hooksOK = true
-		}
-		if m.tunnelOK && m.deviceCount > 0 {
-			// Already fully set up
-			m.screen = screenAlreadySetup
+			m.screen = screenHooksInstall
 			return m, nil
 		}
 		if !m.tunnelOK {
 			m.screen = screenTunnelSelect
-		} else {
-			// Tunnel OK but no devices — go to QR
-			m.screen = screenQRCode
-			return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
-		}
-		return m, nil
-
-	case screenAlreadySetup:
-		switch m.menuCursor {
-		case 0: // Add another device
-			m.screen = screenQRCode
-			return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
-		case 1: // Change tunnel provider
-			m.screen = screenTunnelSelect
 			return m, nil
-		case 2: // Exit
-			return m, tea.Quit
 		}
+		// Tunnel OK — go to main
+		m.screen = screenMain
+		return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
+
+	case screenHooksInstall:
+		return m, installHooksCmd()
 
 	case screenTunnelSelect:
 		provider := tunnelProviders[m.tunnelCursor]
@@ -308,9 +329,6 @@ func (m SetupModel) handleEnter() (tea.Model, tea.Cmd) {
 		m.screen = screenTunnelStarting
 		return m, tea.Batch(m.spinner.Tick, startTunnel(m.client, provider.id, "", m.publicPort))
 
-	case screenSuccess:
-		return m, tea.Quit
-
 	case screenError:
 		return m, tea.Quit
 	}
@@ -318,22 +336,40 @@ func (m SetupModel) handleEnter() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m SetupModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) {
+func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
+	if !m.tunnelOK {
+		m.screen = screenTunnelSelect
+		return m, nil
+	}
+	m.screen = screenMain
+	return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
+}
+
+func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) {
 	m.daemonOK = msg.daemonOK
 	m.hooksOK = msg.hooksOK
 	m.tunnelOK = msg.tunnelOK
 	m.tunnelURL = msg.tunnelURL
 	m.tunnelProv = msg.tunnelProv
 	m.deviceCount = msg.deviceCount
+	m.devices = msg.devices
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
 	}
 
+	// Generate download QR if tunnel is active
+	if m.tunnelURL != "" {
+		qr, err := qrcode.New(m.tunnelURL, qrcode.Medium)
+		if err == nil {
+			m.downloadQR = qr.ToSmallString(false)
+		}
+	}
+
 	return m, nil
 }
 
-func (m SetupModel) handleTunnelStarted(msg tunnelStarted) (tea.Model, tea.Cmd) {
+func (m StartModel) handleTunnelStarted(msg tunnelStarted) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.errMsg = fmt.Sprintf("Tunnel failed: %v", msg.err)
 		m.screen = screenError
@@ -343,45 +379,80 @@ func (m SetupModel) handleTunnelStarted(msg tunnelStarted) (tea.Model, tea.Cmd) 
 	m.tunnelURL = msg.url
 	m.tunnelProv = tunnelProviders[m.tunnelCursor].id
 
-	// Now create a device and show QR
-	m.screen = screenQRCode
+	// Generate download QR
+	qr, err := qrcode.New(m.tunnelURL, qrcode.Medium)
+	if err == nil {
+		m.downloadQR = qr.ToSmallString(false)
+	}
+
+	// Now go to main and create a pairing token
+	m.screen = screenMain
 	return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
 }
 
-func (m SetupModel) handleDeviceCreated(msg deviceCreated) (tea.Model, tea.Cmd) {
+func (m StartModel) handleDeviceCreated(msg deviceCreated) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.errMsg = fmt.Sprintf("Device creation failed: %v", msg.err)
+		m.errMsg = fmt.Sprintf("Pairing token generation failed: %v", msg.err)
 		m.screen = screenError
 		return m, nil
 	}
+
+	m.pairingToken = msg.token
+	m.tokenExpiresAt = time.Now().Add(time.Duration(msg.expiresIn) * time.Second)
 	m.setupURL = msg.setupURL
-	if m.setupURL == "" {
-		m.setupURL = fmt.Sprintf("%s/#/setup?key=%s", m.tunnelURL, msg.key)
+
+	if m.setupURL == "" && m.tunnelURL != "" {
+		m.setupURL = fmt.Sprintf("helios://pair?url=%s&token=%s", m.tunnelURL, msg.token)
 	}
 
-	// Generate QR
-	qr, err := qrcode.New(m.setupURL, qrcode.Medium)
-	if err == nil {
-		m.qrString = qr.ToSmallString(false)
+	// Generate pairing QR
+	if m.setupURL != "" {
+		qr, err := qrcode.New(m.setupURL, qrcode.Medium)
+		if err == nil {
+			m.pairingQR = qr.ToSmallString(false)
+		}
 	}
 
-	// Start polling for any new device connection
-	m.waitingDevice = true
-	return m, tea.Batch(m.spinner.Tick, pollNewDevice(m.client, m.deviceCount))
+	// Start polling for pending devices + token countdown
+	return m, tea.Batch(
+		pollDevices(m.client),
+		tea.Tick(time.Second, func(t time.Time) tea.Msg {
+			return tokenTickMsg(t)
+		}),
+	)
 }
 
-func (m SetupModel) handleDevicePoll(msg devicePollResult) (tea.Model, tea.Cmd) {
-	if msg.connected {
-		m.waitingDevice = false
-		m.deviceName = msg.deviceName
-		m.deviceCount++
-		m.screen = screenSuccess
+func (m StartModel) handleDevicePoll(msg devicePollResult) (tea.Model, tea.Cmd) {
+	m.devices = msg.devices
+
+	// Count active devices
+	m.deviceCount = 0
+	for _, d := range m.devices {
+		if d.Status == "active" {
+			m.deviceCount++
+		}
+	}
+
+	if msg.pendingDevice != nil {
+		m.pendingDevice = msg.pendingDevice
+		m.screen = screenConfirmDevice
 		return m, nil
 	}
+
 	// Keep polling
 	return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+func (m StartModel) handleDeviceAction(msg deviceActionDone) (tea.Model, tea.Cmd) {
+	// After approve/reject, go back to main, refresh devices, new pairing token
+	m.screen = screenMain
+	return m, tea.Batch(
+		m.spinner.Tick,
+		createDevice(m.client),
+		pollDevices(m.client),
+	)
 }
 
 // Commands
@@ -435,6 +506,7 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 		// Check devices
 		dl, err := c.deviceList()
 		if err == nil {
+			result.devices = dl.Devices
 			for _, d := range dl.Devices {
 				if d.Status == "active" {
 					result.deviceCount++
@@ -443,6 +515,20 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 		}
 
 		return result
+	}
+}
+
+func installHooksCmd() tea.Cmd {
+	return func() tea.Msg {
+		exe, err := os.Executable()
+		if err != nil {
+			return hooksInstallDone{err: err}
+		}
+		cmd := exec.Command(exe, "hooks", "install")
+		if err := cmd.Run(); err != nil {
+			return hooksInstallDone{err: err}
+		}
+		return hooksInstallDone{}
 	}
 }
 
@@ -462,35 +548,49 @@ func createDevice(c *client) tea.Cmd {
 		if err != nil {
 			return deviceCreated{err: err}
 		}
-		return deviceCreated{key: resp.Key, setupURL: resp.SetupURL}
+		return deviceCreated{
+			token:     resp.Token,
+			expiresIn: resp.ExpiresIn,
+			setupURL:  resp.SetupURL,
+		}
 	}
 }
 
-// pollNewDevice checks if any new active device appeared since QR was shown.
-func pollNewDevice(c *client, previousCount int) tea.Cmd {
+func pollDevices(c *client) tea.Cmd {
 	return func() tea.Msg {
 		dl, err := c.deviceList()
 		if err != nil {
-			return devicePollResult{connected: false}
+			return devicePollResult{}
 		}
-		var activeCount int
-		var latestName string
+
+		// Look for any pending device
+		var pending *deviceInfo
 		for _, d := range dl.Devices {
-			if d.Status == "active" {
-				activeCount++
-				if latestName == "" {
-					name := d.Name
-					if name == "" {
-						name = d.KID
-					}
-					latestName = name
-				}
+			if d.Status == "pending" {
+				dd := d
+				pending = &dd
+				break
 			}
 		}
-		if activeCount > previousCount {
-			return devicePollResult{connected: true, deviceName: latestName}
+
+		return devicePollResult{
+			pendingDevice: pending,
+			devices:       dl.Devices,
 		}
-		return devicePollResult{connected: false}
+	}
+}
+
+func activateDevice(c *client, kid string) tea.Cmd {
+	return func() tea.Msg {
+		err := c.deviceActivate(kid)
+		return deviceActionDone{err: err}
+	}
+}
+
+func rejectDevice(c *client, kid string) tea.Cmd {
+	return func() tea.Msg {
+		err := c.deviceRevoke(kid)
+		return deviceActionDone{err: err}
 	}
 }
 
@@ -538,9 +638,9 @@ func providerInstallHint(provider string) string {
 	}
 }
 
-// RunSetup launches the bubbletea setup TUI.
-func RunSetup(internalPort, publicPort int) error {
-	m := NewSetupModel(internalPort, publicPort)
+// RunStart launches the bubbletea start TUI.
+func RunStart(internalPort, publicPort int) error {
+	m := NewStartModel(internalPort, publicPort)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

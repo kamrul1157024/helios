@@ -51,6 +51,20 @@ func (s *Store) GetActiveDevice(kid string) (*Device, error) {
 	return d, err
 }
 
+// GetPendingOrActiveDevice returns a device if it is pending or active.
+func (s *Store) GetPendingOrActiveDevice(kid string) (*Device, error) {
+	d := &Device{}
+	err := s.db.QueryRow(
+		`SELECT d.kid, d.name, d.public_key, d.status, d.platform, d.browser, d.last_seen_at, d.created_at,
+		        EXISTS(SELECT 1 FROM push_subscriptions ps WHERE ps.device_kid = d.kid) as push_enabled
+		 FROM devices d WHERE d.kid = ? AND d.status IN ('pending', 'active')`, kid,
+	).Scan(&d.KID, &d.Name, &d.PublicKey, &d.Status, &d.Platform, &d.Browser, &d.LastSeenAt, &d.CreatedAt, &d.PushEnabled)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
 func (s *Store) ListDevices() ([]Device, error) {
 	rows, err := s.db.Query(
 		`SELECT d.kid, d.name, d.public_key, d.status, d.platform, d.browser, d.last_seen_at, d.created_at,

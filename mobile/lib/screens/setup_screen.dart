@@ -6,10 +6,10 @@ import '../services/auth_service.dart';
 import 'dashboard_screen.dart';
 
 class SetupScreen extends StatefulWidget {
-  final String? deepLinkKey;
+  final String? deepLinkToken;
   final String? deepLinkServer;
 
-  const SetupScreen({super.key, this.deepLinkKey, this.deepLinkServer});
+  const SetupScreen({super.key, this.deepLinkToken, this.deepLinkServer});
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -25,29 +25,11 @@ class _SetupScreenState extends State<SetupScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.deepLinkKey != null && widget.deepLinkServer != null) {
+    if (widget.deepLinkToken != null && widget.deepLinkServer != null) {
       // Launched via helios:// deep link — auto-setup
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _doSetup(widget.deepLinkKey!, widget.deepLinkServer!);
+        _doSetup(widget.deepLinkToken!, widget.deepLinkServer!);
       });
-    } else if (kIsWeb) {
-      // On web, auto-setup from URL hash if key is present
-      _tryAutoSetupFromUrl();
-    }
-  }
-
-  void _tryAutoSetupFromUrl() {
-    final uri = Uri.base;
-    final fragment = uri.fragment; // everything after #
-    if (fragment.contains('key=')) {
-      final params = Uri.splitQueryString(
-        fragment.contains('?') ? fragment.split('?').last : fragment,
-      );
-      final key = params['key'];
-      if (key != null) {
-        final serverUrl = '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
-        _doSetup(key, serverUrl);
-      }
     }
   }
 
@@ -60,26 +42,26 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _handleQR(String rawValue) async {
     if (_loading) return;
 
-    final parsed = _parseSetupUrl(rawValue);
+    final parsed = _parsePairingUrl(rawValue);
     if (parsed == null) return;
 
-    await _doSetup(parsed.key, parsed.serverUrl);
+    await _doSetup(parsed.token, parsed.serverUrl);
   }
 
   Future<void> _handleManualSubmit() async {
     final input = _urlController.text.trim();
     if (input.isEmpty) return;
 
-    final parsed = _parseSetupUrl(input);
+    final parsed = _parsePairingUrl(input);
     if (parsed == null) {
-      setState(() => _error = 'Invalid setup URL. Paste the URL from the terminal QR code.');
+      setState(() => _error = 'Invalid pairing URL. Scan the QR code from the terminal.');
       return;
     }
 
-    await _doSetup(parsed.key, parsed.serverUrl);
+    await _doSetup(parsed.token, parsed.serverUrl);
   }
 
-  Future<void> _doSetup(String key, String serverUrl) async {
+  Future<void> _doSetup(String token, String serverUrl) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -87,16 +69,12 @@ class _SetupScreenState extends State<SetupScreen> {
       _scanning = false;
     });
 
-    _addStatus('Importing key...');
     final auth = context.read<AuthService>();
 
-    _addStatus('Registering device...');
-    _addStatus('Authenticating...');
-
-    final result = await auth.setup(key, serverUrl);
+    final result = await auth.setup(token, serverUrl, onStatus: _addStatus);
 
     if (result.ok) {
-      _addStatus('Setup complete');
+      _addStatus('Approved!');
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const DashboardScreen()),
@@ -205,8 +183,8 @@ class _SetupScreenState extends State<SetupScreen> {
           TextField(
             controller: _urlController,
             decoration: const InputDecoration(
-              labelText: 'Setup URL',
-              hintText: 'https://.../#/setup?key=...',
+              labelText: 'Pairing URL',
+              hintText: 'helios://pair?url=...&token=...',
               border: OutlineInputBorder(),
             ),
             style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
@@ -230,6 +208,9 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _buildProgress() {
+    final auth = context.watch<AuthService>();
+    final isPending = auth.isPendingApproval;
+
     return Scaffold(
       body: Center(
         child: Padding(
@@ -249,7 +230,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Setting up device...',
+                    isPending ? 'Waiting for approval...' : 'Setting up device...',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
@@ -273,6 +254,31 @@ class _SetupScreenState extends State<SetupScreen> {
                           ],
                         ),
                       )),
+                  if (isPending) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.phone_android, color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Press "y" in the terminal to approve this device.',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   const Center(child: CircularProgressIndicator()),
                 ],
@@ -285,8 +291,8 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _buildError() {
-    final isKeyClaimed = _error?.contains('already been used') == true ||
-        _error?.contains('key_already_claimed') == true;
+    final isTokenExpired = _error?.contains('expired') == true ||
+        _error?.contains('already been used') == true;
 
     return Scaffold(
       body: Center(
@@ -327,7 +333,7 @@ class _SetupScreenState extends State<SetupScreen> {
                       ),
                     ),
                   ),
-                  if (isKeyClaimed) ...[
+                  if (isTokenExpired) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -341,12 +347,12 @@ class _SetupScreenState extends State<SetupScreen> {
                           Text('What happened?', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                           SizedBox(height: 4),
                           Text(
-                            'Another device already scanned this QR code. Each QR code can only be used by one device.',
+                            'The pairing QR code has expired or was already used. Each QR code can only be scanned once and expires after 2 minutes.',
                             style: TextStyle(fontSize: 13),
                           ),
                           SizedBox(height: 8),
                           Text(
-                            'Run helios start in your terminal to generate a new QR code.',
+                            'A new QR code is automatically generated in the terminal. Scan the latest one.',
                             style: TextStyle(fontSize: 13),
                           ),
                         ],
@@ -386,47 +392,23 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
-/// Parse various setup URL formats and extract key + server URL.
-class _ParsedSetup {
-  final String key;
+/// Parse pairing URL and extract token + server URL.
+class _ParsedPairing {
+  final String token;
   final String serverUrl;
-  _ParsedSetup(this.key, this.serverUrl);
+  _ParsedPairing(this.token, this.serverUrl);
 }
 
-_ParsedSetup? _parseSetupUrl(String input) {
-  // Format: helios://setup?key=abc123&server=https://example.com
+_ParsedPairing? _parsePairingUrl(String input) {
+  // Format: helios://pair?url=https://example.com&token=abc123
   if (input.startsWith('helios://')) {
     try {
       final uri = Uri.parse(input.replaceFirst('helios://', 'https://'));
-      final key = uri.queryParameters['key'];
-      final server = uri.queryParameters['server'];
-      if (key != null && server != null) return _ParsedSetup(key, server);
+      final token = uri.queryParameters['token'];
+      final url = uri.queryParameters['url'];
+      if (token != null && url != null) return _ParsedPairing(token, url);
     } catch (_) {}
   }
-
-  // Format: https://example.com/#/setup?key=abc123
-  if (input.contains('#')) {
-    try {
-      final hashPart = input.split('#')[1];
-      final queryPart = hashPart.contains('?') ? hashPart.split('?')[1] : '';
-      final params = Uri.splitQueryString(queryPart);
-      final key = params['key'];
-      if (key != null) {
-        final serverUrl = input.split('#')[0].replaceAll(RegExp(r'/$'), '');
-        return _ParsedSetup(key, serverUrl);
-      }
-    } catch (_) {}
-  }
-
-  // Format: https://example.com/setup?key=abc123
-  try {
-    final uri = Uri.parse(input);
-    final key = uri.queryParameters['key'];
-    if (key != null) {
-      final serverUrl = '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
-      return _ParsedSetup(key, serverUrl);
-    }
-  } catch (_) {}
 
   return null;
 }

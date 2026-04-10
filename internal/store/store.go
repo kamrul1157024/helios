@@ -50,13 +50,34 @@ func (s *Store) migrate() error {
 			resolved_source TEXT,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
-		`CREATE TABLE IF NOT EXISTS hook_sessions (
-			claude_session_id TEXT PRIMARY KEY,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			session_id TEXT PRIMARY KEY,
+			source TEXT NOT NULL DEFAULT 'claude',
 			cwd TEXT NOT NULL,
+			project TEXT,
+			transcript_path TEXT,
+			model TEXT,
+			status TEXT NOT NULL DEFAULT 'active',
 			last_event TEXT,
 			last_event_at TEXT,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			tmux_pane TEXT,
+			tmux_pid INTEGER,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			ended_at TEXT
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source)`,
+		`CREATE TABLE IF NOT EXISTS subagents (
+			agent_id TEXT PRIMARY KEY,
+			parent_session_id TEXT NOT NULL,
+			agent_type TEXT,
+			description TEXT,
+			status TEXT NOT NULL DEFAULT 'active',
+			transcript_path TEXT,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			ended_at TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_subagents_parent ON subagents(parent_session_id)`,
 		`CREATE TABLE IF NOT EXISTS devices (
 			kid TEXT PRIMARY KEY,
 			name TEXT NOT NULL DEFAULT '',
@@ -81,6 +102,14 @@ func (s *Store) migrate() error {
 			device_kid TEXT,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS pairing_tokens (
+			token TEXT PRIMARY KEY,
+			status TEXT NOT NULL DEFAULT 'pending',
+			claimed_by TEXT,
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pairing_tokens_status ON pairing_tokens(status)`,
 	}
 
 	for _, m := range migrations {
@@ -96,6 +125,9 @@ func (s *Store) migrate() error {
 	}{
 		{"add_devices_platform", `ALTER TABLE devices ADD COLUMN platform TEXT NOT NULL DEFAULT ''`},
 		{"add_devices_browser", `ALTER TABLE devices ADD COLUMN browser TEXT NOT NULL DEFAULT ''`},
+		{"migrate_hook_sessions_to_sessions", `INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, status, last_event, last_event_at, created_at)
+			SELECT claude_session_id, 'claude', cwd, '', 'ended', last_event, last_event_at, created_at
+			FROM hook_sessions WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='hook_sessions')`},
 	}
 
 	for _, cm := range columnMigrations {

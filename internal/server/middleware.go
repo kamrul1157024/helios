@@ -16,8 +16,17 @@ const deviceKIDKey contextKey = "device_kid"
 
 const cookieName = "helios_token"
 
-// cookieAuthMiddleware reads JWT from the helios_token cookie.
+// cookieAuthMiddleware reads JWT from the helios_token cookie. Requires active device status.
 func cookieAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
+	return jwtCookieMiddleware(db, false)
+}
+
+// pendingOrActiveAuthMiddleware reads JWT from the helios_token cookie. Accepts pending or active devices.
+func pendingOrActiveAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
+	return jwtCookieMiddleware(db, true)
+}
+
+func jwtCookieMiddleware(db *store.Store, allowPending bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cookie, err := r.Cookie(cookieName)
@@ -27,9 +36,15 @@ func cookieAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
 			}
 
 			kid, err := auth.ValidateJWT(cookie.Value, func(kid string) (ed25519.PublicKey, error) {
-				device, err := db.GetActiveDevice(kid)
-				if err != nil {
-					return nil, err
+				var device *store.Device
+				var lookupErr error
+				if allowPending {
+					device, lookupErr = db.GetPendingOrActiveDevice(kid)
+				} else {
+					device, lookupErr = db.GetActiveDevice(kid)
+				}
+				if lookupErr != nil {
+					return nil, lookupErr
 				}
 				if device == nil {
 					return nil, fmt.Errorf("device not found or revoked")
