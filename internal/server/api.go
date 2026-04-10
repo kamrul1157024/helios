@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -474,15 +475,21 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
+		log.Printf("session-send: bad request for %s: %v", id, err)
 		jsonError(w, "missing message", http.StatusBadRequest)
 		return
 	}
 
+	log.Printf("session-send: session=%s message=%q", id, truncate(req.Message, 80))
+
 	session, err := s.shared.DB.GetSession(id)
 	if err != nil || session == nil {
+		log.Printf("session-send: session %s not found", id)
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
+
+	log.Printf("session-send: session=%s status=%s tmux_pane=%v", id, session.Status, session.TmuxPane)
 
 	if session.Status == "active" || session.Status == "waiting_permission" {
 		jsonResponse(w, http.StatusConflict, map[string]interface{}{
@@ -492,37 +499,49 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 	}
 
 	if session.Status == "ended" || session.Status == "suspended" {
-		// Resume in a new tmux pane
-		cmd := fmt.Sprintf("claude --resume %s", session.SessionID)
+		// Resume in a new tmux pane with the user's prompt
+		cmd := fmt.Sprintf("claude --resume %s -p %q", session.SessionID, req.Message)
 		paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
 		if err != nil {
+			log.Printf("session-send: failed to resume session %s: %v", id, err)
 			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
 			return
 		}
 		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
-		s.shared.DB.UpdateSessionStatus(id, "active", "RemoteResume")
-		// The prompt will be the --resume argument; for a new prompt we'd need to wait
-		// For now, respond success — the session will come alive via hooks
+		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+		log.Printf("session-send: resumed session %s in pane %s", id, paneID)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true, "resumed": true, "tmux_pane": paneID,
 		})
 		return
 	}
 
-	// Session is idle — send keys
+	// Session is idle — send keys to existing tmux pane
 	if session.TmuxPane == nil || *session.TmuxPane == "" {
-		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false, "error": "no_tmux_pane",
+		log.Printf("session-send: session %s is idle but has no tmux pane, resuming", id)
+		// No tmux pane — resume the session in a new pane with the prompt
+		cmd := fmt.Sprintf("claude --resume %s -p %q", session.SessionID, req.Message)
+		paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
+		if err != nil {
+			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
+			return
+		}
+		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
+		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success": true, "resumed": true, "tmux_pane": paneID,
 		})
 		return
 	}
 
 	if err := s.shared.Tmux.SendKeys(*session.TmuxPane, req.Message); err != nil {
+		log.Printf("session-send: SendKeys failed for pane %s: %v", *session.TmuxPane, err)
 		jsonError(w, fmt.Sprintf("failed to send: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+	log.Printf("session-send: sent keys to pane %s for session %s", *session.TmuxPane, id)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -635,6 +654,13 @@ func extractSessionID(path, suffix string) string {
 	path = strings.TrimPrefix(path, "/api/sessions/")
 	path = strings.TrimSuffix(path, suffix)
 	return path
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // ==================== Internal Server API ====================

@@ -232,6 +232,7 @@ class SSEService extends ChangeNotifier {
     if (_auth == null) return false;
     try {
       final resp = await _auth!.authPost('/api/sessions/$sessionId/send', body: {'message': message});
+      debugPrint('sendSessionPrompt: status=${resp.statusCode} body=${resp.body}');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;

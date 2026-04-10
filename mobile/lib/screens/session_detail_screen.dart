@@ -95,6 +95,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       _promptController.clear();
       await Future.delayed(const Duration(milliseconds: 500));
       await _loadTranscript();
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to send prompt'), duration: Duration(seconds: 2)),
+      );
     }
     if (mounted) setState(() => _sending = false);
   }
