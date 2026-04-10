@@ -1,0 +1,17 @@
+# Binary
+helios
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# helios data
+.helios/
