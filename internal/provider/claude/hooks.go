@@ -14,6 +14,8 @@ import (
 type hookInput struct {
 	SessionID             string          `json:"session_id"`
 	CWD                   string          `json:"cwd"`
+	TranscriptPath        string          `json:"transcript_path,omitempty"`
+	Model                 string          `json:"model,omitempty"`
 	ToolName              string          `json:"tool_name,omitempty"`
 	ToolInput             json.RawMessage `json:"tool_input,omitempty"`
 	PermissionSuggestions json.RawMessage `json:"permission_suggestions,omitempty"`
@@ -24,6 +26,10 @@ type hookInput struct {
 	RequestedSchema       json.RawMessage `json:"requested_schema,omitempty"`
 	URL                   string          `json:"url,omitempty"`
 	ElicitationID         string          `json:"elicitation_id,omitempty"`
+	// Subagent fields
+	AgentID     string `json:"agent_id,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // ==================== Permission Hook ====================
@@ -35,7 +41,8 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "PermissionRequest")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "waiting_permission", "PermissionRequest")
+	updateSessionTranscript(ctx, &input)
 
 	notifID := notifications.GenerateNotificationID()
 	detail := fmt.Sprintf("%s: %s", input.ToolName, summarizeToolInput(input.ToolInput))
@@ -74,6 +81,9 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	if decision == nil {
 		return
 	}
+
+	// Permission resolved — set session back to active
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PermissionResolved")
 
 	type permResponse struct {
 		HookSpecificOutput struct {
@@ -137,7 +147,8 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "AskUserQuestion")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "waiting_permission", "AskUserQuestion")
+	updateSessionTranscript(ctx, &input)
 
 	notifID := notifications.GenerateNotificationID()
 	title := "Claude has a question"
@@ -208,7 +219,8 @@ func handleElicitation(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "Elicitation")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "waiting_permission", "Elicitation")
+	updateSessionTranscript(ctx, &input)
 
 	notifID := notifications.GenerateNotificationID()
 	title := fmt.Sprintf("%s needs input", input.MCPServerName)
@@ -297,7 +309,8 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "Stop")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "idle", "Stop")
+	updateSessionTranscript(ctx, &input)
 
 	// Resolve any pending notifications for this session (approved from CLI)
 	resolvedIDs, _ := ctx.DB.ResolveSessionNotifications(input.SessionID, "resolved", "claude")
@@ -325,7 +338,11 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 	}
 	ctx.Mgr.CreateNotification(notif)
 
-	ctx.Notify("session_done", map[string]string{"session_id": input.SessionID, "cwd": input.CWD})
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"cwd":        input.CWD,
+		"status":     "idle",
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -338,7 +355,8 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "StopFailure")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "error", "StopFailure")
+	updateSessionTranscript(ctx, &input)
 
 	notifID := notifications.GenerateNotificationID()
 	lastDetail := ctx.DB.LastSessionDetail(input.SessionID)
@@ -359,7 +377,11 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 	}
 	ctx.Mgr.CreateNotification(notif)
 
-	ctx.Notify("session_error", map[string]string{"session_id": input.SessionID, "cwd": input.CWD})
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"cwd":        input.CWD,
+		"status":     "error",
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -372,7 +394,7 @@ func handleNotification(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "Notification")
+	updateSessionTranscript(ctx, &input)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -385,9 +407,32 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "SessionStart")
+	var transcriptPath *string
+	if input.TranscriptPath != "" {
+		transcriptPath = &input.TranscriptPath
+	}
+	var model *string
+	if input.Model != "" {
+		model = &input.Model
+	}
 
-	ctx.Notify("session_created", map[string]string{"session_id": input.SessionID, "cwd": input.CWD})
+	sess := &store.Session{
+		SessionID:      input.SessionID,
+		Source:         "claude",
+		CWD:            input.CWD,
+		TranscriptPath: transcriptPath,
+		Model:          model,
+		Status:         "active",
+		LastEvent:      strPtr("SessionStart"),
+	}
+	ctx.DB.UpsertSession(sess)
+
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"cwd":        input.CWD,
+		"status":     "active",
+		"model":      input.Model,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -400,9 +445,13 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		return
 	}
 
-	ctx.DB.UpsertHookSession(input.SessionID, input.CWD, "SessionEnd")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "ended", "SessionEnd")
 
-	ctx.Notify("session_done", map[string]string{"session_id": input.SessionID, "cwd": input.CWD})
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"cwd":        input.CWD,
+		"status":     "ended",
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -436,6 +485,72 @@ func waitForDecision(ctx *provider.HookContext, notifID string, r *http.Request)
 		ctx.Notify("notification_resolved", map[string]string{"id": notifID, "action": "resolved", "source": "claude"})
 		return nil
 	}
+}
+
+// ==================== Subagent Hooks ====================
+
+func handleSubagentStart(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	sub := &store.Subagent{
+		AgentID:         input.AgentID,
+		ParentSessionID: input.SessionID,
+		Status:          "active",
+	}
+	if input.AgentType != "" {
+		sub.AgentType = &input.AgentType
+	}
+	if input.Description != "" {
+		sub.Description = &input.Description
+	}
+	ctx.DB.CreateSubagent(sub)
+
+	ctx.Notify("subagent_status", map[string]interface{}{
+		"agent_id":          input.AgentID,
+		"parent_session_id": input.SessionID,
+		"agent_type":        input.AgentType,
+		"description":       input.Description,
+		"status":            "active",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+func handleSubagentStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSubagentStatus(input.AgentID, "completed")
+
+	ctx.Notify("subagent_status", map[string]interface{}{
+		"agent_id":          input.AgentID,
+		"parent_session_id": input.SessionID,
+		"status":            "completed",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+// ==================== Helpers ====================
+
+// updateSessionTranscript updates the transcript_path if provided in the hook input.
+func updateSessionTranscript(ctx *provider.HookContext, input *hookInput) {
+	if input.TranscriptPath != "" {
+		ctx.DB.UpdateSessionTranscriptPath(input.SessionID, input.TranscriptPath)
+	}
+}
+
+func strPtr(s string) *string {
+	return &s
 }
 
 func summarizeToolInput(raw json.RawMessage) string {

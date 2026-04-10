@@ -102,6 +102,28 @@ func hookConfig(port int) map[string]interface{} {
 					},
 				},
 			},
+			"SubagentStart": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/subagent/start",
+						},
+					},
+				},
+			},
+			"SubagentStop": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/subagent/stop",
+						},
+					},
+				},
+			},
 		},
 	}
 }

@@ -12,11 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/tmux"
 	"github.com/kamrul1157024/helios/internal/tunnel"
 )
 
@@ -62,6 +64,9 @@ func Start(cfg *Config) error {
 
 	// Shared state between both servers
 	shared := server.NewShared(db, mgr, pusher)
+
+	// Discover existing Claude sessions from transcript files + tmux
+	go discovery.DiscoverClaudeSessions(db, tmux.NewClient())
 
 	// Create tunnel manager
 	tunnelMgr := tunnel.NewManager()

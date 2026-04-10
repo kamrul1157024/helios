@@ -15,6 +15,8 @@ func Register() {
 	provider.RegisterHook("claude.notification", handleNotification)
 	provider.RegisterHook("claude.session.start", handleSessionStart)
 	provider.RegisterHook("claude.session.end", handleSessionEnd)
+	provider.RegisterHook("claude.subagent.start", handleSubagentStart)
+	provider.RegisterHook("claude.subagent.stop", handleSubagentStop)
 
 	// Action handlers (type matches notification.type)
 	provider.RegisterAction("claude.permission", handlePermissionAction)

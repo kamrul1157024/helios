@@ -1,13 +1,10 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
-import '../services/auth_service.dart';
 import '../services/sse_service.dart';
-import '../services/notification_service.dart';
-import 'setup_screen.dart';
+import 'session_detail_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -16,160 +13,68 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
-  late SSEService _sse;
-  StreamSubscription<SSEEvent>? _eventSub;
+class _DashboardScreenState extends State<DashboardScreen> {
   final Set<String> _selected = {};
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-
-    _sse = context.read<SSEService>();
-    final auth = context.read<AuthService>();
-    _sse.attach(auth);
-    _sse.fetchNotifications();
-    _sse.start();
-
-    NotificationService.instance.requestPermission();
-    NotificationService.instance.onAction = _handleNotificationAction;
-    _eventSub = _sse.events.listen(_handleSSEEvent);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _sse.fetchNotifications();
-    }
-  }
-
-  void _handleSSEEvent(SSEEvent event) {
-    if (event.type == 'notification' && event.data is Map) {
-      final data = event.data as Map;
-      final type = data['type']?.toString() ?? '';
-      final id = data['id']?.toString() ?? '';
-
-      if (type == 'claude.permission') {
-        NotificationService.instance.showPermissionNotification(
-          id: id,
-          toolName: data['title']?.toString() ?? 'Unknown tool',
-          detail: data['detail']?.toString() ?? 'Permission requested',
-        );
-      } else if (type == 'claude.question') {
-        NotificationService.instance.showNotification(
-          id: id,
-          title: 'Claude has a question',
-          body: data['detail']?.toString() ?? 'Answer required',
-        );
-      } else if (type.startsWith('claude.elicitation')) {
-        NotificationService.instance.showNotification(
-          id: id,
-          title: data['title']?.toString() ?? 'Input requested',
-          body: data['detail']?.toString() ?? 'Input required',
-        );
-      }
-    }
-  }
-
-  void _handleNotificationAction(String notificationId, String action) {
-    if (action == 'approve') {
-      _sse.sendAction(notificationId, {'action': 'approve'});
-    } else if (action == 'deny') {
-      _sse.sendAction(notificationId, {'action': 'deny'});
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _eventSub?.cancel();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('helios'),
-        centerTitle: true,
-        actions: [
-          Consumer<SSEService>(
-            builder: (_, sse, _) => Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Icon(
-                Icons.circle,
-                size: 10,
-                color: sse.connected ? Colors.green : Colors.grey,
-              ),
-            ),
-          ),
-          PopupMenuButton<String>(
-            onSelected: (value) async {
-              if (value == 'logout') {
-                _sse.stop();
-                final auth = context.read<AuthService>();
-                final nav = Navigator.of(context);
-                await auth.logout();
-                if (mounted) {
-                  nav.pushReplacement(
-                    MaterialPageRoute(builder: (_) => const SetupScreen()),
-                  );
-                }
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'logout', child: Text('Disconnect')),
+    return Consumer<SSEService>(
+      builder: (context, sse, _) {
+        final notifications = sse.notifications;
+
+        final pendingActions = notifications
+            .where((n) => registry.needsAction(n))
+            .toList();
+        final activeStatuses = notifications
+            .where((n) => n.isPending && !registry.needsAction(n))
+            .toList();
+        final resolved = notifications
+            .where((n) => !n.isPending)
+            .toList();
+
+        if (pendingActions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
+          return _buildEmptyState();
+        }
+
+        return RefreshIndicator(
+          onRefresh: sse.fetchNotifications,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (pendingActions.isNotEmpty)
+                _buildBatchActions(pendingActions),
+
+              if (pendingActions.isNotEmpty) ...[
+                _sectionHeader('Pending (${pendingActions.length})'),
+                ...pendingActions.map(_buildNotificationCard),
+                const SizedBox(height: 16),
+              ],
+
+              if (activeStatuses.isNotEmpty) ...[
+                _sectionHeader('Active Sessions'),
+                ...activeStatuses.map(_buildStatusCard),
+                const SizedBox(height: 16),
+              ],
+
+              if (resolved.isNotEmpty) ...[
+                _sectionHeader('History'),
+                ...resolved.map(_buildHistoryCard),
+              ],
             ],
           ),
-        ],
-      ),
-      body: Consumer<SSEService>(
-        builder: (context, sse, _) {
-          final notifications = sse.notifications;
+        );
+      },
+    );
+  }
 
-          final pendingActions = notifications
-              .where((n) => registry.needsAction(n))
-              .toList();
-          final activeStatuses = notifications
-              .where((n) => n.isPending && !registry.needsAction(n))
-              .toList();
-          final resolved = notifications
-              .where((n) => !n.isPending)
-              .toList();
-
-          if (pendingActions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
-            return _buildEmptyState();
-          }
-
-          return RefreshIndicator(
-            onRefresh: sse.fetchNotifications,
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                if (pendingActions.isNotEmpty)
-                  _buildBatchActions(pendingActions),
-
-                if (pendingActions.isNotEmpty) ...[
-                  _sectionHeader('Pending (${pendingActions.length})'),
-                  ...pendingActions.map(_buildNotificationCard),
-                  const SizedBox(height: 16),
-                ],
-
-                if (activeStatuses.isNotEmpty) ...[
-                  _sectionHeader('Active Sessions'),
-                  ...activeStatuses.map(_buildStatusCard),
-                  const SizedBox(height: 16),
-                ],
-
-                if (resolved.isNotEmpty) ...[
-                  _sectionHeader('History'),
-                  ...resolved.map(_buildHistoryCard),
-                ],
-              ],
-            ),
-          );
-        },
+  void _navigateToSession(String sourceSession) {
+    if (sourceSession.isEmpty) return;
+    final sse = context.read<SSEService>();
+    final match = sse.sessions.where((s) => s.sessionId == sourceSession);
+    if (match.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SessionDetailScreen(session: match.first),
       ),
     );
   }
@@ -177,9 +82,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   // ==================== Card Routing ====================
 
   Widget _buildNotificationCard(HeliosNotification n) {
+    final sse = context.read<SSEService>();
     final card = registry.buildCardForType(
       notification: n,
-      sse: _sse,
+      sse: sse,
       selected: _selected,
       onSelectionChanged: () => setState(() {}),
     );
@@ -230,6 +136,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Widget _buildBatchActions(List<HeliosNotification> pending) {
+    final sse = context.read<SSEService>();
     final permissionIds = pending.where((n) => n.isClaudePermission).map((n) => n.id).toList();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -238,7 +145,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           if (permissionIds.isNotEmpty)
             FilledButton.tonal(
               onPressed: () {
-                _sse.batchAction(permissionIds, {'action': 'approve'});
+                sse.batchAction(permissionIds, {'action': 'approve'});
               },
               child: Text('Approve All (${permissionIds.length})'),
             ),
@@ -246,7 +153,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             const SizedBox(width: 8),
             OutlinedButton(
               onPressed: () {
-                _sse.batchAction(_selected.toList(), {'action': 'approve'});
+                sse.batchAction(_selected.toList(), {'action': 'approve'});
                 setState(() => _selected.clear());
               },
               child: Text('Approve (${_selected.length})'),
@@ -258,6 +165,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   }
 
   Widget _buildStatusCard(HeliosNotification n) {
+    final sse = context.read<SSEService>();
     final isError = n.type.endsWith('.error');
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -271,6 +179,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         ),
       ),
       child: ListTile(
+        onTap: () => _navigateToSession(n.sourceSession),
         title: Row(
           children: [
             Container(
@@ -294,7 +203,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             const Spacer(),
             IconButton(
               icon: const Icon(Icons.close, size: 16),
-              onPressed: () => _sse.dismissNotification(n.id),
+              onPressed: () => sse.dismissNotification(n.id),
               constraints: const BoxConstraints(),
               padding: EdgeInsets.zero,
             ),
@@ -342,6 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       child: Opacity(
         opacity: 0.7,
         child: ListTile(
+          onTap: () => _navigateToSession(n.sourceSession),
           dense: true,
           title: Row(
             children: [

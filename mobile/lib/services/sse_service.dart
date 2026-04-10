@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/notification.dart';
+import '../models/session.dart';
+import '../models/message.dart';
 import 'auth_service.dart';
 
 class SSEService extends ChangeNotifier {
@@ -14,6 +16,8 @@ class SSEService extends ChangeNotifier {
 
   List<HeliosNotification> _notifications = [];
   List<HeliosNotification> get notifications => _notifications;
+  List<Session> _sessions = [];
+  List<Session> get sessions => _sessions;
   bool get connected => _connected;
 
   final _eventController = StreamController<SSEEvent>.broadcast();
@@ -118,6 +122,10 @@ class SSEService extends ChangeNotifier {
     _eventController.add(SSEEvent(type, data));
     // Refresh notifications on any event
     fetchNotifications();
+    // Refresh sessions on session events
+    if (type == 'session_status') {
+      fetchSessions();
+    }
   }
 
   void _scheduleReconnect() {
@@ -171,6 +179,107 @@ class SSEService extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Failed to batch action: $e');
+    }
+    return false;
+  }
+
+  // ==================== Session API ====================
+
+  Future<void> fetchSessions() async {
+    if (_auth == null || !_auth!.isAuthenticated) return;
+    try {
+      final resp = await _auth!.authGet('/api/sessions');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['sessions'] as List?) ?? [];
+        _sessions = list.map((s) => Session.fromJson(s)).toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch sessions: $e');
+    }
+  }
+
+  Future<TranscriptResult?> fetchTranscript(String sessionId, {int limit = 200, int offset = 0}) async {
+    if (_auth == null) return null;
+    try {
+      final resp = await _auth!.authGet('/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset');
+      if (resp.statusCode == 200) {
+        return TranscriptResult.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch transcript: $e');
+    }
+    return null;
+  }
+
+  Future<List<Subagent>> fetchSubagents(String sessionId) async {
+    if (_auth == null) return [];
+    try {
+      final resp = await _auth!.authGet('/api/sessions/$sessionId/subagents');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['subagents'] as List?) ?? [];
+        return list.map((s) => Subagent.fromJson(s)).toList();
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch subagents: $e');
+    }
+    return [];
+  }
+
+  Future<bool> sendSessionPrompt(String sessionId, String message) async {
+    if (_auth == null) return false;
+    try {
+      final resp = await _auth!.authPost('/api/sessions/$sessionId/send', body: {'message': message});
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to send prompt: $e');
+    }
+    return false;
+  }
+
+  Future<bool> stopSession(String sessionId) async {
+    if (_auth == null) return false;
+    try {
+      final resp = await _auth!.authPost('/api/sessions/$sessionId/stop');
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to stop session: $e');
+    }
+    return false;
+  }
+
+  Future<bool> suspendSession(String sessionId) async {
+    if (_auth == null) return false;
+    try {
+      final resp = await _auth!.authPost('/api/sessions/$sessionId/suspend');
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to suspend session: $e');
+    }
+    return false;
+  }
+
+  Future<bool> resumeSession(String sessionId) async {
+    if (_auth == null) return false;
+    try {
+      final resp = await _auth!.authPost('/api/sessions/$sessionId/resume');
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to resume session: $e');
     }
     return false;
   }
