@@ -1,14 +1,14 @@
-.PHONY: build frontend clean dev install uninstall test
+.PHONY: build clean install uninstall test
 .PHONY: apk apk-release apk-install apk-run apk-clean apk-device mobile
-.PHONY: release
+.PHONY: dmg dmg-dev release
 
 VERSION = 0.2.0
 REPO = kamrul1157024/helios
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
+DMG_PATH = helios.dmg
 
-build: frontend
-	touch frontend.go
+build:
 	go build -o helios ./cmd/helios/
 	codesign -s - -f ./helios
 
@@ -22,17 +22,8 @@ uninstall:
 	sudo rm -f /usr/local/bin/helios
 	@echo "helios removed from /usr/local/bin"
 
-frontend:
-	rm -rf frontend/dist
-	cd frontend && npm install && npm run build
-
 clean:
 	rm -f helios
-	rm -rf frontend/dist frontend/node_modules
-
-dev:
-	cd frontend && npm run dev &
-	go run ./cmd/helios/ daemon start
 
 test:
 	go test ./...
@@ -98,22 +89,47 @@ apk-clean:
 	cd mobile && flutter clean
 	@echo "Mobile build cleaned."
 
-## Full build: frontend + Go binary + APK
+## Full build: Go binary + APK
 mobile: build apk
 	@echo "All built: helios binary + mobile APK"
 
+# ─── macOS (Flutter Desktop) ───────────────────────────────────
+
+## Build macOS app and package as DMG
+dmg:
+	cd mobile && flutter build macos --release
+	./scripts/create-dmg.sh
+	mkdir -p ~/.helios
+	cp $(DMG_PATH) ~/.helios/helios.dmg
+	@echo "DMG: $(DMG_PATH)"
+	@echo "Copied to ~/.helios/helios.dmg"
+
+## Run macOS app in debug mode
+dmg-dev:
+	cd mobile && flutter run -d macos
+
 # ─── Release ─────────────────────────────────────────────────────
 
-## Create a GitHub release with the APK attached
+## Create a GitHub release with available artifacts (APK required, DMG optional)
 release: apk-release
 	@echo "Creating GitHub release v$(VERSION)..."
 	cp $(APK_RELEASE) helios.apk
+	@ASSETS="helios.apk"; \
+	if [ -f "$(DMG_PATH)" ]; then \
+		ASSETS="$$ASSETS $(DMG_PATH)"; \
+		echo "Including DMG in release"; \
+	else \
+		echo "DMG not found — releasing APK only (run 'make dmg' first to include it)"; \
+	fi; \
 	gh release create v$(VERSION) \
 		--repo $(REPO) \
 		--title "helios v$(VERSION)" \
-		--notes "Helios v$(VERSION) — orchestrate AI coding agents from your phone." \
-		helios.apk
+		--notes "Helios v$(VERSION) — orchestrate AI coding agents from your phone and desktop." \
+		$$ASSETS
 	rm -f helios.apk
 	@echo ""
 	@echo "Release created: https://github.com/$(REPO)/releases/tag/v$(VERSION)"
 	@echo "APK download:    https://github.com/$(REPO)/releases/download/v$(VERSION)/helios.apk"
+	@if [ -f "$(DMG_PATH)" ]; then \
+		echo "DMG download:    https://github.com/$(REPO)/releases/download/v$(VERSION)/helios.dmg"; \
+	fi

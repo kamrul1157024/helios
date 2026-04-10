@@ -557,8 +557,11 @@ func (s *PublicServer) handleAppDownload(w http.ResponseWriter, r *http.Request)
 // APKPath is set by daemon to the path of the local APK file.
 var APKPath string
 
-// APKDownloadURL is the GitHub release URL for the APK. Set at build time via ldflags.
-var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/latest/download/helios.apk"
+// APKDownloadURL is the GitHub release URL for the APK (pinned to version).
+var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/v0.2.0/helios.apk"
+
+// DMGDownloadURL is the GitHub release URL for the macOS DMG (pinned to version).
+var DMGDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/v0.2.0/helios.dmg"
 
 // ==================== Helpers ====================
 

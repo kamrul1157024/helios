@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"strings"
 
@@ -76,11 +75,14 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	return s
 }
 
-// NewPublicServer creates the tunnel-exposed server for frontend and API.
-func NewPublicServer(port int, shared *Shared, frontendFS fs.FS) *PublicServer {
+// NewPublicServer creates the tunnel-exposed server for API.
+func NewPublicServer(port int, shared *Shared) *PublicServer {
 	s := &PublicServer{shared: shared}
 
 	mux := http.NewServeMux()
+
+	// Landing page (no auth — download links, exact root path only)
+	mux.HandleFunc("GET /{$}", handleLanding)
 
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -128,12 +130,6 @@ func NewPublicServer(port int, shared *Shared, frontendFS fs.FS) *PublicServer {
 
 	// Wire protected routes through cookie auth middleware
 	mux.Handle("/api/", cookieAuth(protectedMux))
-
-	// Serve embedded frontend (SPA fallback) — behind cookie auth for page loads
-	if frontendFS != nil {
-		frontendHandler := ServeFrontend(frontendFS)
-		mux.Handle("/", frontendAuthMiddleware(shared.DB, frontendHandler))
-	}
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", port),

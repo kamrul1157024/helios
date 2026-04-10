@@ -8,20 +8,14 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
-	helios "github.com/kamrul1157024/helios"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/tui"
 )
 
 const version = "0.2.0"
-
-func init() {
-	daemon.FrontendFS = helios.FrontendFS()
-}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -151,12 +145,21 @@ func handleAuth(args []string) {
 
 	switch args[0] {
 	case "init":
-		// Generate a new setup QR via internal API
+		// Generate a new pairing QR via internal API
+		client := &http.Client{Timeout: 3 * time.Second}
+		tunnelURL := getTunnelURL(client, internalURL)
+		if tunnelURL == "" {
+			fmt.Println()
+			fmt.Println("  No tunnel active. Start a tunnel to connect devices:")
+			fmt.Println("    helios tunnel start --provider ngrok")
+			fmt.Println()
+			return
+		}
 		fmt.Println()
-		fmt.Println("  Helios Device Setup")
-		fmt.Println("  -------------------")
+		fmt.Println("  Helios Device Pairing")
+		fmt.Println("  ---------------------")
 		fmt.Println()
-		createAndShowQR(&http.Client{Timeout: 3 * time.Second}, internalURL)
+		showPairingQR(client, internalURL, tunnelURL)
 		fmt.Println()
 
 	case "devices":
@@ -434,70 +437,63 @@ func printDevices(client *http.Client, internalURL string) {
 		fmt.Println("  No devices registered.")
 	}
 
-	// Always show QRs for adding a device
+	// Check tunnel status — QRs require an active tunnel
+	tunnelURL := getTunnelURL(client, internalURL)
+	if tunnelURL == "" {
+		fmt.Println()
+		fmt.Println("  No tunnel active. Start a tunnel to connect devices:")
+		fmt.Println("    helios tunnel start --provider ngrok")
+		return
+	}
+
+	// QR 1: Download page (tunnel URL)
 	fmt.Println()
-	fmt.Println("  Scan to add a device:")
+	fmt.Println("  Download the app:")
 	fmt.Println()
-	createAndShowQR(client, internalURL)
+	auth.PrintQR(tunnelURL)
+	fmt.Printf("  %s\n", tunnelURL)
+
+	// QR 2: Device pairing
+	fmt.Println()
+	fmt.Println("  Pair a new device:")
+	fmt.Println()
+	showPairingQR(client, internalURL, tunnelURL)
 }
 
-func createDeviceKey(client *http.Client, internalURL string) (key, setupURL string, err error) {
+func getTunnelURL(client *http.Client, internalURL string) string {
+	resp, err := client.Get(internalURL + "/internal/tunnel/status")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var ts struct {
+		Active    bool   `json:"active"`
+		PublicURL string `json:"public_url"`
+	}
+	json.NewDecoder(resp.Body).Decode(&ts)
+	if ts.Active && ts.PublicURL != "" {
+		return ts.PublicURL
+	}
+	return ""
+}
+
+func showPairingQR(client *http.Client, internalURL string, tunnelURL string) {
 	resp, err := client.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
 	if err != nil {
-		return "", "", err
+		fmt.Fprintln(os.Stderr, "  Could not generate pairing QR")
+		return
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		Key      string `json:"key"`
-		SetupURL string `json:"setup_url"`
+		Key string `json:"key"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return result.Key, result.SetupURL, nil
-}
 
-func createAndShowQR(client *http.Client, internalURL string) {
-	// Generate two independent keys — one for the mobile app, one for the download page
-	appKey, appSetupURL, err := createDeviceKey(client, internalURL)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "  Could not generate setup QR")
-		return
-	}
-	dlKey, dlSetupURL, err := createDeviceKey(client, internalURL)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "  Could not generate download QR")
-		return
-	}
-
-	// QR 1: For the Flutter app's QR scanner (same https:// format)
-	if appSetupURL != "" {
-		fmt.Println("  Scan with helios app:")
-		fmt.Println()
-		auth.PrintQR(appSetupURL)
-		fmt.Printf("  %s\n", appSetupURL)
-	} else {
-		// Fallback if no tunnel
-		appURL := fmt.Sprintf("helios://setup?key=%s", appKey)
-		fmt.Println("  Scan with helios app:")
-		fmt.Println()
-		auth.PrintQR(appURL)
-		fmt.Printf("  %s\n", appURL)
-	}
-
-	// QR 2: Download page (scan with phone camera to get the APK)
-	if dlSetupURL != "" {
-		// Change the hash to #/download but pass key for auth
-		serverURL := dlSetupURL
-		if idx := strings.Index(dlSetupURL, "/#/"); idx >= 0 {
-			serverURL = dlSetupURL[:idx]
-		}
-		downloadURL := fmt.Sprintf("%s/#/setup?key=%s", serverURL, dlKey)
-		fmt.Println()
-		fmt.Println("  Download app (scan with phone camera):")
-		fmt.Println()
-		auth.PrintQR(downloadURL)
-		fmt.Printf("  %s\n", downloadURL)
-	}
+	payload := fmt.Sprintf("helios://setup?key=%s&server=%s", result.Key, tunnelURL)
+	auth.PrintQR(payload)
+	fmt.Printf("  %s\n", payload)
 }
 
 

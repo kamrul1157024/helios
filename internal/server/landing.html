@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helios</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0a; color: #e5e5e5;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  }
+  .container { max-width: 480px; width: 100%; padding: 2rem; text-align: center; }
+  h1 { font-size: 2rem; font-weight: 700; color: #fff; margin-bottom: 0.25rem; }
+  .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+  .downloads { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 2.5rem; }
+  .btn {
+    display: block; padding: 0.875rem 1.5rem; border-radius: 8px;
+    text-decoration: none; font-weight: 600; font-size: 0.95rem;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-primary { background: #3b82f6; color: #fff; }
+  .btn-secondary { background: #27272a; color: #e5e5e5; border: 1px solid #3f3f46; }
+  .btn .label { display: block; }
+  .btn .meta { display: block; font-size: 0.75rem; color: #a1a1aa; margin-top: 2px; font-weight: 400; }
+  .btn-primary .meta { color: #bfdbfe; }
+  .setup { text-align: left; background: #18181b; border-radius: 8px; padding: 1.25rem; }
+  .setup h2 { font-size: 0.85rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem; }
+  .setup ol { padding-left: 1.25rem; }
+  .setup li { font-size: 0.875rem; line-height: 1.6; color: #d4d4d8; }
+  .setup code { background: #27272a; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.8rem; color: #a78bfa; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Helios</h1>
+  <p class="subtitle">Orchestrate AI coding agents from your phone</p>
+  <div class="downloads">
+    <a href="{{APK_URL}}" class="btn btn-primary" download="helios.apk">
+      <span class="label">Download for Android</span>
+      <span class="meta">APK</span>
+    </a>
+    <a href="{{DMG_URL}}" class="btn btn-secondary" download="helios.dmg">
+      <span class="label">Download for macOS</span>
+      <span class="meta">DMG</span>
+    </a>
+  </div>
+  <div class="setup">
+    <h2>How to connect</h2>
+    <ol>
+      <li>Download and install the app</li>
+      <li>Run <code>helios start</code> in your terminal</li>
+      <li>Scan the pairing QR code from the app</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

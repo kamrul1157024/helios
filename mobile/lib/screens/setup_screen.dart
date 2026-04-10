@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
@@ -5,7 +6,10 @@ import '../services/auth_service.dart';
 import 'dashboard_screen.dart';
 
 class SetupScreen extends StatefulWidget {
-  const SetupScreen({super.key});
+  final String? deepLinkKey;
+  final String? deepLinkServer;
+
+  const SetupScreen({super.key, this.deepLinkKey, this.deepLinkServer});
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -13,10 +17,39 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   final _urlController = TextEditingController();
-  bool _scanning = true;
+  bool _scanning = !kIsWeb; // QR scanner on mobile, manual input on web
   bool _loading = false;
   String? _error;
   final List<String> _statusMessages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.deepLinkKey != null && widget.deepLinkServer != null) {
+      // Launched via helios:// deep link — auto-setup
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _doSetup(widget.deepLinkKey!, widget.deepLinkServer!);
+      });
+    } else if (kIsWeb) {
+      // On web, auto-setup from URL hash if key is present
+      _tryAutoSetupFromUrl();
+    }
+  }
+
+  void _tryAutoSetupFromUrl() {
+    final uri = Uri.base;
+    final fragment = uri.fragment; // everything after #
+    if (fragment.contains('key=')) {
+      final params = Uri.splitQueryString(
+        fragment.contains('?') ? fragment.split('?').last : fragment,
+      );
+      final key = params['key'];
+      if (key != null) {
+        final serverUrl = '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+        _doSetup(key, serverUrl);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -184,11 +217,13 @@ class _SetupScreenState extends State<SetupScreen> {
             onPressed: _handleManualSubmit,
             child: const Text('Connect'),
           ),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () => setState(() => _scanning = true),
-            child: const Text('Scan QR code instead'),
-          ),
+          if (!kIsWeb) ...[
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () => setState(() => _scanning = true),
+              child: const Text('Scan QR code instead'),
+            ),
+          ],
         ],
       ),
     );
@@ -335,7 +370,7 @@ class _SetupScreenState extends State<SetupScreen> {
                           _error = null;
                           _loading = false;
                           _statusMessages.clear();
-                          _scanning = true;
+                          _scanning = !kIsWeb;
                         });
                       },
                       child: const Text('Try Again'),
@@ -377,7 +412,6 @@ _ParsedSetup? _parseSetupUrl(String input) {
       final params = Uri.splitQueryString(queryPart);
       final key = params['key'];
       if (key != null) {
-        // Extract server URL (everything before the hash)
         final serverUrl = input.split('#')[0].replaceAll(RegExp(r'/$'), '');
         return _ParsedSetup(key, serverUrl);
       }

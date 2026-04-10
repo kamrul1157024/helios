@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/auth_service.dart';
@@ -53,15 +55,50 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
+  late AppLinks _appLinks;
+  String? _deepLinkKey;
+  String? _deepLinkServer;
+  StreamSubscription<Uri>? _linkSub;
+
   @override
   void initState() {
     super.initState();
+    _appLinks = AppLinks();
     _checkAuth();
+    _handleDeepLinks();
+  }
+
+  @override
+  void dispose() {
+    _linkSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _checkAuth() async {
     final auth = context.read<AuthService>();
     await auth.loadStoredCredentials();
+  }
+
+  Future<void> _handleDeepLinks() async {
+    // Handle link that launched the app
+    final initialUri = await _appLinks.getInitialLink();
+    if (initialUri != null) _processUri(initialUri);
+
+    // Handle links while app is running
+    _linkSub = _appLinks.uriLinkStream.listen(_processUri);
+  }
+
+  void _processUri(Uri uri) {
+    if (uri.scheme == 'helios' && uri.host == 'setup') {
+      final key = uri.queryParameters['key'];
+      final server = uri.queryParameters['server'];
+      if (key != null && server != null) {
+        setState(() {
+          _deepLinkKey = key;
+          _deepLinkServer = server;
+        });
+      }
+    }
   }
 
   @override
@@ -76,7 +113,10 @@ class _AuthGateState extends State<AuthGate> {
         if (auth.isAuthenticated) {
           return const DashboardScreen();
         }
-        return const SetupScreen();
+        return SetupScreen(
+          deepLinkKey: _deepLinkKey,
+          deepLinkServer: _deepLinkServer,
+        );
       },
     );
   }

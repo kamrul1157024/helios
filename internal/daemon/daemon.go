@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -19,9 +18,6 @@ import (
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tunnel"
 )
-
-// FrontendFS is set by main.go via go:embed
-var FrontendFS fs.FS
 
 func Start(cfg *Config) error {
 	if err := os.MkdirAll(HeliosDir(), 0755); err != nil {
@@ -75,7 +71,7 @@ func Start(cfg *Config) error {
 
 	// Create both servers
 	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
-	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared, FrontendFS)
+	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared)
 
 	// Write PID file
 	pidPath := filepath.Join(HeliosDir(), "daemon.pid")
