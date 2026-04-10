@@ -13,6 +13,7 @@ import (
 	helios "github.com/kamrul1157024/helios"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/tui"
 )
 
 const version = "0.2.0"
@@ -28,6 +29,10 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "setup":
+		handleSetup()
+	case "devices":
+		handleDevices()
 	case "daemon":
 		handleDaemon(os.Args[2:])
 	case "auth":
@@ -260,6 +265,22 @@ func handleAuth(args []string) {
 	}
 }
 
+func handleSetup() {
+	cfg, _ := daemon.LoadConfig()
+	if err := tui.RunSetup(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func handleDevices() {
+	cfg, _ := daemon.LoadConfig()
+	if err := tui.RunDevices(cfg.Server.InternalPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func handleHooks(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove>")
@@ -298,6 +319,9 @@ Usage:
   helios <command> [subcommand] [options]
 
 Commands:
+  setup                 Interactive setup wizard (TUI)
+  devices               Device management (TUI)
+
   daemon start [flags]  Start the helios daemon
                         -d                Run in background (daemonize)
                         --internal-port P Internal port (default: 7654)

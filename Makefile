@@ -3,6 +3,7 @@
 build: frontend
 	touch frontend.go
 	go build -o helios ./cmd/helios/
+	codesign -s - -f ./helios
 
 install: build
 	sudo cp helios /usr/local/bin/helios

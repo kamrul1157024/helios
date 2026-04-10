@@ -1,0 +1,150 @@
+package tui
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// client wraps HTTP calls to the internal admin API.
+type client struct {
+	baseURL    string
+	httpClient *http.Client
+}
+
+func newClient(internalPort int) *client {
+	return &client{
+		baseURL:    fmt.Sprintf("http://127.0.0.1:%d", internalPort),
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+type healthResponse struct {
+	Status       string `json:"status"`
+	InternalPort string `json:"internal_port"`
+	Pending      int    `json:"pending"`
+	SSEClients   int    `json:"sse_clients"`
+}
+
+func (c *client) health() (*healthResponse, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/internal/health")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r healthResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	return &r, nil
+}
+
+type tunnelStatusResponse struct {
+	Active    bool   `json:"active"`
+	Provider  string `json:"provider"`
+	PublicURL string `json:"public_url"`
+}
+
+func (c *client) tunnelStatus() (*tunnelStatusResponse, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/internal/tunnel/status")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r tunnelStatusResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	return &r, nil
+}
+
+type tunnelStartRequest struct {
+	Provider  string `json:"provider"`
+	CustomURL string `json:"custom_url,omitempty"`
+	LocalPort int    `json:"local_port,omitempty"`
+}
+
+type tunnelStartResponse struct {
+	PublicURL string `json:"public_url"`
+	Message   string `json:"message"`
+}
+
+func (c *client) tunnelStart(provider, customURL string, localPort int) (*tunnelStartResponse, error) {
+	body, _ := json.Marshal(tunnelStartRequest{
+		Provider:  provider,
+		CustomURL: customURL,
+		LocalPort: localPort,
+	})
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/tunnel/start", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	var r tunnelStartResponse
+	json.Unmarshal(data, &r)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("%s", r.Message)
+	}
+	return &r, nil
+}
+
+func (c *client) tunnelStop() error {
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/tunnel/stop", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+type deviceCreateResponse struct {
+	KID      string `json:"kid"`
+	Key      string `json:"key"`
+	SetupURL string `json:"setup_url"`
+}
+
+func (c *client) deviceCreate() (*deviceCreateResponse, error) {
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/device/create", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r deviceCreateResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	return &r, nil
+}
+
+type deviceInfo struct {
+	KID         string  `json:"kid"`
+	Name        string  `json:"name"`
+	Status      string  `json:"status"`
+	Platform    string  `json:"platform"`
+	Browser     string  `json:"browser"`
+	PushEnabled bool    `json:"push_enabled"`
+	LastSeenAt  *string `json:"last_seen_at"`
+}
+
+type deviceListResponse struct {
+	Devices []deviceInfo `json:"devices"`
+}
+
+func (c *client) deviceList() (*deviceListResponse, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/internal/device/list")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r deviceListResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	return &r, nil
+}
+
+func (c *client) deviceRevoke(kid string) error {
+	body, _ := json.Marshal(map[string]string{"kid": kid})
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/device/revoke", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
