@@ -30,7 +30,7 @@ type permissionResponse struct {
 	} `json:"hookSpecificOutput"`
 }
 
-func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 	var input hookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -38,7 +38,7 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Track session
-	s.db.UpsertHookSession(input.SessionID, input.CWD, "PermissionRequest")
+	s.shared.DB.UpsertHookSession(input.SessionID, input.CWD, "PermissionRequest")
 
 	// Create notification
 	notifID := notifications.GenerateNotificationID()
@@ -56,13 +56,13 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 		Detail:          &detail,
 	}
 
-	if err := s.mgr.CreateNotification(notif); err != nil {
+	if err := s.shared.Mgr.CreateNotification(notif); err != nil {
 		http.Error(w, "failed to create notification", http.StatusInternalServerError)
 		return
 	}
 
 	// Broadcast SSE
-	s.sse.Broadcast(SSEEvent{
+	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "notification",
 		Data: notif,
 	})
@@ -71,8 +71,8 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 	go sendDesktopNotification(detail)
 
 	// Web Push notification
-	if s.pusher != nil {
-		go s.pusher.SendToAll(push.PushPayload{
+	if s.shared.Pusher != nil {
+		go s.shared.Pusher.SendToAll(push.PushPayload{
 			Type:  "permission",
 			ID:    notifID,
 			Title: "Claude needs permission",
@@ -90,7 +90,7 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 
 	decisionCh := make(chan string, 1)
 	go func() {
-		decision, err := s.mgr.WaitForDecision(notifID)
+		decision, err := s.shared.Mgr.WaitForDecision(notifID)
 		if err != nil {
 			decisionCh <- "denied"
 			return
@@ -102,11 +102,11 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 	select {
 	case decision = <-decisionCh:
 	case <-timer.C:
-		s.mgr.CancelPending(notifID)
+		s.shared.Mgr.CancelPending(notifID)
 		decision = "denied"
 	case <-r.Context().Done():
-		s.mgr.CancelPendingFromClaude(notifID)
-		s.sse.Broadcast(SSEEvent{
+		s.shared.Mgr.CancelPendingFromClaude(notifID)
+		s.shared.SSE.Broadcast(SSEEvent{
 			Type: "notification_resolved",
 			Data: map[string]string{"id": notifID, "action": "dismissed", "source": "claude"},
 		})
@@ -127,17 +127,17 @@ func (s *Server) handlePermissionHook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (s *Server) handleStopHook(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handleStopHook(w http.ResponseWriter, r *http.Request) {
 	var input hookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	s.db.UpsertHookSession(input.SessionID, input.CWD, "Stop")
+	s.shared.DB.UpsertHookSession(input.SessionID, input.CWD, "Stop")
 
 	notifID := notifications.GenerateNotificationID()
-	lastDetail := s.db.LastSessionDetail(input.SessionID)
+	lastDetail := s.shared.DB.LastSessionDetail(input.SessionID)
 	detail := "Claude session completed"
 	if lastDetail != "" {
 		detail = "Session completed — last action: " + lastDetail
@@ -150,9 +150,9 @@ func (s *Server) handleStopHook(w http.ResponseWriter, r *http.Request) {
 		Status:          "dismissed",
 		Detail:          &detail,
 	}
-	s.mgr.CreateNotification(notif)
+	s.shared.Mgr.CreateNotification(notif)
 
-	s.sse.Broadcast(SSEEvent{
+	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "session_done",
 		Data: map[string]string{"session_id": input.SessionID, "cwd": input.CWD},
 	})
@@ -161,17 +161,17 @@ func (s *Server) handleStopHook(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, `{}`)
 }
 
-func (s *Server) handleStopFailureHook(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handleStopFailureHook(w http.ResponseWriter, r *http.Request) {
 	var input hookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	s.db.UpsertHookSession(input.SessionID, input.CWD, "StopFailure")
+	s.shared.DB.UpsertHookSession(input.SessionID, input.CWD, "StopFailure")
 
 	notifID := notifications.GenerateNotificationID()
-	lastDetail := s.db.LastSessionDetail(input.SessionID)
+	lastDetail := s.shared.DB.LastSessionDetail(input.SessionID)
 	detail := "Claude session stopped with an error"
 	if lastDetail != "" {
 		detail = "Session error — last action: " + lastDetail
@@ -184,9 +184,9 @@ func (s *Server) handleStopFailureHook(w http.ResponseWriter, r *http.Request) {
 		Status:          "pending",
 		Detail:          &detail,
 	}
-	s.mgr.CreateNotification(notif)
+	s.shared.Mgr.CreateNotification(notif)
 
-	s.sse.Broadcast(SSEEvent{
+	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "session_error",
 		Data: map[string]string{"session_id": input.SessionID, "cwd": input.CWD},
 	})
@@ -195,50 +195,30 @@ func (s *Server) handleStopFailureHook(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, `{}`)
 }
 
-func (s *Server) handleNotificationHook(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handleNotificationHook(w http.ResponseWriter, r *http.Request) {
 	var input hookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	s.db.UpsertHookSession(input.SessionID, input.CWD, "Notification")
-
-	notifID := notifications.GenerateNotificationID()
-	lastDetail := s.db.LastSessionDetail(input.SessionID)
-	detail := "Claude is waiting for input"
-	if lastDetail != "" {
-		detail = "Waiting for input — last action: " + lastDetail
-	}
-	notif := &store.Notification{
-		ID:              notifID,
-		ClaudeSessionID: input.SessionID,
-		CWD:             input.CWD,
-		Type:            "idle",
-		Status:          "pending",
-		Detail:          &detail,
-	}
-	s.mgr.CreateNotification(notif)
-
-	s.sse.Broadcast(SSEEvent{
-		Type: "notification",
-		Data: notif,
-	})
+	// Just track session activity, don't create a notification — idle prompts are noise
+	s.shared.DB.UpsertHookSession(input.SessionID, input.CWD, "Notification")
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
 
-func (s *Server) handleSessionStartHook(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handleSessionStartHook(w http.ResponseWriter, r *http.Request) {
 	var input hookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	s.db.UpsertHookSession(input.SessionID, input.CWD, "SessionStart")
+	s.shared.DB.UpsertHookSession(input.SessionID, input.CWD, "SessionStart")
 
-	s.sse.Broadcast(SSEEvent{
+	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "session_created",
 		Data: map[string]string{"session_id": input.SessionID, "cwd": input.CWD},
 	})
@@ -247,16 +227,16 @@ func (s *Server) handleSessionStartHook(w http.ResponseWriter, r *http.Request) 
 	fmt.Fprint(w, `{}`)
 }
 
-func (s *Server) handleSessionEndHook(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handleSessionEndHook(w http.ResponseWriter, r *http.Request) {
 	var input hookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	s.db.UpsertHookSession(input.SessionID, input.CWD, "SessionEnd")
+	s.shared.DB.UpsertHookSession(input.SessionID, input.CWD, "SessionEnd")
 
-	s.sse.Broadcast(SSEEvent{
+	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "session_done",
 		Data: map[string]string{"session_id": input.SessionID, "cwd": input.CWD},
 	})

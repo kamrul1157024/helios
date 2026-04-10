@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/tunnel"
 )
 
 // FrontendFS is set by main.go via go:embed
@@ -40,7 +42,16 @@ func Start(cfg *Config) error {
 	}
 	pusher := push.NewSender(db, vapidKeys)
 
-	srv := server.New(cfg.Server.Bind, cfg.Server.Port, db, mgr, cfg.Auth.Enabled, cfg.Auth.SkipLocal, FrontendFS, pusher)
+	// Shared state between both servers
+	shared := server.NewShared(db, mgr, pusher)
+
+	// Create tunnel manager
+	tunnelMgr := tunnel.NewManager()
+	server.TunnelManager = tunnelMgr
+
+	// Create both servers
+	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
+	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared, FrontendFS)
 
 	// Write PID file
 	pidPath := filepath.Join(HeliosDir(), "daemon.pid")
@@ -49,21 +60,53 @@ func Start(cfg *Config) error {
 	}
 	defer os.Remove(pidPath)
 
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Bind, cfg.Server.Port)
-	fmt.Printf("helios daemon starting on %s\n", addr)
+	fmt.Printf("helios daemon starting\n")
+	fmt.Printf("  internal: 127.0.0.1:%d (hooks + admin)\n", cfg.Server.InternalPort)
+	fmt.Printf("  public:   0.0.0.0:%d (frontend + API)\n", cfg.Server.PublicPort)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Auto-start tunnel if configured
+	if cfg.Tunnel.Provider != "" {
+		go func() {
+			url, err := tunnelMgr.Start(cfg.Tunnel.Provider, cfg.Tunnel.CustomURL, cfg.Server.PublicPort)
+			if err != nil {
+				log.Printf("tunnel auto-start failed: %v", err)
+			} else {
+				fmt.Printf("  tunnel:   %s (%s)\n", url, cfg.Tunnel.Provider)
+			}
+		}()
+	}
+
+	// Start both servers
+	errCh := make(chan error, 2)
+
 	go func() {
-		<-ctx.Done()
-		fmt.Println("\nShutting down...")
-		srv.Shutdown(context.Background())
+		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("internal server: %w", err)
+		}
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("server error: %w", err)
+	go func() {
+		if err := publicSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("public server: %w", err)
+		}
+	}()
+
+	// Wait for shutdown or error
+	select {
+	case <-ctx.Done():
+		fmt.Println("\nShutting down...")
+	case err := <-errCh:
+		fmt.Printf("Server error: %v\n", err)
 	}
+
+	// Graceful shutdown
+	shutdownCtx := context.Background()
+	tunnelMgr.Stop()
+	internalSrv.Shutdown(shutdownCtx)
+	publicSrv.Shutdown(shutdownCtx)
 
 	fmt.Println("helios daemon stopped")
 	return nil

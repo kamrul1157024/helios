@@ -1,16 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	helios "github.com/kamrul1157024/helios"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func init() {
 	daemon.FrontendFS = helios.FrontendFS()
@@ -63,11 +68,18 @@ func handleDaemon(args []string) {
 				if i+1 < len(args[1:]) {
 					cfg.Server.Bind = args[i+2]
 				}
-			case "--port":
+			case "--internal-port":
 				if i+1 < len(args[1:]) {
 					p, err := strconv.Atoi(args[i+2])
 					if err == nil {
-						cfg.Server.Port = p
+						cfg.Server.InternalPort = p
+					}
+				}
+			case "--public-port":
+				if i+1 < len(args[1:]) {
+					p, err := strconv.Atoi(args[i+2])
+					if err == nil {
+						cfg.Server.PublicPort = p
 					}
 				}
 			}
@@ -120,32 +132,128 @@ func handleAuth(args []string) {
 		os.Exit(1)
 	}
 
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
 	switch args[0] {
 	case "init":
-		name := "Device"
-		for i, a := range args[1:] {
-			if a == "--name" && i+1 < len(args[1:]) {
-				name = args[i+2]
+		// Create device via internal API
+		resp, err := http.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: daemon not running? %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+
+		var result struct {
+			KID      string `json:"kid"`
+			Key      string `json:"key"`
+			SetupURL string `json:"setup_url"`
+		}
+		json.NewDecoder(resp.Body).Decode(&result)
+
+		payload := fmt.Sprintf("helios://setup?key=%s&kid=%s&v=1", result.Key, result.KID)
+
+		fmt.Println()
+		fmt.Println("  Helios Device Setup")
+		fmt.Println("  -------------------")
+		fmt.Println()
+		fmt.Println("  Scan this QR code with your phone:")
+		fmt.Println()
+
+		if result.SetupURL != "" {
+			// QR encodes the full HTTPS setup URL for the tunnel
+			if err := auth.PrintQR(result.SetupURL); err != nil {
+				fmt.Printf("  (QR generation failed: %v)\n", err)
 			}
+			fmt.Println()
+			fmt.Printf("  Setup URL: %s\n", result.SetupURL)
+		} else {
+			// No tunnel — encode the helios:// payload
+			if err := auth.PrintQR(payload); err != nil {
+				fmt.Printf("  (QR generation failed: %v)\n", err)
+			}
+			fmt.Println()
+			fmt.Println("  Or copy this setup string:")
+			fmt.Printf("  %s\n", payload)
 		}
-		if err := auth.InitDevice(name); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+
+		fmt.Println()
+		fmt.Printf("  Key ID: %s\n", result.KID)
+		fmt.Println()
+
 	case "devices":
-		if err := auth.ListDevices(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		resp, err := http.Get(internalURL + "/internal/device/list")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: daemon not running? %v\n", err)
 			os.Exit(1)
 		}
+		defer resp.Body.Close()
+
+		var result struct {
+			Devices []struct {
+				KID        string  `json:"kid"`
+				Name       string  `json:"name"`
+				Status     string  `json:"status"`
+				Platform   string  `json:"platform"`
+				Browser    string  `json:"browser"`
+				PushEnabled bool   `json:"push_enabled"`
+				LastSeenAt *string `json:"last_seen_at"`
+			} `json:"devices"`
+		}
+		json.NewDecoder(resp.Body).Decode(&result)
+
+		if len(result.Devices) == 0 {
+			fmt.Println("No devices registered. Run: helios auth init")
+			return
+		}
+
+		fmt.Printf("%-14s %-25s %-10s %-10s %-10s %s\n", "Key ID", "Name", "Status", "Platform", "Push", "Last Seen")
+		fmt.Println("--------------------------------------------------------------------------------------------")
+
+		for _, d := range result.Devices {
+			lastSeen := "never"
+			if d.LastSeenAt != nil {
+				t, err := time.Parse(time.RFC3339, *d.LastSeenAt)
+				if err == nil {
+					lastSeen = humanDuration(time.Since(t))
+				}
+			}
+			pushStr := "off"
+			if d.PushEnabled {
+				pushStr = "on"
+			}
+			name := d.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			fmt.Printf("%-14s %-25s %-10s %-10s %-10s %s\n", d.KID, name, d.Status, d.Platform, pushStr, lastSeen)
+		}
+
 	case "revoke":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Usage: helios auth revoke <kid>")
 			os.Exit(1)
 		}
-		if err := auth.RevokeDevice(args[1]); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		body, _ := json.Marshal(map[string]string{"kid": args[1]})
+		resp, err := http.Post(internalURL+"/internal/device/revoke", "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: daemon not running? %v\n", err)
 			os.Exit(1)
 		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		var result struct {
+			Revoked bool   `json:"revoked"`
+			Message string `json:"message"`
+		}
+		json.Unmarshal(data, &result)
+		if result.Revoked {
+			fmt.Printf("Device %q revoked\n", args[1])
+		} else {
+			fmt.Fprintf(os.Stderr, "Failed to revoke device: %s\n", result.Message)
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown auth command: %s\n", args[0])
 		os.Exit(1)
@@ -191,13 +299,13 @@ Usage:
 
 Commands:
   daemon start [flags]  Start the helios daemon
-                        -d           Run in background (daemonize)
-                        --bind ADDR  Bind address (default: localhost)
-                        --port PORT  Port number (default: 7654)
+                        -d                Run in background (daemonize)
+                        --internal-port P Internal port (default: 7654)
+                        --public-port P   Public port (default: 7655)
   daemon stop           Stop the running daemon
   daemon status         Show daemon status
 
-  auth init [--name N]  Generate device keypair and QR code
+  auth init             Generate device keypair and show QR code
   auth devices          List trusted devices
   auth revoke <kid>     Revoke a device
 
@@ -208,4 +316,17 @@ Commands:
 
   version               Show version
   help                  Show this help`)
+}
+
+func humanDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }

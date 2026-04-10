@@ -57,12 +57,16 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS devices (
 			kid TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
+			name TEXT NOT NULL DEFAULT '',
 			public_key TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'active',
+			status TEXT NOT NULL DEFAULT 'pending',
+			platform TEXT NOT NULL DEFAULT '',
+			browser TEXT NOT NULL DEFAULT '',
 			last_seen_at TEXT,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
+		// Migration: add platform/browser columns if missing (for existing DBs)
+		`CREATE TABLE IF NOT EXISTS _migrations (id TEXT PRIMARY KEY)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_claude_session ON notifications(claude_session_id)`,
@@ -81,6 +85,26 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(m); err != nil {
 			return fmt.Errorf("exec migration: %w", err)
 		}
+	}
+
+	// Column migrations for existing DBs
+	columnMigrations := []struct {
+		id  string
+		sql string
+	}{
+		{"add_devices_platform", `ALTER TABLE devices ADD COLUMN platform TEXT NOT NULL DEFAULT ''`},
+		{"add_devices_browser", `ALTER TABLE devices ADD COLUMN browser TEXT NOT NULL DEFAULT ''`},
+	}
+
+	for _, cm := range columnMigrations {
+		var exists int
+		s.db.QueryRow(`SELECT COUNT(*) FROM _migrations WHERE id = ?`, cm.id).Scan(&exists)
+		if exists > 0 {
+			continue
+		}
+		// Ignore error — column may already exist from fresh schema
+		s.db.Exec(cm.sql)
+		s.db.Exec(`INSERT OR IGNORE INTO _migrations (id) VALUES (?)`, cm.id)
 	}
 
 	return nil

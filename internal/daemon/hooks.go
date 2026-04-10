@@ -84,7 +84,7 @@ func hookConfig(port int) map[string]interface{} {
 
 func InstallHooks(local bool) error {
 	cfg := DefaultConfig()
-	hooks := hookConfig(cfg.Server.Port)
+	hooks := hookConfig(cfg.Server.InternalPort)
 
 	var settingsPath string
 	if local {
@@ -123,7 +123,7 @@ func InstallHooks(local bool) error {
 
 func ShowHooks() {
 	cfg := DefaultConfig()
-	hooks := hookConfig(cfg.Server.Port)
+	hooks := hookConfig(cfg.Server.InternalPort)
 	out, _ := json.MarshalIndent(hooks, "", "  ")
 	fmt.Println(string(out))
 }

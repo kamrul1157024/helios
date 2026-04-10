@@ -1,8 +1,6 @@
-import { getAuthHeader } from './auth';
-
 /**
  * Register the service worker and subscribe to Web Push notifications.
- * Call this after setup is complete and the user has a stored key.
+ * Uses cookie-based auth — browser sends HttpOnly cookie automatically.
  */
 
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
@@ -34,18 +32,16 @@ export async function subscribeToPush(): Promise<boolean> {
 
   const reg = await navigator.serviceWorker.ready;
 
-  // Fetch VAPID public key from daemon
-  const vapidResp = await fetch('/api/push/vapid-public-key');
+  // Fetch VAPID public key from daemon (cookie sent automatically)
+  const vapidResp = await fetch('/api/push/vapid-public-key', { credentials: 'same-origin' });
   if (!vapidResp.ok) {
     console.error('Failed to fetch VAPID key');
     return false;
   }
   const { public_key } = await vapidResp.json();
 
-  // Convert base64url VAPID key to Uint8Array for subscribe()
   const applicationServerKey = urlBase64ToUint8Array(public_key);
 
-  // Subscribe via Push API — browser contacts FCM/Mozilla and returns an endpoint
   const subscription = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: applicationServerKey.buffer as ArrayBuffer,
@@ -53,21 +49,11 @@ export async function subscribeToPush(): Promise<boolean> {
 
   const subJSON = subscription.toJSON();
 
-  // Send subscription to daemon so it can push to us later
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  try {
-    const auth = await getAuthHeader();
-    headers['Authorization'] = auth;
-  } catch {
-    // localhost — no auth needed
-  }
-
+  // Send subscription to daemon (cookie sent automatically)
   const resp = await fetch('/api/push/subscribe', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     body: JSON.stringify({
       endpoint: subJSON.endpoint,
       keys: {
@@ -108,21 +94,11 @@ export async function unsubscribeFromPush(): Promise<boolean> {
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
 
-    // Tell daemon to remove subscription
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    try {
-      const auth = await getAuthHeader();
-      headers['Authorization'] = auth;
-    } catch {
-      // localhost
-    }
-
+    // Tell daemon to remove subscription (cookie sent automatically)
     await fetch('/api/push/unsubscribe', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ endpoint }),
     });
 

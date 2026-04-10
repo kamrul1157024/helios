@@ -1,24 +1,16 @@
-import { getAuthHeader, hasKey } from './auth';
-
 const BASE = '';
 
+// Cookie-based auth: browser sends HttpOnly cookie automatically.
+// No need to set Authorization headers.
 async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const headers = new Headers(options.headers);
-
-  try {
-    const auth = await getAuthHeader();
-    headers.set('Authorization', auth);
-  } catch {
-    // No key stored — will get 401 from server if remote
-  }
-
-  const resp = await fetch(`${BASE}${path}`, { ...options, headers });
+  const resp = await fetch(`${BASE}${path}`, {
+    ...options,
+    credentials: 'same-origin', // Send cookies
+  });
 
   if (resp.status === 401) {
-    const keyExists = await hasKey();
-    if (!keyExists) {
-      window.location.hash = '#/';
-    }
+    // Redirect to setup
+    window.location.hash = '#/setup';
   }
 
   return resp;
@@ -68,13 +60,37 @@ export async function batchAction(ids: string[], action: 'approve' | 'deny'): Pr
   });
 }
 
-export async function verifyAuth(): Promise<boolean> {
+export async function login(token: string): Promise<{ success: boolean; kid: string }> {
+  const resp = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+    credentials: 'same-origin',
+  });
+  return resp.json();
+}
+
+export async function getDeviceMe(): Promise<{
+  kid: string;
+  name: string;
+  platform: string;
+  browser: string;
+} | null> {
   try {
-    const resp = await authFetch('/api/auth/verify', { method: 'POST' });
-    return resp.ok;
+    const resp = await authFetch('/api/auth/device/me');
+    if (!resp.ok) return null;
+    return resp.json();
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function updateDeviceMe(name: string, platform: string, browser: string): Promise<void> {
+  await authFetch('/api/auth/device/me', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, platform, browser }),
+  });
 }
 
 export async function healthCheck(): Promise<{ status: string; sse_clients: number; pending: number }> {

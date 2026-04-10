@@ -12,25 +12,44 @@ import (
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
-type Server struct {
-	httpServer *http.Server
-	db         *store.Store
-	mgr        *notifications.Manager
-	sse        *SSEBroadcaster
-	pusher     *push.Sender
+// Shared holds shared dependencies between internal and public servers.
+type Shared struct {
+	DB     *store.Store
+	Mgr    *notifications.Manager
+	SSE    *SSEBroadcaster
+	Pusher *push.Sender
 }
 
-func New(bind string, port int, db *store.Store, mgr *notifications.Manager, authEnabled, skipLocal bool, frontendFS fs.FS, pusher *push.Sender) *Server {
-	s := &Server{
-		db:     db,
-		mgr:    mgr,
-		sse:    NewSSEBroadcaster(),
-		pusher: pusher,
+// InternalServer handles hooks (Claude) and admin API (CLI).
+// Binds to 127.0.0.1 only. No auth required.
+type InternalServer struct {
+	httpServer *http.Server
+	shared     *Shared
+}
+
+// PublicServer handles the frontend, push API, and notification actions.
+// Binds to 0.0.0.0, exposed via tunnel. Cookie-based JWT auth.
+type PublicServer struct {
+	httpServer *http.Server
+	shared     *Shared
+}
+
+func NewShared(db *store.Store, mgr *notifications.Manager, pusher *push.Sender) *Shared {
+	return &Shared{
+		DB:     db,
+		Mgr:    mgr,
+		SSE:    NewSSEBroadcaster(),
+		Pusher: pusher,
 	}
+}
+
+// NewInternalServer creates the localhost-only server for hooks and admin API.
+func NewInternalServer(port int, shared *Shared) *InternalServer {
+	s := &InternalServer{shared: shared}
 
 	mux := http.NewServeMux()
 
-	// Hook endpoints (no auth — localhost only from Claude)
+	// Hook endpoints (Claude hooks — no auth, localhost only)
 	mux.HandleFunc("POST /hooks/permission", s.handlePermissionHook)
 	mux.HandleFunc("POST /hooks/stop", s.handleStopHook)
 	mux.HandleFunc("POST /hooks/stop-failure", s.handleStopFailureHook)
@@ -38,23 +57,48 @@ func New(bind string, port int, db *store.Store, mgr *notifications.Manager, aut
 	mux.HandleFunc("POST /hooks/session-start", s.handleSessionStartHook)
 	mux.HandleFunc("POST /hooks/session-end", s.handleSessionEndHook)
 
+	// Internal admin API (CLI — no auth, localhost only)
+	mux.HandleFunc("GET /internal/health", s.handleInternalHealth)
+	mux.HandleFunc("GET /internal/tunnel/status", s.handleTunnelStatus)
+	mux.HandleFunc("POST /internal/tunnel/start", s.handleTunnelStart)
+	mux.HandleFunc("POST /internal/tunnel/stop", s.handleTunnelStop)
+	mux.HandleFunc("POST /internal/device/create", s.handleDeviceCreate)
+	mux.HandleFunc("GET /internal/device/list", s.handleDeviceList)
+	mux.HandleFunc("POST /internal/device/revoke", s.handleDeviceRevoke)
+
+	s.httpServer = &http.Server{
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
+		Handler: mux,
+	}
+
+	return s
+}
+
+// NewPublicServer creates the tunnel-exposed server for frontend and API.
+func NewPublicServer(port int, shared *Shared, frontendFS fs.FS) *PublicServer {
+	s := &PublicServer{shared: shared}
+
+	mux := http.NewServeMux()
+
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
-	mux.HandleFunc("POST /api/auth/verify", s.handleVerifyAuth)
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 
 	// Auth-protected API endpoints
-	authMw := authMiddleware(db, authEnabled, skipLocal)
+	cookieAuth := cookieAuthMiddleware(shared.DB)
 
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("GET /api/push/vapid-public-key", s.handleVAPIDPublicKey)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
-	protectedMux.Handle("GET /api/events", s.sse)
+	protectedMux.Handle("GET /api/events", shared.SSE)
 	protectedMux.HandleFunc("GET /api/auth/devices", s.handleListDevices)
+	protectedMux.HandleFunc("GET /api/auth/device/me", s.handleDeviceMe)
+	protectedMux.HandleFunc("POST /api/auth/device/me", s.handleUpdateDeviceMe)
 	protectedMux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
 	protectedMux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
 
-	// Dynamic path handlers need manual routing
+	// Dynamic path handlers
 	protectedMux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
@@ -77,44 +121,35 @@ func New(bind string, port int, db *store.Store, mgr *notifications.Manager, aut
 		}
 	})
 
-	// Wire protected routes through auth middleware
-	mux.Handle("/api/", authMw(protectedMux))
+	// Wire protected routes through cookie auth middleware
+	mux.Handle("/api/", cookieAuth(protectedMux))
 
-	// Serve embedded frontend (SPA fallback)
+	// Serve embedded frontend (SPA fallback) — behind cookie auth for page loads
 	if frontendFS != nil {
-		mux.Handle("/", ServeFrontend(frontendFS))
+		frontendHandler := ServeFrontend(frontendFS)
+		mux.Handle("/", frontendAuthMiddleware(shared.DB, frontendHandler))
 	}
 
-	// CORS wrapper
-	handler := corsMiddleware(mux)
-
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", bind, port),
-		Handler: handler,
+		Addr:    fmt.Sprintf("0.0.0.0:%d", port),
+		Handler: mux,
 	}
 
 	return s
 }
 
-func (s *Server) ListenAndServe() error {
+func (s *InternalServer) ListenAndServe() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func (s *Server) Shutdown(ctx context.Context) error {
+func (s *InternalServer) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+func (s *PublicServer) ListenAndServe() error {
+	return s.httpServer.ListenAndServe()
+}
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+func (s *PublicServer) Shutdown(ctx context.Context) error {
+	return s.httpServer.Shutdown(ctx)
 }

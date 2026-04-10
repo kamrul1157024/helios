@@ -15,7 +15,7 @@ type pushSubscribeRequest struct {
 	} `json:"keys"`
 }
 
-func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
+func (s *PublicServer) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	var req pushSubscribeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -39,7 +39,7 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		DeviceKID: deviceKID,
 	}
 
-	if err := s.db.CreatePushSubscription(sub); err != nil {
+	if err := s.shared.DB.CreatePushSubscription(sub); err != nil {
 		jsonError(w, "failed to save subscription", http.StatusInternalServerError)
 		return
 	}
@@ -50,7 +50,7 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
+func (s *PublicServer) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Endpoint string `json:"endpoint"`
 	}
@@ -59,7 +59,7 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.DeletePushSubscription(req.Endpoint); err != nil {
+	if err := s.shared.DB.DeletePushSubscription(req.Endpoint); err != nil {
 		jsonError(w, "failed to remove subscription", http.StatusInternalServerError)
 		return
 	}
@@ -69,13 +69,13 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleVAPIDPublicKey(w http.ResponseWriter, r *http.Request) {
-	if s.pusher == nil {
+func (s *PublicServer) handleVAPIDPublicKey(w http.ResponseWriter, r *http.Request) {
+	if s.shared.Pusher == nil {
 		jsonError(w, "push not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"public_key": s.pusher.VAPIDPublicKey(),
+		"public_key": s.shared.Pusher.VAPIDPublicKey(),
 	})
 }

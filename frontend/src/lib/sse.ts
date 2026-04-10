@@ -1,5 +1,3 @@
-import { getAuthHeader } from './auth';
-
 export type SSEEventType =
   | 'notification'
   | 'notification_resolved'
@@ -17,11 +15,10 @@ export function connectSSE(callback: SSECallback): () => void {
 
   async function connect() {
     try {
-      const authHeader = await getAuthHeader();
-
+      // Cookie-based auth: browser sends HttpOnly cookie automatically
       const resp = await fetch('/api/events', {
-        headers: { Authorization: authHeader },
         signal: abortController.signal,
+        credentials: 'same-origin',
       });
 
       if (!resp.ok || !resp.body) {

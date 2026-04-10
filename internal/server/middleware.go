@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
-	"net"
 	"net/http"
-	"strings"
 
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -16,31 +14,19 @@ type contextKey string
 
 const deviceKIDKey contextKey = "device_kid"
 
-func authMiddleware(db *store.Store, authEnabled, skipLocal bool) func(http.Handler) http.Handler {
+const cookieName = "helios_token"
+
+// cookieAuthMiddleware reads JWT from the helios_token cookie.
+func cookieAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth if disabled globally
-			if !authEnabled {
-				next.ServeHTTP(w, r)
+			cookie, err := r.Cookie(cookieName)
+			if err != nil || cookie.Value == "" {
+				http.Error(w, `{"error":"unauthorized","message":"missing auth cookie"}`, http.StatusUnauthorized)
 				return
 			}
 
-			// Skip auth for localhost if configured
-			if skipLocal && isLocalhost(r) {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Extract Bearer token
-			authHeader := r.Header.Get("Authorization")
-			if !strings.HasPrefix(authHeader, "Bearer ") {
-				http.Error(w, `{"error":"unauthorized","message":"missing or invalid Authorization header"}`, http.StatusUnauthorized)
-				return
-			}
-
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-			kid, err := auth.ValidateJWT(tokenString, func(kid string) (ed25519.PublicKey, error) {
+			kid, err := auth.ValidateJWT(cookie.Value, func(kid string) (ed25519.PublicKey, error) {
 				device, err := db.GetActiveDevice(kid)
 				if err != nil {
 					return nil, err
@@ -48,13 +34,7 @@ func authMiddleware(db *store.Store, authEnabled, skipLocal bool) func(http.Hand
 				if device == nil {
 					return nil, fmt.Errorf("device not found or revoked")
 				}
-
-				pubKey, err := auth.PublicKeyFromBase64(device.PublicKey)
-				if err != nil {
-					return nil, err
-				}
-
-				return pubKey, nil
+				return auth.PublicKeyFromBase64(device.PublicKey)
 			})
 
 			if err != nil {
@@ -62,21 +42,60 @@ func authMiddleware(db *store.Store, authEnabled, skipLocal bool) func(http.Hand
 				return
 			}
 
-			// Update last seen
 			db.UpdateDeviceLastSeen(kid)
 
-			// Add device KID to request context
 			ctx := context.WithValue(r.Context(), deviceKIDKey, kid)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-func isLocalhost(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+// frontendAuthMiddleware protects page loads with cookie auth.
+// If no valid cookie, redirects to setup page (which is part of the SPA).
+func frontendAuthMiddleware(db *store.Store, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Always serve static assets (JS, CSS, icons, manifest, sw.js)
+		path := r.URL.Path
+		if isStaticAsset(path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 
-	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+		// Check cookie
+		cookie, err := r.Cookie(cookieName)
+		if err != nil || cookie.Value == "" {
+			// No cookie — serve the SPA anyway (it will show setup page)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		_, err = auth.ValidateJWT(cookie.Value, func(kid string) (ed25519.PublicKey, error) {
+			device, err := db.GetActiveDevice(kid)
+			if err != nil {
+				return nil, err
+			}
+			if device == nil {
+				return nil, fmt.Errorf("device not found or revoked")
+			}
+			return auth.PublicKeyFromBase64(device.PublicKey)
+		})
+
+		if err != nil {
+			// Invalid cookie — serve SPA (will show setup)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Valid cookie — serve normally
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isStaticAsset(path string) bool {
+	for _, ext := range []string{".js", ".css", ".svg", ".png", ".ico", ".json", ".webmanifest"} {
+		if len(path) > len(ext) && path[len(path)-len(ext):] == ext {
+			return true
+		}
+	}
+	return path == "/sw.js" || path == "/manifest.json"
 }
