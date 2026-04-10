@@ -152,54 +152,11 @@ func handleAuth(args []string) {
 	switch args[0] {
 	case "init":
 		// Generate a new setup QR via internal API
-		resp, err := http.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: daemon not running? %v\n", err)
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-
-		var result struct {
-			Key      string `json:"key"`
-			SetupURL string `json:"setup_url"`
-		}
-		json.NewDecoder(resp.Body).Decode(&result)
-
 		fmt.Println()
 		fmt.Println("  Helios Device Setup")
 		fmt.Println("  -------------------")
 		fmt.Println()
-
-		// Build mobile app deep link
-		serverURL := ""
-		if result.SetupURL != "" {
-			if idx := strings.Index(result.SetupURL, "/#/"); idx >= 0 {
-				serverURL = result.SetupURL[:idx]
-			}
-		}
-		appURL := fmt.Sprintf("helios://setup?key=%s", result.Key)
-		if serverURL != "" {
-			appURL += "&server=" + serverURL
-		}
-
-		fmt.Println("  Mobile App (scan with helios app):")
-		fmt.Println()
-		if err := auth.PrintQR(appURL); err != nil {
-			fmt.Printf("  (QR generation failed: %v)\n", err)
-		}
-		fmt.Println()
-		fmt.Printf("  %s\n", appURL)
-
-		if result.SetupURL != "" {
-			fmt.Println()
-			fmt.Println("  Browser (open on any device):")
-			fmt.Println()
-			if err := auth.PrintQR(result.SetupURL); err != nil {
-				fmt.Printf("  (QR generation failed: %v)\n", err)
-			}
-			fmt.Println()
-			fmt.Printf("  %s\n", result.SetupURL)
-		}
+		createAndShowQR(&http.Client{Timeout: 3 * time.Second}, internalURL)
 		fmt.Println()
 
 	case "devices":
@@ -484,11 +441,10 @@ func printDevices(client *http.Client, internalURL string) {
 	createAndShowQR(client, internalURL)
 }
 
-func createAndShowQR(client *http.Client, internalURL string) {
+func createDeviceKey(client *http.Client, internalURL string) (key, setupURL string, err error) {
 	resp, err := client.Post(internalURL+"/internal/device/create", "application/json", bytes.NewBufferString("{}"))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "  Could not generate setup QR")
-		return
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
@@ -497,32 +453,50 @@ func createAndShowQR(client *http.Client, internalURL string) {
 		SetupURL string `json:"setup_url"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
+	return result.Key, result.SetupURL, nil
+}
 
-	// QR 1: Mobile app (helios:// deep link with server URL)
-	serverURL := ""
-	if result.SetupURL != "" {
-		// Extract server base URL from setup URL (everything before /#/setup)
-		if idx := strings.Index(result.SetupURL, "/#/"); idx >= 0 {
-			serverURL = result.SetupURL[:idx]
+func createAndShowQR(client *http.Client, internalURL string) {
+	// Generate two independent keys — one for the mobile app, one for the download page
+	appKey, appSetupURL, err := createDeviceKey(client, internalURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Could not generate setup QR")
+		return
+	}
+	dlKey, dlSetupURL, err := createDeviceKey(client, internalURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "  Could not generate download QR")
+		return
+	}
+
+	// QR 1: For the Flutter app's QR scanner (same https:// format)
+	if appSetupURL != "" {
+		fmt.Println("  Scan with helios app:")
+		fmt.Println()
+		auth.PrintQR(appSetupURL)
+		fmt.Printf("  %s\n", appSetupURL)
+	} else {
+		// Fallback if no tunnel
+		appURL := fmt.Sprintf("helios://setup?key=%s", appKey)
+		fmt.Println("  Scan with helios app:")
+		fmt.Println()
+		auth.PrintQR(appURL)
+		fmt.Printf("  %s\n", appURL)
+	}
+
+	// QR 2: Download page (scan with phone camera to get the APK)
+	if dlSetupURL != "" {
+		// Change the hash to #/download but pass key for auth
+		serverURL := dlSetupURL
+		if idx := strings.Index(dlSetupURL, "/#/"); idx >= 0 {
+			serverURL = dlSetupURL[:idx]
 		}
-	}
-	appURL := fmt.Sprintf("helios://setup?key=%s", result.Key)
-	if serverURL != "" {
-		appURL += "&server=" + serverURL
-	}
-
-	fmt.Println("  Mobile App (scan with helios app):")
-	fmt.Println()
-	auth.PrintQR(appURL)
-	fmt.Printf("  %s\n", appURL)
-
-	// QR 2: Browser (web URL)
-	if result.SetupURL != "" {
+		downloadURL := fmt.Sprintf("%s/#/setup?key=%s", serverURL, dlKey)
 		fmt.Println()
-		fmt.Println("  Browser (open on any device):")
+		fmt.Println("  Download app (scan with phone camera):")
 		fmt.Println()
-		auth.PrintQR(result.SetupURL)
-		fmt.Printf("  %s\n", result.SetupURL)
+		auth.PrintQR(downloadURL)
+		fmt.Printf("  %s\n", downloadURL)
 	}
 }
 

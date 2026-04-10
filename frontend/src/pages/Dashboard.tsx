@@ -1,345 +1,76 @@
-import { useEffect, useState, useCallback } from 'react';
-import {
-  listNotifications,
-  approveNotification,
-  denyNotification,
-  dismissNotification,
-  batchAction,
-  type Notification,
-} from '../lib/api';
-import { connectSSE } from '../lib/sse';
-import { subscribeToPush, isPushSubscribed, unsubscribeFromPush } from '../lib/push';
-import { getTheme, toggleTheme } from '../lib/theme';
-import { Card, CardContent } from '@/components/ui/card';
+import { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
 
 export function Dashboard() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [pushEnabled, setPushEnabled] = useState(false);
-  const [pushLoading, setPushLoading] = useState(false);
-  const [pushError, setPushError] = useState<string | null>(null);
-  const [theme, setThemeState] = useState(getTheme);
+  const [downloading, setDownloading] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const all = await listNotifications();
-      setNotifications(all);
-    } catch {
-      // ignore
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    refresh();
-    isPushSubscribed().then(setPushEnabled);
-    const disconnect = connectSSE(() => {
-      refresh();
-    });
-    return disconnect;
-  }, [refresh]);
-
-  async function handleTogglePush() {
-    setPushLoading(true);
-    setPushError(null);
-    try {
-      if (pushEnabled) {
-        await unsubscribeFromPush();
-        setPushEnabled(false);
-      } else {
-        const result = await subscribeToPush();
-        setPushEnabled(result.ok);
-        if (!result.ok && result.error) {
-          setPushError(result.error);
-        }
-      }
-    } finally {
-      setPushLoading(false);
-    }
-  }
-
-  function handleToggleTheme() {
-    const next = toggleTheme();
-    setThemeState(next);
-  }
-
-  const pendingPermissions = notifications.filter(
-    (n) => n.status === 'pending' && n.type === 'permission'
-  );
-  const activeStatuses = notifications.filter(
-    (n) => n.status === 'pending' && n.type !== 'permission'
-  );
-  const resolved = notifications.filter((n) => n.status !== 'pending');
-
-  async function handleApprove(id: string) {
-    await approveNotification(id);
-    refresh();
-  }
-
-  async function handleDeny(id: string) {
-    await denyNotification(id);
-    refresh();
-  }
-
-  async function handleDismiss(id: string) {
-    await dismissNotification(id);
-    refresh();
-  }
-
-  async function handleApproveAll() {
-    const ids = pendingPermissions.map((n) => n.id);
-    if (ids.length === 0) return;
-    await batchAction(ids, 'approve');
-    refresh();
-  }
-
-  async function handleApproveSelected() {
-    const ids = Array.from(selected);
-    if (ids.length === 0) return;
-    await batchAction(ids, 'approve');
-    setSelected(new Set());
-    refresh();
-  }
-
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="flex items-center gap-3 text-muted-foreground">
-          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <span>Loading...</span>
-        </div>
-      </div>
-    );
+  function handleDownload() {
+    setDownloading(true);
+    // Cookie is already set from setup — download is authenticated
+    window.location.href = '/api/app/download';
+    setTimeout(() => setDownloading(false), 3000);
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-4 pb-8">
-      {/* Header */}
-      <header className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold tracking-tight">helios</h1>
-        <div className="flex items-center gap-3">
-          {/* Theme toggle */}
-          <Button variant="ghost" size="icon" onClick={handleToggleTheme} title="Toggle theme">
-            {theme === 'dark' ? (
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+    <div className="flex items-center justify-center min-h-screen p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl">helios</CardTitle>
+          <CardDescription>Install the mobile app</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="text-center space-y-2">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-2">
+              <svg className="h-8 w-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
               </svg>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Get the helios app for background notifications — approve or deny tool requests from anywhere.
+            </p>
+          </div>
+
+          <Button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="w-full h-12 text-base"
+            size="lg"
+          >
+            {downloading ? (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Downloading...
+              </span>
             ) : (
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
+              <span className="flex items-center gap-2">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download for Android
+              </span>
             )}
           </Button>
 
-          {/* Push toggle */}
-          <div className="flex items-center gap-2">
-            <label htmlFor="push-toggle" className="text-xs text-muted-foreground">
-              Push
-            </label>
-            <Switch
-              id="push-toggle"
-              checked={pushEnabled}
-              onCheckedChange={handleTogglePush}
-              disabled={pushLoading}
-            />
+          <div className="rounded-lg bg-muted p-4 space-y-3 text-sm">
+            <p className="font-medium">How to install:</p>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+              <li>Tap "Download for Android" above</li>
+              <li>Open the downloaded APK file</li>
+              <li>Allow "Install from unknown sources" if prompted</li>
+              <li>Open the helios app</li>
+              <li>Scan the "Mobile App" QR code from your terminal</li>
+            </ol>
           </div>
 
-          {/* Bulk actions */}
-          {pendingPermissions.length > 0 && (
-            <>
-              <Separator orientation="vertical" className="h-6" />
-              <Button size="sm" onClick={handleApproveAll}>
-                Approve All ({pendingPermissions.length})
-              </Button>
-              {selected.size > 0 && (
-                <Button size="sm" variant="outline" onClick={handleApproveSelected}>
-                  Approve ({selected.size})
-                </Button>
-              )}
-            </>
-          )}
-        </div>
-      </header>
-
-      {/* Push error banner */}
-      {pushError && (
-        <div className="mb-4 rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
-          <p className="font-medium">Push notifications unavailable</p>
-          <p className="text-xs mt-1 opacity-80">{pushError}</p>
-          <p className="text-xs mt-1 opacity-60">Notifications still work when this tab is open.</p>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {pendingPermissions.length === 0 && activeStatuses.length === 0 && resolved.length === 0 && (
-        <div className="text-center py-16">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-muted mb-4">
-            <svg className="h-6 w-6 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-            </svg>
-          </div>
-          <p className="text-muted-foreground">No notifications yet.</p>
-          <p className="text-sm text-muted-foreground/70 mt-1">
-            Start a Claude session with helios hooks installed.
+          <p className="text-xs text-center text-muted-foreground/60">
+            The app connects to your helios daemon via the same tunnel URL and delivers push notifications even when the browser is closed.
           </p>
-        </div>
-      )}
-
-      {/* Pending Permissions */}
-      {pendingPermissions.length > 0 && (
-        <section className="mb-6">
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">
-            Pending Permissions ({pendingPermissions.length})
-          </h2>
-          <div className="space-y-3">
-            {pendingPermissions.map((n) => (
-              <Card key={n.id} className="border-l-4 border-l-warning">
-                <CardContent className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(n.id)}
-                      onChange={() => toggleSelect(n.id)}
-                      className="accent-primary"
-                    />
-                    <Badge variant="outline" className="text-warning border-warning/30 bg-warning/10">
-                      permission
-                    </Badge>
-                    <span className="font-semibold text-sm">{n.tool_name}</span>
-                    <span className="ml-auto font-mono text-xs text-muted-foreground" title={n.claude_session_id}>
-                      {n.claude_session_id.slice(0, 8)}...
-                    </span>
-                  </div>
-
-                  <div className="rounded-md bg-muted p-2.5 text-sm font-mono break-all max-h-28 overflow-y-auto">
-                    {n.detail || n.tool_input || 'No details'}
-                  </div>
-
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="font-mono truncate max-w-[240px]" title={n.cwd}>{n.cwd}</span>
-                    <span>{formatTime(n.created_at)}</span>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => handleApprove(n.id)}>
-                      Approve
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={() => handleDeny(n.id)}>
-                      Deny
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Active Sessions */}
-      {activeStatuses.length > 0 && (
-        <section className="mb-6">
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">Active Sessions</h2>
-          <div className="space-y-3">
-            {activeStatuses.map((n) => (
-              <Card key={n.id} className={n.type === 'error' ? 'border-l-4 border-l-destructive' : 'border-l-4 border-l-primary'}>
-                <CardContent>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant={n.type === 'error' ? 'destructive' : 'secondary'}>
-                      {statusLabel(n.type)}
-                    </Badge>
-                    <span className="ml-auto font-mono text-xs text-muted-foreground" title={n.claude_session_id}>
-                      {n.claude_session_id.slice(0, 8)}...
-                    </span>
-                    <Button variant="ghost" size="icon-xs" onClick={() => handleDismiss(n.id)} title="Dismiss">
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </Button>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{n.detail || statusLabel(n.type)}</p>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-2">
-                    <span className="font-mono truncate max-w-[240px]" title={n.cwd}>{n.cwd}</span>
-                    <span>{formatTime(n.created_at)}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* History */}
-      {resolved.length > 0 && (
-        <section>
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">History</h2>
-          <div className="space-y-2">
-            {resolved.map((n) => (
-              <Card key={n.id} className="opacity-70">
-                <CardContent>
-                  <div className="flex items-center gap-2 mb-1">
-                    <Badge variant={n.status === 'approved' ? 'default' : n.status === 'denied' ? 'destructive' : 'secondary'}>
-                      {n.status}
-                    </Badge>
-                    <span className="text-sm font-medium">{n.tool_name || statusLabel(n.type)}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground truncate">
-                    {n.detail || n.tool_input || statusLabel(n.type)}
-                  </p>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
-                    <span className="font-mono truncate max-w-[240px]" title={n.cwd}>{n.cwd}</span>
-                    <span>{formatTime(n.created_at)}</span>
-                    {n.resolved_source && (
-                      <span>via {n.resolved_source}</span>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      )}
+        </CardContent>
+      </Card>
     </div>
   );
-}
-
-function statusLabel(type: string): string {
-  switch (type) {
-    case 'idle': return 'Waiting for input';
-    case 'done': return 'Session completed';
-    case 'error': return 'Session error';
-    case 'permission': return 'Permission request';
-    default: return type;
-  }
-}
-
-function formatTime(ts: string): string {
-  try {
-    const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return d.toLocaleDateString();
-  } catch {
-    return ts;
-  }
 }

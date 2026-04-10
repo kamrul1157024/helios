@@ -4,7 +4,7 @@ import { Dashboard } from './pages/Dashboard';
 import { getDeviceMe } from './lib/api';
 
 export function App() {
-  const [route, setRoute] = useState<'loading' | 'setup' | 'dashboard'>('loading');
+  const [route, setRoute] = useState<'loading' | 'setup' | 'download'>('loading');
 
   useEffect(() => {
     const hash = window.location.hash;
@@ -14,15 +14,15 @@ export function App() {
     }
 
     getDeviceMe().then((device) => {
-      setRoute(device ? 'dashboard' : 'setup');
+      setRoute(device ? 'download' : 'setup');
     });
 
     function onHashChange() {
       const h = window.location.hash;
       if (h.startsWith('#/setup')) {
         setRoute('setup');
-      } else if (h === '#/dashboard') {
-        setRoute('dashboard');
+      } else if (h === '#/dashboard' || h === '#/download') {
+        setRoute('download');
       }
     }
 
@@ -48,8 +48,8 @@ export function App() {
     return (
       <Setup
         onComplete={() => {
-          window.location.hash = '#/dashboard';
-          setRoute('dashboard');
+          window.location.hash = '#/download';
+          setRoute('download');
         }}
       />
     );

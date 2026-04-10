@@ -45,17 +45,28 @@ apk:
 	else \
 		cd mobile && flutter build apk --debug; \
 	fi
-	@[ -f "$(APK_DEBUG)" ] && echo "APK: $(APK_DEBUG)" || true
+	@if [ -f "$(APK_DEBUG)" ]; then \
+		mkdir -p ~/.helios; \
+		cp $(APK_DEBUG) ~/.helios/helios.apk; \
+		echo "APK: $(APK_DEBUG)"; \
+		echo "Copied to ~/.helios/helios.apk"; \
+	fi
 
 ## Force rebuild debug APK
 apk-rebuild:
 	cd mobile && flutter build apk --debug
+	mkdir -p ~/.helios
+	cp $(APK_DEBUG) ~/.helios/helios.apk
 	@echo "APK: $(APK_DEBUG)"
+	@echo "Copied to ~/.helios/helios.apk"
 
 ## Build release APK
 apk-release:
 	cd mobile && flutter build apk --release
+	mkdir -p ~/.helios
+	cp $(APK_RELEASE) ~/.helios/helios.apk
 	@echo "APK: $(APK_RELEASE)"
+	@echo "Copied to ~/.helios/helios.apk"
 
 ## Install APK on connected device (builds first if needed)
 apk-install: apk

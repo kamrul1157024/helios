@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/auth"
@@ -528,6 +529,34 @@ func (s *InternalServer) handleDeviceRevoke(w http.ResponseWriter, r *http.Reque
 		"revoked": true,
 	})
 }
+
+// handleAppDownload serves the APK from ~/.helios/helios.apk
+func (s *PublicServer) handleAppDownload(w http.ResponseWriter, r *http.Request) {
+	if APKPath == "" {
+		jsonError(w, "APK path not configured", http.StatusNotFound)
+		return
+	}
+
+	f, err := os.Open(APKPath)
+	if err != nil {
+		jsonError(w, "APK not available — build with: make apk", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		jsonError(w, "failed to read APK", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"helios.apk\"")
+	http.ServeContent(w, r, "helios.apk", stat.ModTime(), f)
+}
+
+// APKPath is set by daemon to the path of the APK file.
+var APKPath string
 
 // ==================== Helpers ====================
 
