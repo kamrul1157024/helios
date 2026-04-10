@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	helios "github.com/kamrul1157024/helios"
@@ -168,23 +169,36 @@ func handleAuth(args []string) {
 		fmt.Println("  Helios Device Setup")
 		fmt.Println("  -------------------")
 		fmt.Println()
-		fmt.Println("  Scan this QR code with your phone:")
+
+		// Build mobile app deep link
+		serverURL := ""
+		if result.SetupURL != "" {
+			if idx := strings.Index(result.SetupURL, "/#/"); idx >= 0 {
+				serverURL = result.SetupURL[:idx]
+			}
+		}
+		appURL := fmt.Sprintf("helios://setup?key=%s", result.Key)
+		if serverURL != "" {
+			appURL += "&server=" + serverURL
+		}
+
+		fmt.Println("  Mobile App (scan with helios app):")
 		fmt.Println()
+		if err := auth.PrintQR(appURL); err != nil {
+			fmt.Printf("  (QR generation failed: %v)\n", err)
+		}
+		fmt.Println()
+		fmt.Printf("  %s\n", appURL)
 
 		if result.SetupURL != "" {
+			fmt.Println()
+			fmt.Println("  Browser (open on any device):")
+			fmt.Println()
 			if err := auth.PrintQR(result.SetupURL); err != nil {
 				fmt.Printf("  (QR generation failed: %v)\n", err)
 			}
 			fmt.Println()
-			fmt.Printf("  Setup URL: %s\n", result.SetupURL)
-		} else {
-			payload := fmt.Sprintf("helios://setup?key=%s", result.Key)
-			if err := auth.PrintQR(payload); err != nil {
-				fmt.Printf("  (QR generation failed: %v)\n", err)
-			}
-			fmt.Println()
-			fmt.Println("  Or copy this setup string:")
-			fmt.Printf("  %s\n", payload)
+			fmt.Printf("  %s\n", result.SetupURL)
 		}
 		fmt.Println()
 
@@ -463,9 +477,9 @@ func printDevices(client *http.Client, internalURL string) {
 		fmt.Println("  No devices registered.")
 	}
 
-	// Always show QR for adding a device
+	// Always show QRs for adding a device
 	fmt.Println()
-	fmt.Println("  Scan this QR code to add a device:")
+	fmt.Println("  Scan to add a device:")
 	fmt.Println()
 	createAndShowQR(client, internalURL)
 }
@@ -484,15 +498,34 @@ func createAndShowQR(client *http.Client, internalURL string) {
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 
+	// QR 1: Mobile app (helios:// deep link with server URL)
+	serverURL := ""
 	if result.SetupURL != "" {
+		// Extract server base URL from setup URL (everything before /#/setup)
+		if idx := strings.Index(result.SetupURL, "/#/"); idx >= 0 {
+			serverURL = result.SetupURL[:idx]
+		}
+	}
+	appURL := fmt.Sprintf("helios://setup?key=%s", result.Key)
+	if serverURL != "" {
+		appURL += "&server=" + serverURL
+	}
+
+	fmt.Println("  Mobile App (scan with helios app):")
+	fmt.Println()
+	auth.PrintQR(appURL)
+	fmt.Printf("  %s\n", appURL)
+
+	// QR 2: Browser (web URL)
+	if result.SetupURL != "" {
+		fmt.Println()
+		fmt.Println("  Browser (open on any device):")
+		fmt.Println()
 		auth.PrintQR(result.SetupURL)
 		fmt.Printf("  %s\n", result.SetupURL)
-	} else {
-		payload := fmt.Sprintf("helios://setup?key=%s", result.Key)
-		auth.PrintQR(payload)
-		fmt.Printf("  %s\n", payload)
 	}
 }
+
 
 func handleSetup() {
 	cfg, _ := daemon.LoadConfig()
