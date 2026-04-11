@@ -47,7 +47,8 @@ class Session {
     );
   }
 
-  bool get isActive => status == 'active' || status == 'waiting_permission' || status == 'compacting';
+  bool get isStarting => status == 'starting';
+  bool get isActive => status == 'active' || status == 'waiting_permission' || status == 'compacting' || status == 'starting';
   bool get isCompacting => status == 'compacting';
   bool get isIdle => status == 'idle';
   bool get isEnded => status == 'ended';

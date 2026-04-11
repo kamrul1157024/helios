@@ -3,10 +3,20 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/tmux"
 )
+
+// tmuxClient is set by the daemon after shared state is initialized.
+var tmuxClient *tmux.Client
+
+// SetTmux sets the tmux client for action handlers that need pane access.
+func SetTmux(c *tmux.Client) {
+	tmuxClient = c
+}
 
 func handlePermissionAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
@@ -81,4 +91,45 @@ func handleElicitationAction(notif *store.Notification, body json.RawMessage) (n
 		"content": req.Content,
 	})
 	return notifications.Decision{Status: status, Response: response}, nil
+}
+
+func handleTrustAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
+	var req struct {
+		Action string `json:"action"` // "trust" or "deny"
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return notifications.Decision{}, fmt.Errorf("invalid body: %w", err)
+	}
+
+	// Extract pane_id from the notification payload
+	var payload struct {
+		PaneID string `json:"pane_id"`
+	}
+	if notif.Payload != nil {
+		json.Unmarshal([]byte(*notif.Payload), &payload)
+	}
+
+	if payload.PaneID == "" {
+		return notifications.Decision{}, fmt.Errorf("missing pane_id in notification payload")
+	}
+
+	if tmuxClient == nil {
+		return notifications.Decision{}, fmt.Errorf("tmux client not available")
+	}
+
+	if req.Action == "trust" {
+		// Send "Yes, proceed" by pressing Enter (the trust dialog has Yes selected by default)
+		if err := tmuxClient.SendKeysRaw(payload.PaneID, "Enter"); err != nil {
+			log.Printf("trust-action: failed to send Enter to pane %s: %v", payload.PaneID, err)
+			return notifications.Decision{}, fmt.Errorf("failed to send keys: %w", err)
+		}
+		log.Printf("trust-action: sent Enter to pane %s (trust approved)", payload.PaneID)
+		return notifications.Decision{Status: "approved"}, nil
+	}
+
+	// Deny — send Ctrl+C to abort Claude
+	if err := tmuxClient.SendKeysRaw(payload.PaneID, "C-c"); err != nil {
+		log.Printf("trust-action: failed to send C-c to pane %s: %v", payload.PaneID, err)
+	}
+	return notifications.Decision{Status: "denied"}, nil
 }

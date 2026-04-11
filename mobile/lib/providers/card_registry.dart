@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/notification.dart';
-import '../services/sse_service.dart';
+import '../services/daemon_api_service.dart';
 import 'claude/cards.dart';
 import 'claude/notification_ext.dart';
 
 /// Signature for a notification card builder.
 typedef CardBuilder = Widget Function({
   required HeliosNotification notification,
-  required SSEService sse,
+  required DaemonAPIService sse,
   required Set<String> selected,
   required VoidCallback onSelectionChanged,
 });
@@ -16,7 +16,7 @@ typedef CardBuilder = Widget Function({
 /// Returns null if no card is registered for the type.
 Widget? buildCardForType({
   required HeliosNotification notification,
-  required SSEService sse,
+  required DaemonAPIService sse,
   required Set<String> selected,
   required VoidCallback onSelectionChanged,
 }) {
@@ -40,6 +40,11 @@ Widget? buildCardForType({
       );
     case 'claude.elicitation.url':
       return ClaudeElicitationUrlCard(
+        notification: notification,
+        sse: sse,
+      );
+    case 'claude.trust':
+      return ClaudeTrustCard(
         notification: notification,
         sse: sse,
       );

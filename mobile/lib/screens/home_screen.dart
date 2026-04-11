@@ -2,11 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
-import '../services/sse_service.dart';
+import '../services/daemon_api_service.dart';
 import '../services/notification_service.dart';
 import '../providers/card_registry.dart' as registry;
 import 'setup_screen.dart';
 import 'sessions_screen.dart';
+import 'new_session_sheet.dart';
 import 'dashboard_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -17,7 +18,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  late SSEService _sse;
+  late DaemonAPIService _sse;
   StreamSubscription<SSEEvent>? _eventSub;
   int _currentIndex = 0;
 
@@ -26,13 +27,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _sse = context.read<SSEService>();
+    _sse = context.read<DaemonAPIService>();
     final auth = context.read<AuthService>();
     _sse.attach(auth);
     _sse.fetchNotifications();
     _sse.fetchSessions();
     _sse.fetchCommands();
     _sse.fetchHealth();
+    _sse.fetchProviders();
     _sse.start();
 
     NotificationService.instance.requestPermission();
@@ -84,6 +86,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _showNewSessionSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: _sse,
+        child: const NewSessionSheet(),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -98,7 +112,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title: const Text('helios'),
         centerTitle: true,
         actions: [
-          Consumer<SSEService>(
+          Consumer<DaemonAPIService>(
             builder: (_, sse, _) => Padding(
               padding: const EdgeInsets.only(right: 8),
               child: Icon(
@@ -135,7 +149,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           DashboardScreen(),
         ],
       ),
-      bottomNavigationBar: Consumer<SSEService>(
+      floatingActionButton: _currentIndex == 0
+          ? FloatingActionButton(
+              onPressed: _showNewSessionSheet,
+              tooltip: 'New Session',
+              child: const Icon(Icons.add),
+            )
+          : null,
+      bottomNavigationBar: Consumer<DaemonAPIService>(
         builder: (context, sse, _) {
           final pendingCount = sse.notifications.where((n) => registry.needsAction(n)).length;
           final activeSessionCount = sse.sessions.where((s) => s.isActive).length;

@@ -22,6 +22,34 @@ class NotificationService {
       const InitializationSettings(android: androidSettings, iOS: iosSettings),
       onDidReceiveNotificationResponse: _onResponse,
     );
+
+    // Explicitly create Android notification channels with sound enabled.
+    // This ensures correct settings even if old channels were cached.
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android != null) {
+      await android.createNotificationChannel(const AndroidNotificationChannel(
+        'helios_permissions_v3',
+        'Permission Requests',
+        description: 'Claude tool permission requests',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      ));
+      await android.createNotificationChannel(const AndroidNotificationChannel(
+        'helios_general_v3',
+        'General',
+        description: 'General helios notifications',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+      ));
+      // Clean up old channels
+      await android.deleteNotificationChannel('helios_permissions');
+      await android.deleteNotificationChannel('helios_permissions_v2');
+      await android.deleteNotificationChannel('helios_general');
+      await android.deleteNotificationChannel('helios_general_v2');
+    }
   }
 
   Future<bool> requestPermission() async {
@@ -49,7 +77,7 @@ class NotificationService {
     required String detail,
   }) async {
     final androidDetails = AndroidNotificationDetails(
-      'helios_permissions_v2',
+      'helios_permissions_v3',
       'Permission Requests',
       channelDescription: 'Claude tool permission requests',
       importance: Importance.max,
@@ -84,7 +112,7 @@ class NotificationService {
     required String body,
   }) async {
     const androidDetails = AndroidNotificationDetails(
-      'helios_general_v2',
+      'helios_general_v3',
       'General',
       channelDescription: 'General helios notifications',
       importance: Importance.high,

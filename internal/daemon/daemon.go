@@ -65,6 +65,9 @@ func Start(cfg *Config) error {
 	// Shared state between both servers
 	shared := server.NewShared(db, mgr, pusher)
 
+	// Give the claude action handlers access to the tmux client
+	claude.SetTmux(shared.Tmux)
+
 	// Discover existing Claude sessions from transcript files + tmux
 	go discovery.DiscoverClaudeSessions(db, tmux.NewClient())
 
@@ -82,6 +85,9 @@ func Start(cfg *Config) error {
 	// Create both servers
 	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
 	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared)
+
+	// Start pane watcher for trust prompt detection
+	server.StartPaneWatcher(shared)
 
 	// Write PID file
 	pidPath := filepath.Join(HeliosDir(), "daemon.pid")

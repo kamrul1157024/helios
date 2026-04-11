@@ -7,7 +7,7 @@ import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
 import '../providers/claude/verbs.dart';
-import '../services/sse_service.dart';
+import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
 import '../widgets/skeleton.dart';
 
@@ -39,7 +39,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomClaudeVerb());
     });
-    _eventSub = context.read<SSEService>().events.listen((event) {
+    _eventSub = context.read<DaemonAPIService>().events.listen((event) {
       if (event.data is Map) {
         final data = event.data as Map;
         // Refresh on session status changes and notification events for this session
@@ -48,7 +48,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           _loadTranscript();
         }
         if (event.type == 'notification' || event.type == 'notification_resolved') {
-          // Notifications refresh via SSEService.fetchNotifications — just rebuild
+          // Notifications refresh via DaemonAPIService.fetchNotifications — just rebuild
           if (mounted) setState(() {});
         }
       }
@@ -65,7 +65,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _loadTranscript() async {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final result = await sse.fetchTranscript(widget.session.sessionId, limit: 200);
     if (result != null && mounted) {
       setState(() {
@@ -84,7 +84,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     if (text.isEmpty) return;
 
     setState(() => _sending = true);
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final ok = await sse.sendSessionPrompt(widget.session.sessionId, text);
     if (ok && mounted) {
       _promptController.clear();
@@ -99,22 +99,22 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _stop() async {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     await sse.stopSession(widget.session.sessionId);
   }
 
   Future<void> _suspend() async {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     await sse.suspendSession(widget.session.sessionId);
   }
 
   Future<void> _resume() async {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     await sse.resumeSession(widget.session.sessionId);
   }
 
   /// Get pending notifications for this session.
-  List<HeliosNotification> _pendingNotifications(SSEService sse) {
+  List<HeliosNotification> _pendingNotifications(DaemonAPIService sse) {
     return sse.notifications
         .where((n) => n.sourceSession == widget.session.sessionId && n.isPending)
         .toList();
@@ -122,7 +122,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SSEService>(
+    return Consumer<DaemonAPIService>(
       builder: (context, sse, _) {
         final session = sse.sessions.firstWhere(
           (s) => s.sessionId == widget.session.sessionId,
@@ -169,7 +169,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Widget _buildInlineNotifications(List<HeliosNotification> notifs, SSEService sse) {
+  Widget _buildInlineNotifications(List<HeliosNotification> notifs, DaemonAPIService sse) {
     final theme = Theme.of(context);
     return Container(
       decoration: BoxDecoration(
@@ -208,7 +208,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Widget _buildInlineNotifCard(HeliosNotification n, SSEService sse) {
+  Widget _buildInlineNotifCard(HeliosNotification n, DaemonAPIService sse) {
     // Try to use the provider-specific card
     final card = registry.buildCardForType(
       notification: n,
@@ -365,7 +365,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   void _showCommandSheet() {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final commands = sse.commands;
     if (commands.isEmpty) return;
 
@@ -402,7 +402,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _sendCommand(String command) async {
     setState(() => _sending = true);
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final ok = await sse.sendSessionPrompt(widget.session.sessionId, command);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -438,7 +438,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget _buildPromptBar(Session session) {
     final canSend = session.canSendPrompt;
     final theme = Theme.of(context);
-    final hasCommands = context.read<SSEService>().commands.isNotEmpty;
+    final hasCommands = context.read<DaemonAPIService>().commands.isNotEmpty;
 
     return Container(
       padding: EdgeInsets.only(
@@ -533,6 +533,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Color _statusColor(String status, ThemeData theme) {
     switch (status) {
+      case 'starting':
+        return Colors.teal;
       case 'active':
         return Colors.green;
       case 'compacting':
@@ -556,6 +558,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   String _statusLabel(String status) {
     switch (status) {
+      case 'starting':
+        return 'Starting';
       case 'active':
         return 'Active';
       case 'compacting':

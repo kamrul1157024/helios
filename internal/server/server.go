@@ -14,11 +14,12 @@ import (
 
 // Shared holds shared dependencies between internal and public servers.
 type Shared struct {
-	DB     *store.Store
-	Mgr    *notifications.Manager
-	SSE    *SSEBroadcaster
-	Pusher *push.Sender
-	Tmux   *tmux.Client
+	DB           *store.Store
+	Mgr          *notifications.Manager
+	SSE          *SSEBroadcaster
+	Pusher       *push.Sender
+	Tmux         *tmux.Client
+	PendingPanes *PendingPaneMap
 }
 
 // InternalServer handles hooks (Claude) and admin API (CLI).
@@ -37,11 +38,12 @@ type PublicServer struct {
 
 func NewShared(db *store.Store, mgr *notifications.Manager, pusher *push.Sender) *Shared {
 	return &Shared{
-		DB:     db,
-		Mgr:    mgr,
-		SSE:    NewSSEBroadcaster(),
-		Pusher: pusher,
-		Tmux:   tmux.NewClient(),
+		DB:           db,
+		Mgr:          mgr,
+		SSE:          NewSSEBroadcaster(),
+		Pusher:       pusher,
+		Tmux:         tmux.NewClient(),
+		PendingPanes: NewPendingPaneMap(),
 	}
 }
 
@@ -105,6 +107,21 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("POST /api/device/logs", s.handleDeviceLogs)
 	protectedMux.HandleFunc("GET /api/app/download", s.handleAppDownload)
 	protectedMux.HandleFunc("GET /api/commands", s.handleListCommands)
+	protectedMux.HandleFunc("GET /api/providers", s.handleListProviders)
+	protectedMux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+
+	// Dynamic path handlers for providers
+	protectedMux.HandleFunc("/api/providers/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(path, "/models"):
+			s.handleListModels(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/models/refresh"):
+			s.handleRefreshModels(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 
 	// Dynamic path handlers
 	protectedMux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, r *http.Request) {

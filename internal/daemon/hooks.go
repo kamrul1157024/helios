@@ -144,13 +144,17 @@ func hookConfig(port int) map[string]interface{} {
 					},
 				},
 			},
+			// SessionStart/End and SubagentStart/Stop use command hooks
+			// because Claude Code v2.1.101 does not fire HTTP hooks for
+			// these lifecycle events. The command hook pipes stdin (the
+			// hook payload) through curl to the daemon endpoint.
 			"SessionStart": []interface{}{
 				map[string]interface{}{
 					"matcher": "*",
 					"hooks": []interface{}{
 						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/session/start",
+							"type":    "command",
+							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/session/start",
 						},
 					},
 				},
@@ -160,8 +164,8 @@ func hookConfig(port int) map[string]interface{} {
 					"matcher": "*",
 					"hooks": []interface{}{
 						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/session/end",
+							"type":    "command",
+							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/session/end",
 						},
 					},
 				},
@@ -171,8 +175,8 @@ func hookConfig(port int) map[string]interface{} {
 					"matcher": "*",
 					"hooks": []interface{}{
 						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/subagent/start",
+							"type":    "command",
+							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/subagent/start",
 						},
 					},
 				},
@@ -182,8 +186,8 @@ func hookConfig(port int) map[string]interface{} {
 					"matcher": "*",
 					"hooks": []interface{}{
 						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/subagent/stop",
+							"type":    "command",
+							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/subagent/stop",
 						},
 					},
 				},

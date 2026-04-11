@@ -4,11 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/notification.dart';
+import '../models/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
 import 'auth_service.dart';
 
-class SSEService extends ChangeNotifier {
+class DaemonAPIService extends ChangeNotifier {
   AuthService? _auth;
   http.Client? _client;
   Timer? _reconnectTimer;
@@ -38,6 +39,16 @@ class SSEService extends ChangeNotifier {
 
   bool _tmuxMissingBannerDismissed = false;
   bool get tmuxMissingBannerDismissed => _tmuxMissingBannerDismissed;
+
+  List<ProviderInfo> _providers = [];
+  List<ProviderInfo> get providers => _providers;
+  bool _providersLoaded = false;
+  bool get providersLoaded => _providersLoaded;
+
+  // Per-provider model cache: provider ID → models
+  final Map<String, List<ModelInfo>> _modelCache = {};
+  final Map<String, DateTime> _modelCacheFetchedAt = {};
+  static const _modelCacheTTL = Duration(hours: 24);
 
   static const _pluginBannerDismissedKey = 'tmux_plugin_banner_dismissed';
   static const _tmuxMissingBannerDismissedKey = 'tmux_missing_banner_dismissed';
@@ -375,6 +386,90 @@ class SSEService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to fetch commands: $e');
     }
+  }
+
+  // ==================== Providers & Models API ====================
+
+  Future<void> fetchProviders() async {
+    if (_auth == null || !_auth!.isAuthenticated) return;
+    try {
+      final resp = await _auth!.authGet('/api/providers');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['providers'] as List?) ?? [];
+        _providers = list.map((p) => ProviderInfo.fromJson(p)).toList();
+        _providersLoaded = true;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch providers: $e');
+    }
+  }
+
+  List<ModelInfo> getCachedModels(String providerId) {
+    return _modelCache[providerId] ?? [];
+  }
+
+  bool hasModelCache(String providerId) {
+    final fetchedAt = _modelCacheFetchedAt[providerId];
+    if (fetchedAt == null) return false;
+    return DateTime.now().difference(fetchedAt) < _modelCacheTTL;
+  }
+
+  Future<List<ModelInfo>> fetchModels(String providerId, {bool forceRefresh = false}) async {
+    if (!forceRefresh && hasModelCache(providerId)) {
+      return _modelCache[providerId]!;
+    }
+
+    if (_auth == null || !_auth!.isAuthenticated) return [];
+    try {
+      final endpoint = forceRefresh
+          ? '/api/providers/$providerId/models/refresh'
+          : '/api/providers/$providerId/models';
+      final resp = forceRefresh
+          ? await _auth!.authPost(endpoint)
+          : await _auth!.authGet(endpoint);
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['models'] as List?) ?? [];
+        final models = list.map((m) => ModelInfo.fromJson(m)).toList();
+        _modelCache[providerId] = models;
+        _modelCacheFetchedAt[providerId] = DateTime.now();
+        notifyListeners();
+        return models;
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch models for $providerId: $e');
+    }
+    return _modelCache[providerId] ?? [];
+  }
+
+  Future<bool> createSession({
+    required String provider,
+    required String prompt,
+    String? model,
+    String? cwd,
+    bool dangerouslySkipPermissions = false,
+  }) async {
+    if (_auth == null) return false;
+    try {
+      final body = <String, dynamic>{
+        'provider': provider,
+        'prompt': prompt,
+      };
+      if (model != null && model.isNotEmpty) body['model'] = model;
+      if (cwd != null && cwd.isNotEmpty) body['cwd'] = cwd;
+      if (dangerouslySkipPermissions) body['dangerously_skip_permissions'] = true;
+
+      final resp = await _auth!.authPost('/api/sessions', body: body);
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to create session: $e');
+    }
+    return false;
   }
 
   @override

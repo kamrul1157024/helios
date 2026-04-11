@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os/exec"
 	"runtime"
@@ -20,18 +21,23 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	rawType := r.PathValue("hookType")
 	hookType := strings.ReplaceAll(rawType, "/", ".")
 
+	log.Printf("hook: received %s from %s", hookType, r.RemoteAddr)
+
 	handler := provider.GetHookHandler(hookType)
 	if handler == nil {
+		log.Printf("hook: unknown type %s", hookType)
 		http.Error(w, fmt.Sprintf("unknown hook type: %s", hookType), http.StatusNotFound)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("hook: failed to read body for %s: %v", hookType, err)
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
 
+	log.Printf("hook: dispatching %s (%d bytes)", hookType, len(body))
 	ctx := s.hookContext()
 	handler(ctx, w, r, json.RawMessage(body))
 }
@@ -39,8 +45,9 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 // hookContext builds a provider.HookContext from the shared state.
 func (s *InternalServer) hookContext() *provider.HookContext {
 	return &provider.HookContext{
-		DB:  s.shared.DB,
-		Mgr: s.shared.Mgr,
+		DB:   s.shared.DB,
+		Mgr:  s.shared.Mgr,
+		Tmux: s.shared.Tmux,
 		Notify: func(eventType string, data interface{}) {
 			s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
 		},
@@ -54,6 +61,9 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 					Body:  body,
 				})
 			}
+		},
+		RemovePendingPane: func(cwd string) {
+			s.shared.PendingPanes.RemoveByCWD(cwd)
 		},
 	}
 }

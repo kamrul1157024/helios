@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/session.dart';
-import '../services/sse_service.dart';
+import '../services/daemon_api_service.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
@@ -16,12 +16,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
   @override
   void initState() {
     super.initState();
-    context.read<SSEService>().fetchSessions();
+    context.read<DaemonAPIService>().fetchSessions();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SSEService>(
+    return Consumer<DaemonAPIService>(
       builder: (context, sse, _) {
         final sessions = sse.sessions;
 
@@ -199,7 +199,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildTmuxMissingBanner(SSEService sse) {
+  Widget _buildTmuxMissingBanner(DaemonAPIService sse) {
     final theme = Theme.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -258,7 +258,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildPluginBanner(TmuxStatus tmux, SSEService sse) {
+  Widget _buildPluginBanner(TmuxStatus tmux, DaemonAPIService sse) {
     final theme = Theme.of(context);
     final missing = <String>[];
     if (!tmux.resurrectPlugin) missing.add('tmux-resurrect');
@@ -326,6 +326,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   Color _statusColor(String status, ThemeData theme) {
     switch (status) {
+      case 'starting':
+        return Colors.teal;
       case 'active':
         return Colors.green;
       case 'compacting':
@@ -349,6 +351,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   IconData _statusIcon(String status) {
     switch (status) {
+      case 'starting':
+        return Icons.rocket_launch;
       case 'active':
         return Icons.play_circle_filled;
       case 'compacting':
@@ -372,6 +376,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   String _statusLabel(String status) {
     switch (status) {
+      case 'starting':
+        return 'Starting';
       case 'active':
         return 'Active';
       case 'compacting':

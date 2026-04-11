@@ -1,14 +1,14 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../models/notification.dart';
-import '../../services/sse_service.dart';
+import '../../services/daemon_api_service.dart';
 import 'notification_ext.dart';
 
 // ==================== Permission Card ====================
 
 class ClaudePermissionCard extends StatefulWidget {
   final HeliosNotification notification;
-  final SSEService sse;
+  final DaemonAPIService sse;
   final Set<String> selected;
   final VoidCallback onSelectionChanged;
 
@@ -293,7 +293,7 @@ class _ClaudePermissionCardState extends State<ClaudePermissionCard> {
 
 class ClaudeQuestionCard extends StatefulWidget {
   final HeliosNotification notification;
-  final SSEService sse;
+  final DaemonAPIService sse;
 
   const ClaudeQuestionCard({
     super.key,
@@ -471,7 +471,7 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
 
 class ClaudeElicitationFormCard extends StatelessWidget {
   final HeliosNotification notification;
-  final SSEService sse;
+  final DaemonAPIService sse;
 
   const ClaudeElicitationFormCard({
     super.key,
@@ -583,9 +583,127 @@ class ClaudeElicitationFormCard extends StatelessWidget {
 
 // ==================== Elicitation URL Card ====================
 
+// ==================== Trust Card ====================
+
+class ClaudeTrustCard extends StatelessWidget {
+  final HeliosNotification notification;
+  final DaemonAPIService sse;
+
+  const ClaudeTrustCard({
+    super.key,
+    required this.notification,
+    required this.sse,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final n = notification;
+    final cwd = n.payload?['cwd']?.toString() ?? n.cwd;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: Colors.teal.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.teal.withValues(alpha: 0.3)),
+                  ),
+                  child: const Text('trust', style: TextStyle(fontSize: 11, color: Colors.teal)),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Workspace Trust Required',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Claude is asking to trust the files in this workspace before proceeding.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                cwd,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Spacer(),
+                Text(
+                  n.timeAgo,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => sse.sendAction(n.id, {'action': 'trust'}),
+                    child: const Text('Trust & Proceed'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => sse.sendAction(n.id, {'action': 'deny'}),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      foregroundColor: Theme.of(context).colorScheme.onError,
+                    ),
+                    child: const Text('Deny'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== Elicitation URL Card ====================
+
 class ClaudeElicitationUrlCard extends StatelessWidget {
   final HeliosNotification notification;
-  final SSEService sse;
+  final DaemonAPIService sse;
 
   const ClaudeElicitationUrlCard({
     super.key,

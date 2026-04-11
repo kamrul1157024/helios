@@ -272,26 +272,34 @@ func handleStop() {
 
 func handleNew(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios new \"prompt\" [--cwd /path/to/dir]")
+		fmt.Fprintln(os.Stderr, "Usage: helios new \"prompt\" [--model model] [--cwd /path/to/dir]")
 		os.Exit(1)
 	}
 
 	prompt := args[0]
 	cwd, _ := os.Getwd()
+	model := ""
 
 	for i, a := range args {
 		if a == "--cwd" && i+1 < len(args) {
 			cwd = args[i+1]
+		}
+		if a == "--model" && i+1 < len(args) {
+			model = args[i+1]
 		}
 	}
 
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 
-	body, _ := json.Marshal(map[string]string{
+	reqBody := map[string]string{
 		"prompt": prompt,
 		"cwd":    cwd,
-	})
+	}
+	if model != "" {
+		reqBody["model"] = model
+	}
+	body, _ := json.Marshal(reqBody)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Post(internalURL+"/internal/sessions", "application/json", bytes.NewBuffer(body))

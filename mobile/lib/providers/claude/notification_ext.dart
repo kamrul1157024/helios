@@ -9,12 +9,13 @@ extension ClaudeNotification on HeliosNotification {
   bool get isClaudeElicitationForm => type == 'claude.elicitation.form';
   bool get isClaudeElicitationUrl => type == 'claude.elicitation.url';
   bool get isClaudeElicitation => type.startsWith('claude.elicitation.');
+  bool get isClaudeTrust => type == 'claude.trust';
   bool get isClaudeDone => type == 'claude.done';
   bool get isClaudeError => type == 'claude.error';
 
   /// Whether this Claude notification needs user action.
   bool get needsClaudeAction =>
-      isPending && (isClaudePermission || isClaudeQuestion || isClaudeElicitation);
+      isPending && (isClaudePermission || isClaudeQuestion || isClaudeElicitation || isClaudeTrust);
 
   String get claudeDisplayTitle => title ?? _claudeTypeLabel;
 
@@ -28,6 +29,8 @@ extension ClaudeNotification on HeliosNotification {
         return 'Input requested';
       case 'claude.elicitation.url':
         return 'Authentication required';
+      case 'claude.trust':
+        return 'Workspace trust required';
       case 'claude.done':
         return 'Session completed';
       case 'claude.error':

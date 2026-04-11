@@ -679,11 +679,24 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 
 func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Prompt string `json:"prompt"`
-		CWD    string `json:"cwd"`
+		Provider                  string `json:"provider"`
+		Prompt                    string `json:"prompt"`
+		Model                    string `json:"model,omitempty"`
+		CWD                      string `json:"cwd"`
+		DangerouslySkipPermissions bool  `json:"dangerously_skip_permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
 		jsonError(w, "missing prompt", http.StatusBadRequest)
+		return
+	}
+
+	if req.Provider == "" {
+		req.Provider = "claude"
+	}
+
+	builder := provider.GetSessionBuilder(req.Provider)
+	if builder == nil {
+		jsonError(w, fmt.Sprintf("unknown provider: %s", req.Provider), http.StatusNotFound)
 		return
 	}
 
@@ -696,14 +709,18 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		req.CWD = cwd
 	}
 
-	// Build the command — shell-escape the prompt by using -p flag
-	cmd := fmt.Sprintf("claude -p %q", req.Prompt)
+	cmd := builder(req.Prompt, req.Model, req.CWD)
+	if req.DangerouslySkipPermissions {
+		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
+	}
 
 	paneID, err := s.shared.Tmux.CreateWindow(req.CWD, cmd)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to create tmux window: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	s.shared.PendingPanes.Add(paneID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success":   true,
@@ -957,6 +974,153 @@ var DMGDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/
 func (s *PublicServer) handleListCommands(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"commands": provider.GetCommands(),
+	})
+}
+
+// ==================== Providers & Models ====================
+
+// modelCache holds cached model lists per provider with a TTL.
+var modelCache = struct {
+	data      map[string][]provider.ModelInfo
+	fetchedAt map[string]time.Time
+}{
+	data:      make(map[string][]provider.ModelInfo),
+	fetchedAt: make(map[string]time.Time),
+}
+
+const modelCacheTTL = 24 * time.Hour
+
+func getCachedModels(providerID string) ([]provider.ModelInfo, bool) {
+	models, ok := modelCache.data[providerID]
+	if !ok {
+		return nil, false
+	}
+	if time.Since(modelCache.fetchedAt[providerID]) > modelCacheTTL {
+		return nil, false
+	}
+	return models, true
+}
+
+func fetchAndCacheModels(providerID string) ([]provider.ModelInfo, error) {
+	fetcher := provider.GetModelsFetcher(providerID)
+	if fetcher == nil {
+		return nil, fmt.Errorf("unknown provider: %s", providerID)
+	}
+	models, err := fetcher()
+	if err != nil {
+		return nil, err
+	}
+	modelCache.data[providerID] = models
+	modelCache.fetchedAt[providerID] = time.Now()
+	return models, nil
+}
+
+func (s *PublicServer) handleListProviders(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"providers": provider.GetProviders(),
+	})
+}
+
+func (s *PublicServer) handleListModels(w http.ResponseWriter, r *http.Request) {
+	providerID := extractPathParam(r.URL.Path, "/api/providers/", "/models")
+	if providerID == "" {
+		jsonError(w, "missing provider id", http.StatusBadRequest)
+		return
+	}
+
+	models, ok := getCachedModels(providerID)
+	if !ok {
+		var err error
+		models, err = fetchAndCacheModels(providerID)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"provider":          providerID,
+		"models":            models,
+		"cached_at":         modelCache.fetchedAt[providerID].UTC().Format(time.RFC3339),
+		"cache_ttl_seconds": int(modelCacheTTL.Seconds()),
+	})
+}
+
+func (s *PublicServer) handleRefreshModels(w http.ResponseWriter, r *http.Request) {
+	providerID := extractPathParam(r.URL.Path, "/api/providers/", "/models/refresh")
+	if providerID == "" {
+		jsonError(w, "missing provider id", http.StatusBadRequest)
+		return
+	}
+
+	models, err := fetchAndCacheModels(providerID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"provider":          providerID,
+		"models":            models,
+		"cached_at":         modelCache.fetchedAt[providerID].UTC().Format(time.RFC3339),
+		"cache_ttl_seconds": int(modelCacheTTL.Seconds()),
+	})
+}
+
+func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider                  string `json:"provider"`
+		Prompt                    string `json:"prompt"`
+		Model                    string `json:"model,omitempty"`
+		CWD                      string `json:"cwd,omitempty"`
+		DangerouslySkipPermissions bool  `json:"dangerously_skip_permissions,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Prompt == "" {
+		jsonError(w, "missing prompt", http.StatusBadRequest)
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "claude"
+	}
+
+	builder := provider.GetSessionBuilder(req.Provider)
+	if builder == nil {
+		jsonError(w, fmt.Sprintf("unknown provider: %s", req.Provider), http.StatusNotFound)
+		return
+	}
+
+	if req.CWD == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			jsonError(w, "failed to determine home directory", http.StatusInternalServerError)
+			return
+		}
+		req.CWD = home
+	}
+
+	cmd := builder(req.Prompt, req.Model, req.CWD)
+	if req.DangerouslySkipPermissions {
+		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
+	}
+
+	paneID, err := s.shared.Tmux.CreateWindow(req.CWD, cmd)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to create tmux window: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Track pane in memory — the pane watcher will detect trust prompts
+	// and SessionStart hook will create the real session record.
+	s.shared.PendingPanes.Add(paneID, req.CWD)
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"tmux_pane": paneID,
+		"cwd":       req.CWD,
 	})
 }
 

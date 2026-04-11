@@ -4,7 +4,7 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/auth_service.dart';
-import 'services/sse_service.dart';
+import 'services/daemon_api_service.dart';
 import 'services/notification_service.dart';
 import 'screens/setup_screen.dart';
 import 'screens/home_screen.dart';
@@ -17,7 +17,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
-        ChangeNotifierProvider(create: (_) => SSEService()),
+        ChangeNotifierProvider(create: (_) => DaemonAPIService()),
       ],
       child: const HeliosApp(),
     ),

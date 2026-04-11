@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
-import '../services/sse_service.dart';
+import '../services/daemon_api_service.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
@@ -19,7 +19,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SSEService>(
+    return Consumer<DaemonAPIService>(
       builder: (context, sse, _) {
         if (!sse.notificationsLoaded) {
           return ListView(
@@ -81,7 +81,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _navigateToSession(String sourceSession) {
     if (sourceSession.isEmpty) return;
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final match = sse.sessions.where((s) => s.sessionId == sourceSession);
     if (match.isEmpty) return;
     Navigator.of(context).push(
@@ -94,7 +94,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // ==================== Card Routing ====================
 
   Widget _buildNotificationCard(HeliosNotification n) {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final card = registry.buildCardForType(
       notification: n,
       sse: sse,
@@ -148,7 +148,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildBatchActions(List<HeliosNotification> pending) {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final permissionIds = pending.where((n) => n.isClaudePermission).map((n) => n.id).toList();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -177,7 +177,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildStatusCard(HeliosNotification n) {
-    final sse = context.read<SSEService>();
+    final sse = context.read<DaemonAPIService>();
     final isError = n.type.endsWith('.error');
     return Card(
       margin: const EdgeInsets.only(bottom: 8),

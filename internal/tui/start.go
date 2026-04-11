@@ -622,7 +622,7 @@ func hooksInstalled() bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), "/hooks/permission")
+	return strings.Contains(string(data), "/hooks/claude/permission")
 }
 
 func installHooksQuietly() {

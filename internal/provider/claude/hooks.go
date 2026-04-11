@@ -427,6 +427,11 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	}
 	ctx.DB.UpsertSession(sess)
 
+	// Remove from pending panes — Claude has started successfully.
+	if ctx.RemovePendingPane != nil {
+		ctx.RemovePendingPane(input.CWD)
+	}
+
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
 		"cwd":        input.CWD,
