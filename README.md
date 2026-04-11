@@ -6,7 +6,7 @@ You run 5 Claude sessions across 3 projects. One needs permission to run a test.
 
 Helios fixes this. It's a daemon that sits between you and your AI coding tools. It manages their sessions via tmux, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are.
 
-**The killer feature:** Claude needs permission → your phone buzzes → you tap approve → Claude continues. From one browser tab, you can see all your sessions, approve permissions in batch, send follow-up messages, and create new tasks — without touching the terminal.
+**The killer feature:** Full session management and notifications from your phone — see all sessions across multiple machines, approve or deny permissions, send follow-up messages, create new tasks, and get push notifications the moment any session needs attention. No terminal required.
 
 ```
       Phone                    Internet                   Your Machine
