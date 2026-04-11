@@ -22,12 +22,15 @@ class DaemonAPIService extends ChangeNotifier {
   bool _running = false;
   bool _connected = false;
   bool _isActiveHost = false;
+  int _consecutiveFailures = 0;
+  static const _offlineThreshold = 1;
 
   List<HeliosNotification> _notifications = [];
   List<HeliosNotification> get notifications => _notifications;
   List<Session> _sessions = [];
   List<Session> get sessions => _sessions;
   bool get connected => _connected;
+  bool get isOffline => _consecutiveFailures >= _offlineThreshold;
 
   bool _notificationsLoaded = false;
   bool get notificationsLoaded => _notificationsLoaded;
@@ -167,6 +170,7 @@ class DaemonAPIService extends ChangeNotifier {
     _running = false;
     _connected = false;
     _isActiveHost = false;
+    _consecutiveFailures = 0;
     _client?.close();
     _client = null;
     _reconnectTimer?.cancel();
@@ -218,10 +222,13 @@ class DaemonAPIService extends ChangeNotifier {
 
       if (response.statusCode != 200) {
         debugPrint('[$hostId] SSE connect failed: HTTP ${response.statusCode}');
+        _consecutiveFailures++;
+        notifyListeners();
         _scheduleReconnect();
         return;
       }
 
+      _consecutiveFailures = 0;
       _connected = true;
       notifyListeners();
 
@@ -250,6 +257,7 @@ class DaemonAPIService extends ChangeNotifier {
     } catch (e) {
       if (!_running) return;
       debugPrint('[$hostId] SSE error: $e');
+      _consecutiveFailures++;
     }
 
     _connected = false;
@@ -280,7 +288,12 @@ class DaemonAPIService extends ChangeNotifier {
   void _scheduleReconnect() {
     if (!_running) return;
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), _connect);
+    // Exponential backoff: 3s, 6s, 12s, 24s, capped at 30s
+    final delay = Duration(
+      seconds: (3 * (1 << (_consecutiveFailures - 1).clamp(0, 3))).clamp(3, 30),
+    );
+    debugPrint('[$hostId] reconnecting in ${delay.inSeconds}s (failures=$_consecutiveFailures)');
+    _reconnectTimer = Timer(delay, _connect);
   }
 
   // ==================== Health ====================

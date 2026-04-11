@@ -249,6 +249,30 @@ class _SetupScreenState extends State<SetupScreen> {
                       )),
                   if (isPending) ...[
                     const SizedBox(height: 16),
+                    if (hm.pendingDeviceId != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.key, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Device ID: ${hm.pendingDeviceId!.substring(0, 8)}...',
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -257,7 +281,7 @@ class _SetupScreenState extends State<SetupScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.phone_android,
+                          Icon(Icons.terminal,
                               color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
                           const SizedBox(width: 8),
                           Expanded(

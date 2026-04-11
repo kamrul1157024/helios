@@ -127,6 +127,10 @@ class _PendingApprovalScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hm = context.watch<HostManager>();
+    final deviceId = hm.pendingDeviceId ?? '';
+    final shortId = deviceId.length > 8 ? deviceId.substring(0, 8) : deviceId;
+
     return Scaffold(
       body: Center(
         child: Padding(
@@ -152,7 +156,32 @@ class _PendingApprovalScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   const CircularProgressIndicator(),
-                  const SizedBox(height: 24),
+                  if (shortId.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.key, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Device ID: $shortId...',
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(

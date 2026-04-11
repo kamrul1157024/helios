@@ -24,10 +24,12 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 	}
 
 	for _, sess := range sessions {
-		// Backfill last_user_message from transcript if missing
-		if sess.LastUserMessage == nil && sess.TranscriptPath != nil && *sess.TranscriptPath != "" {
+		// Backfill last_user_message from transcript
+		if sess.TranscriptPath != nil && *sess.TranscriptPath != "" {
 			if msg := lastUserMessageFromTranscript(*sess.TranscriptPath); msg != "" {
-				db.UpdateSessionLastUserMessage(sess.SessionID, msg)
+				if sess.LastUserMessage == nil || *sess.LastUserMessage != msg {
+					db.UpdateSessionLastUserMessage(sess.SessionID, msg)
+				}
 			}
 		}
 
@@ -77,8 +79,10 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 	}
 }
 
-// lastUserMessageFromTranscript reads the tail of a transcript JSONL file
-// to find the last user message text.
+// lastUserMessageFromTranscript reads a transcript JSONL file backward
+// in chunks to find the last user message text. Tool-result entries can
+// push the last real user prompt far from the end of the file, so we
+// read in 64KB chunks working backward until we find one.
 func lastUserMessageFromTranscript(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
@@ -91,55 +95,68 @@ func lastUserMessageFromTranscript(path string) string {
 		return ""
 	}
 
-	// Read last 16KB
-	readSize := int64(16384)
-	offset := stat.Size() - readSize
-	if offset < 0 {
-		offset = 0
-		readSize = stat.Size()
+	const chunkSize int64 = 65536
+	fileSize := stat.Size()
+	if fileSize == 0 {
+		return ""
 	}
 
-	buf := make([]byte, readSize)
-	f.ReadAt(buf, offset)
+	// Read backward in chunks until we find a user text message.
+	for end := fileSize; end > 0; {
+		start := end - chunkSize
+		if start < 0 {
+			start = 0
+		}
+		readLen := end - start
 
-	var lastMsg string
-	scanner := bufio.NewScanner(strings.NewReader(string(buf)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		var entry struct {
-			Type    string          `json:"type"`
-			Message json.RawMessage `json:"message"`
-		}
-		if json.Unmarshal([]byte(line), &entry) != nil || entry.Type != "user" {
-			continue
-		}
-		var msg struct {
-			Content json.RawMessage `json:"content"`
-		}
-		if json.Unmarshal(entry.Message, &msg) != nil {
-			continue
-		}
-		var text string
-		if json.Unmarshal(msg.Content, &text) == nil && text != "" {
-			lastMsg = text
-			continue
-		}
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(msg.Content, &blocks) == nil {
-			for _, b := range blocks {
-				if b.Type == "text" && b.Text != "" {
-					lastMsg = b.Text
-					break
+		buf := make([]byte, readLen)
+		f.ReadAt(buf, start)
+
+		var lastMsg string
+		scanner := bufio.NewScanner(strings.NewReader(string(buf)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var entry struct {
+				Type    string          `json:"type"`
+				Message json.RawMessage `json:"message"`
+			}
+			if json.Unmarshal([]byte(line), &entry) != nil || entry.Type != "user" {
+				continue
+			}
+			var msg struct {
+				Content json.RawMessage `json:"content"`
+			}
+			if json.Unmarshal(entry.Message, &msg) != nil {
+				continue
+			}
+			var text string
+			if json.Unmarshal(msg.Content, &text) == nil && text != "" {
+				lastMsg = text
+				continue
+			}
+			var blocks []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(msg.Content, &blocks) == nil {
+				for _, b := range blocks {
+					if b.Type == "text" && b.Text != "" {
+						lastMsg = b.Text
+						break
+					}
 				}
 			}
 		}
+
+		if lastMsg != "" {
+			return lastMsg
+		}
+
+		end = start
 	}
 
-	return lastMsg
+	return ""
 }

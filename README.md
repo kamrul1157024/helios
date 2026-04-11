@@ -21,6 +21,54 @@ Helios fixes this. It's a daemon that sits between you and your AI coding tools.
                                                    └──────────────────────┘
 ```
 
+### Multi-Host & Multi-Device
+
+Helios supports **many-to-many** connectivity between devices and machines:
+
+- **Multiple hosts from one device** — connect your phone to your work laptop, home desktop, and cloud VM. All sessions from all machines appear in a single unified view, color-coded by host.
+- **Multiple devices on one host** — pair your phone, tablet, and desktop app to the same machine. Each device gets independent push notifications and can manage sessions simultaneously.
+
+```
+                          ┌──────────────────────────────┐
+                          │     Machine A (Work laptop)  │
+                     ┌───▶│     helios daemon             │
+                     │    │       ├── claude #1           │
+                     │    │       ├── claude #2           │
+  ┌──────────────┐   │    │       └── aider  #3           │
+  │  Phone       │───┤    └──────────────────────────────┘
+  │  Helios App  │   │
+  │              │   │    ┌──────────────────────────────┐
+  │  All sessions│   │    │     Machine B (Home desktop) │
+  │  unified view│   ├───▶│     helios daemon             │
+  │  color-coded │   │    │       ├── claude #4           │
+  │  by host     │   │    │       └── claude #5           │
+  └──────────────┘   │    └──────────────────────────────┘
+                     │
+                     │    ┌──────────────────────────────┐
+                     │    │     Machine C (Cloud VM)     │
+                     └───▶│     helios daemon             │
+                          │       └── codex  #6           │
+                          └──────────────────────────────┘
+
+
+  ┌──────────────┐
+  │  Phone       │────┐
+  │  Helios App  │    │
+  └──────────────┘    │
+                      │   ┌──────────────────────────────┐
+  ┌──────────────┐    │   │     Machine A                │
+  │  Tablet      │────┼──▶│     helios daemon             │
+  │  Helios App  │    │   │       ├── claude #1           │
+  └──────────────┘    │   │       └── claude #2           │
+                      │   └──────────────────────────────┘
+  ┌──────────────┐    │
+  │  Desktop App │────┘   Each device pairs independently.
+  │  (macOS)     │        All receive push notifications
+  └──────────────┘        and can manage sessions.
+```
+
+Each connection is fully independent — separate pairing, separate credentials, separate SSE streams. The app maintains live connections to all hosts in the background, routing actions (approve, deny, send message) to the correct machine automatically.
+
 ## Setup Guide
 
 ### Prerequisites

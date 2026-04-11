@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
+import '../models/host_connection.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../services/notification_service.dart';
@@ -25,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
+  final Set<String> _offlineDialogShown = {};
 
   @override
   void initState() {
@@ -131,6 +133,91 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _hm.setActiveHost(hostId);
     } catch (_) {
       // Legacy payload format (just notification ID) — ignore
+    }
+  }
+
+  void _checkOfflineHosts(HostManager hm) {
+    // Reset dialog tracking for hosts that have come back online
+    for (final host in hm.hosts) {
+      final service = hm.serviceFor(host.id);
+      if (service != null && service.connected) {
+        _offlineDialogShown.remove(host.id);
+      }
+    }
+
+    final offlineHosts = hm.offlineHosts;
+    for (final host in offlineHosts) {
+      if (_offlineDialogShown.contains(host.id)) continue;
+      _offlineDialogShown.add(host.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _showOfflineHostDialog(host);
+      });
+    }
+  }
+
+  Future<void> _showOfflineHostDialog(HostConnection host) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final shortId = host.deviceId.length > 8
+            ? host.deviceId.substring(0, 8)
+            : host.deviceId;
+        return AlertDialog(
+        icon: const Icon(Icons.cloud_off, size: 40),
+        title: const Text('Host Offline'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '"${host.label}" (${host.serverUrl}) is unreachable.\n',
+            ),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.key, size: 16, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Device ID: $shortId...',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('Would you like to remove this host?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Remove'),
+          ),
+        ],
+      );
+      },
+    );
+
+    if (confirmed == true && mounted) {
+      await _hm.removeHost(host.id);
     }
   }
 
@@ -324,6 +411,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         for (final host in hm.hosts) {
           _subscribeToHost(host.id);
         }
+
+        // Prompt user to remove offline hosts
+        _checkOfflineHosts(hm);
 
         final allNotifications = hm.allNotifications;
         final allSessions = hm.allSessions;

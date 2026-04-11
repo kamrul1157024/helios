@@ -284,18 +284,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
           service?.patchSession(session.sessionId, archived: !isArchived);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(isArchived ? 'Session unarchived' : 'Session archived'),
-                action: SnackBarAction(
-                  label: 'Undo',
-                  onPressed: () => service?.patchSession(session.sessionId, archived: isArchived),
-                ),
-                duration: const Duration(seconds: 3),
-              ),
-            );
-          }
           return false;
         } else {
           final confirmed = await showDialog<bool>(
@@ -518,16 +506,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 onTap: () {
                   Navigator.pop(ctx);
                   service?.patchSession(session.sessionId, archived: !isArchived);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(isArchived ? 'Session unarchived' : 'Session archived'),
-                      action: SnackBarAction(
-                        label: 'Undo',
-                        onPressed: () => service?.patchSession(session.sessionId, archived: isArchived),
-                      ),
-                      duration: const Duration(seconds: 3),
-                    ),
-                  );
                 },
               ),
               ListTile(

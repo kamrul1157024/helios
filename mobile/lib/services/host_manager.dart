@@ -28,12 +28,14 @@ class HostManager extends ChangeNotifier {
 
   bool _isLoading = true;
   bool _isPendingApproval = false;
+  String? _pendingDeviceId;
 
   // --- Public accessors ---
 
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _hosts.isNotEmpty;
   bool get isPendingApproval => _isPendingApproval;
+  String? get pendingDeviceId => _pendingDeviceId;
   List<HostConnection> get hosts => List.unmodifiable(_hosts);
   String? get activeHostId => _activeHostId;
 
@@ -59,6 +61,14 @@ class HostManager extends ChangeNotifier {
   }
 
   bool get hasAnyConnection => _services.values.any((s) => s.connected);
+
+  /// Returns hosts whose services have exceeded the offline failure threshold.
+  List<HostConnection> get offlineHosts {
+    return _hosts.where((h) {
+      final service = _services[h.id];
+      return service != null && service.isOffline;
+    }).toList();
+  }
 
   /// All sessions from all hosts, merged.
   List<Session> get allSessions =>
@@ -238,7 +248,25 @@ class HostManager extends ChangeNotifier {
       final extractedSeed = await keyPair.extractPrivateKeyBytes();
       final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
 
-      // 7. Create host connection
+      // 7. Update device metadata
+      await _updateDeviceMetadata(serverUrl, cookie);
+
+      // 8. Wait for approval (host is NOT added to _hosts yet)
+      onStatus?.call('Waiting for approval on terminal...');
+      _pendingDeviceId = deviceId;
+      _isPendingApproval = true;
+      notifyListeners();
+
+      final approved = await _waitForApproval(serverUrl, cookie);
+      _isPendingApproval = false;
+      _pendingDeviceId = null;
+
+      if (!approved) {
+        notifyListeners();
+        return SetupResult.error('Device was rejected by the terminal user.');
+      }
+
+      // 9. Approved — now create and persist the host
       final nextColorIndex = _hosts.isEmpty ? 0 : (_hosts.map((h) => h.colorIndex).reduce((a, b) => a > b ? a : b) + 1);
       final host = HostConnection(
         id: const Uuid().v4(),
@@ -249,31 +277,12 @@ class HostManager extends ChangeNotifier {
         addedAt: DateTime.now(),
       );
 
-      // 8. Persist credentials
       await _secureStorage.write(key: 'helios_host_${host.id}_key', value: _base64urlEncode(seed));
       await _secureStorage.write(key: 'helios_host_${host.id}_cookie', value: cookie);
       _hosts.add(host);
       await _saveHosts();
 
-      // 9. Update device metadata
-      await _updateDeviceMetadata(serverUrl, cookie);
-
-      // 10. Wait for approval
-      onStatus?.call('Waiting for approval on terminal...');
-      _isPendingApproval = true;
-      notifyListeners();
-
-      final approved = await _waitForApproval(serverUrl, cookie);
-      _isPendingApproval = false;
-
-      if (!approved) {
-        // Remove the unapproved host
-        await removeHost(host.id);
-        notifyListeners();
-        return SetupResult.error('Device was rejected by the terminal user.');
-      }
-
-      // 11. Set as active and start service
+      // 10. Set as active and start service
       _activeHostId = host.id;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_activeHostKey, host.id);
@@ -287,6 +296,7 @@ class HostManager extends ChangeNotifier {
       return SetupResult.success();
     } catch (e) {
       _isPendingApproval = false;
+      _pendingDeviceId = null;
       notifyListeners();
       return SetupResult.error('Setup failed: $e');
     }
