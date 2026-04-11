@@ -72,7 +72,7 @@ class NotificationService {
       id.hashCode,
       'helios — Permission Request',
       '$toolName: $detail',
-      const NotificationDetails(android: androidDetails, iOS: iosDetails),
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
       payload: id,
     );
   }
