@@ -66,22 +66,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         _hasMore = result.hasMore;
         _loading = false;
       });
-      _scrollToBottom();
     } else if (mounted) {
       setState(() => _loading = false);
     }
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
   }
 
   Future<void> _sendPrompt() async {
@@ -338,12 +325,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Widget _buildMessageList() {
+    // reverse: true renders from bottom up — newest messages visible immediately.
+    // Items are indexed in reverse order, so index 0 = last message.
+    final itemCount = _messages.length + (_hasMore ? 1 : 0);
     return ListView.builder(
       controller: _scrollController,
+      reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      itemCount: _messages.length + (_hasMore ? 1 : 0),
+      itemCount: itemCount,
       itemBuilder: (context, index) {
-        if (_hasMore && index == 0) {
+        // Last item in reversed list = "earlier messages" banner
+        if (_hasMore && index == itemCount - 1) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(8),
@@ -357,7 +349,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ),
           );
         }
-        final msgIndex = _hasMore ? index - 1 : index;
+        // Reverse the index: index 0 → last message, index N → first message
+        final msgIndex = _messages.length - 1 - index;
         return MessageCard(message: _messages[msgIndex]);
       },
     );
@@ -424,6 +417,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     switch (status) {
       case 'active':
         return Colors.green;
+      case 'compacting':
+        return Colors.indigo;
       case 'waiting_permission':
         return Colors.orange;
       case 'idle':
@@ -432,6 +427,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         return theme.colorScheme.error;
       case 'suspended':
         return Colors.purple;
+      case 'stale':
+        return Colors.grey;
       case 'ended':
         return theme.colorScheme.outline;
       default:
@@ -443,6 +440,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     switch (status) {
       case 'active':
         return 'Active';
+      case 'compacting':
+        return 'Compacting';
       case 'waiting_permission':
         return 'Needs Approval';
       case 'idle':
@@ -451,6 +450,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         return 'Error';
       case 'suspended':
         return 'Suspended';
+      case 'stale':
+        return 'Stale';
       case 'ended':
         return 'Ended';
       default:

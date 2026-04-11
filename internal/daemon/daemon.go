@@ -127,6 +127,21 @@ func Start(cfg *Config) error {
 		}
 	}()
 
+	// Periodic stale session reaper
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		tmuxClient := tmux.NewClient()
+		for {
+			select {
+			case <-ticker.C:
+				reapStaleSessions(db, tmuxClient, shared.SSE)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Start both servers
 	errCh := make(chan error, 2)
 

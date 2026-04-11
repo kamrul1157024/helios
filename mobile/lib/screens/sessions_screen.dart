@@ -179,6 +179,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
     switch (status) {
       case 'active':
         return Colors.green;
+      case 'compacting':
+        return Colors.indigo;
       case 'waiting_permission':
         return Colors.orange;
       case 'idle':
@@ -187,6 +189,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return theme.colorScheme.error;
       case 'suspended':
         return Colors.purple;
+      case 'stale':
+        return Colors.grey;
       case 'ended':
         return theme.colorScheme.outline;
       default:
@@ -198,6 +202,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
     switch (status) {
       case 'active':
         return Icons.play_circle_filled;
+      case 'compacting':
+        return Icons.compress;
       case 'waiting_permission':
         return Icons.warning_amber;
       case 'idle':
@@ -206,6 +212,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return Icons.error;
       case 'suspended':
         return Icons.stop_circle;
+      case 'stale':
+        return Icons.help_outline;
       case 'ended':
         return Icons.check_circle;
       default:
@@ -217,6 +225,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
     switch (status) {
       case 'active':
         return 'Active';
+      case 'compacting':
+        return 'Compacting';
       case 'waiting_permission':
         return 'Needs Approval';
       case 'idle':
@@ -225,6 +235,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return 'Error';
       case 'suspended':
         return 'Suspended';
+      case 'stale':
+        return 'Stale';
       case 'ended':
         return 'Ended';
       default:

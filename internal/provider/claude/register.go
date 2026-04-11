@@ -15,6 +15,12 @@ func Register() {
 	provider.RegisterHook("claude.notification", handleNotification)
 	provider.RegisterHook("claude.session.start", handleSessionStart)
 	provider.RegisterHook("claude.session.end", handleSessionEnd)
+	provider.RegisterHook("claude.prompt.submit", handlePromptSubmit)
+	provider.RegisterHook("claude.tool.pre", handleToolPre)
+	provider.RegisterHook("claude.tool.post", handleToolPost)
+	provider.RegisterHook("claude.tool.post.failure", handleToolPostFailure)
+	provider.RegisterHook("claude.compact.pre", handlePreCompact)
+	provider.RegisterHook("claude.compact.post", handlePostCompact)
 	provider.RegisterHook("claude.subagent.start", handleSubagentStart)
 	provider.RegisterHook("claude.subagent.stop", handleSubagentStop)
 

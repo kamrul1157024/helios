@@ -23,6 +23,17 @@ func hookConfig(port int) map[string]interface{} {
 					},
 				},
 			},
+			"UserPromptSubmit": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/prompt/submit",
+						},
+					},
+				},
+			},
 			"PreToolUse": []interface{}{
 				map[string]interface{}{
 					"matcher": "AskUserQuestion",
@@ -31,6 +42,37 @@ func hookConfig(port int) map[string]interface{} {
 							"type":    "http",
 							"url":     base + "/question",
 							"timeout": 300,
+						},
+					},
+				},
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/tool/pre",
+						},
+					},
+				},
+			},
+			"PostToolUse": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/tool/post",
+						},
+					},
+				},
+			},
+			"PostToolUseFailure": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/tool/post/failure",
 						},
 					},
 				},
@@ -43,6 +85,28 @@ func hookConfig(port int) map[string]interface{} {
 							"type":    "http",
 							"url":     base + "/elicitation",
 							"timeout": 300,
+						},
+					},
+				},
+			},
+			"PreCompact": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/compact/pre",
+						},
+					},
+				},
+			},
+			"PostCompact": []interface{}{
+				map[string]interface{}{
+					"matcher": "*",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type": "http",
+							"url":  base + "/compact/post",
 						},
 					},
 				},

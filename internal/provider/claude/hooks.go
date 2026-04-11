@@ -487,6 +487,115 @@ func waitForDecision(ctx *provider.HookContext, notifID string, r *http.Request)
 	}
 }
 
+// ==================== Activity Hooks ====================
+
+func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "UserPromptSubmit")
+	updateSessionTranscript(ctx, &input)
+
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"status":     "active",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+func handleToolPre(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PreToolUse:"+input.ToolName)
+	updateSessionTranscript(ctx, &input)
+
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"status":     "active",
+		"last_event": "PreToolUse:" + input.ToolName,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUse:"+input.ToolName)
+	updateSessionTranscript(ctx, &input)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+func handleToolPostFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUseFailure:"+input.ToolName)
+	updateSessionTranscript(ctx, &input)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+// ==================== Compaction Hooks ====================
+
+func handlePreCompact(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "compacting", "PreCompact")
+	updateSessionTranscript(ctx, &input)
+
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"status":     "compacting",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
+func handlePostCompact(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
+	var input hookInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostCompact")
+	updateSessionTranscript(ctx, &input)
+
+	ctx.Notify("session_status", map[string]interface{}{
+		"session_id": input.SessionID,
+		"status":     "active",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{}`)
+}
+
 // ==================== Subagent Hooks ====================
 
 func handleSubagentStart(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {

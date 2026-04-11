@@ -634,19 +634,19 @@ func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
-	s.shared.DB.UpdateSessionStatus(id, "active", "RemoteResume")
+	s.shared.DB.UpdateSessionStatus(id, "idle", "RemoteResume")
 
 	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "session_status",
 		Data: map[string]interface{}{
 			"session_id": session.SessionID,
-			"status":     "active",
+			"status":     "idle",
 			"tmux_pane":  paneID,
 		},
 	})
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true, "status": "active", "tmux_pane": paneID,
+		"success": true, "status": "idle", "tmux_pane": paneID,
 	})
 }
 

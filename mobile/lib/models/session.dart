@@ -47,14 +47,16 @@ class Session {
     );
   }
 
-  bool get isActive => status == 'active' || status == 'waiting_permission';
+  bool get isActive => status == 'active' || status == 'waiting_permission' || status == 'compacting';
+  bool get isCompacting => status == 'compacting';
   bool get isIdle => status == 'idle';
   bool get isEnded => status == 'ended';
   bool get isSuspended => status == 'suspended';
-  bool get canSendPrompt => status == 'idle' || status == 'ended' || status == 'suspended';
-  bool get canStop => isActive;
+  bool get isStale => status == 'stale';
+  bool get canSendPrompt => status == 'idle' || status == 'ended' || status == 'suspended' || status == 'stale';
+  bool get canStop => status == 'active' || status == 'waiting_permission' || status == 'compacting';
   bool get canSuspend => isActive || isIdle;
-  bool get canResume => isEnded || isSuspended;
+  bool get canResume => isEnded || isSuspended || isStale;
 
   String get shortId {
     if (sessionId.length > 8) return sessionId.substring(0, 8);

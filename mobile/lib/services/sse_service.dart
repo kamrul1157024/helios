@@ -11,6 +11,7 @@ class SSEService extends ChangeNotifier {
   AuthService? _auth;
   http.Client? _client;
   Timer? _reconnectTimer;
+  Timer? _pollTimer;
   bool _running = false;
   bool _connected = false;
 
@@ -43,14 +44,22 @@ class SSEService extends ChangeNotifier {
     }
   }
 
-  /// Start the persistent SSE connection.
+  /// Start the persistent SSE connection and session polling.
   Future<void> start() async {
     if (_running) return;
     _running = true;
+    _startPolling();
     await _connect();
   }
 
-  /// Stop the SSE connection.
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      fetchSessions();
+    });
+  }
+
+  /// Stop the SSE connection and polling.
   void stop() {
     _running = false;
     _connected = false;
@@ -58,6 +67,8 @@ class SSEService extends ChangeNotifier {
     _client = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _pollTimer?.cancel();
+    _pollTimer = null;
     notifyListeners();
   }
 
@@ -122,8 +133,11 @@ class SSEService extends ChangeNotifier {
     _eventController.add(SSEEvent(type, data));
     // Refresh notifications on any event
     fetchNotifications();
-    // Refresh sessions on session events
-    if (type == 'session_status') {
+    // Refresh sessions on any session-relevant event
+    if (type == 'session_status' ||
+        type == 'notification' ||
+        type == 'notification_resolved' ||
+        type == 'subagent_status') {
       fetchSessions();
     }
   }
