@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -11,6 +12,7 @@ type Session struct {
 	Source          string  `json:"source"`
 	CWD             string  `json:"cwd"`
 	Project         string  `json:"project"`
+	Title           *string `json:"title,omitempty"`
 	TranscriptPath  *string `json:"transcript_path,omitempty"`
 	Model           *string `json:"model,omitempty"`
 	Status          string  `json:"status"`
@@ -44,18 +46,19 @@ func (s *Store) UpsertSession(sess *Session) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, transcript_path, model, status, last_event, last_event_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
+		   title = COALESCE(sessions.title, excluded.title),
 		   transcript_path = COALESCE(excluded.transcript_path, sessions.transcript_path),
 		   model = COALESCE(excluded.model, sessions.model),
 		   status = excluded.status,
 		   last_event = excluded.last_event,
 		   last_event_at = excluded.last_event_at`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
-		sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
+		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
 	)
 	return err
 }
@@ -69,10 +72,10 @@ func (s *Store) InsertDiscoveredSession(sess *Session) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, transcript_path, model, status, last_event, last_event_at, last_user_message, tmux_pane, tmux_pid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, last_user_message, tmux_pane, tmux_pid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
-		sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, sess.LastEventAt,
+		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, sess.LastEventAt,
 		sess.LastUserMessage, sess.TmuxPane, sess.TmuxPID,
 	)
 	return err
@@ -127,12 +130,12 @@ func (s *Store) UpdateSessionTmuxPane(sessionID, paneID string, pid int) error {
 func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
-		`SELECT session_id, source, cwd, project, transcript_path, model, status,
+		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 		        last_event, last_event_at, last_user_message, pinned, archived,
 		        tmux_pane, tmux_pid, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
-		&sess.TranscriptPath, &sess.Model, &sess.Status,
+		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
 		&sess.TmuxPane, &sess.TmuxPID,
 		&sess.CreatedAt, &sess.EndedAt)
@@ -142,14 +145,61 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	return sess, err
 }
 
-// ListSessions returns all sessions ordered by most recent activity.
+// ListSessions returns all non-archived sessions ordered by most recent activity.
 func (s *Store) ListSessions() ([]Session, error) {
-	rows, err := s.db.Query(
-		`SELECT session_id, source, cwd, project, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, pinned, archived,
-		        tmux_pane, tmux_pid, created_at, ended_at
-		 FROM sessions ORDER BY COALESCE(last_event_at, created_at) DESC LIMIT 100`,
-	)
+	return s.SearchSessions("", "", "", "")
+}
+
+// SearchSessions returns sessions matching the given filters.
+// query: free-text search (tokenized by spaces, all tokens must match).
+// status: exact match on session status (empty = no filter).
+// filter: "all" (default, excludes archived), "pinned", "archived".
+// cwd: exact match on session CWD (empty = no filter).
+func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, error) {
+	var where []string
+	var args []interface{}
+
+	// Tokenized text search
+	if query != "" {
+		for _, token := range strings.Fields(query) {
+			pattern := "%" + token + "%"
+			where = append(where, `(COALESCE(title,'') || ' ' || COALESCE(last_user_message,'') || ' ' || project || ' ' || cwd || ' ' || session_id) LIKE ?`)
+			args = append(args, pattern)
+		}
+	}
+
+	// Status filter
+	if status != "" {
+		where = append(where, `status = ?`)
+		args = append(args, status)
+	}
+
+	// Flag-based filter
+	switch filter {
+	case "pinned":
+		where = append(where, `pinned = 1 AND archived = 0`)
+	case "archived":
+		where = append(where, `archived = 1`)
+	default: // "all" or empty
+		where = append(where, `archived = 0`)
+	}
+
+	// CWD filter
+	if cwd != "" {
+		where = append(where, `cwd = ?`)
+		args = append(args, cwd)
+	}
+
+	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
+	        last_event, last_event_at, last_user_message, pinned, archived,
+	        tmux_pane, tmux_pid, created_at, ended_at
+	 FROM sessions`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += ` ORDER BY COALESCE(last_event_at, created_at) DESC LIMIT 1000`
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +209,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
-			&sess.TranscriptPath, &sess.Model, &sess.Status,
+			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
 			&sess.TmuxPane, &sess.TmuxPID,
 			&sess.CreatedAt, &sess.EndedAt); err != nil {
@@ -168,6 +218,53 @@ func (s *Store) ListSessions() ([]Session, error) {
 		result = append(result, sess)
 	}
 	return result, rows.Err()
+}
+
+// DirectoryInfo holds aggregated info about sessions in a given CWD.
+type DirectoryInfo struct {
+	CWD          string `json:"cwd"`
+	Project      string `json:"project"`
+	SessionCount int    `json:"session_count"`
+	ActiveCount  int    `json:"active_count"`
+}
+
+// ListDirectories returns all distinct CWDs with session counts.
+func (s *Store) ListDirectories() ([]DirectoryInfo, error) {
+	rows, err := s.db.Query(
+		`SELECT cwd, project,
+		        COUNT(*) as session_count,
+		        SUM(CASE WHEN status IN ('active','waiting_permission','compacting','starting') THEN 1 ELSE 0 END) as active_count
+		 FROM sessions
+		 GROUP BY cwd
+		 ORDER BY MAX(COALESCE(last_event_at, created_at)) DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []DirectoryInfo
+	for rows.Next() {
+		var d DirectoryInfo
+		if err := rows.Scan(&d.CWD, &d.Project, &d.SessionCount, &d.ActiveCount); err != nil {
+			return nil, err
+		}
+		result = append(result, d)
+	}
+	return result, rows.Err()
+}
+
+// UpdateSessionTitle sets or clears the user-defined session title.
+func (s *Store) UpdateSessionTitle(sessionID, title string) error {
+	var titleVal interface{}
+	if title != "" {
+		titleVal = title
+	}
+	_, err := s.db.Exec(
+		`UPDATE sessions SET title = ? WHERE session_id = ?`,
+		titleVal, sessionID,
+	)
+	return err
 }
 
 // UpdateSessionFlags updates the pinned and archived flags for a session.

@@ -363,7 +363,12 @@ func (s *PublicServer) handleUpdateDeviceMe(w http.ResponseWriter, r *http.Reque
 // ==================== Session API ====================
 
 func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.shared.DB.ListSessions()
+	query := r.URL.Query().Get("q")
+	status := r.URL.Query().Get("status")
+	filter := r.URL.Query().Get("filter")
+	cwd := r.URL.Query().Get("cwd")
+
+	sessions, err := s.shared.DB.SearchSessions(query, status, filter, cwd)
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
 		return
@@ -371,6 +376,18 @@ func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"sessions": sessions,
+	})
+}
+
+func (s *PublicServer) handleListDirectories(w http.ResponseWriter, r *http.Request) {
+	dirs, err := s.shared.DB.ListDirectories()
+	if err != nil {
+		jsonError(w, "failed to list directories", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"directories": dirs,
 	})
 }
 
@@ -668,8 +685,9 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		Pinned   *bool `json:"pinned"`
-		Archived *bool `json:"archived"`
+		Pinned   *bool   `json:"pinned"`
+		Archived *bool   `json:"archived"`
+		Title    *string `json:"title"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -688,6 +706,13 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	if err := s.shared.DB.UpdateSessionFlags(id, pinned, archived); err != nil {
 		jsonError(w, "failed to update session", http.StatusInternalServerError)
 		return
+	}
+
+	if req.Title != nil {
+		if err := s.shared.DB.UpdateSessionTitle(id, *req.Title); err != nil {
+			jsonError(w, "failed to update session title", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	s.shared.SSE.Broadcast(SSEEvent{

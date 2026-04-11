@@ -391,13 +391,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
 
   Widget _buildCwdSection(ThemeData theme) {
     final sse = _service;
-    // Extract unique CWDs from recent sessions
-    final recentCwds = (sse?.sessions ?? [])
-        .where((s) => s.cwd.isNotEmpty)
-        .map((s) => s.cwd)
-        .toSet()
-        .take(5)
-        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -410,44 +403,56 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           ),
         ),
         const SizedBox(height: 8),
-        if (recentCwds.isNotEmpty)
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ...recentCwds.map((cwd) {
-                final isSelected = _cwdController.text == cwd;
-                return FilterChip(
-                  label: Text(
-                    _shortCwd(cwd),
-                    style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                  ),
-                  selected: isSelected,
+        FutureBuilder<List<DirectoryInfo>>(
+          future: sse?.fetchDirectories() ?? Future.value([]),
+          builder: (context, snapshot) {
+            final dirs = snapshot.data ?? [];
+            return Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                ...dirs.take(8).map((d) {
+                  final isSelected = _cwdController.text == d.cwd;
+                  return FilterChip(
+                    avatar: d.activeCount > 0
+                        ? Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.green),
+                          )
+                        : null,
+                    label: Text(
+                      d.project.isNotEmpty ? d.project : d.shortCwd,
+                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                    ),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() {
+                        if (selected) {
+                          _cwdController.text = d.cwd;
+                          _showCustomCwd = false;
+                        } else {
+                          _cwdController.clear();
+                        }
+                      });
+                    },
+                  );
+                }),
+                FilterChip(
+                  label: const Text('Custom...', style: TextStyle(fontSize: 12)),
+                  selected: _showCustomCwd,
                   onSelected: (selected) {
                     setState(() {
-                      if (selected) {
-                        _cwdController.text = cwd;
-                        _showCustomCwd = false;
-                      } else {
-                        _cwdController.clear();
-                      }
+                      _showCustomCwd = selected;
+                      if (!selected) _cwdController.clear();
                     });
                   },
-                );
-              }),
-              FilterChip(
-                label: const Text('Custom...', style: TextStyle(fontSize: 12)),
-                selected: _showCustomCwd,
-                onSelected: (selected) {
-                  setState(() {
-                    _showCustomCwd = selected;
-                    if (!selected) _cwdController.clear();
-                  });
-                },
-              ),
-            ],
-          ),
-        if (recentCwds.isEmpty || _showCustomCwd) ...[
+                ),
+              ],
+            );
+          },
+        ),
+        if (_showCustomCwd) ...[
           const SizedBox(height: 8),
           TextField(
             controller: _cwdController,
@@ -467,11 +472,5 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         ],
       ],
     );
-  }
-
-  String _shortCwd(String cwd) {
-    final parts = cwd.split('/');
-    if (parts.length <= 3) return cwd;
-    return '.../${parts.sublist(parts.length - 2).join('/')}';
   }
 }

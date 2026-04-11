@@ -300,8 +300,15 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenMain:
 			return m, tea.Quit
+		case screenTunnelSelect, screenBinaryMissing, screenCustomURL:
+			// If tunnel is already active, go back to main instead of quitting
+			if m.tunnelOK {
+				m.screen = screenMain
+				return m, nil
+			}
+			return m, tea.Quit
 		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenTmuxRestart,
-			screenEditorSetup, screenTunnelSelect, screenBinaryMissing, screenError:
+			screenEditorSetup, screenError:
 			return m, tea.Quit
 		}
 
@@ -341,6 +348,12 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenTmuxRestart {
 			m.tmuxRestartNeeded = false
 			return m.proceedAfterTmuxRestart()
+		}
+
+	case "t":
+		if m.screen == screenMain {
+			m.screen = screenTunnelSelect
+			return m, nil
 		}
 
 	case "s":
@@ -530,6 +543,11 @@ func (m StartModel) handleTunnelStarted(msg tunnelStarted) (tea.Model, tea.Cmd) 
 	if err == nil {
 		m.downloadQR = qr.ToSmallString(false)
 	}
+
+	// Clear stale pairing QR (new token will regenerate it)
+	m.pairingQR = ""
+	m.pairingToken = ""
+	m.setupURL = ""
 
 	// Now go to main and create a pairing token
 	m.screen = screenMain

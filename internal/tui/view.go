@@ -299,7 +299,11 @@ func (m StartModel) viewTunnelSelect() string {
 		b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(p.label)))
 	}
 
-	b.WriteString(helpStyle.Render("  ↑/↓ navigate  enter select  q quit"))
+	if m.tunnelOK {
+		b.WriteString(helpStyle.Render("  ↑/↓ navigate  enter select  q back"))
+	} else {
+		b.WriteString(helpStyle.Render("  ↑/↓ navigate  enter select  q quit"))
+	}
 
 	return b.String()
 }
@@ -477,7 +481,7 @@ func (m StartModel) viewMain() string {
 		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
 	}
 
-	b.WriteString(helpStyle.Render("  q quit"))
+	b.WriteString(helpStyle.Render("  t change tunnel  q quit"))
 
 	return b.String()
 }

@@ -37,6 +37,11 @@ class DaemonAPIService extends ChangeNotifier {
   bool _sessionsLoaded = false;
   bool get sessionsLoaded => _sessionsLoaded;
 
+  // Track last fetch params so polling/SSE refreshes use the same filters
+  String? _lastSessionQ;
+  String? _lastSessionFilter;
+  String? _lastSessionCwd;
+
   List<SlashCommand> _commands = [];
   List<SlashCommand> get commands => _commands;
 
@@ -374,9 +379,30 @@ class DaemonAPIService extends ChangeNotifier {
 
   // ==================== Session API ====================
 
-  Future<void> fetchSessions() async {
+  Future<void> fetchSessions({String? q, String? status, String? filter, String? cwd, bool updateFilters = false}) async {
+    // When called with explicit params from search UI, remember them.
+    if (updateFilters) {
+      _lastSessionQ = q;
+      _lastSessionFilter = filter;
+      _lastSessionCwd = cwd;
+    }
+
+    // Use the remembered filters for background refreshes (polling/SSE).
+    final effectiveQ = q ?? _lastSessionQ;
+    final effectiveFilter = filter ?? _lastSessionFilter;
+    final effectiveCwd = cwd ?? _lastSessionCwd;
+
     try {
-      final resp = await _authGet('/api/sessions');
+      final params = <String, String>{};
+      if (effectiveQ != null && effectiveQ.isNotEmpty) params['q'] = effectiveQ;
+      if (status != null && status.isNotEmpty) params['status'] = status;
+      if (effectiveFilter != null && effectiveFilter.isNotEmpty) params['filter'] = effectiveFilter;
+      if (effectiveCwd != null && effectiveCwd.isNotEmpty) params['cwd'] = effectiveCwd;
+
+      final queryString = params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
+      final path = queryString.isNotEmpty ? '/api/sessions?$queryString' : '/api/sessions';
+
+      final resp = await _authGet(path);
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['sessions'] as List?) ?? [];
@@ -387,6 +413,20 @@ class DaemonAPIService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[$hostId] Failed to fetch sessions: $e');
     }
+  }
+
+  Future<List<DirectoryInfo>> fetchDirectories() async {
+    try {
+      final resp = await _authGet('/api/sessions/directories');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['directories'] as List?) ?? [];
+        return list.map((d) => DirectoryInfo.fromJson(d)).toList();
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to fetch directories: $e');
+    }
+    return [];
   }
 
   Future<TranscriptResult?> fetchTranscript(String sessionId, {int limit = 200, int offset = 0}) async {
@@ -468,8 +508,11 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived}) async {
+  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived, String? title}) async {
     // Optimistically update the local session list for instant UI feedback.
+    // Use Future.microtask to defer the notification so any dialog/sheet that
+    // triggered this call finishes its pop transition first — avoids the
+    // _dependents.isEmpty assertion in framework.dart.
     final idx = _sessions.indexWhere((s) => s.sessionId == sessionId);
     Session? original;
     if (idx != -1) {
@@ -477,14 +520,16 @@ class DaemonAPIService extends ChangeNotifier {
       _sessions[idx] = original.copyWith(
         pinned: pinned ?? original.pinned,
         archived: archived ?? original.archived,
+        title: title,
       );
-      notifyListeners();
+      Future.microtask(() => notifyListeners());
     }
 
     try {
       final body = <String, dynamic>{};
       if (pinned != null) body['pinned'] = pinned;
       if (archived != null) body['archived'] = archived;
+      if (title != null) body['title'] = title;
       final resp = await _authPatch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
@@ -506,7 +551,7 @@ class DaemonAPIService extends ChangeNotifier {
     // Optimistically remove from local list for instant UI feedback.
     final original = List<Session>.from(_sessions);
     _sessions.removeWhere((s) => s.sessionId == sessionId);
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
 
     try {
       final resp = await _authDelete('/api/sessions/$sessionId');
@@ -648,6 +693,35 @@ class SlashCommand {
       description: json['description'] as String? ?? '',
       icon: json['icon'] as String? ?? '',
     );
+  }
+}
+
+class DirectoryInfo {
+  final String cwd;
+  final String project;
+  final int sessionCount;
+  final int activeCount;
+
+  DirectoryInfo({
+    required this.cwd,
+    required this.project,
+    required this.sessionCount,
+    required this.activeCount,
+  });
+
+  factory DirectoryInfo.fromJson(Map<String, dynamic> json) {
+    return DirectoryInfo(
+      cwd: json['cwd'] as String,
+      project: json['project'] as String? ?? '',
+      sessionCount: json['session_count'] as int? ?? 0,
+      activeCount: json['active_count'] as int? ?? 0,
+    );
+  }
+
+  String get shortCwd {
+    final parts = cwd.split('/');
+    if (parts.length <= 3) return cwd;
+    return '.../${parts.sublist(parts.length - 2).join('/')}';
   }
 }
 

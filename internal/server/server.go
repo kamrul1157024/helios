@@ -99,6 +99,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("GET /api/push/vapid-public-key", s.handleVAPIDPublicKey)
 	protectedMux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	protectedMux.HandleFunc("GET /api/sessions/directories", s.handleListDirectories)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
 	protectedMux.Handle("GET /api/events", shared.SSE)

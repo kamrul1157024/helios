@@ -123,6 +123,28 @@ class _SetupScreenState extends State<SetupScreen> {
                 }
               }
             },
+            errorBuilder: (context, error) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.camera_alt_outlined, size: 48,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                      const SizedBox(height: 16),
+                      Text('Camera unavailable',
+                          style: Theme.of(context).textTheme.bodyLarge),
+                      const SizedBox(height: 8),
+                      Text('Grant camera permission or paste the URL manually.',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          textAlign: TextAlign.center),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ),
         Padding(

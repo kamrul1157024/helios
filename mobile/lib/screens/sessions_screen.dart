@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -20,10 +21,28 @@ class _SessionsScreenState extends State<SessionsScreen> {
   SessionFilter _filter = SessionFilter.all;
   final Set<String> _selected = {};
   bool _multiSelect = false;
+  bool _searchExpanded = false;
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  Timer? _debounce;
+  String? _cwdFilter;
+  String? _cwdFilterProject;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
 
   String _compositeKey(Session s) => '${s.hostId}:${s.sessionId}';
 
   List<Session> _filterSessions(List<Session> sessions) {
+    // When search or CWD filter is active, API already filtered — pass through.
+    if (_searchExpanded && _searchController.text.trim().isNotEmpty || _cwdFilter != null) {
+      return sessions;
+    }
     switch (_filter) {
       case SessionFilter.all:
         return sessions.where((s) => !s.archived).toList();
@@ -45,6 +64,126 @@ class _SessionsScreenState extends State<SessionsScreen> {
       return bTime.compareTo(aTime);
     });
     return sessions;
+  }
+
+  String get _filterParam {
+    switch (_filter) {
+      case SessionFilter.all:
+        return 'all';
+      case SessionFilter.pinned:
+        return 'pinned';
+      case SessionFilter.archived:
+        return 'archived';
+    }
+  }
+
+  void _triggerSearch() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      final hm = context.read<HostManager>();
+      final q = _searchController.text.trim();
+      if (hm.activeHostId != null) {
+        hm.serviceFor(hm.activeHostId!)?.fetchSessions(
+          q: q.isNotEmpty ? q : null,
+          filter: _filterParam,
+          cwd: _cwdFilter,
+          updateFilters: true,
+        );
+      } else {
+        for (final host in hm.hosts) {
+          hm.serviceFor(host.id)?.fetchSessions(
+            q: q.isNotEmpty ? q : null,
+            filter: _filterParam,
+            cwd: _cwdFilter,
+            updateFilters: true,
+          );
+        }
+      }
+    });
+  }
+
+  void _setCwdFilter(String cwd, String project) {
+    setState(() {
+      _cwdFilter = cwd;
+      _cwdFilterProject = project;
+    });
+    _triggerSearch();
+  }
+
+  void _clearCwdFilter() {
+    setState(() {
+      _cwdFilter = null;
+      _cwdFilterProject = null;
+    });
+    _triggerSearch();
+  }
+
+  void _openDirectoryPicker() async {
+    final hm = context.read<HostManager>();
+    final service = hm.activeHostId != null ? hm.serviceFor(hm.activeHostId!) : null;
+    if (service == null) return;
+
+    final dirs = await service.fetchDirectories();
+    if (!mounted || dirs.isEmpty) return;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Filter by directory',
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const Divider(height: 1),
+              ...dirs.map((d) => ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(d.project.isNotEmpty ? d.project : d.shortCwd),
+                subtitle: Text(
+                  d.shortCwd,
+                  style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (d.activeCount > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${d.activeCount} active',
+                          style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${d.sessionCount}',
+                      style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _setCwdFilter(d.cwd, d.project);
+                },
+              )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _exitMultiSelect() {
@@ -104,7 +243,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     final hm = context.read<HostManager>();
     for (final key in _selected.toList()) {
@@ -135,7 +274,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
           );
         }
 
-        if (sessions.isEmpty) {
+        final isSearchActive = _searchExpanded && _searchController.text.trim().isNotEmpty;
+        final isFilterActive = isSearchActive || _cwdFilter != null;
+
+        if (sessions.isEmpty && !isFilterActive) {
           return _buildEmptyState();
         }
 
@@ -155,7 +297,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return Column(
           children: [
             if (_multiSelect) _buildMultiSelectBar(),
-            _buildFilterChips(sessions),
+            _buildFilterRow(sessions),
+            if (_cwdFilter != null) _buildActiveFiltersRow(),
             Expanded(
               child: filtered.isEmpty
                   ? _buildEmptyFilterState()
@@ -208,20 +351,102 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
+  Widget _buildFilterRow(List<Session> allSessions) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: AnimatedCrossFade(
+        duration: const Duration(milliseconds: 200),
+        crossFadeState: _searchExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+        firstChild: _buildFilterChips(allSessions),
+        secondChild: _buildSearchBar(),
+      ),
+    );
+  }
+
   Widget _buildFilterChips(List<Session> allSessions) {
     final allCount = allSessions.where((s) => !s.archived).length;
     final pinnedCount = allSessions.where((s) => s.pinned && !s.archived).length;
     final archivedCount = allSessions.where((s) => s.archived).length;
 
+    return Row(
+      children: [
+        _filterChip('All', allCount, SessionFilter.all),
+        const SizedBox(width: 8),
+        _filterChip('Pinned', pinnedCount, SessionFilter.pinned),
+        const SizedBox(width: 8),
+        _filterChip('Archived', archivedCount, SessionFilter.archived),
+        const Spacer(),
+        IconButton(
+          icon: const Icon(Icons.folder_outlined, size: 20),
+          tooltip: 'Filter by directory',
+          visualDensity: VisualDensity.compact,
+          onPressed: _openDirectoryPicker,
+        ),
+        IconButton(
+          icon: const Icon(Icons.search, size: 20),
+          tooltip: 'Search',
+          visualDensity: VisualDensity.compact,
+          onPressed: () {
+            setState(() => _searchExpanded = true);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _searchFocusNode.requestFocus();
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _searchController,
+            focusNode: _searchFocusNode,
+            onChanged: (_) => _triggerSearch(),
+            decoration: InputDecoration(
+              hintText: 'Search sessions...',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() => _searchExpanded = false);
+                  _triggerSearch();
+                },
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              isDense: true,
+            ),
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActiveFiltersRow() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
       child: Row(
         children: [
-          _filterChip('All', allCount, SessionFilter.all),
-          const SizedBox(width: 8),
-          _filterChip('Pinned', pinnedCount, SessionFilter.pinned),
-          const SizedBox(width: 8),
-          _filterChip('Archived', archivedCount, SessionFilter.archived),
+          if (_cwdFilter != null)
+            InputChip(
+              avatar: const Icon(Icons.folder_outlined, size: 16),
+              label: Text(
+                _cwdFilterProject ?? _cwdFilter!.split('/').last,
+                style: const TextStyle(fontSize: 12),
+              ),
+              onDeleted: _clearCwdFilter,
+              visualDensity: VisualDensity.compact,
+            ),
         ],
       ),
     );
@@ -232,10 +457,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
     return FilterChip(
       label: Text(count > 0 ? '$label ($count)' : label),
       selected: isSelected,
-      onSelected: (_) => setState(() {
-        _filter = filter;
-        _exitMultiSelect();
-      }),
+      onSelected: (_) {
+        setState(() {
+          _filter = filter;
+          _exitMultiSelect();
+        });
+        _triggerSearch();
+      },
       showCheckmark: false,
       visualDensity: VisualDensity.compact,
     );
@@ -395,9 +623,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
                               ],
                             ),
                             const SizedBox(height: 8),
-                            // Row 2: Prompt
+                            // Row 2: Title / Prompt
                             Text(
-                              session.lastUserMessage ?? session.shortCwd,
+                              session.displayTitle,
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -452,7 +680,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
   void _showContextMenu(Session session, HostManager hm) {
     final theme = Theme.of(context);
     final isArchived = session.archived;
-    final service = hm.serviceFor(session.hostId);
+    final hostId = session.hostId;
+    final sessionId = session.sessionId;
+    final service = hm.serviceFor(hostId);
 
     showModalBottomSheet(
       context: context,
@@ -467,7 +697,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        session.lastUserMessage ?? session.shortCwd,
+                        session.displayTitle,
                         style: theme.textTheme.titleSmall,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -486,6 +716,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 title: const Text('Select'),
                 onTap: () {
                   Navigator.pop(ctx);
+                  if (!mounted) return;
                   setState(() {
                     _multiSelect = true;
                     _selected.add(_compositeKey(session));
@@ -493,11 +724,29 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Rename'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  _showRenameDialog(session, hm);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: const Text('Filter this directory'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  _setCwdFilter(session.cwd, session.project);
+                },
+              ),
+              ListTile(
                 leading: Icon(session.pinned ? Icons.push_pin : Icons.push_pin_outlined),
                 title: Text(session.pinned ? 'Unpin' : 'Pin'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  service?.patchSession(session.sessionId, pinned: !session.pinned);
+                  service?.patchSession(sessionId, pinned: !session.pinned);
                 },
               ),
               ListTile(
@@ -505,7 +754,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 title: Text(isArchived ? 'Unarchive' : 'Archive'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  service?.patchSession(session.sessionId, archived: !isArchived);
+                  service?.patchSession(sessionId, archived: !isArchived);
                 },
               ),
               ListTile(
@@ -513,6 +762,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 title: Text('Delete', style: TextStyle(color: theme.colorScheme.error)),
                 onTap: () async {
                   Navigator.pop(ctx);
+                  if (!mounted) return;
                   final confirmed = await showDialog<bool>(
                     context: context,
                     builder: (dCtx) => AlertDialog(
@@ -529,7 +779,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     ),
                   );
                   if (confirmed == true) {
-                    service?.deleteSession(session.sessionId);
+                    service?.deleteSession(sessionId);
                   }
                 },
               ),
@@ -571,6 +821,45 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
+  void _showRenameDialog(Session session, HostManager hm) {
+    final sessionId = session.sessionId;
+    final service = hm.serviceFor(session.hostId);
+    if (service == null) return;
+
+    showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final controller = TextEditingController(text: session.title ?? '');
+        return AlertDialog(
+          title: const Text('Rename session'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: session.lastUserMessage ?? 'Session title',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onSubmitted: (value) => Navigator.pop(ctx, value.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    ).then((title) {
+      if (title != null && title.isNotEmpty) {
+        service.patchSession(sessionId, title: title);
+      }
+    });
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -597,23 +886,40 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   Widget _buildEmptyFilterState() {
-    final label = switch (_filter) {
-      SessionFilter.pinned => 'No pinned sessions.',
-      SessionFilter.archived => 'No archived sessions.',
-      SessionFilter.all => 'No sessions.',
-    };
-    final hint = switch (_filter) {
-      SessionFilter.pinned => 'Long-press a session to pin it.',
-      SessionFilter.archived => 'Swipe right on a session to archive it.',
-      SessionFilter.all => '',
-    };
+    final isSearchActive = _searchExpanded && _searchController.text.trim().isNotEmpty;
+
+    final String label;
+    final String hint;
+    final IconData icon;
+
+    if (isSearchActive) {
+      label = 'No matching sessions.';
+      hint = 'Try a different search term.';
+      icon = Icons.search_off;
+    } else if (_cwdFilter != null) {
+      label = 'No sessions in this directory.';
+      hint = '';
+      icon = Icons.folder_off_outlined;
+    } else {
+      label = switch (_filter) {
+        SessionFilter.pinned => 'No pinned sessions.',
+        SessionFilter.archived => 'No archived sessions.',
+        SessionFilter.all => 'No sessions.',
+      };
+      hint = switch (_filter) {
+        SessionFilter.pinned => 'Long-press a session to pin it.',
+        SessionFilter.archived => 'Swipe right on a session to archive it.',
+        SessionFilter.all => '',
+      };
+      icon = _filter == SessionFilter.pinned ? Icons.push_pin_outlined : Icons.archive_outlined;
+    }
 
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            _filter == SessionFilter.pinned ? Icons.push_pin_outlined : Icons.archive_outlined,
+            icon,
             size: 48,
             color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
           ),

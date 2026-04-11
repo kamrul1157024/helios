@@ -4,6 +4,7 @@ class Session {
   final String source;
   final String cwd;
   final String project;
+  final String? title;
   final String? transcriptPath;
   final String? model;
   final String status;
@@ -23,6 +24,7 @@ class Session {
     required this.source,
     required this.cwd,
     required this.project,
+    this.title,
     this.transcriptPath,
     this.model,
     required this.status,
@@ -44,6 +46,7 @@ class Session {
       source: json['source'] as String? ?? 'claude',
       cwd: json['cwd'] as String? ?? '',
       project: json['project'] as String? ?? '',
+      title: json['title'] as String?,
       transcriptPath: json['transcript_path'] as String?,
       model: json['model'] as String?,
       status: json['status'] as String,
@@ -67,11 +70,14 @@ class Session {
   bool get isSuspended => status == 'suspended';
   bool get isStale => status == 'stale';
   bool get canSendPrompt => status == 'idle' || status == 'ended' || status == 'suspended' || status == 'stale';
+
+  String get displayTitle => title ?? lastUserMessage ?? shortCwd;
   bool get canStop => status == 'active' || status == 'waiting_permission' || status == 'compacting';
   bool get canSuspend => isActive || isIdle;
   bool get canResume => isEnded || isSuspended || isStale;
 
   Session copyWith({
+    String? title,
     bool? pinned,
     bool? archived,
   }) {
@@ -81,6 +87,7 @@ class Session {
       source: source,
       cwd: cwd,
       project: project,
+      title: title ?? this.title,
       transcriptPath: transcriptPath,
       model: model,
       status: status,

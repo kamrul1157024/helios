@@ -103,6 +103,45 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     if (mounted) setState(() => _sending = false);
   }
 
+  void _showRenameDialog(Session session) {
+    final controller = TextEditingController(text: session.title ?? '');
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Rename session'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: session.lastUserMessage ?? 'Session title',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onSubmitted: (_) {
+              Navigator.pop(ctx);
+              final title = controller.text.trim();
+              _sse?.patchSession(widget.session.sessionId, title: title);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                final title = controller.text.trim();
+                _sse?.patchSession(widget.session.sessionId, title: title);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    ).then((_) => controller.dispose());
+  }
+
   Future<void> _stop() async {
     await _sse?.stopSession(widget.session.sessionId);
   }
@@ -135,18 +174,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(session.shortCwd, style: const TextStyle(fontSize: 14)),
-                Text(
-                  '${_statusLabel(session.status)} ${session.model ?? ''}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _statusColor(session.status, Theme.of(context)),
+            title: GestureDetector(
+              onTap: () => _showRenameDialog(session),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    session.displayTitle,
+                    style: const TextStyle(fontSize: 14),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-              ],
+                  Text(
+                    '${_statusLabel(session.status)} ${session.model ?? ''} · ${session.shortCwd}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _statusColor(session.status, Theme.of(context)),
+                    ),
+                  ),
+                ],
+              ),
             ),
             actions: _buildActions(session),
           ),

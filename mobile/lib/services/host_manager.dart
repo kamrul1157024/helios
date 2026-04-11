@@ -202,16 +202,37 @@ class HostManager extends ChangeNotifier {
 
       // 4. Pair device
       onStatus?.call('Registering device...');
-      final pairResp = await http.post(
-        Uri.parse('$serverUrl/api/auth/pair'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'token': pairingToken,
-          'kid': deviceId,
-          'public_key': publicKeyB64,
-        }),
-      );
-      final pairData = jsonDecode(pairResp.body);
+      final http.Response pairResp;
+      try {
+        pairResp = await http.post(
+          Uri.parse('$serverUrl/api/auth/pair'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'token': pairingToken,
+            'kid': deviceId,
+            'public_key': publicKeyB64,
+          }),
+        );
+      } catch (e) {
+        return SetupResult.error(
+          'Could not reach server at $serverUrl.\n'
+          'Check that the tunnel is running and try again.',
+        );
+      }
+      if (pairResp.statusCode >= 500) {
+        return SetupResult.error(
+          'Server error (${pairResp.statusCode}). The tunnel may have expired or hit its bandwidth limit.',
+        );
+      }
+      final Map<String, dynamic> pairData;
+      try {
+        pairData = jsonDecode(pairResp.body) as Map<String, dynamic>;
+      } catch (_) {
+        return SetupResult.error(
+          'Invalid response from server (HTTP ${pairResp.statusCode}). '
+          'The tunnel may have expired or hit its bandwidth limit.',
+        );
+      }
       if (pairData['success'] != true) {
         if (pairData['error'] == 'invalid_token') {
           return SetupResult.error(
@@ -225,14 +246,22 @@ class HostManager extends ChangeNotifier {
       // 5. Sign JWT and login
       onStatus?.call('Authenticating...');
       final jwt = await _signJWT(keyPair, deviceId);
-      final loginResp = await http.post(
-        Uri.parse('$serverUrl/api/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': jwt}),
-      );
+      final http.Response loginResp;
+      try {
+        loginResp = await http.post(
+          Uri.parse('$serverUrl/api/auth/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'token': jwt}),
+        );
+      } catch (e) {
+        return SetupResult.error(
+          'Could not reach server during login.\n'
+          'Check that the tunnel is running and try again.',
+        );
+      }
 
       if (loginResp.statusCode != 200) {
-        return SetupResult.error('Login failed');
+        return SetupResult.error('Login failed (HTTP ${loginResp.statusCode})');
       }
 
       // Extract cookie
@@ -298,6 +327,14 @@ class HostManager extends ChangeNotifier {
       _isPendingApproval = false;
       _pendingDeviceId = null;
       notifyListeners();
+      final msg = e.toString();
+      if (msg.contains('SocketException') || msg.contains('ClientException') || msg.contains('Connection')) {
+        return SetupResult.error(
+          'Could not connect to the server.\n'
+          'The tunnel may have expired or hit its bandwidth limit.\n'
+          'Restart the tunnel and try again.',
+        );
+      }
       return SetupResult.error('Setup failed: $e');
     }
   }
