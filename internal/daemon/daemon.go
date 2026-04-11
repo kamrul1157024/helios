@@ -22,7 +22,18 @@ import (
 	"github.com/kamrul1157024/helios/internal/tunnel"
 )
 
-func Start(cfg *Config) error {
+func Start(cfg *Config) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC: %v", r)
+			err = fmt.Errorf("daemon panicked: %v", r)
+		}
+	}()
+
+	return startDaemon(cfg)
+}
+
+func startDaemon(cfg *Config) error {
 	if err := os.MkdirAll(HeliosDir(), 0755); err != nil {
 		return fmt.Errorf("create helios dir: %w", err)
 	}
@@ -71,7 +82,7 @@ func Start(cfg *Config) error {
 	go discovery.DiscoverClaudeSessions(db, tmux.NewClient())
 
 	// Create tunnel manager
-	tunnelMgr := tunnel.NewManager()
+	tunnelMgr := tunnel.NewManager(HeliosDir())
 	server.TunnelManager = tunnelMgr
 
 	// Persist tunnel config changes to config.yaml
@@ -105,9 +116,18 @@ func Start(cfg *Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Auto-start tunnel if configured
-	if cfg.Tunnel.Provider != "" {
-		go func() {
+	// Try to adopt an existing tunnel from a previous daemon run
+	// If none found and a provider is configured, start a new one
+	go func() {
+		if url, err := tunnelMgr.Adopt(); err != nil {
+			log.Printf("tunnel adopt failed: %v", err)
+		} else if url != "" {
+			log.Printf("tunnel adopted: %s", url)
+			fmt.Printf("  tunnel:   %s (adopted)\n", url)
+			return
+		}
+
+		if cfg.Tunnel.Provider != "" {
 			url, err := tunnelMgr.Start(cfg.Tunnel.Provider, cfg.Tunnel.CustomURL, cfg.Server.PublicPort)
 			if err != nil {
 				log.Printf("tunnel auto-start failed: %v", err)
@@ -115,8 +135,8 @@ func Start(cfg *Config) error {
 				log.Printf("tunnel started: %s (%s)", url, cfg.Tunnel.Provider)
 				fmt.Printf("  tunnel:   %s (%s)\n", url, cfg.Tunnel.Provider)
 			}
-		}()
-	}
+		}
+	}()
 
 	// Periodic cleanup of expired pairing tokens
 	go func() {
@@ -171,10 +191,10 @@ func Start(cfg *Config) error {
 	}
 
 	// Graceful shutdown (3 second timeout to avoid hanging on open SSE connections)
+	// Tunnel is NOT stopped — it keeps running independently
 	log.Printf("shutting down")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
-	tunnelMgr.Stop()
 	internalSrv.Shutdown(shutdownCtx)
 	publicSrv.Shutdown(shutdownCtx)
 

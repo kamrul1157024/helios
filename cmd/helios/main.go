@@ -18,6 +18,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/tmux"
 	"github.com/kamrul1157024/helios/internal/tui"
+	"github.com/kamrul1157024/helios/internal/tunnel"
 )
 
 const version = "0.2.0"
@@ -41,6 +42,8 @@ func main() {
 		handleSessions(os.Args[2:])
 	case "daemon":
 		handleDaemon(os.Args[2:])
+	case "tunnel":
+		handleTunnel(os.Args[2:])
 	case "auth":
 		handleAuth(os.Args[2:])
 	case "wrap":
@@ -125,16 +128,21 @@ func handleDaemon(args []string) {
 			proc.Release()
 			return
 		}
-		if err := daemon.Start(cfg); err != nil {
+		// Run under supervisor so panics/crashes get auto-restarted
+		sv := daemon.NewSupervisor(cfg)
+		if err := sv.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "stop":
-		if err := daemon.Stop(); err != nil {
+		if err := daemon.StopSupervisor(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "status":
+		if running, pid := daemon.SupervisorStatus(); running {
+			fmt.Printf("helios supervisor is running (pid %d)\n", pid)
+		}
 		if err := daemon.Status(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -260,19 +268,77 @@ func handleDevices() {
 }
 
 func handleStop() {
-	cfg, _ := daemon.LoadConfig()
-	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+	// Stop daemon (or supervisor if running). Tunnel is left alive.
+	if err := daemon.StopSupervisor(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	// Stop tunnel if running
-	resp, err := http.Post(internalURL+"/internal/tunnel/stop", "application/json", bytes.NewBufferString("{}"))
-	if err == nil {
-		resp.Body.Close()
-		fmt.Println("Tunnel stopped")
+func handleTunnel(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: helios tunnel <stop|status>")
+		os.Exit(1)
 	}
 
-	// Stop daemon
-	if err := daemon.Stop(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	switch args[0] {
+	case "status":
+		state, err := tunnel.LoadState(daemon.HeliosDir())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if state == nil {
+			fmt.Println("No tunnel running.")
+			return
+		}
+		if !tunnel.IsProcessAlive(state.PID) {
+			fmt.Println("No tunnel running (stale state, cleaning up).")
+			tunnel.RemoveState(daemon.HeliosDir())
+			return
+		}
+		uptime := time.Since(state.StartedAt).Truncate(time.Second)
+		fmt.Printf("Tunnel active: %s (%s, PID %d, up %s)\n", state.URL, state.Provider, state.PID, uptime)
+
+	case "stop":
+		state, err := tunnel.LoadState(daemon.HeliosDir())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if state == nil {
+			fmt.Println("No tunnel running.")
+			return
+		}
+		if !tunnel.IsProcessAlive(state.PID) {
+			fmt.Println("No tunnel running (stale state, cleaning up).")
+			tunnel.RemoveState(daemon.HeliosDir())
+			return
+		}
+
+		fmt.Printf("Tunnel is running: %s (%s, PID %d)\n\n", state.URL, state.Provider, state.PID)
+		fmt.Println("WARNING: Killing the tunnel will disconnect all mobile devices.")
+		fmt.Println("         They will need to rescan and reconnect.")
+		fmt.Print("\nKill tunnel? [y/N]: ")
+
+		var answer string
+		fmt.Scanln(&answer)
+		answer = strings.TrimSpace(strings.ToLower(answer))
+
+		if answer != "y" {
+			fmt.Println("Tunnel kept alive.")
+			return
+		}
+
+		// Kill the tunnel process
+		if err := tunnel.KillTunnel(daemon.HeliosDir()); err != nil {
+			fmt.Fprintf(os.Stderr, "Error stopping tunnel: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Tunnel stopped.")
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown tunnel command: %s\n", args[0])
 		os.Exit(1)
 	}
 }
@@ -560,8 +626,9 @@ func handleCleanup(args []string) {
 		fmt.Println("Logs removed:", logsDir)
 
 	case "all":
-		// Stop daemon first if running
-		_ = daemon.Stop()
+		// Stop tunnel, supervisor, and daemon
+		tunnel.KillTunnel(heliosDir)
+		daemon.StopSupervisor()
 
 		if err := os.RemoveAll(heliosDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error removing helios data: %v\n", err)
@@ -702,7 +769,7 @@ Usage:
 
 Commands:
   start                 Start helios (daemon + tunnel + device pairing TUI)
-  stop                  Stop daemon and tunnel
+  stop                  Stop daemon (tunnel stays alive)
   devices               Device management (TUI)
   new "prompt" [flags]  Launch Claude in a managed tmux pane
                         --cwd PATH  Working directory (default: current)
@@ -710,12 +777,15 @@ Commands:
                         Example: helios wrap -- claude
   sessions              List all tracked sessions
 
-  daemon start [flags]  Start the helios daemon directly
+  daemon start [flags]  Start the helios daemon (with supervisor)
                         -d                Run in background (daemonize)
                         --internal-port P Internal port (default: 7654)
                         --public-port P   Public port (default: 7655)
-  daemon stop           Stop the running daemon
-  daemon status         Show daemon status
+  daemon stop           Stop the daemon (tunnel stays alive)
+  daemon status         Show daemon and supervisor status
+
+  tunnel status         Show tunnel status (works without daemon)
+  tunnel stop           Stop the tunnel (prompts for confirmation)
 
   setup shell           Install shell wrapper (claude → helios wrap)
   setup editor          Configure editor terminals to use tmux
