@@ -26,7 +26,12 @@ Helios fixes this. It's a daemon that sits between you and your AI coding tools.
 ### Prerequisites
 
 ```bash
-brew install go tmux cloudflared    # Go, tmux, Cloudflare tunnel
+brew install go tmux                # Go (build helios), tmux (session management)
+
+# Pick ONE tunnel provider — exposes helios to your phone over the internet:
+brew install cloudflared            # Cloudflare Tunnel (recommended, free, no account needed)
+# or
+brew install ngrok                  # ngrok (free tier, requires signup at ngrok.com)
 ```
 
 ### Step 1 — Install the binary
