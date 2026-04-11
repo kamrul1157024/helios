@@ -17,6 +17,8 @@ type Session struct {
 	LastEvent       *string `json:"last_event,omitempty"`
 	LastEventAt     *string `json:"last_event_at,omitempty"`
 	LastUserMessage *string `json:"last_user_message,omitempty"`
+	Pinned          bool    `json:"pinned"`
+	Archived        bool    `json:"archived"`
 	TmuxPane        *string `json:"tmux_pane,omitempty"`
 	TmuxPID         *int    `json:"tmux_pid,omitempty"`
 	CreatedAt       string  `json:"created_at"`
@@ -126,11 +128,13 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, tmux_pane, tmux_pid, created_at, ended_at
+		        last_event, last_event_at, last_user_message, pinned, archived,
+		        tmux_pane, tmux_pid, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.TranscriptPath, &sess.Model, &sess.Status,
-		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.TmuxPane, &sess.TmuxPID,
+		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
+		&sess.TmuxPane, &sess.TmuxPID,
 		&sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -142,7 +146,8 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(
 		`SELECT session_id, source, cwd, project, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, tmux_pane, tmux_pid, created_at, ended_at
+		        last_event, last_event_at, last_user_message, pinned, archived,
+		        tmux_pane, tmux_pid, created_at, ended_at
 		 FROM sessions ORDER BY COALESCE(last_event_at, created_at) DESC LIMIT 100`,
 	)
 	if err != nil {
@@ -155,13 +160,39 @@ func (s *Store) ListSessions() ([]Session, error) {
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.TmuxPane, &sess.TmuxPID,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
+			&sess.TmuxPane, &sess.TmuxPID,
 			&sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, sess)
 	}
 	return result, rows.Err()
+}
+
+// UpdateSessionFlags updates the pinned and archived flags for a session.
+func (s *Store) UpdateSessionFlags(sessionID string, pinned, archived bool) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET pinned = ?, archived = ? WHERE session_id = ?`,
+		pinned, archived, sessionID,
+	)
+	return err
+}
+
+// DeleteSession permanently removes a session and its subagents.
+func (s *Store) DeleteSession(sessionID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	tx.Exec(`DELETE FROM subagents WHERE parent_session_id = ?`, sessionID)
+	tx.Exec(`DELETE FROM notifications WHERE source_session = ?`, sessionID)
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CreateSubagent inserts a new subagent record.

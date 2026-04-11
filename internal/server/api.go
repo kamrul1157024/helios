@@ -654,6 +654,86 @@ func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Pinned   *bool `json:"pinned"`
+		Archived *bool `json:"archived"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	pinned := session.Pinned
+	archived := session.Archived
+	if req.Pinned != nil {
+		pinned = *req.Pinned
+	}
+	if req.Archived != nil {
+		archived = *req.Archived
+	}
+
+	if err := s.shared.DB.UpdateSessionFlags(id, pinned, archived); err != nil {
+		jsonError(w, "failed to update session", http.StatusInternalServerError)
+		return
+	}
+
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "session_updated",
+		Data: map[string]interface{}{
+			"session_id": id,
+			"pinned":     pinned,
+			"archived":   archived,
+		},
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"pinned":   pinned,
+		"archived": archived,
+	})
+}
+
+func (s *PublicServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.shared.DB.DeleteSession(id); err != nil {
+		jsonError(w, "failed to delete session", http.StatusInternalServerError)
+		return
+	}
+
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "session_deleted",
+		Data: map[string]interface{}{
+			"session_id": id,
+		},
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 func extractSessionID(path, suffix string) string {
 	path = strings.TrimPrefix(path, "/api/sessions/")
 	path = strings.TrimSuffix(path, suffix)

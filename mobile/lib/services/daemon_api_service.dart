@@ -206,6 +206,8 @@ class DaemonAPIService extends ChangeNotifier {
     fetchNotifications();
     // Refresh sessions on any session-relevant event
     if (type == 'session_status' ||
+        type == 'session_updated' ||
+        type == 'session_deleted' ||
         type == 'notification' ||
         type == 'notification_resolved' ||
         type == 'subagent_status') {
@@ -367,6 +369,37 @@ class DaemonAPIService extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Failed to resume session: $e');
+    }
+    return false;
+  }
+
+  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived}) async {
+    if (_auth == null) return false;
+    try {
+      final body = <String, dynamic>{};
+      if (pinned != null) body['pinned'] = pinned;
+      if (archived != null) body['archived'] = archived;
+      final resp = await _auth!.authPatch('/api/sessions/$sessionId', body: body);
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to patch session: $e');
+    }
+    return false;
+  }
+
+  Future<bool> deleteSession(String sessionId) async {
+    if (_auth == null) return false;
+    try {
+      final resp = await _auth!.authDelete('/api/sessions/$sessionId');
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Failed to delete session: $e');
     }
     return false;
   }

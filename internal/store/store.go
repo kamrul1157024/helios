@@ -61,6 +61,8 @@ func (s *Store) migrate() error {
 			last_event TEXT,
 			last_event_at TEXT,
 			last_user_message TEXT,
+			pinned INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			tmux_pane TEXT,
 			tmux_pid INTEGER,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -130,6 +132,8 @@ func (s *Store) migrate() error {
 			SELECT claude_session_id, 'claude', cwd, '', 'ended', last_event, last_event_at, created_at
 			FROM hook_sessions WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='hook_sessions')`},
 		{"add_sessions_last_user_message", `ALTER TABLE sessions ADD COLUMN last_user_message TEXT`},
+		{"add_sessions_pinned", `ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`},
+		{"add_sessions_archived", `ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
 	}
 
 	for _, cm := range columnMigrations {

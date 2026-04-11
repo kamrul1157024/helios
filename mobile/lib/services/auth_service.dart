@@ -202,6 +202,24 @@ class AuthService extends ChangeNotifier {
     );
   }
 
+  Future<http.Response> authPatch(String path, {Map<String, dynamic>? body}) async {
+    return http.patch(
+      Uri.parse('$_serverUrl$path'),
+      headers: {
+        ..._authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: body != null ? jsonEncode(body) : null,
+    );
+  }
+
+  Future<http.Response> authDelete(String path) async {
+    return http.delete(
+      Uri.parse('$_serverUrl$path'),
+      headers: _authHeaders(),
+    );
+  }
+
   Map<String, String> _authHeaders() {
     return {
       'Cookie': 'helios_token=$_cookie',

@@ -151,6 +151,10 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 			s.handleSessionSuspend(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
+		case r.Method == "PATCH":
+			s.handlePatchSession(w, r)
+		case r.Method == "DELETE":
+			s.handleDeleteSession(w, r)
 		case r.Method == "GET":
 			s.handleGetSession(w, r)
 		default:

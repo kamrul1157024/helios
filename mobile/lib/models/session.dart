@@ -9,6 +9,8 @@ class Session {
   final String? lastEvent;
   final String? lastEventAt;
   final String? lastUserMessage;
+  final bool pinned;
+  final bool archived;
   final String? tmuxPane;
   final int? tmuxPid;
   final String createdAt;
@@ -25,6 +27,8 @@ class Session {
     this.lastEvent,
     this.lastEventAt,
     this.lastUserMessage,
+    this.pinned = false,
+    this.archived = false,
     this.tmuxPane,
     this.tmuxPid,
     required this.createdAt,
@@ -43,6 +47,8 @@ class Session {
       lastEvent: json['last_event'] as String?,
       lastEventAt: json['last_event_at'] as String?,
       lastUserMessage: json['last_user_message'] as String?,
+      pinned: json['pinned'] == true || json['pinned'] == 1,
+      archived: json['archived'] == true || json['archived'] == 1,
       tmuxPane: json['tmux_pane'] as String?,
       tmuxPid: json['tmux_pid'] as int?,
       createdAt: json['created_at'] as String,
