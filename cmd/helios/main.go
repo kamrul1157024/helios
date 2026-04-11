@@ -355,8 +355,18 @@ func handleWrap(args []string) {
 
 	tc := tmux.NewClient()
 
-	// If already inside tmux, just exec the command directly
+	// If already inside tmux, register this pane with the daemon, then exec
 	if os.Getenv("TMUX") != "" {
+		paneID := os.Getenv("TMUX_PANE")
+		if paneID != "" {
+			cfg, _ := daemon.LoadConfig()
+			internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+			body, _ := json.Marshal(map[string]string{
+				"pane_id": paneID,
+				"cwd":     cwd,
+			})
+			http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
+		}
 		parts := args[cmdStart:]
 		binary, err := exec.LookPath(parts[0])
 		if err != nil {

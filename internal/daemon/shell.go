@@ -48,20 +48,12 @@ func ShellWrapperSnippet(syntax string) string {
 	case "posix":
 		return fmt.Sprintf(`%s
 claude() {
-  if [ -n "$TMUX" ]; then
-    command claude "$@"
-    return
-  fi
   helios wrap -- claude "$@"
 }
 %s`, shellMarkerStart, shellMarkerEnd)
 	case "fish":
 		return fmt.Sprintf(`%s
 function claude
-  if set -q TMUX
-    command claude $argv
-    return
-  end
   helios wrap -- claude $argv
 end
 %s`, shellMarkerStart, shellMarkerEnd)

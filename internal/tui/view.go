@@ -54,6 +54,8 @@ func (m StartModel) View() string {
 		return m.viewHooksUpdate()
 	case screenShellSetup:
 		return m.viewShellSetup()
+	case screenTmuxRestart:
+		return m.viewTmuxRestart()
 	case screenEditorSetup:
 		return m.viewEditorSetup()
 	case screenTunnelSelect:
@@ -212,6 +214,28 @@ func (m StartModel) viewShellSetup() string {
 	b.WriteString(dimStyle.Render(fmt.Sprintf("  Will add wrapper to: %s", m.shellInfo.RCPath)))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  enter install  s skip  q quit"))
+
+	return b.String()
+}
+
+func (m StartModel) viewTmuxRestart() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — tmux Restart Required"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("!"), "Shell wrapper was installed/updated."))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  Existing tmux sessions use the old shell environment."))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  A tmux server restart is needed for the wrapper to take effect."))
+	b.WriteString("\n\n")
+	b.WriteString(warnStyle.Render("  Warning: this will kill all running tmux sessions."))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  Any Claude sessions in tmux will be terminated."))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  The tmux server will start fresh on next use."))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  y restart tmux  n skip  q quit"))
 
 	return b.String()
 }

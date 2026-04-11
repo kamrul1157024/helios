@@ -24,6 +24,7 @@ const (
 	screenHooksInstall                 // prompt to install Claude hooks
 	screenHooksUpdate                  // prompt to update outdated hooks
 	screenShellSetup                   // prompt to install shell wrapper
+	screenTmuxRestart                  // prompt to restart tmux server
 	screenEditorSetup                  // prompt to configure editor terminals
 	screenTunnelSelect                 // first time only: pick tunnel provider
 	screenBinaryMissing                // tunnel binary not found
@@ -102,6 +103,10 @@ type shellSetupDone struct {
 	manual    string // manual instructions if failed
 }
 
+type tmuxRestartDone struct {
+	err error
+}
+
 type editorSetupDone struct {
 	results []daemon.EditorSetupResult
 	manual  string // manual instructions for failed editors
@@ -130,9 +135,10 @@ type StartModel struct {
 	tmux        tmuxStatus
 
 	// Shell setup
-	shellInfo      daemon.ShellInfo
-	shellInstalled bool
-	shellManual    string // non-empty if auto-install failed
+	shellInfo         daemon.ShellInfo
+	shellInstalled    bool
+	shellManual       string // non-empty if auto-install failed
+	tmuxRestartNeeded bool   // true if shell wrapper was just installed/updated
 
 	// Editor setup
 	editors       []daemon.EditorInfo
@@ -234,8 +240,21 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.shellManual = msg.manual
 		} else {
 			m.shellInstalled = true
+			// If tmux server is running, we need a restart for the new wrapper to take effect
+			if m.tmux.ServerRunning {
+				m.tmuxRestartNeeded = true
+			}
 		}
 		return m.proceedAfterShell()
+
+	case tmuxRestartDone:
+		if msg.err != nil {
+			m.errMsg = fmt.Sprintf("Failed to restart tmux: %v", msg.err)
+			m.screen = screenError
+			return m, nil
+		}
+		m.tmuxRestartNeeded = false
+		return m.proceedAfterTmuxRestart()
 
 	case editorSetupDone:
 		m.editorResults = msg.results
@@ -281,8 +300,8 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenMain:
 			return m, tea.Quit
-		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenEditorSetup,
-			screenTunnelSelect, screenBinaryMissing, screenError:
+		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenTmuxRestart,
+			screenEditorSetup, screenTunnelSelect, screenBinaryMissing, screenError:
 			return m, tea.Quit
 		}
 
@@ -309,12 +328,19 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingDevice = nil
 			return m, activateDevice(m.client, kid)
 		}
+		if m.screen == screenTmuxRestart {
+			return m, restartTmuxCmd()
+		}
 
 	case "n":
 		if m.screen == screenConfirmDevice && m.pendingDevice != nil {
 			kid := m.pendingDevice.KID
 			m.pendingDevice = nil
 			return m, rejectDevice(m.client, kid)
+		}
+		if m.screen == screenTmuxRestart {
+			m.tmuxRestartNeeded = false
+			return m.proceedAfterTmuxRestart()
 		}
 
 	case "s":
@@ -323,6 +349,9 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.proceedAfterHooks()
 		case screenShellSetup:
 			return m.proceedAfterShell()
+		case screenTmuxRestart:
+			m.tmuxRestartNeeded = false
+			return m.proceedAfterTmuxRestart()
 		case screenEditorSetup:
 			return m.proceedAfterEditor()
 		}
@@ -424,6 +453,15 @@ func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 }
 
 func (m StartModel) proceedAfterShell() (tea.Model, tea.Cmd) {
+	// Tmux restart needed after shell wrapper install/update
+	if m.tmuxRestartNeeded {
+		m.screen = screenTmuxRestart
+		return m, nil
+	}
+	return m.proceedAfterTmuxRestart()
+}
+
+func (m StartModel) proceedAfterTmuxRestart() (tea.Model, tea.Cmd) {
 	// Editor setup (skip if no editors found or all already configured)
 	unconfigured := false
 	for _, e := range m.editors {
@@ -762,6 +800,14 @@ func configureEditorsCmd(editors []daemon.EditorInfo) tea.Cmd {
 			results: results,
 			manual:  strings.Join(manualParts, "\n"),
 		}
+	}
+}
+
+func restartTmuxCmd() tea.Cmd {
+	return func() tea.Msg {
+		tmuxPath := findTmuxPath()
+		err := exec.Command(tmuxPath, "kill-server").Run()
+		return tmuxRestartDone{err: err}
 	}
 }
 
