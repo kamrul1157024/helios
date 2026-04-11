@@ -42,6 +42,14 @@ var tunnelProviders = []struct {
 }
 
 // Messages
+type tmuxStatus struct {
+	Installed       bool
+	Version         string
+	ServerRunning   bool
+	ResurrectPlugin bool
+	ContinuumPlugin bool
+}
+
 type statusCheckDone struct {
 	daemonOK    bool
 	hooksOK     bool
@@ -50,6 +58,7 @@ type statusCheckDone struct {
 	tunnelProv  string
 	deviceCount int
 	devices     []deviceInfo
+	tmux        tmuxStatus
 	err         error
 }
 
@@ -97,6 +106,7 @@ type StartModel struct {
 	tunnelProv  string
 	deviceCount int
 	devices     []deviceInfo
+	tmux        tmuxStatus
 
 	// Tunnel selection
 	tunnelCursor int
@@ -353,6 +363,7 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.tunnelProv = msg.tunnelProv
 	m.deviceCount = msg.deviceCount
 	m.devices = msg.devices
+	m.tmux = msg.tmux
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -511,6 +522,17 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 				if d.Status == "active" {
 					result.deviceCount++
 				}
+			}
+		}
+
+		// Check tmux status
+		if h != nil && h.Tmux != nil {
+			result.tmux = tmuxStatus{
+				Installed:       h.Tmux.Installed,
+				Version:         h.Tmux.Version,
+				ServerRunning:   h.Tmux.ServerRunning,
+				ResurrectPlugin: h.Tmux.ResurrectPlugin,
+				ContinuumPlugin: h.Tmux.ContinuumPlugin,
 			}
 		}
 

@@ -89,6 +89,12 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Claude hooks not installed"))
 		}
 
+		if m.tmux.Installed {
+			b.WriteString(check(fmt.Sprintf("tmux installed (%s)", m.tmux.Version)))
+		} else {
+			b.WriteString(cross("tmux not installed — session management unavailable"))
+		}
+
 		if m.tunnelOK {
 			b.WriteString(check(fmt.Sprintf("Tunnel active (%s)", m.tunnelProv)))
 		} else {
@@ -208,6 +214,11 @@ func (m StartModel) viewMain() string {
 	if m.hooksOK {
 		b.WriteString(check("Claude hooks installed"))
 	}
+	if m.tmux.Installed {
+		b.WriteString(check(fmt.Sprintf("tmux (%s)", m.tmux.Version)))
+	} else {
+		b.WriteString(cross("tmux not installed — session management disabled"))
+	}
 	if m.tunnelOK {
 		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
 	}
@@ -239,6 +250,35 @@ func (m StartModel) viewMain() string {
 	}
 	if activeDevices == 0 {
 		b.WriteString(dimStyle.Render("  No devices connected yet."))
+		b.WriteString("\n")
+	}
+
+	// tmux plugin recommendations
+	if m.tmux.Installed && (!m.tmux.ResurrectPlugin || !m.tmux.ContinuumPlugin) {
+		b.WriteString("\n")
+		b.WriteString(warnStyle.Render("  Recommended tmux plugins for crash recovery:"))
+		b.WriteString("\n")
+		if !m.tmux.ResurrectPlugin {
+			b.WriteString(dimStyle.Render("    tmux-resurrect  — saves/restores tmux sessions"))
+			b.WriteString("\n")
+		}
+		if !m.tmux.ContinuumPlugin {
+			b.WriteString(dimStyle.Render("    tmux-continuum  — auto-saves every 5 minutes"))
+			b.WriteString("\n")
+		}
+		b.WriteString(dimStyle.Render("    Install: git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("    See: helios docs for setup instructions"))
+		b.WriteString("\n")
+	}
+
+	if !m.tmux.Installed {
+		b.WriteString("\n")
+		b.WriteString(errorStyle.Render("  tmux is required for session management."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("    Install: brew install tmux"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("    Session features (send, stop, resume) will not work without tmux."))
 		b.WriteString("\n")
 	}
 

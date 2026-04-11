@@ -2,12 +2,23 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 )
 
 const defaultSession = "helios"
+
+// Status describes the availability of tmux and recommended plugins.
+type Status struct {
+	Installed        bool   `json:"installed"`
+	Version          string `json:"version,omitempty"`
+	ServerRunning    bool   `json:"server_running"`
+	ResurrectPlugin  bool   `json:"resurrect_plugin"`
+	ContinuumPlugin  bool   `json:"continuum_plugin"`
+	SessionMgmtReady bool   `json:"session_mgmt_ready"`
+}
 
 // Client wraps tmux shell commands.
 type Client struct{}
@@ -158,4 +169,47 @@ func (c *Client) ListClaudePanes() ([]PaneProcess, error) {
 	}
 
 	return result, nil
+}
+
+// CheckStatus returns the tmux installation and plugin status.
+func (c *Client) CheckStatus() Status {
+	s := Status{}
+
+	// Check if tmux is installed
+	path, err := exec.LookPath("tmux")
+	if err != nil || path == "" {
+		return s
+	}
+	s.Installed = true
+
+	// Get version
+	out, err := exec.Command("tmux", "-V").Output()
+	if err == nil {
+		s.Version = strings.TrimSpace(string(out))
+	}
+
+	// Check if tmux server is running
+	s.ServerRunning = exec.Command("tmux", "list-sessions").Run() == nil
+
+	// Check for resurrect plugin
+	s.ResurrectPlugin = pluginExists("tmux-resurrect")
+
+	// Check for continuum plugin
+	s.ContinuumPlugin = pluginExists("tmux-continuum")
+
+	// Session management requires tmux installed and server running
+	s.SessionMgmtReady = s.Installed && s.ServerRunning
+
+	return s
+}
+
+// pluginExists checks if a tmux plugin is installed in the standard TPM location.
+func pluginExists(name string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	pluginDir := home + "/.tmux/plugins/" + name
+	info, err := os.Stat(pluginDir)
+	return err == nil && info.IsDir()
 }

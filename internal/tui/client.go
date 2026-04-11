@@ -24,11 +24,20 @@ func newClient(internalPort int) *client {
 	}
 }
 
+type tmuxHealthStatus struct {
+	Installed       bool   `json:"installed"`
+	Version         string `json:"version"`
+	ServerRunning   bool   `json:"server_running"`
+	ResurrectPlugin bool   `json:"resurrect_plugin"`
+	ContinuumPlugin bool   `json:"continuum_plugin"`
+}
+
 type healthResponse struct {
-	Status       string `json:"status"`
-	InternalPort string `json:"internal_port"`
-	Pending      int    `json:"pending"`
-	SSEClients   int    `json:"sse_clients"`
+	Status       string           `json:"status"`
+	InternalPort string           `json:"internal_port"`
+	Pending      int              `json:"pending"`
+	SSEClients   int              `json:"sse_clients"`
+	Tmux         *tmuxHealthStatus `json:"tmux,omitempty"`
 }
 
 func (c *client) health() (*healthResponse, error) {

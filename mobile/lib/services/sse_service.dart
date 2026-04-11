@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/notification.dart';
 import '../models/session.dart';
 import '../models/message.dart';
@@ -29,11 +30,61 @@ class SSEService extends ChangeNotifier {
   List<SlashCommand> _commands = [];
   List<SlashCommand> get commands => _commands;
 
+  TmuxStatus? _tmuxStatus;
+  TmuxStatus? get tmuxStatus => _tmuxStatus;
+
+  bool _pluginBannerDismissed = false;
+  bool get pluginBannerDismissed => _pluginBannerDismissed;
+
+  bool _tmuxMissingBannerDismissed = false;
+  bool get tmuxMissingBannerDismissed => _tmuxMissingBannerDismissed;
+
+  static const _pluginBannerDismissedKey = 'tmux_plugin_banner_dismissed';
+  static const _tmuxMissingBannerDismissedKey = 'tmux_missing_banner_dismissed';
+
   final _eventController = StreamController<SSEEvent>.broadcast();
   Stream<SSEEvent> get events => _eventController.stream;
 
   void attach(AuthService auth) {
     _auth = auth;
+    _loadPluginBannerState();
+  }
+
+  Future<void> _loadPluginBannerState() async {
+    final prefs = await SharedPreferences.getInstance();
+    _pluginBannerDismissed = prefs.getBool(_pluginBannerDismissedKey) ?? false;
+    _tmuxMissingBannerDismissed = prefs.getBool(_tmuxMissingBannerDismissedKey) ?? false;
+  }
+
+  Future<void> dismissPluginBanner() async {
+    _pluginBannerDismissed = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_pluginBannerDismissedKey, true);
+  }
+
+  Future<void> dismissTmuxMissingBanner() async {
+    _tmuxMissingBannerDismissed = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_tmuxMissingBannerDismissedKey, true);
+  }
+
+  /// Fetch health status including tmux info.
+  Future<void> fetchHealth() async {
+    if (_auth == null || !_auth!.isAuthenticated) return;
+    try {
+      final resp = await _auth!.authGet('/api/health');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        if (data['tmux'] != null) {
+          _tmuxStatus = TmuxStatus.fromJson(data['tmux']);
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch health: $e');
+    }
   }
 
   /// Fetch all notifications from the API.
@@ -352,6 +403,35 @@ class SlashCommand {
       name: json['name'] as String,
       description: json['description'] as String? ?? '',
       icon: json['icon'] as String? ?? '',
+    );
+  }
+}
+
+class TmuxStatus {
+  final bool installed;
+  final String version;
+  final bool serverRunning;
+  final bool resurrectPlugin;
+  final bool continuumPlugin;
+  final bool sessionMgmtReady;
+
+  TmuxStatus({
+    required this.installed,
+    required this.version,
+    required this.serverRunning,
+    required this.resurrectPlugin,
+    required this.continuumPlugin,
+    required this.sessionMgmtReady,
+  });
+
+  factory TmuxStatus.fromJson(Map<String, dynamic> json) {
+    return TmuxStatus(
+      installed: json['installed'] as bool? ?? false,
+      version: json['version'] as String? ?? '',
+      serverRunning: json['server_running'] as bool? ?? false,
+      resurrectPlugin: json['resurrect_plugin'] as bool? ?? false,
+      continuumPlugin: json['continuum_plugin'] as bool? ?? false,
+      sessionMgmtReady: json['session_mgmt_ready'] as bool? ?? false,
     );
   }
 }
