@@ -191,6 +191,7 @@ func (s *PublicServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":      "ok",
 		"sse_clients": s.shared.SSE.ClientCount(),
 		"pending":     s.shared.Mgr.PendingCount(),
+		"tmux":        s.shared.Tmux.CheckStatus(),
 	})
 }
 
@@ -717,6 +718,7 @@ func (s *InternalServer) handleInternalHealth(w http.ResponseWriter, r *http.Req
 		"internal_port": extractPort(s.httpServer.Addr),
 		"sse_clients":   s.shared.SSE.ClientCount(),
 		"pending":       s.shared.Mgr.PendingCount(),
+		"tmux":          s.shared.Tmux.CheckStatus(),
 	})
 }
 
@@ -949,6 +951,14 @@ var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/
 
 // DMGDownloadURL is the GitHub release URL for the macOS DMG (pinned to version).
 var DMGDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/v0.2.0/helios.dmg"
+
+// ==================== Commands ====================
+
+func (s *PublicServer) handleListCommands(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"commands": provider.GetCommands(),
+	})
+}
 
 // ==================== Helpers ====================
 

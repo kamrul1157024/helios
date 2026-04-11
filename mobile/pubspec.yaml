@@ -34,6 +34,8 @@ dependencies:
   provider: ^6.1.4
   # Shared preferences
   shared_preferences: ^2.5.3
+  # Markdown rendering
+  flutter_markdown: ^0.7.6
 
 dev_dependencies:
   flutter_test:

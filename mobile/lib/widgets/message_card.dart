@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/message.dart';
 
 class MessageCard extends StatelessWidget {
@@ -82,11 +83,32 @@ class _AssistantMessageCard extends StatelessWidget {
             bottomRight: Radius.circular(16),
           ),
         ),
-        child: SelectableText(
-          content,
-          style: TextStyle(
-            fontSize: 14,
-            color: theme.colorScheme.onSurface,
+        child: MarkdownBody(
+          data: content,
+          selectable: true,
+          styleSheet: MarkdownStyleSheet(
+            p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+            code: TextStyle(
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: theme.colorScheme.onSurface,
+              backgroundColor: theme.colorScheme.surfaceContainerHigh,
+            ),
+            codeblockDecoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            codeblockPadding: const EdgeInsets.all(10),
+            blockquoteDecoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(color: theme.colorScheme.primary, width: 3),
+              ),
+            ),
+            blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
+            h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+            h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+            h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
+            listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
           ),
         ),
       ),

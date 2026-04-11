@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../services/sse_service.dart';
+import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
 class SessionsScreen extends StatefulWidget {
@@ -23,6 +24,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
     return Consumer<SSEService>(
       builder: (context, sse, _) {
         final sessions = sse.sessions;
+
+        if (!sse.sessionsLoaded) {
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: const [
+              SessionCardSkeleton(),
+              SessionCardSkeleton(),
+              SessionCardSkeleton(),
+              SessionCardSkeleton(),
+            ],
+          );
+        }
 
         if (sessions.isEmpty) {
           return _buildEmptyState();

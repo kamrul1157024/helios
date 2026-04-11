@@ -29,4 +29,16 @@ func Register() {
 	provider.RegisterAction("claude.question", handleQuestionAction)
 	provider.RegisterAction("claude.elicitation.form", handleElicitationAction)
 	provider.RegisterAction("claude.elicitation.url", handleElicitationAction)
+
+	// Slash commands available in the Claude CLI
+	provider.RegisterCommands([]provider.Command{
+		{Name: "/compact", Description: "Compact conversation context", Icon: "compress"},
+		{Name: "/review", Description: "Review code changes", Icon: "rate_review"},
+		{Name: "/cost", Description: "Show token usage & cost", Icon: "payments"},
+		{Name: "/status", Description: "Show session status", Icon: "info"},
+		{Name: "/doctor", Description: "Run health check", Icon: "health_and_safety"},
+		{Name: "/memory", Description: "View & manage memory", Icon: "memory"},
+		{Name: "/clear", Description: "Clear conversation history", Icon: "clear_all"},
+		{Name: "/model", Description: "Switch model", Icon: "swap_horiz"},
+	})
 }

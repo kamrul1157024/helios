@@ -21,6 +21,14 @@ class SSEService extends ChangeNotifier {
   List<Session> get sessions => _sessions;
   bool get connected => _connected;
 
+  bool _notificationsLoaded = false;
+  bool get notificationsLoaded => _notificationsLoaded;
+  bool _sessionsLoaded = false;
+  bool get sessionsLoaded => _sessionsLoaded;
+
+  List<SlashCommand> _commands = [];
+  List<SlashCommand> get commands => _commands;
+
   final _eventController = StreamController<SSEEvent>.broadcast();
   Stream<SSEEvent> get events => _eventController.stream;
 
@@ -37,6 +45,7 @@ class SSEService extends ChangeNotifier {
         final data = jsonDecode(resp.body);
         final list = (data['notifications'] as List?) ?? [];
         _notifications = list.map((n) => HeliosNotification.fromJson(n)).toList();
+        _notificationsLoaded = true;
         notifyListeners();
       }
     } catch (e) {
@@ -207,6 +216,7 @@ class SSEService extends ChangeNotifier {
         final data = jsonDecode(resp.body);
         final list = (data['sessions'] as List?) ?? [];
         _sessions = list.map((s) => Session.fromJson(s)).toList();
+        _sessionsLoaded = true;
         notifyListeners();
       }
     } catch (e) {
@@ -299,6 +309,23 @@ class SSEService extends ChangeNotifier {
     return false;
   }
 
+  // ==================== Commands API ====================
+
+  Future<void> fetchCommands() async {
+    if (_auth == null || !_auth!.isAuthenticated) return;
+    try {
+      final resp = await _auth!.authGet('/api/commands');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['commands'] as List?) ?? [];
+        _commands = list.map((c) => SlashCommand.fromJson(c)).toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch commands: $e');
+    }
+  }
+
   @override
   void dispose() {
     stop();
@@ -311,4 +338,20 @@ class SSEEvent {
   final String type;
   final dynamic data;
   SSEEvent(this.type, this.data);
+}
+
+class SlashCommand {
+  final String name;
+  final String description;
+  final String icon;
+
+  SlashCommand({required this.name, required this.description, required this.icon});
+
+  factory SlashCommand.fromJson(Map<String, dynamic> json) {
+    return SlashCommand(
+      name: json['name'] as String,
+      description: json['description'] as String? ?? '',
+      icon: json['icon'] as String? ?? '',
+    );
+  }
 }

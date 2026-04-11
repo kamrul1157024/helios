@@ -31,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _sse.attach(auth);
     _sse.fetchNotifications();
     _sse.fetchSessions();
+    _sse.fetchCommands();
     _sse.start();
 
     NotificationService.instance.requestPermission();

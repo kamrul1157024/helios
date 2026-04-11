@@ -8,6 +8,7 @@ import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
 import '../services/sse_service.dart';
 import '../widgets/message_card.dart';
+import '../widgets/skeleton.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final Session session;
@@ -144,7 +145,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               // Messages
               Expanded(
                 child: _loading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const MessageListSkeleton()
                     : _messages.isEmpty && pendingNotifs.isEmpty
                         ? _buildEmptyTranscript()
                         : _buildMessageList(),
@@ -356,9 +357,81 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
+  void _showCommandSheet() {
+    final sse = context.read<SSEService>();
+    final commands = sse.commands;
+    if (commands.isEmpty) return;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Commands',
+                  style: Theme.of(ctx).textTheme.titleSmall,
+                ),
+              ),
+              ...commands.map((cmd) => ListTile(
+                leading: Icon(_iconForCommand(cmd.icon)),
+                title: Text(cmd.name, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600)),
+                subtitle: Text(cmd.description, style: const TextStyle(fontSize: 12)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _sendCommand(cmd.name);
+                },
+              )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _sendCommand(String command) async {
+    setState(() => _sending = true);
+    final sse = context.read<SSEService>();
+    final ok = await sse.sendSessionPrompt(widget.session.sessionId, command);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to send command'), duration: Duration(seconds: 2)),
+      );
+    }
+    if (mounted) setState(() => _sending = false);
+  }
+
+  IconData _iconForCommand(String icon) {
+    switch (icon) {
+      case 'compress':
+        return Icons.compress;
+      case 'rate_review':
+        return Icons.rate_review;
+      case 'payments':
+        return Icons.payments;
+      case 'info':
+        return Icons.info_outline;
+      case 'health_and_safety':
+        return Icons.health_and_safety;
+      case 'memory':
+        return Icons.memory;
+      case 'clear_all':
+        return Icons.clear_all;
+      case 'swap_horiz':
+        return Icons.swap_horiz;
+      default:
+        return Icons.terminal;
+    }
+  }
+
   Widget _buildPromptBar(Session session) {
     final canSend = session.canSendPrompt;
     final theme = Theme.of(context);
+    final hasCommands = context.read<SSEService>().commands.isNotEmpty;
 
     return Container(
       padding: EdgeInsets.only(
@@ -375,6 +448,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       ),
       child: Row(
         children: [
+          if (hasCommands)
+            IconButton(
+              onPressed: canSend && !_sending ? _showCommandSheet : null,
+              icon: const Text('/', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              tooltip: 'Commands',
+            ),
           Expanded(
             child: TextField(
               controller: _promptController,

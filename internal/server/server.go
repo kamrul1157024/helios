@@ -104,6 +104,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
 	protectedMux.HandleFunc("POST /api/device/logs", s.handleDeviceLogs)
 	protectedMux.HandleFunc("GET /api/app/download", s.handleAppDownload)
+	protectedMux.HandleFunc("GET /api/commands", s.handleListCommands)
 
 	// Dynamic path handlers
 	protectedMux.HandleFunc("/api/notifications/", func(w http.ResponseWriter, r *http.Request) {

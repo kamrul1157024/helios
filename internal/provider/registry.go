@@ -44,3 +44,22 @@ func GetHookHandler(hookType string) HookHandler {
 func GetActionHandler(notifType string) ActionHandler {
 	return actionHandlers[notifType]
 }
+
+// Command represents a slash command available in a provider's CLI.
+type Command struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+}
+
+var commands []Command
+
+// RegisterCommands registers slash commands for a provider.
+func RegisterCommands(cmds []Command) {
+	commands = append(commands, cmds...)
+}
+
+// GetCommands returns all registered slash commands.
+func GetCommands() []Command {
+	return commands
+}

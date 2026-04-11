@@ -4,6 +4,7 @@ import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
 import '../services/sse_service.dart';
+import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -20,6 +21,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Consumer<SSEService>(
       builder: (context, sse, _) {
+        if (!sse.notificationsLoaded) {
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: const [
+              NotificationCardSkeleton(),
+              NotificationCardSkeleton(),
+              NotificationCardSkeleton(),
+            ],
+          );
+        }
+
         final notifications = sse.notifications;
 
         final pendingActions = notifications
