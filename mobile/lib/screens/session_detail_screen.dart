@@ -7,6 +7,7 @@ import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
 import '../providers/claude/verbs.dart';
+import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
 import '../widgets/skeleton.dart';
@@ -39,7 +40,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomClaudeVerb());
     });
-    _eventSub = context.read<DaemonAPIService>().events.listen((event) {
+    final sse = context.read<HostManager>().serviceFor(widget.session.hostId);
+    _eventSub = sse?.events.listen((event) {
       if (event.data is Map) {
         final data = event.data as Map;
         // Refresh on session status changes and notification events for this session
@@ -64,8 +66,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     super.dispose();
   }
 
+  DaemonAPIService? get _sse => context.read<HostManager>().serviceFor(widget.session.hostId);
+
   Future<void> _loadTranscript() async {
-    final sse = context.read<DaemonAPIService>();
+    final sse = _sse;
+    if (sse == null) return;
     final result = await sse.fetchTranscript(widget.session.sessionId, limit: 200);
     if (result != null && mounted) {
       setState(() {
@@ -84,8 +89,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     if (text.isEmpty) return;
 
     setState(() => _sending = true);
-    final sse = context.read<DaemonAPIService>();
-    final ok = await sse.sendSessionPrompt(widget.session.sessionId, text);
+    final sse = _sse;
+    final ok = sse != null && await sse.sendSessionPrompt(widget.session.sessionId, text);
     if (ok && mounted) {
       _promptController.clear();
       await Future.delayed(const Duration(milliseconds: 500));
@@ -99,18 +104,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _stop() async {
-    final sse = context.read<DaemonAPIService>();
-    await sse.stopSession(widget.session.sessionId);
+    await _sse?.stopSession(widget.session.sessionId);
   }
 
   Future<void> _suspend() async {
-    final sse = context.read<DaemonAPIService>();
-    await sse.suspendSession(widget.session.sessionId);
+    await _sse?.suspendSession(widget.session.sessionId);
   }
 
   Future<void> _resume() async {
-    final sse = context.read<DaemonAPIService>();
-    await sse.resumeSession(widget.session.sessionId);
+    await _sse?.resumeSession(widget.session.sessionId);
   }
 
   /// Get pending notifications for this session.
@@ -122,13 +124,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<DaemonAPIService>(
-      builder: (context, sse, _) {
-        final session = sse.sessions.firstWhere(
+    return Consumer<HostManager>(
+      builder: (context, hm, _) {
+        final sse = hm.serviceFor(widget.session.hostId);
+        final session = sse?.sessions.firstWhere(
           (s) => s.sessionId == widget.session.sessionId,
           orElse: () => widget.session,
-        );
-        final pendingNotifs = _pendingNotifications(sse);
+        ) ?? widget.session;
+        final pendingNotifs = sse != null ? _pendingNotifications(sse) : <HeliosNotification>[];
 
         return Scaffold(
           appBar: AppBar(
@@ -158,7 +161,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                         : _buildMessageList(),
               ),
               // Inline HITL: pending notifications for this session
-              if (pendingNotifs.isNotEmpty)
+              if (pendingNotifs.isNotEmpty && sse != null)
                 _buildInlineNotifications(pendingNotifs, sse),
               // Prompt bar
               _buildPromptBar(session),
@@ -365,8 +368,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   void _showCommandSheet() {
-    final sse = context.read<DaemonAPIService>();
-    final commands = sse.commands;
+    final commands = _sse?.commands ?? [];
     if (commands.isEmpty) return;
 
     showModalBottomSheet(
@@ -402,8 +404,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _sendCommand(String command) async {
     setState(() => _sending = true);
-    final sse = context.read<DaemonAPIService>();
-    final ok = await sse.sendSessionPrompt(widget.session.sessionId, command);
+    final sse = _sse;
+    final ok = sse != null && await sse.sendSessionPrompt(widget.session.sessionId, command);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to send command'), duration: Duration(seconds: 2)),
@@ -438,7 +440,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget _buildPromptBar(Session session) {
     final canSend = session.canSendPrompt;
     final theme = Theme.of(context);
-    final hasCommands = context.read<DaemonAPIService>().commands.isNotEmpty;
+    final hasCommands = (_sse?.commands ?? []).isNotEmpty;
 
     return Container(
       padding: EdgeInsets.only(

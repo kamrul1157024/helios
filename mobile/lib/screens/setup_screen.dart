@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
-import 'dashboard_screen.dart';
+import '../services/host_manager.dart';
+import 'home_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   final String? deepLinkToken;
@@ -17,7 +17,7 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   final _urlController = TextEditingController();
-  bool _scanning = !kIsWeb; // QR scanner on mobile, manual input on web
+  bool _scanning = !kIsWeb;
   bool _loading = false;
   String? _error;
   final List<String> _statusMessages = [];
@@ -26,7 +26,6 @@ class _SetupScreenState extends State<SetupScreen> {
   void initState() {
     super.initState();
     if (widget.deepLinkToken != null && widget.deepLinkServer != null) {
-      // Launched via helios:// deep link — auto-setup
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _doSetup(widget.deepLinkToken!, widget.deepLinkServer!);
       });
@@ -41,23 +40,19 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _handleQR(String rawValue) async {
     if (_loading) return;
-
     final parsed = _parsePairingUrl(rawValue);
     if (parsed == null) return;
-
     await _doSetup(parsed.token, parsed.serverUrl);
   }
 
   Future<void> _handleManualSubmit() async {
     final input = _urlController.text.trim();
     if (input.isEmpty) return;
-
     final parsed = _parsePairingUrl(input);
     if (parsed == null) {
       setState(() => _error = 'Invalid pairing URL. Scan the QR code from the terminal.');
       return;
     }
-
     await _doSetup(parsed.token, parsed.serverUrl);
   }
 
@@ -69,16 +64,23 @@ class _SetupScreenState extends State<SetupScreen> {
       _scanning = false;
     });
 
-    final auth = context.read<AuthService>();
+    final hm = context.read<HostManager>();
+    final hasExistingHosts = hm.hosts.isNotEmpty;
 
-    final result = await auth.setup(token, serverUrl, onStatus: _addStatus);
+    final result = await hm.addHost(token, serverUrl, onStatus: _addStatus);
 
     if (result.ok) {
       _addStatus('Approved!');
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        );
+        if (hasExistingHosts) {
+          // Return to existing HomeScreen
+          Navigator.of(context).pop();
+        } else {
+          // First host — navigate to HomeScreen
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          );
+        }
       }
     } else {
       setState(() {
@@ -89,18 +91,13 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   void _addStatus(String msg) {
-    setState(() => _statusMessages.add(msg));
+    if (mounted) setState(() => _statusMessages.add(msg));
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return _buildProgress();
-    }
-
-    if (_error != null) {
-      return _buildError();
-    }
+    if (_loading) return _buildProgress();
+    if (_error != null) return _buildError();
 
     return Scaffold(
       appBar: AppBar(
@@ -166,14 +163,12 @@ class _SetupScreenState extends State<SetupScreen> {
         children: [
           Text(
             'helios',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Text(
-            'Device Setup',
+            'Add Host',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -208,8 +203,8 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _buildProgress() {
-    final auth = context.watch<AuthService>();
-    final isPending = auth.isPendingApproval;
+    final hm = context.watch<HostManager>();
+    final isPending = hm.isPendingApproval;
 
     return Scaffold(
       body: Center(
@@ -224,9 +219,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 children: [
                   Text(
                     'helios',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -240,16 +233,16 @@ class _SetupScreenState extends State<SetupScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 2),
                         child: Row(
                           children: [
-                            Text('+', style: TextStyle(
-                              color: Theme.of(context).colorScheme.primary,
-                              fontFamily: 'monospace',
-                            )),
+                            Text('+',
+                                style: TextStyle(
+                                    color: Theme.of(context).colorScheme.primary, fontFamily: 'monospace')),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: Text(msg, style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                fontFamily: 'monospace',
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              )),
+                              child: Text(msg,
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        fontFamily: 'monospace',
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      )),
                             ),
                           ],
                         ),
@@ -264,7 +257,8 @@ class _SetupScreenState extends State<SetupScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.phone_android, color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
+                          Icon(Icons.phone_android,
+                              color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -291,8 +285,8 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _buildError() {
-    final isTokenExpired = _error?.contains('expired') == true ||
-        _error?.contains('already been used') == true;
+    final isTokenExpired =
+        _error?.contains('expired') == true || _error?.contains('already been used') == true;
 
     return Scaffold(
       body: Center(
@@ -305,19 +299,13 @@ class _SetupScreenState extends State<SetupScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'helios',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
+                  Text('helios',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
-                  Text(
-                    'Setup Failed',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
+                  Text('Setup Failed',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          )),
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -325,13 +313,8 @@ class _SetupScreenState extends State<SetupScreen> {
                       color: Theme.of(context).colorScheme.errorContainer,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                        fontSize: 13,
-                      ),
-                    ),
+                    child: Text(_error!,
+                        style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer, fontSize: 13)),
                   ),
                   if (isTokenExpired) ...[
                     const SizedBox(height: 12),
@@ -344,17 +327,16 @@ class _SetupScreenState extends State<SetupScreen> {
                       child: const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('What happened?', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          Text('What happened?',
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                           SizedBox(height: 4),
                           Text(
-                            'The pairing QR code has expired or was already used. Each QR code can only be scanned once and expires after 2 minutes.',
-                            style: TextStyle(fontSize: 13),
-                          ),
+                              'The pairing QR code has expired or was already used. Each QR code can only be scanned once and expires after 2 minutes.',
+                              style: TextStyle(fontSize: 13)),
                           SizedBox(height: 8),
                           Text(
-                            'A new QR code is automatically generated in the terminal. Scan the latest one.',
-                            style: TextStyle(fontSize: 13),
-                          ),
+                              'A new QR code is automatically generated in the terminal. Scan the latest one.',
+                              style: TextStyle(fontSize: 13)),
                         ],
                       ),
                     ),
@@ -362,10 +344,11 @@ class _SetupScreenState extends State<SetupScreen> {
                   const SizedBox(height: 16),
                   ..._statusMessages.map((msg) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 1),
-                        child: Text(msg, style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontFamily: 'monospace',
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        )),
+                        child: Text(msg,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontFamily: 'monospace',
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                )),
                       )),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -392,7 +375,6 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
-/// Parse pairing URL and extract token + server URL.
 class _ParsedPairing {
   final String token;
   final String serverUrl;
@@ -400,7 +382,6 @@ class _ParsedPairing {
 }
 
 _ParsedPairing? _parsePairingUrl(String input) {
-  // Format: helios://pair?url=https://example.com&token=abc123
   if (input.startsWith('helios://')) {
     try {
       final uri = Uri.parse(input.replaceFirst('helios://', 'https://'));
@@ -409,6 +390,5 @@ _ParsedPairing? _parsePairingUrl(String input) {
       if (token != null && url != null) return _ParsedPairing(token, url);
     } catch (_) {}
   }
-
   return null;
 }

@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
-import '../services/daemon_api_service.dart';
+import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
@@ -19,9 +19,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<DaemonAPIService>(
-      builder: (context, sse, _) {
-        if (!sse.notificationsLoaded) {
+    return Consumer<HostManager>(
+      builder: (context, hm, _) {
+        if (!hm.notificationsLoaded) {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: const [
@@ -32,45 +32,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         }
 
-        final notifications = sse.notifications;
+        final notifications = hm.filteredNotifications;
 
-        final pendingActions = notifications
-            .where((n) => registry.needsAction(n))
-            .toList();
-        final activeStatuses = notifications
-            .where((n) => n.isPending && !registry.needsAction(n))
-            .toList();
-        final resolved = notifications
-            .where((n) => !n.isPending)
-            .toList();
+        final pendingActions = notifications.where((n) => registry.needsAction(n)).toList();
+        final activeStatuses = notifications.where((n) => n.isPending && !registry.needsAction(n)).toList();
+        final resolved = notifications.where((n) => !n.isPending).toList();
 
         if (pendingActions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
           return _buildEmptyState();
         }
 
         return RefreshIndicator(
-          onRefresh: sse.fetchNotifications,
+          onRefresh: () => hm.activeHostId != null
+              ? hm.refreshHost(hm.activeHostId!)
+              : hm.refreshAll(),
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (pendingActions.isNotEmpty)
-                _buildBatchActions(pendingActions),
-
+              if (pendingActions.isNotEmpty) _buildBatchActions(pendingActions, hm),
               if (pendingActions.isNotEmpty) ...[
                 _sectionHeader('Pending (${pendingActions.length})'),
-                ...pendingActions.map(_buildNotificationCard),
+                ...pendingActions.map((n) => _buildNotificationCard(n, hm)),
                 const SizedBox(height: 16),
               ],
-
               if (activeStatuses.isNotEmpty) ...[
                 _sectionHeader('Active Sessions'),
-                ...activeStatuses.map(_buildStatusCard),
+                ...activeStatuses.map((n) => _buildStatusCard(n, hm)),
                 const SizedBox(height: 16),
               ],
-
               if (resolved.isNotEmpty) ...[
                 _sectionHeader('History'),
-                ...resolved.map(_buildHistoryCard),
+                ...resolved.map((n) => _buildHistoryCard(n, hm)),
               ],
             ],
           ),
@@ -79,32 +71,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _navigateToSession(String sourceSession) {
+  void _navigateToSession(String hostId, String sourceSession) {
     if (sourceSession.isEmpty) return;
-    final sse = context.read<DaemonAPIService>();
-    final match = sse.sessions.where((s) => s.sessionId == sourceSession);
+    final hm = context.read<HostManager>();
+    final service = hm.serviceFor(hostId);
+    if (service == null) return;
+    final match = service.sessions.where((s) => s.sessionId == sourceSession);
     if (match.isEmpty) return;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SessionDetailScreen(session: match.first),
-      ),
+      MaterialPageRoute(builder: (_) => SessionDetailScreen(session: match.first)),
     );
   }
 
-  // ==================== Card Routing ====================
-
-  Widget _buildNotificationCard(HeliosNotification n) {
-    final sse = context.read<DaemonAPIService>();
+  Widget _buildNotificationCard(HeliosNotification n, HostManager hm) {
+    final service = hm.serviceFor(n.hostId);
+    if (service == null) return const SizedBox.shrink();
     final card = registry.buildCardForType(
       notification: n,
-      sse: sse,
+      sse: service,
       selected: _selected,
       onSelectionChanged: () => setState(() {}),
     );
-    return card ?? _buildStatusCard(n);
+    return _wrapWithHostBar(n, hm, card ?? _buildStatusCard(n, hm));
   }
 
-  // ==================== Shared Widgets ====================
+  Widget _wrapWithHostBar(HeliosNotification n, HostManager hm, Widget child, {double opacity = 0.4}) {
+    final host = hm.hostById(n.hostId);
+    final hostColor = host?.color ?? Theme.of(context).colorScheme.primary;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              Container(width: 2, color: hostColor.withValues(alpha: opacity)),
+              Expanded(child: child),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildEmptyState() {
     return Center(
@@ -147,9 +156,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildBatchActions(List<HeliosNotification> pending) {
-    final sse = context.read<DaemonAPIService>();
-    final permissionIds = pending.where((n) => n.isClaudePermission).map((n) => n.id).toList();
+  Widget _buildBatchActions(List<HeliosNotification> pending, HostManager hm) {
+    final permissionIds = pending.where((n) => n.isClaudePermission).toList();
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -157,7 +166,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (permissionIds.isNotEmpty)
             FilledButton.tonal(
               onPressed: () {
-                sse.batchAction(permissionIds, {'action': 'approve'});
+                // Group by host and send batch to each
+                final byHost = <String, List<String>>{};
+                for (final n in permissionIds) {
+                  byHost.putIfAbsent(n.hostId, () => []).add(n.id);
+                }
+                for (final entry in byHost.entries) {
+                  hm.serviceFor(entry.key)?.batchAction(entry.value, {'action': 'approve'});
+                }
               },
               child: Text('Approve All (${permissionIds.length})'),
             ),
@@ -165,7 +181,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(width: 8),
             OutlinedButton(
               onPressed: () {
-                sse.batchAction(_selected.toList(), {'action': 'approve'});
+                // Group selected by host
+                final byHost = <String, List<String>>{};
+                for (final id in _selected) {
+                  final n = pending.where((n) => n.id == id).firstOrNull;
+                  if (n != null) {
+                    byHost.putIfAbsent(n.hostId, () => []).add(n.id);
+                  }
+                }
+                for (final entry in byHost.entries) {
+                  hm.serviceFor(entry.key)?.batchAction(entry.value, {'action': 'approve'});
+                }
                 setState(() => _selected.clear());
               },
               child: Text('Approve (${_selected.length})'),
@@ -176,11 +202,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildStatusCard(HeliosNotification n) {
-    final sse = context.read<DaemonAPIService>();
+  Widget _buildStatusCard(HeliosNotification n, HostManager hm) {
+    final service = hm.serviceFor(n.hostId);
     final isError = n.type.endsWith('.error');
+    final host = hm.hostById(n.hostId);
+    final hostColor = host?.color ?? Theme.of(context).colorScheme.primary;
+    final hostLabel = host?.label ?? '';
+
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
@@ -191,7 +221,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
       child: ListTile(
-        onTap: () => _navigateToSession(n.sourceSession),
+        onTap: () => _navigateToSession(n.hostId, n.sourceSession),
         title: Row(
           children: [
             Container(
@@ -215,7 +245,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const Spacer(),
             IconButton(
               icon: const Icon(Icons.close, size: 16),
-              onPressed: () => sse.dismissNotification(n.id),
+              onPressed: () => service?.dismissNotification(n.id),
               constraints: const BoxConstraints(),
               padding: EdgeInsets.zero,
             ),
@@ -227,14 +257,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 4),
             Text(n.displayDetail, style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 4),
-            Text(
-              '${n.cwd}  ${n.timeAgo}',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-              overflow: TextOverflow.ellipsis,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${n.cwd}  ${n.timeAgo}',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  hostLabel,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: hostColor),
+                ),
+              ],
             ),
           ],
         ),
@@ -242,7 +282,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildHistoryCard(HeliosNotification n) {
+  Widget _buildHistoryCard(HeliosNotification n, HostManager hm) {
+    final host = hm.hostById(n.hostId);
+    final hostColor = host?.color ?? Theme.of(context).colorScheme.primary;
+    final hostLabel = host?.label ?? '';
+
     Color badgeColor;
     switch (n.status) {
       case 'approved':
@@ -260,42 +304,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 4),
+      clipBehavior: Clip.antiAlias,
       child: Opacity(
         opacity: 0.7,
-        child: ListTile(
-          onTap: () => _navigateToSession(n.sourceSession),
-          dense: true,
-          title: Row(
+        child: IntrinsicHeight(
+          child: Row(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  n.status,
-                  style: TextStyle(fontSize: 11, color: badgeColor),
-                ),
-              ),
-              const SizedBox(width: 8),
+              Container(width: 2, color: hostColor.withValues(alpha: 0.3)),
               Expanded(
-                child: Text(
-                  n.displayTitle,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                  overflow: TextOverflow.ellipsis,
+                child: ListTile(
+                  onTap: () => _navigateToSession(n.hostId, n.sourceSession),
+                  dense: true,
+                  title: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: badgeColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(n.status, style: TextStyle(fontSize: 11, color: badgeColor)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          n.displayTitle,
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        hostLabel,
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: hostColor),
+                      ),
+                    ],
+                  ),
+                  subtitle: Text(
+                    '${n.displayDetail}  ${n.timeAgo}${n.resolvedSource != null ? '  via ${n.resolvedSource}' : ''}',
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
             ],
-          ),
-          subtitle: Text(
-            '${n.displayDetail}  ${n.timeAgo}${n.resolvedSource != null ? '  via ${n.resolvedSource}' : ''}',
-            style: TextStyle(
-              fontSize: 12,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),

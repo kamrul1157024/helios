@@ -1,4 +1,5 @@
 class Session {
+  final String hostId;
   final String sessionId;
   final String source;
   final String cwd;
@@ -17,6 +18,7 @@ class Session {
   final String? endedAt;
 
   Session({
+    this.hostId = '',
     required this.sessionId,
     required this.source,
     required this.cwd,
@@ -35,8 +37,9 @@ class Session {
     this.endedAt,
   });
 
-  factory Session.fromJson(Map<String, dynamic> json) {
+  factory Session.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
     return Session(
+      hostId: hostId,
       sessionId: json['session_id'] as String,
       source: json['source'] as String? ?? 'claude',
       cwd: json['cwd'] as String? ?? '',
@@ -67,6 +70,31 @@ class Session {
   bool get canStop => status == 'active' || status == 'waiting_permission' || status == 'compacting';
   bool get canSuspend => isActive || isIdle;
   bool get canResume => isEnded || isSuspended || isStale;
+
+  Session copyWith({
+    bool? pinned,
+    bool? archived,
+  }) {
+    return Session(
+      hostId: hostId,
+      sessionId: sessionId,
+      source: source,
+      cwd: cwd,
+      project: project,
+      transcriptPath: transcriptPath,
+      model: model,
+      status: status,
+      lastEvent: lastEvent,
+      lastEventAt: lastEventAt,
+      lastUserMessage: lastUserMessage,
+      pinned: pinned ?? this.pinned,
+      archived: archived ?? this.archived,
+      tmuxPane: tmuxPane,
+      tmuxPid: tmuxPid,
+      createdAt: createdAt,
+      endedAt: endedAt,
+    );
+  }
 
   String get shortId {
     if (sessionId.length > 8) return sessionId.substring(0, 8);

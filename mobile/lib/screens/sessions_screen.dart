@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/session.dart';
+import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
@@ -20,11 +21,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
   final Set<String> _selected = {};
   bool _multiSelect = false;
 
-  @override
-  void initState() {
-    super.initState();
-    context.read<DaemonAPIService>().fetchSessions();
-  }
+  String _compositeKey(Session s) => '${s.hostId}:${s.sessionId}';
 
   List<Session> _filterSessions(List<Session> sessions) {
     switch (_filter) {
@@ -37,6 +34,19 @@ class _SessionsScreenState extends State<SessionsScreen> {
     }
   }
 
+  List<Session> _sortSessions(List<Session> sessions) {
+    sessions.sort((a, b) {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      final aTime = a.lastEventAt ?? a.createdAt;
+      final bTime = b.lastEventAt ?? b.createdAt;
+      return bTime.compareTo(aTime);
+    });
+    return sessions;
+  }
+
   void _exitMultiSelect() {
     setState(() {
       _multiSelect = false;
@@ -44,32 +54,41 @@ class _SessionsScreenState extends State<SessionsScreen> {
     });
   }
 
-  void _toggleSelection(String sessionId) {
+  void _toggleSelection(Session session) {
+    final key = _compositeKey(session);
     setState(() {
-      if (_selected.contains(sessionId)) {
-        _selected.remove(sessionId);
+      if (_selected.contains(key)) {
+        _selected.remove(key);
         if (_selected.isEmpty) _multiSelect = false;
       } else {
-        _selected.add(sessionId);
+        _selected.add(key);
       }
     });
   }
 
-  Future<void> _batchPin(DaemonAPIService sse, bool pin) async {
-    for (final id in _selected.toList()) {
-      await sse.patchSession(id, pinned: pin);
+  Future<void> _batchPin(bool pin) async {
+    final hm = context.read<HostManager>();
+    for (final key in _selected.toList()) {
+      final parts = key.split(':');
+      if (parts.length == 2) {
+        hm.serviceFor(parts[0])?.patchSession(parts[1], pinned: pin);
+      }
     }
     _exitMultiSelect();
   }
 
-  Future<void> _batchArchive(DaemonAPIService sse, bool archive) async {
-    for (final id in _selected.toList()) {
-      await sse.patchSession(id, archived: archive);
+  Future<void> _batchArchive(bool archive) async {
+    final hm = context.read<HostManager>();
+    for (final key in _selected.toList()) {
+      final parts = key.split(':');
+      if (parts.length == 2) {
+        hm.serviceFor(parts[0])?.patchSession(parts[1], archived: archive);
+      }
     }
     _exitMultiSelect();
   }
 
-  Future<void> _batchDelete(DaemonAPIService sse) async {
+  Future<void> _batchDelete() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -87,19 +106,24 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
     if (confirmed != true) return;
 
-    for (final id in _selected.toList()) {
-      await sse.deleteSession(id);
+    final hm = context.read<HostManager>();
+    for (final key in _selected.toList()) {
+      final parts = key.split(':');
+      if (parts.length == 2) {
+        hm.serviceFor(parts[0])?.deleteSession(parts[1]);
+      }
     }
     _exitMultiSelect();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<DaemonAPIService>(
-      builder: (context, sse, _) {
-        final sessions = sse.sessions;
+    return Consumer<HostManager>(
+      builder: (context, hm, _) {
+        final sessions = hm.filteredSessions;
+        final loaded = hm.sessionsLoaded;
 
-        if (!sse.sessionsLoaded) {
+        if (!loaded) {
           return ListView(
             padding: const EdgeInsets.all(12),
             children: const [
@@ -115,35 +139,36 @@ class _SessionsScreenState extends State<SessionsScreen> {
           return _buildEmptyState();
         }
 
-        final filtered = _filterSessions(sessions);
+        final filtered = _sortSessions(_filterSessions(sessions));
 
-        final tmux = sse.tmuxStatus;
+        final activeService = hm.activeHostId != null ? hm.serviceFor(hm.activeHostId!) : null;
+        final tmux = activeService?.tmuxStatus;
         final banners = <Widget>[];
-        if (tmux != null && !tmux.installed && !sse.tmuxMissingBannerDismissed) {
-          banners.add(_buildTmuxMissingBanner(sse));
-        } else if (tmux != null && (!tmux.resurrectPlugin || !tmux.continuumPlugin) && !sse.pluginBannerDismissed) {
-          banners.add(_buildPluginBanner(tmux, sse));
+        if (tmux != null && !tmux.installed && !(activeService?.tmuxMissingBannerDismissed ?? true)) {
+          banners.add(_buildTmuxMissingBanner(activeService!));
+        } else if (tmux != null &&
+            (!tmux.resurrectPlugin || !tmux.continuumPlugin) &&
+            !(activeService?.pluginBannerDismissed ?? true)) {
+          banners.add(_buildPluginBanner(tmux, activeService!));
         }
 
         return Column(
           children: [
-            // Multi-select action bar
-            if (_multiSelect)
-              _buildMultiSelectBar(sse),
-            // Filter chips
+            if (_multiSelect) _buildMultiSelectBar(),
             _buildFilterChips(sessions),
-            // Session list
             Expanded(
               child: filtered.isEmpty
                   ? _buildEmptyFilterState()
                   : RefreshIndicator(
-                      onRefresh: sse.fetchSessions,
+                      onRefresh: () => hm.activeHostId != null
+                          ? hm.refreshHost(hm.activeHostId!)
+                          : hm.refreshAll(),
                       child: ListView.builder(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         itemCount: filtered.length + banners.length,
                         itemBuilder: (context, index) {
                           if (index < banners.length) return banners[index];
-                          return _buildSwipeableCard(filtered[index - banners.length], sse);
+                          return _buildSwipeableCard(filtered[index - banners.length], hm);
                         },
                       ),
                     ),
@@ -154,7 +179,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildMultiSelectBar(DaemonAPIService sse) {
+  Widget _buildMultiSelectBar() {
     final theme = Theme.of(context);
     final isArchiveTab = _filter == SessionFilter.archived;
 
@@ -163,30 +188,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
       color: theme.colorScheme.surfaceContainerHighest,
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: _exitMultiSelect,
-          ),
-          Text(
-            '${_selected.length} selected',
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
+          IconButton(icon: const Icon(Icons.close), onPressed: _exitMultiSelect),
+          Text('${_selected.length} selected', style: const TextStyle(fontWeight: FontWeight.w600)),
           const Spacer(),
           if (!isArchiveTab)
-            IconButton(
-              icon: const Icon(Icons.push_pin_outlined),
-              tooltip: 'Pin',
-              onPressed: () => _batchPin(sse, true),
-            ),
+            IconButton(icon: const Icon(Icons.push_pin_outlined), tooltip: 'Pin', onPressed: () => _batchPin(true)),
           IconButton(
             icon: Icon(isArchiveTab ? Icons.unarchive_outlined : Icons.archive_outlined),
             tooltip: isArchiveTab ? 'Unarchive' : 'Archive',
-            onPressed: () => _batchArchive(sse, !isArchiveTab),
+            onPressed: () => _batchArchive(!isArchiveTab),
           ),
           IconButton(
             icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
             tooltip: 'Delete',
-            onPressed: () => _batchDelete(sse),
+            onPressed: _batchDelete,
           ),
         ],
       ),
@@ -226,13 +241,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildSwipeableCard(Session session, DaemonAPIService sse) {
+  Widget _buildSwipeableCard(Session session, HostManager hm) {
     final theme = Theme.of(context);
     final isArchived = session.archived;
+    final service = hm.serviceFor(session.hostId);
 
     return Dismissible(
-      key: ValueKey(session.sessionId),
-      // Swipe right → archive/unarchive
+      key: ValueKey(_compositeKey(session)),
       background: Container(
         margin: const EdgeInsets.only(bottom: 8),
         decoration: BoxDecoration(
@@ -252,13 +267,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ],
         ),
       ),
-      // Swipe left → delete
       secondaryBackground: Container(
         margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.error,
-          borderRadius: BorderRadius.circular(12),
-        ),
+        decoration: BoxDecoration(color: theme.colorScheme.error, borderRadius: BorderRadius.circular(12)),
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
         child: const Row(
@@ -272,23 +283,21 @@ class _SessionsScreenState extends State<SessionsScreen> {
       ),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
-          // Archive/unarchive — no confirm needed
-          await sse.patchSession(session.sessionId, archived: !isArchived);
+          service?.patchSession(session.sessionId, archived: !isArchived);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(isArchived ? 'Session unarchived' : 'Session archived'),
                 action: SnackBarAction(
                   label: 'Undo',
-                  onPressed: () => sse.patchSession(session.sessionId, archived: isArchived),
+                  onPressed: () => service?.patchSession(session.sessionId, archived: isArchived),
                 ),
                 duration: const Duration(seconds: 3),
               ),
             );
           }
-          return false; // don't remove from list, fetchSessions handles it
+          return false;
         } else {
-          // Delete — confirm
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
@@ -305,23 +314,27 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ),
           );
           if (confirmed == true) {
-            await sse.deleteSession(session.sessionId);
+            service?.deleteSession(session.sessionId);
           }
           return false;
         }
       },
-      child: _buildSessionCard(session, sse),
+      child: _buildSessionCard(session, hm),
     );
   }
 
-  Widget _buildSessionCard(Session session, DaemonAPIService sse) {
+  Widget _buildSessionCard(Session session, HostManager hm) {
     final theme = Theme.of(context);
     final statusColor = _statusColor(session.status, theme);
     final statusIcon = _statusIcon(session.status);
-    final isSelected = _selected.contains(session.sessionId);
+    final isSelected = _selected.contains(_compositeKey(session));
+    final host = hm.hostById(session.hostId);
+    final hostColor = host?.color ?? theme.colorScheme.primary;
+    final hostLabel = host?.label ?? '';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: isSelected
@@ -334,127 +347,111 @@ class _SessionsScreenState extends State<SessionsScreen> {
         borderRadius: BorderRadius.circular(12),
         onTap: () {
           if (_multiSelect) {
-            _toggleSelection(session.sessionId);
+            _toggleSelection(session);
           } else {
             Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => SessionDetailScreen(session: session),
-              ),
+              MaterialPageRoute(builder: (_) => SessionDetailScreen(session: session)),
             );
           }
         },
         onLongPress: () {
           HapticFeedback.mediumImpact();
-          _showContextMenu(session, sse);
+          _showContextMenu(session, hm);
         },
-        child: Padding(
-          padding: const EdgeInsets.all(12),
+        child: IntrinsicHeight(
           child: Row(
             children: [
-              // Selection checkbox in multi-select mode
-              if (_multiSelect) ...[
-                Checkbox(
-                  value: isSelected,
-                  onChanged: (_) => _toggleSelection(session.sessionId),
-                  visualDensity: VisualDensity.compact,
-                ),
-                const SizedBox(width: 4),
-              ],
+              Container(width: 2, color: hostColor.withValues(alpha: 0.4)),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Top row: status badge + pin icon + model + time
-                    Row(
-                      children: [
-                        Icon(statusIcon, size: 14, color: statusColor),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            _statusLabel(session.status),
-                            style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
-                          ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      if (_multiSelect) ...[
+                        Checkbox(
+                          value: isSelected,
+                          onChanged: (_) => _toggleSelection(session),
+                          visualDensity: VisualDensity.compact,
                         ),
-                        if (session.pinned) ...[
-                          const SizedBox(width: 6),
-                          Icon(Icons.push_pin, size: 14, color: theme.colorScheme.primary),
-                        ],
-                        if (session.model != null) ...[
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              session.model!,
+                        const SizedBox(width: 4),
+                      ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Row 1: Status + pin + time
+                            Row(
+                              children: [
+                                Icon(statusIcon, size: 14, color: statusColor),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    _statusLabel(session.status),
+                                    style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                                if (session.pinned) ...[
+                                  const SizedBox(width: 6),
+                                  Icon(Icons.push_pin, size: 14, color: theme.colorScheme.primary),
+                                ],
+                                const Spacer(),
+                                Text(
+                                  session.timeAgo,
+                                  style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            // Row 2: Prompt
+                            Text(
+                              session.lastUserMessage ?? session.shortCwd,
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 6),
+                            // Row 3: Workspace
+                            Text(
+                              session.shortCwd,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'monospace',
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                        ],
-                        const Spacer(),
-                        Text(
-                          session.timeAgo,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
+                            const SizedBox(height: 4),
+                            // Row 4: Model + host name
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    session.model ?? '',
+                                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Text(
+                                  hostLabel,
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: hostColor),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // Last user message — bold for visibility
-                    if (session.lastUserMessage != null) ...[
-                      Text(
-                        session.lastUserMessage!,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onSurface,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    // CWD
-                    Text(
-                      session.shortCwd,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontFamily: 'monospace',
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    // Last event
-                    if (session.lastEvent != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        session.lastEvent!,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                        ),
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
-                    // Session ID
-                    const SizedBox(height: 4),
-                    Text(
-                      session.shortId,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                        color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -464,9 +461,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  void _showContextMenu(Session session, DaemonAPIService sse) {
+  void _showContextMenu(Session session, HostManager hm) {
     final theme = Theme.of(context);
     final isArchived = session.archived;
+    final service = hm.serviceFor(session.hostId);
 
     showModalBottomSheet(
       context: context,
@@ -475,7 +473,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Row(
@@ -490,17 +487,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     ),
                     Text(
                       session.shortId,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),
               ),
               const Divider(height: 1),
-              // Select
               ListTile(
                 leading: const Icon(Icons.check_box_outlined),
                 title: const Text('Select'),
@@ -508,39 +500,36 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   Navigator.pop(ctx);
                   setState(() {
                     _multiSelect = true;
-                    _selected.add(session.sessionId);
+                    _selected.add(_compositeKey(session));
                   });
                 },
               ),
-              // Pin / Unpin
               ListTile(
                 leading: Icon(session.pinned ? Icons.push_pin : Icons.push_pin_outlined),
                 title: Text(session.pinned ? 'Unpin' : 'Pin'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  sse.patchSession(session.sessionId, pinned: !session.pinned);
+                  service?.patchSession(session.sessionId, pinned: !session.pinned);
                 },
               ),
-              // Archive / Unarchive
               ListTile(
                 leading: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined),
                 title: Text(isArchived ? 'Unarchive' : 'Archive'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  sse.patchSession(session.sessionId, archived: !isArchived);
+                  service?.patchSession(session.sessionId, archived: !isArchived);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(isArchived ? 'Session unarchived' : 'Session archived'),
                       action: SnackBarAction(
                         label: 'Undo',
-                        onPressed: () => sse.patchSession(session.sessionId, archived: isArchived),
+                        onPressed: () => service?.patchSession(session.sessionId, archived: isArchived),
                       ),
                       duration: const Duration(seconds: 3),
                     ),
                   );
                 },
               ),
-              // Delete
               ListTile(
                 leading: Icon(Icons.delete_outline, color: theme.colorScheme.error),
                 title: Text('Delete', style: TextStyle(color: theme.colorScheme.error)),
@@ -562,11 +551,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     ),
                   );
                   if (confirmed == true) {
-                    await sse.deleteSession(session.sessionId);
+                    service?.deleteSession(session.sessionId);
                   }
                 },
               ),
-              // Session control actions
               if (session.canStop || session.canSuspend || session.canResume) ...[
                 const Divider(height: 1),
                 if (session.canStop)
@@ -575,7 +563,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     title: const Text('Stop'),
                     onTap: () {
                       Navigator.pop(ctx);
-                      sse.stopSession(session.sessionId);
+                      service?.stopSession(session.sessionId);
                     },
                   ),
                 if (session.canSuspend)
@@ -584,7 +572,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     title: const Text('Suspend'),
                     onTap: () {
                       Navigator.pop(ctx);
-                      sse.suspendSession(session.sessionId);
+                      service?.suspendSession(session.sessionId);
                     },
                   ),
                 if (session.canResume)
@@ -593,7 +581,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     title: const Text('Resume'),
                     onTap: () {
                       Navigator.pop(ctx);
-                      sse.resumeSession(session.sessionId);
+                      service?.resumeSession(session.sessionId);
                     },
                   ),
               ],
@@ -610,17 +598,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.terminal,
-            size: 48,
-            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-          ),
+          Icon(Icons.terminal, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
           const SizedBox(height: 16),
           Text(
             'No sessions yet.',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 4),
           Text(
@@ -660,9 +642,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           const SizedBox(height: 16),
           Text(
             label,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           if (hint.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -678,7 +658,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildTmuxMissingBanner(DaemonAPIService sse) {
+  Widget _buildTmuxMissingBanner(DaemonAPIService service) {
     final theme = Theme.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -696,23 +676,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 Expanded(
                   child: Text(
                     'tmux not installed',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: theme.colorScheme.onErrorContainer,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: theme.colorScheme.onErrorContainer),
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => sse.dismissTmuxMissingBanner(),
+                  onTap: () => service.dismissTmuxMissingBanner(),
                   child: Icon(Icons.close, size: 18, color: theme.colorScheme.onErrorContainer),
                 ),
               ],
             ),
             const SizedBox(height: 6),
             Text(
-              'Session management (send, stop, resume) requires tmux. '
-              'Install it on your server:',
+              'Session management (send, stop, resume) requires tmux. Install it on your server:',
               style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
             ),
             const SizedBox(height: 6),
@@ -724,11 +699,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ),
               child: Text(
                 'brew install tmux',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  color: theme.colorScheme.onErrorContainer,
-                ),
+                style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.colorScheme.onErrorContainer),
               ),
             ),
           ],
@@ -737,7 +708,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildPluginBanner(TmuxStatus tmux, DaemonAPIService sse) {
+  Widget _buildPluginBanner(TmuxStatus tmux, DaemonAPIService service) {
     final theme = Theme.of(context);
     final missing = <String>[];
     if (!tmux.resurrectPlugin) missing.add('tmux-resurrect');
@@ -762,15 +733,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 Expanded(
                   child: Text(
                     'Recommended: ${missing.join(" & ")}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: theme.colorScheme.onSurface,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: theme.colorScheme.onSurface),
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => sse.dismissPluginBanner(),
+                  onTap: () => service.dismissPluginBanner(),
                   child: Icon(Icons.close, size: 18, color: theme.colorScheme.onSurfaceVariant),
                 ),
               ],
@@ -790,11 +757,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ),
               child: Text(
                 'git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm',
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurface,
-                ),
+                style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: theme.colorScheme.onSurface),
               ),
             ),
           ],

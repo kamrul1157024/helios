@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/provider.dart';
+import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 
 class NewSessionSheet extends StatefulWidget {
@@ -14,6 +15,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   final _promptController = TextEditingController();
   final _cwdController = TextEditingController();
 
+  String? _selectedHostId;
   ProviderInfo? _selectedProvider;
   ModelInfo? _selectedModel;
   List<ModelInfo> _models = [];
@@ -26,16 +28,24 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   @override
   void initState() {
     super.initState();
+    final hm = context.read<HostManager>();
+    // Default to the active host, or first host
+    _selectedHostId = hm.activeHostId ?? hm.hosts.firstOrNull?.id;
     _initProvider();
   }
 
+  DaemonAPIService? get _service {
+    if (_selectedHostId == null) return null;
+    return context.read<HostManager>().serviceFor(_selectedHostId!);
+  }
+
   void _initProvider() {
-    final sse = context.read<DaemonAPIService>();
+    final sse = _service;
+    if (sse == null) return;
     if (sse.providers.isNotEmpty) {
       _selectedProvider = sse.providers.first;
       _loadModels();
     } else {
-      // Providers not loaded yet — fetch then init
       sse.fetchProviders().then((_) {
         if (mounted && sse.providers.isNotEmpty) {
           setState(() => _selectedProvider = sse.providers.first);
@@ -47,8 +57,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
 
   Future<void> _loadModels() async {
     if (_selectedProvider == null) return;
+    final sse = _service;
+    if (sse == null) return;
     setState(() => _loadingModels = true);
-    final sse = context.read<DaemonAPIService>();
     final models = await sse.fetchModels(_selectedProvider!.id);
     if (mounted) {
       setState(() {
@@ -63,14 +74,14 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
 
   Future<void> _refreshModels() async {
     if (_selectedProvider == null) return;
+    final sse = _service;
+    if (sse == null) return;
     setState(() => _refreshingModels = true);
-    final sse = context.read<DaemonAPIService>();
     final models = await sse.fetchModels(_selectedProvider!.id, forceRefresh: true);
     if (mounted) {
       setState(() {
         _models = models;
         _refreshingModels = false;
-        // Keep selection if still valid, otherwise reset
         if (_selectedModel != null &&
             !_models.any((m) => m.id == _selectedModel!.id)) {
           _selectedModel = _models.isNotEmpty ? _models.first : null;
@@ -83,8 +94,10 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     final prompt = _promptController.text.trim();
     if (prompt.isEmpty || _selectedProvider == null) return;
 
+    final sse = _service;
+    if (sse == null) return;
+
     setState(() => _creating = true);
-    final sse = context.read<DaemonAPIService>();
     final cwd = _cwdController.text.trim();
     final ok = await sse.createSession(
       provider: _selectedProvider!.id,
@@ -119,6 +132,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hm = context.read<HostManager>();
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Padding(
@@ -153,6 +167,12 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             ),
           ),
           const SizedBox(height: 20),
+
+          // Host selector (only when multiple hosts)
+          if (hm.hosts.length > 1) ...[
+            _buildHostDropdown(theme, hm),
+            const SizedBox(height: 16),
+          ],
 
           // Provider dropdown
           _buildProviderDropdown(theme),
@@ -229,9 +249,52 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     );
   }
 
+  Widget _buildHostDropdown(ThemeData theme, HostManager hm) {
+    return DropdownButtonFormField<String>(
+      initialValue: _selectedHostId,
+      decoration: InputDecoration(
+        labelText: 'Host',
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      ),
+      items: hm.hosts.map((host) {
+        final isConnected = hm.serviceFor(host.id)?.connected == true;
+        return DropdownMenuItem(
+          value: host.id,
+          child: Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: host.color.withValues(alpha: isConnected ? 1.0 : 0.3),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(host.label),
+            ],
+          ),
+        );
+      }).toList(),
+      onChanged: (value) {
+        if (value == null || value == _selectedHostId) return;
+        setState(() {
+          _selectedHostId = value;
+          _selectedProvider = null;
+          _selectedModel = null;
+          _models = [];
+        });
+        _initProvider();
+      },
+    );
+  }
+
   Widget _buildProviderDropdown(ThemeData theme) {
-    final sse = context.read<DaemonAPIService>();
-    final providers = sse.providers;
+    final sse = _service;
+    final providers = sse?.providers ?? [];
 
     return DropdownButtonFormField<String>(
       initialValue: _selectedProvider?.id,
@@ -327,9 +390,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   }
 
   Widget _buildCwdSection(ThemeData theme) {
-    final sse = context.read<DaemonAPIService>();
+    final sse = _service;
     // Extract unique CWDs from recent sessions
-    final recentCwds = sse.sessions
+    final recentCwds = (sse?.sessions ?? [])
         .where((s) => s.cwd.isNotEmpty)
         .map((s) => s.cwd)
         .toSet()

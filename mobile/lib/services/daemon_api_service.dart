@@ -7,15 +7,21 @@ import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
-import 'auth_service.dart';
+
+/// Callback fired when an SSE event arrives on this host.
+typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
 
 class DaemonAPIService extends ChangeNotifier {
-  AuthService? _auth;
+  final String hostId;
+  final String serverUrl;
+  String? _cookie;
+
   http.Client? _client;
   Timer? _reconnectTimer;
   Timer? _pollTimer;
   bool _running = false;
   bool _connected = false;
+  bool _isActiveHost = false;
 
   List<HeliosNotification> _notifications = [];
   List<HeliosNotification> get notifications => _notifications;
@@ -50,77 +56,103 @@ class DaemonAPIService extends ChangeNotifier {
   final Map<String, DateTime> _modelCacheFetchedAt = {};
   static const _modelCacheTTL = Duration(hours: 24);
 
-  static const _pluginBannerDismissedKey = 'tmux_plugin_banner_dismissed';
-  static const _tmuxMissingBannerDismissedKey = 'tmux_missing_banner_dismissed';
-
   final _eventController = StreamController<SSEEvent>.broadcast();
   Stream<SSEEvent> get events => _eventController.stream;
 
-  void attach(AuthService auth) {
-    _auth = auth;
-    _loadPluginBannerState();
+  /// External callback for SSE events (used by HostManager for notification routing).
+  SSEEventCallback? onSSEEvent;
+
+  DaemonAPIService({
+    required this.hostId,
+    required this.serverUrl,
+    String? cookie,
+  }) : _cookie = cookie;
+
+  void setCookie(String cookie) {
+    _cookie = cookie;
   }
 
-  Future<void> _loadPluginBannerState() async {
-    final prefs = await SharedPreferences.getInstance();
-    _pluginBannerDismissed = prefs.getBool(_pluginBannerDismissedKey) ?? false;
-    _tmuxMissingBannerDismissed = prefs.getBool(_tmuxMissingBannerDismissedKey) ?? false;
+  // ==================== Auth Helpers ====================
+
+  Map<String, String> _authHeaders() {
+    return {
+      'Cookie': 'helios_token=$_cookie',
+    };
   }
 
-  Future<void> dismissPluginBanner() async {
-    _pluginBannerDismissed = true;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_pluginBannerDismissedKey, true);
+  Future<http.Response> _authGet(String path) {
+    return http.get(
+      Uri.parse('$serverUrl$path'),
+      headers: _authHeaders(),
+    );
   }
 
-  Future<void> dismissTmuxMissingBanner() async {
-    _tmuxMissingBannerDismissed = true;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_tmuxMissingBannerDismissedKey, true);
+  Future<http.Response> _authPost(String path, {Map<String, dynamic>? body}) {
+    return http.post(
+      Uri.parse('$serverUrl$path'),
+      headers: {
+        ..._authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: body != null ? jsonEncode(body) : null,
+    );
   }
 
-  /// Fetch health status including tmux info.
-  Future<void> fetchHealth() async {
-    if (_auth == null || !_auth!.isAuthenticated) return;
-    try {
-      final resp = await _auth!.authGet('/api/health');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        if (data['tmux'] != null) {
-          _tmuxStatus = TmuxStatus.fromJson(data['tmux']);
-          notifyListeners();
-        }
-      }
-    } catch (e) {
-      debugPrint('Failed to fetch health: $e');
-    }
+  Future<http.Response> _authPatch(String path, {Map<String, dynamic>? body}) {
+    return http.patch(
+      Uri.parse('$serverUrl$path'),
+      headers: {
+        ..._authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: body != null ? jsonEncode(body) : null,
+    );
   }
 
-  /// Fetch all notifications from the API.
-  Future<void> fetchNotifications() async {
-    if (_auth == null || !_auth!.isAuthenticated) return;
-    try {
-      final resp = await _auth!.authGet('/api/notifications');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        final list = (data['notifications'] as List?) ?? [];
-        _notifications = list.map((n) => HeliosNotification.fromJson(n)).toList();
-        _notificationsLoaded = true;
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('Failed to fetch notifications: $e');
-    }
+  Future<http.Response> _authDelete(String path) {
+    return http.delete(
+      Uri.parse('$serverUrl$path'),
+      headers: _authHeaders(),
+    );
   }
 
-  /// Start the persistent SSE connection and session polling.
-  Future<void> start() async {
+  // ==================== Lifecycle ====================
+
+  /// Start as the active host: SSE + session polling.
+  Future<void> startActive() async {
     if (_running) return;
     _running = true;
+    _isActiveHost = true;
+    await _loadBannerState();
     _startPolling();
-    await _connect();
+    _connect(); // fire-and-forget — SSE runs in background
+  }
+
+  /// Start as a background host: SSE only, no polling.
+  Future<void> startBackground() async {
+    if (_running) return;
+    _running = true;
+    _isActiveHost = false;
+    await _loadBannerState();
+    _connect(); // fire-and-forget — SSE runs in background
+  }
+
+  /// Promote from background to active (start polling, fetch data).
+  void promote() {
+    _isActiveHost = true;
+    fetchSessions();
+    fetchNotifications();
+    fetchHealth();
+    fetchProviders();
+    fetchCommands();
+    _startPolling();
+  }
+
+  /// Demote from active to background (stop polling).
+  void demote() {
+    _isActiveHost = false;
+    _pollTimer?.cancel();
+    _pollTimer = null;
   }
 
   void _startPolling() {
@@ -134,6 +166,7 @@ class DaemonAPIService extends ChangeNotifier {
   void stop() {
     _running = false;
     _connected = false;
+    _isActiveHost = false;
     _client?.close();
     _client = null;
     _reconnectTimer?.cancel();
@@ -143,16 +176,40 @@ class DaemonAPIService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ==================== Banner State ====================
+
+  Future<void> _loadBannerState() async {
+    final prefs = await SharedPreferences.getInstance();
+    _pluginBannerDismissed = prefs.getBool('tmux_plugin_banner_dismissed_$hostId') ?? false;
+    _tmuxMissingBannerDismissed = prefs.getBool('tmux_missing_banner_dismissed_$hostId') ?? false;
+  }
+
+  Future<void> dismissPluginBanner() async {
+    _pluginBannerDismissed = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('tmux_plugin_banner_dismissed_$hostId', true);
+  }
+
+  Future<void> dismissTmuxMissingBanner() async {
+    _tmuxMissingBannerDismissed = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('tmux_missing_banner_dismissed_$hostId', true);
+  }
+
+  // ==================== SSE ====================
+
   Future<void> _connect() async {
-    if (!_running || _auth == null || !_auth!.isAuthenticated) return;
+    if (!_running) return;
 
     _client?.close();
     _client = http.Client();
 
     try {
-      final request = http.Request('GET', Uri.parse('${_auth!.serverUrl}/api/events'));
+      final request = http.Request('GET', Uri.parse('$serverUrl/api/events'));
       request.headers.addAll({
-        'Cookie': 'helios_token=${_auth!.cookie}',
+        'Cookie': 'helios_token=$_cookie',
         'Accept': 'text/event-stream',
         'Cache-Control': 'no-cache',
       });
@@ -160,7 +217,7 @@ class DaemonAPIService extends ChangeNotifier {
       final response = await _client!.send(request);
 
       if (response.statusCode != 200) {
-        debugPrint('SSE connect failed: HTTP ${response.statusCode}');
+        debugPrint('[$hostId] SSE connect failed: HTTP ${response.statusCode}');
         _scheduleReconnect();
         return;
       }
@@ -192,7 +249,7 @@ class DaemonAPIService extends ChangeNotifier {
       }
     } catch (e) {
       if (!_running) return;
-      debugPrint('SSE error: $e');
+      debugPrint('[$hostId] SSE error: $e');
     }
 
     _connected = false;
@@ -201,16 +258,21 @@ class DaemonAPIService extends ChangeNotifier {
   }
 
   void _handleEvent(String type, dynamic data) {
-    _eventController.add(SSEEvent(type, data));
-    // Refresh notifications on any event
+    final event = SSEEvent(type, data);
+    _eventController.add(event);
+    onSSEEvent?.call(hostId, event);
+
+    // Always refresh notifications on any event (even background hosts)
     fetchNotifications();
-    // Refresh sessions on any session-relevant event
-    if (type == 'session_status' ||
-        type == 'session_updated' ||
-        type == 'session_deleted' ||
-        type == 'notification' ||
-        type == 'notification_resolved' ||
-        type == 'subagent_status') {
+
+    // Only refresh sessions if this is the active host
+    if (_isActiveHost &&
+        (type == 'session_status' ||
+            type == 'session_updated' ||
+            type == 'session_deleted' ||
+            type == 'notification' ||
+            type == 'notification_resolved' ||
+            type == 'subagent_status')) {
       fetchSessions();
     }
   }
@@ -221,42 +283,69 @@ class DaemonAPIService extends ChangeNotifier {
     _reconnectTimer = Timer(const Duration(seconds: 3), _connect);
   }
 
-  /// Send an action for any notification type.
-  /// The body is type-specific — each card widget builds it.
+  // ==================== Health ====================
+
+  Future<void> fetchHealth() async {
+    try {
+      final resp = await _authGet('/api/health');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        if (data['tmux'] != null) {
+          _tmuxStatus = TmuxStatus.fromJson(data['tmux']);
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to fetch health: $e');
+    }
+  }
+
+  // ==================== Notifications API ====================
+
+  Future<void> fetchNotifications() async {
+    try {
+      final resp = await _authGet('/api/notifications');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['notifications'] as List?) ?? [];
+        _notifications = list.map((n) => HeliosNotification.fromJson(n, hostId: hostId)).toList();
+        _notificationsLoaded = true;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to fetch notifications: $e');
+    }
+  }
+
   Future<bool> sendAction(String id, Map<String, dynamic> body) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/notifications/$id/action', body: body);
+      final resp = await _authPost('/api/notifications/$id/action', body: body);
       if (resp.statusCode == 200) {
         await fetchNotifications();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to send action: $e');
+      debugPrint('[$hostId] Failed to send action: $e');
     }
     return false;
   }
 
-  /// Dismiss a notification.
   Future<bool> dismissNotification(String id) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/notifications/$id/dismiss');
+      final resp = await _authPost('/api/notifications/$id/dismiss');
       if (resp.statusCode == 200) {
         await fetchNotifications();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to dismiss: $e');
+      debugPrint('[$hostId] Failed to dismiss: $e');
     }
     return false;
   }
 
-  /// Batch action — sends the same action body to multiple notifications.
   Future<bool> batchAction(List<String> ids, Map<String, dynamic> action) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/notifications/batch', body: {
+      final resp = await _authPost('/api/notifications/batch', body: {
         'notification_ids': ids,
         'action': action,
       });
@@ -265,7 +354,7 @@ class DaemonAPIService extends ChangeNotifier {
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to batch action: $e');
+      debugPrint('[$hostId] Failed to batch action: $e');
     }
     return false;
   }
@@ -273,143 +362,160 @@ class DaemonAPIService extends ChangeNotifier {
   // ==================== Session API ====================
 
   Future<void> fetchSessions() async {
-    if (_auth == null || !_auth!.isAuthenticated) return;
     try {
-      final resp = await _auth!.authGet('/api/sessions');
+      final resp = await _authGet('/api/sessions');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['sessions'] as List?) ?? [];
-        _sessions = list.map((s) => Session.fromJson(s)).toList();
+        _sessions = list.map((s) => Session.fromJson(s, hostId: hostId)).toList();
         _sessionsLoaded = true;
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Failed to fetch sessions: $e');
+      debugPrint('[$hostId] Failed to fetch sessions: $e');
     }
   }
 
   Future<TranscriptResult?> fetchTranscript(String sessionId, {int limit = 200, int offset = 0}) async {
-    if (_auth == null) return null;
     try {
-      final resp = await _auth!.authGet('/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset');
+      final resp = await _authGet('/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset');
       if (resp.statusCode == 200) {
         return TranscriptResult.fromJson(jsonDecode(resp.body));
       }
     } catch (e) {
-      debugPrint('Failed to fetch transcript: $e');
+      debugPrint('[$hostId] Failed to fetch transcript: $e');
     }
     return null;
   }
 
   Future<List<Subagent>> fetchSubagents(String sessionId) async {
-    if (_auth == null) return [];
     try {
-      final resp = await _auth!.authGet('/api/sessions/$sessionId/subagents');
+      final resp = await _authGet('/api/sessions/$sessionId/subagents');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['subagents'] as List?) ?? [];
         return list.map((s) => Subagent.fromJson(s)).toList();
       }
     } catch (e) {
-      debugPrint('Failed to fetch subagents: $e');
+      debugPrint('[$hostId] Failed to fetch subagents: $e');
     }
     return [];
   }
 
   Future<bool> sendSessionPrompt(String sessionId, String message) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/sessions/$sessionId/send', body: {'message': message});
-      debugPrint('sendSessionPrompt: status=${resp.statusCode} body=${resp.body}');
+      final resp = await _authPost('/api/sessions/$sessionId/send', body: {'message': message});
+      debugPrint('[$hostId] sendSessionPrompt: status=${resp.statusCode} body=${resp.body}');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to send prompt: $e');
+      debugPrint('[$hostId] Failed to send prompt: $e');
     }
     return false;
   }
 
   Future<bool> stopSession(String sessionId) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/sessions/$sessionId/stop');
+      final resp = await _authPost('/api/sessions/$sessionId/stop');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to stop session: $e');
+      debugPrint('[$hostId] Failed to stop session: $e');
     }
     return false;
   }
 
   Future<bool> suspendSession(String sessionId) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/sessions/$sessionId/suspend');
+      final resp = await _authPost('/api/sessions/$sessionId/suspend');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to suspend session: $e');
+      debugPrint('[$hostId] Failed to suspend session: $e');
     }
     return false;
   }
 
   Future<bool> resumeSession(String sessionId) async {
-    if (_auth == null) return false;
     try {
-      final resp = await _auth!.authPost('/api/sessions/$sessionId/resume');
+      final resp = await _authPost('/api/sessions/$sessionId/resume');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to resume session: $e');
+      debugPrint('[$hostId] Failed to resume session: $e');
     }
     return false;
   }
 
   Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived}) async {
-    if (_auth == null) return false;
+    // Optimistically update the local session list for instant UI feedback.
+    final idx = _sessions.indexWhere((s) => s.sessionId == sessionId);
+    Session? original;
+    if (idx != -1) {
+      original = _sessions[idx];
+      _sessions[idx] = original.copyWith(
+        pinned: pinned ?? original.pinned,
+        archived: archived ?? original.archived,
+      );
+      notifyListeners();
+    }
+
     try {
       final body = <String, dynamic>{};
       if (pinned != null) body['pinned'] = pinned;
       if (archived != null) body['archived'] = archived;
-      final resp = await _auth!.authPatch('/api/sessions/$sessionId', body: body);
+      final resp = await _authPatch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to patch session: $e');
+      debugPrint('[$hostId] Failed to patch session: $e');
+    }
+
+    // Revert on failure.
+    if (original != null && idx != -1 && idx < _sessions.length) {
+      _sessions[idx] = original;
+      notifyListeners();
     }
     return false;
   }
 
   Future<bool> deleteSession(String sessionId) async {
-    if (_auth == null) return false;
+    // Optimistically remove from local list for instant UI feedback.
+    final original = List<Session>.from(_sessions);
+    _sessions.removeWhere((s) => s.sessionId == sessionId);
+    notifyListeners();
+
     try {
-      final resp = await _auth!.authDelete('/api/sessions/$sessionId');
+      final resp = await _authDelete('/api/sessions/$sessionId');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to delete session: $e');
+      debugPrint('[$hostId] Failed to delete session: $e');
     }
+
+    // Revert on failure.
+    _sessions = original;
+    notifyListeners();
     return false;
   }
 
   // ==================== Commands API ====================
 
   Future<void> fetchCommands() async {
-    if (_auth == null || !_auth!.isAuthenticated) return;
     try {
-      final resp = await _auth!.authGet('/api/commands');
+      final resp = await _authGet('/api/commands');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['commands'] as List?) ?? [];
@@ -417,16 +523,15 @@ class DaemonAPIService extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Failed to fetch commands: $e');
+      debugPrint('[$hostId] Failed to fetch commands: $e');
     }
   }
 
   // ==================== Providers & Models API ====================
 
   Future<void> fetchProviders() async {
-    if (_auth == null || !_auth!.isAuthenticated) return;
     try {
-      final resp = await _auth!.authGet('/api/providers');
+      final resp = await _authGet('/api/providers');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['providers'] as List?) ?? [];
@@ -435,7 +540,7 @@ class DaemonAPIService extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Failed to fetch providers: $e');
+      debugPrint('[$hostId] Failed to fetch providers: $e');
     }
   }
 
@@ -454,14 +559,13 @@ class DaemonAPIService extends ChangeNotifier {
       return _modelCache[providerId]!;
     }
 
-    if (_auth == null || !_auth!.isAuthenticated) return [];
     try {
       final endpoint = forceRefresh
           ? '/api/providers/$providerId/models/refresh'
           : '/api/providers/$providerId/models';
       final resp = forceRefresh
-          ? await _auth!.authPost(endpoint)
-          : await _auth!.authGet(endpoint);
+          ? await _authPost(endpoint)
+          : await _authGet(endpoint);
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['models'] as List?) ?? [];
@@ -472,7 +576,7 @@ class DaemonAPIService extends ChangeNotifier {
         return models;
       }
     } catch (e) {
-      debugPrint('Failed to fetch models for $providerId: $e');
+      debugPrint('[$hostId] Failed to fetch models for $providerId: $e');
     }
     return _modelCache[providerId] ?? [];
   }
@@ -484,7 +588,6 @@ class DaemonAPIService extends ChangeNotifier {
     String? cwd,
     bool dangerouslySkipPermissions = false,
   }) async {
-    if (_auth == null) return false;
     try {
       final body = <String, dynamic>{
         'provider': provider,
@@ -494,13 +597,13 @@ class DaemonAPIService extends ChangeNotifier {
       if (cwd != null && cwd.isNotEmpty) body['cwd'] = cwd;
       if (dangerouslySkipPermissions) body['dangerously_skip_permissions'] = true;
 
-      final resp = await _auth!.authPost('/api/sessions', body: body);
+      final resp = await _authPost('/api/sessions', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('Failed to create session: $e');
+      debugPrint('[$hostId] Failed to create session: $e');
     }
     return false;
   }

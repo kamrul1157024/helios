@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 class HeliosNotification {
+  final String hostId;
   final String id;
   final String source;
   final String sourceSession;
@@ -16,6 +17,7 @@ class HeliosNotification {
   final String createdAt;
 
   HeliosNotification({
+    this.hostId = '',
     required this.id,
     required this.source,
     required this.sourceSession,
@@ -31,7 +33,7 @@ class HeliosNotification {
     required this.createdAt,
   });
 
-  factory HeliosNotification.fromJson(Map<String, dynamic> json) {
+  factory HeliosNotification.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
     Map<String, dynamic>? parseJson(dynamic raw) {
       if (raw == null) return null;
       if (raw is Map<String, dynamic>) return raw;
@@ -45,6 +47,7 @@ class HeliosNotification {
     }
 
     return HeliosNotification(
+      hostId: hostId,
       id: json['id'] as String,
       source: json['source'] as String? ?? 'claude',
       sourceSession: json['source_session'] as String? ?? '',

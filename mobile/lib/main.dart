@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'services/auth_service.dart';
-import 'services/daemon_api_service.dart';
+import 'services/host_manager.dart';
 import 'services/notification_service.dart';
 import 'screens/setup_screen.dart';
 import 'screens/home_screen.dart';
@@ -14,11 +12,8 @@ void main() async {
   await NotificationService.instance.init();
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => AuthService()),
-        ChangeNotifierProvider(create: (_) => DaemonAPIService()),
-      ],
+    ChangeNotifierProvider(
+      create: (_) => HostManager(),
       child: const HeliosApp(),
     ),
   );
@@ -76,8 +71,8 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _checkAuth() async {
-    final auth = context.read<AuthService>();
-    await auth.loadStoredCredentials();
+    final hm = context.read<HostManager>();
+    await hm.loadStoredHosts();
   }
 
   Future<void> _handleDeepLinks() async {
@@ -104,17 +99,17 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AuthService>(
-      builder: (context, auth, _) {
-        if (auth.isLoading) {
+    return Consumer<HostManager>(
+      builder: (context, hm, _) {
+        if (hm.isLoading) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (auth.isAuthenticated) {
+        if (hm.isAuthenticated) {
           return const HomeScreen();
         }
-        if (auth.isPendingApproval) {
+        if (hm.isPendingApproval) {
           return const _PendingApprovalScreen();
         }
         return SetupScreen(
@@ -127,48 +122,8 @@ class _AuthGateState extends State<AuthGate> {
 }
 
 /// Shown when the app restores a device that is still pending approval.
-class _PendingApprovalScreen extends StatefulWidget {
+class _PendingApprovalScreen extends StatelessWidget {
   const _PendingApprovalScreen();
-
-  @override
-  State<_PendingApprovalScreen> createState() => _PendingApprovalScreenState();
-}
-
-class _PendingApprovalScreenState extends State<_PendingApprovalScreen> {
-  @override
-  void initState() {
-    super.initState();
-    _resumePolling();
-  }
-
-  Future<void> _resumePolling() async {
-    final auth = context.read<AuthService>();
-    // Poll until approved or rejected
-    while (mounted && auth.isPendingApproval) {
-      await Future.delayed(const Duration(seconds: 2));
-      if (!mounted) return;
-      try {
-        final resp = await auth.authGet('/api/auth/device/me');
-        if (resp.statusCode == 200) {
-          final data = jsonDecode(resp.body);
-          final status = data['status'] as String?;
-          if (status == 'active') {
-            auth.markAuthenticated();
-            return;
-          }
-          if (status == 'revoked') {
-            auth.logout();
-            return;
-          }
-        } else if (resp.statusCode == 401 || resp.statusCode == 403) {
-          auth.logout();
-          return;
-        }
-      } catch (_) {
-        // Network error — keep trying
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -223,7 +178,7 @@ class _PendingApprovalScreenState extends State<_PendingApprovalScreen> {
                   const SizedBox(height: 16),
                   TextButton(
                     onPressed: () {
-                      context.read<AuthService>().logout();
+                      // Cancel not applicable in multi-host — just wait
                     },
                     child: const Text('Cancel'),
                   ),
