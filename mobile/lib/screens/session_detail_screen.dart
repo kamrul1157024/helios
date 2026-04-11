@@ -385,16 +385,23 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   style: Theme.of(ctx).textTheme.titleSmall,
                 ),
               ),
-              ...commands.map((cmd) => ListTile(
-                leading: Icon(_iconForCommand(cmd.icon)),
-                title: Text(cmd.name, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600)),
-                subtitle: Text(cmd.description, style: const TextStyle(fontSize: 12)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _sendCommand(cmd.name);
-                },
-              )),
-              const SizedBox(height: 8),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    ...commands.map((cmd) => ListTile(
+                      leading: Icon(_iconForCommand(cmd.icon)),
+                      title: Text(cmd.name, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600)),
+                      subtitle: Text(cmd.description, style: const TextStyle(fontSize: 12)),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _sendCommand(cmd.name);
+                      },
+                    )),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
             ],
           ),
         );
