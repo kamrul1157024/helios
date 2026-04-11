@@ -27,22 +27,14 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   List<Session> _filterSessions(List<Session> sessions) {
-    List<Session> filtered;
     switch (_filter) {
       case SessionFilter.all:
-        filtered = sessions.where((s) => !s.archived).toList();
+        return sessions.where((s) => !s.archived).toList();
       case SessionFilter.pinned:
-        filtered = sessions.where((s) => s.pinned && !s.archived).toList();
+        return sessions.where((s) => s.pinned && !s.archived).toList();
       case SessionFilter.archived:
-        filtered = sessions.where((s) => s.archived).toList();
+        return sessions.where((s) => s.archived).toList();
     }
-    // Active sessions always float to the top.
-    filtered.sort((a, b) {
-      if (a.isActive && !b.isActive) return -1;
-      if (!a.isActive && b.isActive) return 1;
-      return 0; // preserve server order otherwise
-    });
-    return filtered;
   }
 
   void _exitMultiSelect() {
