@@ -68,6 +68,30 @@ class Session {
   bool get canSuspend => isActive || isIdle;
   bool get canResume => isEnded || isSuspended || isStale;
 
+  Session copyWith({
+    bool? pinned,
+    bool? archived,
+  }) {
+    return Session(
+      sessionId: sessionId,
+      source: source,
+      cwd: cwd,
+      project: project,
+      transcriptPath: transcriptPath,
+      model: model,
+      status: status,
+      lastEvent: lastEvent,
+      lastEventAt: lastEventAt,
+      lastUserMessage: lastUserMessage,
+      pinned: pinned ?? this.pinned,
+      archived: archived ?? this.archived,
+      tmuxPane: tmuxPane,
+      tmuxPid: tmuxPid,
+      createdAt: createdAt,
+      endedAt: endedAt,
+    );
+  }
+
   String get shortId {
     if (sessionId.length > 8) return sessionId.substring(0, 8);
     return sessionId;

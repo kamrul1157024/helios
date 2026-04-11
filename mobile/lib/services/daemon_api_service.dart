@@ -375,6 +375,19 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived}) async {
     if (_auth == null) return false;
+
+    // Optimistically update the local session list for instant UI feedback.
+    final idx = _sessions.indexWhere((s) => s.sessionId == sessionId);
+    Session? original;
+    if (idx != -1) {
+      original = _sessions[idx];
+      _sessions[idx] = original.copyWith(
+        pinned: pinned ?? original.pinned,
+        archived: archived ?? original.archived,
+      );
+      notifyListeners();
+    }
+
     try {
       final body = <String, dynamic>{};
       if (pinned != null) body['pinned'] = pinned;
@@ -387,11 +400,23 @@ class DaemonAPIService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to patch session: $e');
     }
+
+    // Revert on failure.
+    if (original != null && idx != -1 && idx < _sessions.length) {
+      _sessions[idx] = original;
+      notifyListeners();
+    }
     return false;
   }
 
   Future<bool> deleteSession(String sessionId) async {
     if (_auth == null) return false;
+
+    // Optimistically remove from local list for instant UI feedback.
+    final original = List<Session>.from(_sessions);
+    _sessions.removeWhere((s) => s.sessionId == sessionId);
+    notifyListeners();
+
     try {
       final resp = await _auth!.authDelete('/api/sessions/$sessionId');
       if (resp.statusCode == 200) {
@@ -401,6 +426,10 @@ class DaemonAPIService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to delete session: $e');
     }
+
+    // Revert on failure.
+    _sessions = original;
+    notifyListeners();
     return false;
   }
 
