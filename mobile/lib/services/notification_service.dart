@@ -1,4 +1,7 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Callback for when a notification action (approve/deny) is tapped.
 typedef NotificationActionCallback = void Function(String notificationId, String action);
@@ -10,7 +13,40 @@ class NotificationService {
   final _plugin = FlutterLocalNotificationsPlugin();
   NotificationActionCallback? onAction;
 
+  static const _permChannel = 'helios_perm_v7';
+  static const _generalChannel = 'helios_general_v7';
+
+  static const _platform = MethodChannel('com.helios.helios/notifications');
+
+  static const _keySoundEnabled = 'notif_sound_enabled';
+  static const _keyVibrationEnabled = 'notif_vibration_enabled';
+
+  bool _soundEnabled = true;
+  bool _vibrationEnabled = true;
+
+  bool get soundEnabled => _soundEnabled;
+  bool get vibrationEnabled => _vibrationEnabled;
+
+  Future<void> setSoundEnabled(bool value) async {
+    _soundEnabled = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keySoundEnabled, value);
+  }
+
+  Future<void> setVibrationEnabled(bool value) async {
+    _vibrationEnabled = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyVibrationEnabled, value);
+  }
+
+  /// Convert a string ID to a positive notification ID.
+  static int _notifId(String id) => id.hashCode & 0x7FFFFFFF;
+
   Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    _soundEnabled = prefs.getBool(_keySoundEnabled) ?? true;
+    _vibrationEnabled = prefs.getBool(_keyVibrationEnabled) ?? true;
+
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -23,32 +59,66 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onResponse,
     );
 
-    // Explicitly create Android notification channels with sound enabled.
-    // This ensures correct settings even if old channels were cached.
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     if (android != null) {
-      await android.createNotificationChannel(const AndroidNotificationChannel(
-        'helios_permissions_v3',
-        'Permission Requests',
-        description: 'Claude tool permission requests',
-        importance: Importance.max,
-        playSound: true,
-        enableVibration: true,
-      ));
-      await android.createNotificationChannel(const AndroidNotificationChannel(
-        'helios_general_v3',
-        'General',
-        description: 'General helios notifications',
-        importance: Importance.high,
-        playSound: true,
-        enableVibration: true,
-      ));
-      // Clean up old channels
-      await android.deleteNotificationChannel('helios_permissions');
-      await android.deleteNotificationChannel('helios_permissions_v2');
-      await android.deleteNotificationChannel('helios_general');
-      await android.deleteNotificationChannel('helios_general_v2');
+      // Clean up all old channel IDs.
+      for (final old in [
+        'helios_permissions', 'helios_general',
+        'helios_perm_v2', 'helios_general_v2',
+        'helios_perm_v3', 'helios_general_v3',
+        'helios_perm_v4', 'helios_general_v4',
+        'helios_perm_v5', 'helios_general_v5',
+        'helios_perm_v6', 'helios_general_v6',
+      ]) {
+        await android.deleteNotificationChannel(old);
+      }
+    }
+
+    // Create channels via native platform channel to bypass
+    // flutter_local_notifications plugin issues with sound on ColorOS/RealmeUI.
+    try {
+      await _platform.invokeMethod('createChannels', {
+        'channels': [
+          {
+            'id': _permChannel,
+            'name': 'Permission Requests',
+            'description': 'Claude tool permission requests',
+            'importance': 5, // IMPORTANCE_HIGH (max)
+          },
+          {
+            'id': _generalChannel,
+            'name': 'General',
+            'description': 'General helios notifications',
+            'importance': 5,
+          },
+        ],
+      });
+      debugPrint('[NotificationService] Native channels created');
+    } on MissingPluginException {
+      debugPrint('[NotificationService] Native channel creation not available, using plugin');
+      // Fallback to plugin-based channel creation.
+      if (android != null) {
+        await android.deleteNotificationChannel(_permChannel);
+        await android.deleteNotificationChannel(_generalChannel);
+
+        await android.createNotificationChannel(AndroidNotificationChannel(
+          _permChannel,
+          'Permission Requests',
+          description: 'Claude tool permission requests',
+          importance: Importance.max,
+          playSound: false,
+          enableVibration: false,
+        ));
+        await android.createNotificationChannel(AndroidNotificationChannel(
+          _generalChannel,
+          'General',
+          description: 'General helios notifications',
+          importance: Importance.max,
+          playSound: false,
+          enableVibration: false,
+        ));
+      }
     }
   }
 
@@ -76,14 +146,19 @@ class NotificationService {
     required String toolName,
     required String detail,
   }) async {
+    final nid = _notifId(id);
+    debugPrint('[NotificationService] showPermission id=$id nid=$nid tool=$toolName');
+
     final androidDetails = AndroidNotificationDetails(
-      'helios_permissions_v3',
+      _permChannel,
       'Permission Requests',
       channelDescription: 'Claude tool permission requests',
       importance: Importance.max,
-      priority: Priority.high,
-      playSound: true,
-      enableVibration: true,
+      priority: Priority.max,
+      playSound: false,
+      enableVibration: false,
+      fullScreenIntent: true,
+      category: AndroidNotificationCategory.alarm,
       actions: [
         const AndroidNotificationAction('approve', 'Approve', showsUserInterface: true),
         const AndroidNotificationAction('deny', 'Deny', showsUserInterface: true),
@@ -94,15 +169,22 @@ class NotificationService {
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
     );
 
-    await _plugin.show(
-      id.hashCode,
-      'helios — Permission Request',
-      '$toolName: $detail',
-      NotificationDetails(android: androidDetails, iOS: iosDetails),
-      payload: id,
-    );
+    try {
+      await _plugin.show(
+        nid,
+        'helios — Permission Request',
+        '$toolName: $detail',
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+        payload: id,
+      );
+      await _playSound();
+      debugPrint('[NotificationService] showPermission SUCCESS');
+    } catch (e) {
+      debugPrint('[NotificationService] showPermission ERROR: $e');
+    }
   }
 
   /// Show a generic notification.
@@ -111,29 +193,55 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
-    const androidDetails = AndroidNotificationDetails(
-      'helios_general_v3',
+    final nid = _notifId(id);
+    debugPrint('[NotificationService] showNotification id=$id nid=$nid title=$title');
+
+    final androidDetails = AndroidNotificationDetails(
+      _generalChannel,
       'General',
       channelDescription: 'General helios notifications',
-      importance: Importance.high,
-      priority: Priority.high,
-      playSound: true,
-      enableVibration: true,
+      importance: Importance.max,
+      priority: Priority.max,
+      playSound: false,
+      enableVibration: false,
+      fullScreenIntent: true,
+      category: AndroidNotificationCategory.alarm,
     );
 
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
     );
 
-    await _plugin.show(
-      id.hashCode,
-      title,
-      body,
-      const NotificationDetails(android: androidDetails, iOS: iosDetails),
-      payload: id,
-    );
+    try {
+      await _plugin.show(
+        nid,
+        title,
+        body,
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+        payload: id,
+      );
+      await _playSound();
+      debugPrint('[NotificationService] showNotification SUCCESS');
+    } catch (e) {
+      debugPrint('[NotificationService] showNotification ERROR: $e');
+    }
+  }
+
+  /// Play notification sound and vibrate directly via native Android APIs.
+  /// Workaround for OEMs (Realme/ColorOS) that strip sound from notification channels.
+  Future<void> _playSound() async {
+    if (!_soundEnabled && !_vibrationEnabled) return;
+    try {
+      await _platform.invokeMethod('playNotificationSound', {
+        'sound': _soundEnabled,
+        'vibration': _vibrationEnabled,
+      });
+    } catch (e) {
+      debugPrint('[NotificationService] playSound failed: $e');
+    }
   }
 
   void _onResponse(NotificationResponse response) {

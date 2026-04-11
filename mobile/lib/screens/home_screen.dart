@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/daemon_api_service.dart';
@@ -9,6 +10,7 @@ import 'setup_screen.dart';
 import 'sessions_screen.dart';
 import 'new_session_sheet.dart';
 import 'dashboard_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late DaemonAPIService _sse;
   StreamSubscription<SSEEvent>? _eventSub;
   int _currentIndex = 0;
+  bool _notifPermissionDenied = false;
 
   @override
   void initState() {
@@ -37,9 +40,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _sse.fetchProviders();
     _sse.start();
 
-    NotificationService.instance.requestPermission();
+    _checkNotificationPermission();
     NotificationService.instance.onAction = _handleNotificationAction;
     _eventSub = _sse.events.listen(_handleSSEEvent);
+  }
+
+  Future<void> _checkNotificationPermission() async {
+    final granted = await NotificationService.instance.requestPermission();
+    if (mounted) setState(() => _notifPermissionDenied = !granted);
   }
 
   @override
@@ -47,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _sse.fetchNotifications();
       _sse.fetchSessions();
+      _checkNotificationPermission();
     }
   }
 
@@ -98,6 +107,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildNotifPermissionBanner() {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: theme.colorScheme.errorContainer,
+      child: Row(
+        children: [
+          Icon(Icons.notifications_off, size: 18, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Notifications are disabled — you won\'t hear permission requests.',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
+            ),
+          ),
+          TextButton(
+            onPressed: () => openAppSettings(),
+            child: const Text('Enable', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -124,7 +158,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           PopupMenuButton<String>(
             onSelected: (value) async {
-              if (value == 'logout') {
+              if (value == 'settings') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              } else if (value == 'logout') {
                 _sse.stop();
                 final auth = context.read<AuthService>();
                 final nav = Navigator.of(context);
@@ -137,16 +175,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               }
             },
             itemBuilder: (_) => [
+              const PopupMenuItem(value: 'settings', child: Text('Settings')),
               const PopupMenuItem(value: 'logout', child: Text('Disconnect')),
             ],
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: const [
-          SessionsScreen(),
-          DashboardScreen(),
+      body: Column(
+        children: [
+          if (_notifPermissionDenied)
+            _buildNotifPermissionBanner(),
+          Expanded(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: const [
+                SessionsScreen(),
+                DashboardScreen(),
+              ],
+            ),
+          ),
         ],
       ),
       floatingActionButton: _currentIndex == 0
