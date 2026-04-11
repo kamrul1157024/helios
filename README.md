@@ -8,6 +8,341 @@ Helios fixes this. It's a daemon that sits between you and your AI coding tools.
 
 **The killer feature:** Claude needs permission → your phone buzzes → you tap approve → Claude continues. From one browser tab, you can see all your sessions, approve permissions in batch, send follow-up messages, and create new tasks — without touching the terminal.
 
+```
+      Phone                    Internet                   Your Machine
+  ┌───────────┐          ┌──────────────┐          ┌──────────────────────┐
+  │ Helios App│◀── HTTPS ──▶│   Tunnel   │◀─────────│   helios daemon      │
+  │           │          │ (cloudflare)  │          │   ├── sessions       │
+  │ sessions  │          └──────────────┘          │   ├── hooks          │
+  │ approve   │                                    │   ├── notifications  │
+  │ deny      │                                    │   └── tmux           │
+  │ send msgs │                                    │       ├── claude #1  │
+  └───────────┘                                    │       └── claude #2  │
+                                                   └──────────────────────┘
+```
+
+## Setup Guide
+
+### Prerequisites
+
+```bash
+brew install go tmux cloudflared    # Go, tmux, Cloudflare tunnel
+```
+
+### Step 1 — Install the binary
+
+```bash
+$ make install
+```
+
+```
+┌──────────────────────────────────────────────┐
+│  $ make install                              │
+│  go build -o helios ./cmd/helios/            │
+│  helios installed to /usr/local/bin/helios   │
+└──────────────────────────────────────────────┘
+```
+
+### Step 2 — Start helios
+
+```bash
+$ helios start
+```
+
+The TUI checks your environment and walks you through setup:
+
+```
+┌──────────────────────────────────────────────┐
+│                                              │
+│  helios                                      │
+│                                              │
+│    ✓ Daemon running                          │
+│    ✓ Claude hooks installed                  │
+│    ✓ tmux installed (3.5a)                   │
+│    ✗ No tunnel configured                    │
+│    · No devices registered                   │
+│                                              │
+│    enter continue  q quit                    │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+### Step 3 — Pick a tunnel
+
+Your phone needs a way to reach your machine. Pick a tunnel provider:
+
+```
+┌──────────────────────────────────────────────┐
+│                                              │
+│  helios — Tunnel Setup                       │
+│                                              │
+│    How will your phone connect?              │
+│                                              │
+│    > Cloudflare Tunnel (recommended)         │
+│      ngrok                                   │
+│      Tailscale                               │
+│      Local Network (no HTTPS)                │
+│      Custom URL                              │
+│                                              │
+│    ↑/↓ navigate  enter select  q quit        │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+### Step 4 — Main dashboard with QR codes
+
+Once the tunnel connects, the dashboard shows two QR codes:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│  helios                                                  │
+│                                                          │
+│    ✓ Daemon running                                      │
+│    ✓ Claude hooks installed                              │
+│    ✓ tmux (3.5a)                                         │
+│    ✓ Tunnel: https://abc-xyz.trycloudflare.com           │
+│                                                          │
+│    · No devices connected yet.                           │
+│                                                          │
+│    Download app:                                         │
+│    ┌─────────────────────────────────┐                   │
+│    │  ▄▄▄▄▄▄▄ ▄▄ ▄ ▄▄▄▄ ▄▄▄▄▄▄▄    │                   │
+│    │  █ ▄▄▄ █ ▄▀██▀▄▀▄  █ ▄▄▄ █    │  ← scan with      │
+│    │  █ ███ █ ▀█▄▀ ▀█ ▄ █ ███ █    │    phone camera    │
+│    │  █▄▄▄▄▄█ ▄ █▄▀ █ ▄ █▄▄▄▄▄█    │    to download     │
+│    │  ▄▄▄▄▄ ▄▄▄▀▄ ▄▀  ▄ ▄ ▄ ▄ ▄    │    the app         │
+│    │  █▄▄▄▄▄█ ▀▄▀▄ ▀▄  █▄▄▄▄▄▄█    │                   │
+│    │  ▀▀▀▀▀▀▀ ▀ ▀▀ ▀ ▀▀ ▀▀▀▀▀▀▀    │                   │
+│    └─────────────────────────────────┘                   │
+│    https://abc-xyz.trycloudflare.com                     │
+│                                                          │
+│    Pair a new device:                                    │
+│    ┌─────────────────────────────────┐                   │
+│    │  ▄▄▄▄▄▄▄ ▄ ▄▄ ▄▄▄  ▄▄▄▄▄▄▄    │                   │
+│    │  █ ▄▄▄ █ █▀▀▄█ █▀▄ █ ▄▄▄ █    │  ← scan from      │
+│    │  █ ███ █ ██▀▄ ▀ ▀▄ █ ███ █    │    inside the      │
+│    │  █▄▄▄▄▄█ █ ▀▄█▄█ ▄ █▄▄▄▄▄█    │    helios app      │
+│    │  ▄▄  ▄ ▄▄▄▀ ▀▄▄ ▄▄ ▄ ▄ ▄ ▄    │                   │
+│    │  █▄▄▄▄▄█ ▄▀▀█▄ ▀█  █▄▄▄▄▄▄█    │                   │
+│    │  ▀▀▀▀▀▀▀ ▀▀ ▀ ▀▀▀  ▀▀▀▀▀▀▀    │                   │
+│    └─────────────────────────────────┘                   │
+│    Expires in 1:42  (auto-refreshes)                     │
+│                                                          │
+│    q quit                                                │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Step 5 — Download the app (QR 1)
+
+Scan the **Download QR** with your phone camera. It opens a landing page:
+
+```
+┌─────────────────────────┐
+│ ┌─────────────────────┐ │
+│ │ ◀  abc.trycloudfl.. │ │
+│ └─────────────────────┘ │
+│                         │
+│                         │
+│         Helios          │
+│  Orchestrate AI coding  │
+│  agents from your phone │
+│                         │
+│  ┌───────────────────┐  │
+│  │                   │  │
+│  │  Download for     │  │
+│  │  Android          │  │
+│  │  APK              │  │
+│  │                   │  │
+│  └───────────────────┘  │
+│                         │
+│  ┌───────────────────┐  │
+│  │                   │  │
+│  │  Download for     │  │
+│  │  macOS            │  │
+│  │  DMG              │  │
+│  │                   │  │
+│  └───────────────────┘  │
+│                         │
+│  ┌───────────────────┐  │
+│  │ How to connect    │  │
+│  │ 1. Download app   │  │
+│  │ 2. Run helios     │  │
+│  │    start          │  │
+│  │ 3. Scan pairing   │  │
+│  │    QR code        │  │
+│  └───────────────────┘  │
+│                         │
+└─────────────────────────┘
+```
+
+### Step 6 — Pair your device (QR 2)
+
+Open the Helios app and scan the **Pairing QR**:
+
+```
+┌─────────────────────────┐
+│          helios          │
+│                         │
+│  ┌───────────────────┐  │
+│  │                   │  │
+│  │                   │  │
+│  │   ┌───────────┐   │  │
+│  │   │           │   │  │
+│  │   │  CAMERA   │   │  │
+│  │   │ VIEWFINDER│   │  │
+│  │   │           │   │  │
+│  │   │   [ ]     │   │  │
+│  │   │           │   │  │
+│  │   └───────────┘   │  │
+│  │                   │  │
+│  │                   │  │
+│  └───────────────────┘  │
+│                         │
+│  Scan the QR code from  │
+│  your terminal          │
+│                         │
+│  Run helios start in    │
+│  your terminal to       │
+│  generate a QR code     │
+│                         │
+│  Paste URL manually     │
+│                         │
+└─────────────────────────┘
+```
+
+### Step 7 — Approve the device
+
+The app registers and waits. The terminal asks you to confirm:
+
+```
+┌─────────────────────────┐          ┌──────────────────────────────────────────────┐
+│                         │          │                                              │
+│  ┌───────────────────┐  │          │  helios — New Device                         │
+│  │                   │  │          │                                              │
+│  │  helios           │  │          │    A device wants to pair:                   │
+│  │  Setting up...    │  │          │                                              │
+│  │                   │  │          │      Name:     Android — Helios App          │
+│  │  + Generating     │  │          │      Platform: Android                       │
+│  │    keys...        │  │          │      KID:      a1b2c3d4-e5f6                 │
+│  │  + Registering    │  │          │                                              │
+│  │    device...      │  │          │    Allow this device?                        │
+│  │  + Authenticating │  │          │                                              │
+│  │  + Waiting for    │  │          │    y approve  n reject                       │
+│  │    approval...    │  │          │                                              │
+│  │                   │  │          └──────────────────────────────────────────────┘
+│  │  ┌─────────────┐  │  │
+│  │  │  Press "y"  │  │  │                       press y
+│  │  │ in terminal │  │  │                          │
+│  │  │ to approve  │  │  │                          ▼
+│  │  └─────────────┘  │  │
+│  │                   │  │          ┌──────────────────────────────────────────────┐
+│  │       ⟳           │  │          │  helios                                      │
+│  │                   │  │          │                                              │
+│  └───────────────────┘  │          │    ✓ Daemon running                          │
+│                         │          │    ✓ Claude hooks installed                  │
+└─────────────────────────┘          │    ✓ tmux (3.5a)                             │
+                                     │    ✓ Tunnel: https://abc-xyz.trycloud...     │
+        Phone                        │                                              │
+                                     │    * Android — Helios App  push:on  just now │
+                                     │                                              │
+                                     └──────────────────────────────────────────────┘
+
+                                                    Terminal
+```
+
+### Step 8 — You're in
+
+The app navigates to the dashboard. Start a session and control Claude from your phone:
+
+```bash
+$ helios new "fix the auth bug in login.go"
+```
+
+```
+┌──────────────────────────────────────────────┐
+│  Session started in tmux pane %1             │
+│    cwd: /Users/you/workspace/myapp           │
+│    Attach with: tmux attach -t helios        │
+└──────────────────────────────────────────────┘
+```
+
+Claude asks for permission → your phone buzzes:
+
+```
+  PHONE                                         PHONE
+  Sessions Tab                                   Notifications Tab
+
+┌─────────────────────────┐                    ┌─────────────────────────┐
+│  helios            ● ⋮  │                    │  helios            ● ⋮  │
+│                         │                    │                         │
+│  ┌───────────────────┐  │                    │  Pending (2)            │
+│  │                   │  │                    │  [Approve All (2)]      │
+│  │  fix the auth bug │  │                    │                         │
+│  │  in login.go      │  │                    │  ┌───────────────────┐  │
+│  │                   │  │                    │  │ claude.permission │  │
+│  │  ● active   %1    │  │                    │  │                   │  │
+│  │  ~/workspace/myapp│  │                    │  │ Bash              │  │
+│  │                   │  │                    │  │ npm test          │  │
+│  │  Clauding...      │  │                    │  │                   │  │
+│  │  ▁▁▁▂▂▃▃▅▅▆▆▇    │  │                    │  │ ~/workspace/myapp │  │
+│  │                   │  │                    │  │ 2s ago            │  │
+│  └───────────────────┘  │                    │  │                   │  │
+│                         │                    │  │ [Approve] [Deny]  │  │
+│  ┌───────────────────┐  │                    │  └───────────────────┘  │
+│  │                   │  │                    │                         │
+│  │  refactor DB      │  │                    │  ┌───────────────────┐  │
+│  │  queries          │  │                    │  │ claude.permission │  │
+│  │                   │  │                    │  │                   │  │
+│  │  ○ done     %2    │  │                    │  │ Edit              │  │
+│  │  ~/workspace/api  │  │                    │  │ src/auth/login.go │  │
+│  │                   │  │                    │  │                   │  │
+│  └───────────────────┘  │                    │  │ [Approve] [Deny]  │  │
+│                         │                    │  └───────────────────┘  │
+│  ┌───────────────────┐  │                    │                         │
+│  │  + New Session    │  │                    │  History                │
+│  │  ┌─────────────┐  │  │                    │  ✓ approved Read pac..  │
+│  │  │ prompt...   │  │  │                    │  ✗ denied  Bash: rm..   │
+│  │  └─────────────┘  │  │                    │                         │
+│  └───────────────────┘  │                    │                         │
+│                         │                    │                         │
+├─────────────────────────┤                    ├─────────────────────────┤
+│ *Sessions  Notifications│                    │  Sessions *Notifications│
+└─────────────────────────┘                    └─────────────────────────┘
+```
+
+macOS desktop app (same UI, desktop window):
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  helios                                           ● ⋮       │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Pending (1)                                                 │
+│  [Approve All (1)]                                           │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐   │
+│  │ claude.permission                                 ✕    │   │
+│  │                                                        │   │
+│  │ Bash                                                   │   │
+│  │ docker compose up -d                                   │   │
+│  │                                                        │   │
+│  │ ~/workspace/myapp  3s ago                              │   │
+│  │                                                        │   │
+│  │ [Approve]  [Deny]                                      │   │
+│  └────────────────────────────────────────────────────────┘   │
+│                                                              │
+│  History                                                     │
+│  ✓ approved  Read package.json               12s ago         │
+│  ✓ approved  Bash: ls src/                   18s ago         │
+│  ✗ denied    Bash: rm -rf node_modules/      1m ago          │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│  Sessions                                    Notifications   │
+└──────────────────────────────────────────────────────────────┘
+```
+
 ## What is this?
 
 Helios is a **platform**, not a tool. It orchestrates AI coding agents on your local machine without requiring a remote environment. Everything runs on your hardware. Everything except the AI itself is free.
@@ -32,27 +367,76 @@ Helios treats AI sessions like infrastructure — something to be managed, monit
 ## Architecture
 
 ```
-    Browser        Telegram       CLI        TUI
-       |              |            |          |
-       +--------------+------------+----------+
-                       |
-                   HTTP API + SSE
-                       |
-              +--------+--------+
-              |  helios daemon  |
-              |                 |
-              |  sessions       |
-              |  notifications  |
-              |  channels       |
-              |  providers      |
-              +---------+-------+
-                        |
-                   tmux server
-                        |
-          +-------------+-------------+
-          |             |             |
-     claude #1     claude #2     aider #3
-     (session)     (session)     (session)
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              helios daemon                                   │
+│                                                                              │
+│  ┌─────────────────────────────────────┐  ┌────────────────────────────────┐ │
+│  │  Internal Server (127.0.0.1:7654)   │  │  Public Server (0.0.0.0:7655)  │ │
+│  │                                     │  │                                │ │
+│  │  /internal/health                   │  │  GET  /          landing page  │ │
+│  │  /internal/sessions                 │  │  GET  /download  APK file      │ │
+│  │  /internal/device/create            │  │  POST /api/auth/pair           │ │
+│  │  /internal/device/list              │  │  POST /api/auth/login          │ │
+│  │  /internal/device/activate          │  │  GET  /api/auth/device/me      │ │
+│  │  /internal/device/revoke            │  │  GET  /api/notifications       │ │
+│  │  /internal/tunnel/start             │  │  POST /api/notifications/:id   │ │
+│  │  /internal/tunnel/stop              │  │  GET  /api/sessions            │ │
+│  │  /internal/logs                     │  │  GET  /api/sse  (realtime)     │ │
+│  │  /hooks/permission (Claude hooks)   │  │                                │ │
+│  └─────────────────────────────────────┘  └────────────────────────────────┘ │
+│                                                                              │
+│  ┌──────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
+│  │  SQLite  │  │ VAPID Keys │  │ Session      │  │  Tunnel Manager        │ │
+│  │ helios.db│  │ (Web Push) │  │ Reaper       │  │  (cloudflare/ngrok/..) │ │
+│  └──────────┘  └────────────┘  └──────────────┘  └────────────────────────┘ │
+│                                                                              │
+│                              tmux server                                     │
+│                    ┌─────────────┬─────────────┐                             │
+│                    │             │             │                              │
+│               claude #1    claude #2    aider #3                             │
+│               (session)    (session)    (session)                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │ tunnel (cloudflare/ngrok/tailscale)
+                         │
+                         ▼
+                ┌──────────────────┐
+                │  Public Internet │
+                │  https://abc.cf  │
+                └────────┬─────────┘
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+     ┌────────┴───────┐   ┌────────┴───────┐
+     │  Mobile App    │   │  Desktop App   │
+     │  (Android)     │   │  (macOS)       │
+     │                │   │                │
+     │  Sessions      │   │  Sessions      │
+     │  Notifications │   │  Notifications │
+     │  Approve/Deny  │   │  Approve/Deny  │
+     │  SSE realtime  │   │  SSE realtime  │
+     └────────────────┘   └────────────────┘
+```
+
+```
+┌─────────────────────────────────────────┐
+│           File Layout (~/.helios/)       │
+│                                         │
+│  ~/.helios/                             │
+│  ├── config.yaml      ← server config  │
+│  ├── helios.db        ← SQLite (devices,│
+│  │                      sessions, etc.) │
+│  ├── daemon.pid       ← running PID    │
+│  ├── helios.apk       ← built APK copy │
+│  ├── vapid_private.pem← push keys      │
+│  ├── vapid_public.pem │                 │
+│  └── logs/                              │
+│      └── daemon.log   ← daemon logs    │
+│                                         │
+│  ~/.claude/settings.json                │
+│      └── hooks: [...helios hooks...]    │
+│                                         │
+└─────────────────────────────────────────┘
 ```
 
 ## Status
@@ -112,10 +496,10 @@ helios resume 1
 ## Tech Stack
 
 - **Daemon**: Go
+- **Mobile/Desktop**: Flutter
 - **Session backend**: tmux
-- **Frontend**: React (embedded in binary via go:embed)
 - **Real-time**: SSE
-- **Auth**: Asymmetric JWT (Ed25519), QR code device setup
+- **Auth**: Asymmetric JWT (Ed25519), QR code device pairing
 - **AI integration**: Claude Code hooks (native), pane scraping (others)
 - **Everything runs locally. No cloud. No subscriptions. No accounts.**
 
@@ -124,6 +508,7 @@ helios resume 1
 - Go 1.22+
 - tmux 3.0+
 - At least one AI CLI tool (claude, aider, codex, etc.)
+- Flutter 3.32+ (only if building the mobile/desktop app from source)
 
 ## License
 
