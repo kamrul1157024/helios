@@ -1,5 +1,7 @@
 # Binary
 /helios
+*.apk
+*.dmg
 
 # Frontend
 frontend/node_modules/
