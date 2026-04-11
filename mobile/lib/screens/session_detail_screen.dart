@@ -21,7 +21,8 @@ class SessionDetailScreen extends StatefulWidget {
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionDetailScreenState extends State<SessionDetailScreen> {
+class _SessionDetailScreenState extends State<SessionDetailScreen>
+    with SingleTickerProviderStateMixin {
   final _promptController = TextEditingController();
   final _scrollController = ScrollController();
   List<Message> _messages = [];
@@ -32,10 +33,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   StreamSubscription<SSEEvent>? _eventSub;
   String _currentVerb = randomClaudeVerb();
   Timer? _verbTimer;
+  late final AnimationController _breathController;
 
   @override
   void initState() {
     super.initState();
+    _breathController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2500),
+    )..repeat(reverse: true);
     _loadTranscript();
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomClaudeVerb());
@@ -59,6 +65,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
+    _breathController.dispose();
     _promptController.dispose();
     _scrollController.dispose();
     _eventSub?.cancel();
@@ -511,61 +518,92 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               tooltip: 'Commands',
             ),
           Expanded(
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                TextField(
-                  controller: _promptController,
-                  enabled: canSend && !_sending,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => canSend ? _sendPrompt() : null,
-                  maxLines: 3,
-                  minLines: 1,
-                  decoration: InputDecoration(
-                    hintText: canSend
-                        ? 'Send a prompt...'
-                        : session.isActive
-                            ? '' // handled by animated overlay
-                            : 'Session ${session.status}',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24),
-                      borderSide: BorderSide.none,
+            child: AnimatedBuilder(
+              animation: _breathController,
+              builder: (context, _) {
+                final isBreathing = session.isActive && !canSend;
+                final t = _breathController.value; // 0..1..0 (reverse: true)
+
+                // Morph border radius: pill (24) -> squircle (16) -> pill
+                final radius = isBreathing ? 24.0 - 8.0 * t : 24.0;
+
+                final accentColor = theme.colorScheme.primary;
+
+                // Verb text: fade between muted and slightly tinted
+                final verbColor = isBreathing
+                    ? Color.lerp(
+                        theme.colorScheme.onSurfaceVariant,
+                        accentColor,
+                        0.3 + 0.3 * t,
+                      )!
+                    : theme.colorScheme.onSurfaceVariant;
+
+                return Stack(
+                  alignment: Alignment.centerLeft,
+                  children: [
+                    TextField(
+                      controller: _promptController,
+                      enabled: canSend && !_sending,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => canSend ? _sendPrompt() : null,
+                      maxLines: 3,
+                      minLines: 1,
+                      decoration: InputDecoration(
+                        hintText: canSend
+                            ? 'Send a prompt...'
+                            : session.isActive
+                                ? ''
+                                : 'Session ${session.status}',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: BorderSide.none,
+                        ),
+                        disabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        isDense: true,
+                      ),
+                      style: const TextStyle(fontSize: 14),
                     ),
-                    filled: true,
-                    fillColor: theme.colorScheme.surfaceContainerHighest,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    isDense: true,
-                  ),
-                  style: const TextStyle(fontSize: 14),
-                ),
-                if (session.isActive && !canSend)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: IgnorePointer(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 400),
-                        transitionBuilder: (child, animation) {
-                          final slideIn = Tween<Offset>(
-                            begin: const Offset(0, 0.5),
-                            end: Offset.zero,
-                          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
-                          return SlideTransition(
-                            position: slideIn,
-                            child: FadeTransition(opacity: animation, child: child),
-                          );
-                        },
-                        child: Text(
-                          '$_currentVerb...',
-                          key: ValueKey(_currentVerb),
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: theme.colorScheme.onSurfaceVariant,
+                    if (isBreathing)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 16),
+                        child: IgnorePointer(
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 400),
+                            transitionBuilder: (child, animation) {
+                              final slideIn = Tween<Offset>(
+                                begin: const Offset(0, 0.5),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                              return SlideTransition(
+                                position: slideIn,
+                                child: FadeTransition(opacity: animation, child: child),
+                              );
+                            },
+                            child: Text(
+                              '$_currentVerb...',
+                              key: ValueKey(_currentVerb),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: verbColor,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
           const SizedBox(width: 8),

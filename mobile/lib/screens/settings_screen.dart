@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/host_connection.dart';
+import '../providers/theme_provider.dart';
 import '../services/host_manager.dart';
 import '../services/notification_service.dart';
 import 'host_detail_screen.dart';
@@ -43,6 +44,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
               ),
+              const _SectionHeader('Appearance'),
+              _buildThemeTile(context),
               const _SectionHeader('Notifications'),
               SwitchListTile(
                 title: const Text('Sound'),
@@ -66,6 +69,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildThemeTile(BuildContext context) {
+    final tp = context.watch<ThemeProvider>();
+    return ListTile(
+      leading: Icon(
+        tp.mode == ThemeMode.dark
+            ? Icons.dark_mode
+            : tp.mode == ThemeMode.light
+                ? Icons.light_mode
+                : Icons.brightness_auto,
+      ),
+      title: const Text('Theme'),
+      trailing: SegmentedButton<ThemeMode>(
+        segments: const [
+          ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto, size: 18)),
+          ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode, size: 18)),
+          ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode, size: 18)),
+        ],
+        selected: {tp.mode},
+        onSelectionChanged: (modes) => tp.setMode(modes.first),
+        showSelectedIcon: false,
+        style: ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
     );
   }
 

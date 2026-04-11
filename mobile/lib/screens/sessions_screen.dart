@@ -598,7 +598,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
                             // Row 1: Status + pin + time
                             Row(
                               children: [
-                                Icon(statusIcon, size: 14, color: statusColor),
+                                if (session.isActive)
+                                  _PulsingIcon(icon: statusIcon, color: statusColor, size: 14)
+                                else
+                                  Icon(statusIcon, size: 14, color: statusColor),
                                 const SizedBox(width: 6),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -1123,5 +1126,50 @@ class _SessionsScreenState extends State<SessionsScreen> {
       default:
         return status;
     }
+  }
+}
+
+class _PulsingIcon extends StatefulWidget {
+  final IconData icon;
+  final Color color;
+  final double size;
+
+  const _PulsingIcon({required this.icon, required this.color, required this.size});
+
+  @override
+  State<_PulsingIcon> createState() => _PulsingIconState();
+}
+
+class _PulsingIconState extends State<_PulsingIcon> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final opacity = 0.4 + 0.6 * _controller.value;
+        final scale = 1.0 + 0.15 * _controller.value;
+        return Transform.scale(
+          scale: scale,
+          child: Icon(widget.icon, size: widget.size, color: widget.color.withValues(alpha: opacity)),
+        );
+      },
+    );
   }
 }

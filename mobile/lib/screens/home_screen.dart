@@ -26,7 +26,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
-  final Set<String> _offlineDialogShown = {};
 
   @override
   void initState() {
@@ -136,89 +135,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _checkOfflineHosts(HostManager hm) {
-    // Reset dialog tracking for hosts that have come back online
-    for (final host in hm.hosts) {
-      final service = hm.serviceFor(host.id);
-      if (service != null && service.connected) {
-        _offlineDialogShown.remove(host.id);
-      }
-    }
-
-    final offlineHosts = hm.offlineHosts;
-    for (final host in offlineHosts) {
-      if (_offlineDialogShown.contains(host.id)) continue;
-      _offlineDialogShown.add(host.id);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _showOfflineHostDialog(host);
-      });
-    }
-  }
-
-  Future<void> _showOfflineHostDialog(HostConnection host) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        final shortId = host.deviceId.length > 8
-            ? host.deviceId.substring(0, 8)
-            : host.deviceId;
-        return AlertDialog(
-        icon: const Icon(Icons.cloud_off, size: 40),
-        title: const Text('Host Offline'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '"${host.label}" (${host.serverUrl}) is unreachable.\n',
+  Widget _buildOfflineHostBanner(HostConnection host) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      color: theme.colorScheme.errorContainer,
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off, size: 16, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '"${host.label}" is offline',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
+              overflow: TextOverflow.ellipsis,
             ),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.key, size: 16, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Device ID: $shortId...',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text('Would you like to remove this host?'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
+          TextButton(
+            onPressed: () {
+              _hm.serviceFor(host.id)?.reconnect();
+            },
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
             ),
-            child: const Text('Remove'),
+            child: Text('Retry', style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer)),
+          ),
+          TextButton(
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Remove host?'),
+                  content: Text('Remove "${host.label}"? You can re-pair later.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                      child: const Text('Remove'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true && mounted) {
+                await _hm.removeHost(host.id);
+              }
+            },
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            child: Text('Remove', style: TextStyle(fontSize: 12, color: theme.colorScheme.error)),
           ),
         ],
-      );
-      },
+      ),
     );
-
-    if (confirmed == true && mounted) {
-      await _hm.removeHost(host.id);
-    }
   }
 
   void _showNewSessionSheet() {
@@ -412,8 +387,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _subscribeToHost(host.id);
         }
 
-        // Prompt user to remove offline hosts
-        _checkOfflineHosts(hm);
+        final offlineHosts = hm.offlineHosts;
 
         final allNotifications = hm.allNotifications;
         final allSessions = hm.allSessions;
@@ -440,6 +414,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           body: Column(
             children: [
               if (_notifPermissionDenied) _buildNotifPermissionBanner(),
+              ...offlineHosts.map((h) => _buildOfflineHostBanner(h)),
               Expanded(
                 child: IndexedStack(
                   index: _currentIndex,

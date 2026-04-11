@@ -19,11 +19,13 @@ class DaemonAPIService extends ChangeNotifier {
   http.Client? _client;
   Timer? _reconnectTimer;
   Timer? _pollTimer;
+  Timer? _sessionDebounce;
+  Timer? _notificationDebounce;
   bool _running = false;
   bool _connected = false;
   bool _isActiveHost = false;
   int _consecutiveFailures = 0;
-  static const _offlineThreshold = 1;
+  static const _offlineThreshold = 5;
 
   List<HeliosNotification> _notifications = [];
   List<HeliosNotification> get notifications => _notifications;
@@ -126,13 +128,13 @@ class DaemonAPIService extends ChangeNotifier {
 
   // ==================== Lifecycle ====================
 
-  /// Start as the active host: SSE + session polling.
+  /// Start as the active host: SSE + fallback polling when SSE is down.
   Future<void> startActive() async {
     if (_running) return;
     _running = true;
     _isActiveHost = true;
     await _loadBannerState();
-    _startPolling();
+    await _loadSessionCache();
     _connect(); // fire-and-forget — SSE runs in background
   }
 
@@ -145,15 +147,16 @@ class DaemonAPIService extends ChangeNotifier {
     _connect(); // fire-and-forget — SSE runs in background
   }
 
-  /// Promote from background to active (start polling, fetch data).
-  void promote() {
+  /// Promote from background to active (fetch data, start polling if SSE is down).
+  void promote() async {
     _isActiveHost = true;
+    await _loadSessionCache();
     fetchSessions();
     fetchNotifications();
     fetchHealth();
     fetchProviders();
     fetchCommands();
-    _startPolling();
+    if (!_connected) _startPolling();
   }
 
   /// Demote from active to background (stop polling).
@@ -163,6 +166,7 @@ class DaemonAPIService extends ChangeNotifier {
     _pollTimer = null;
   }
 
+  /// Fallback polling when SSE is disconnected. Stopped when SSE reconnects.
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -182,6 +186,10 @@ class DaemonAPIService extends ChangeNotifier {
     _reconnectTimer = null;
     _pollTimer?.cancel();
     _pollTimer = null;
+    _sessionDebounce?.cancel();
+    _sessionDebounce = null;
+    _notificationDebounce?.cancel();
+    _notificationDebounce = null;
     notifyListeners();
   }
 
@@ -205,6 +213,38 @@ class DaemonAPIService extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('tmux_missing_banner_dismissed_$hostId', true);
+  }
+
+  // ==================== Session Cache ====================
+
+  String get _sessionCacheKey => 'session_cache_$hostId';
+
+  /// Load cached sessions from disk for instant display on launch.
+  Future<void> _loadSessionCache() async {
+    if (_sessionsLoaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_sessionCacheKey);
+      if (raw == null) return;
+      final list = (jsonDecode(raw) as List?) ?? [];
+      _sessions = list.map((s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId)).toList();
+      _sessionsLoaded = true;
+      notifyListeners();
+    } catch (_) {
+      // Schema changed or corrupt cache — drop it and fetch fresh
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_sessionCacheKey);
+    }
+  }
+
+  /// Persist the raw session JSON for next launch.
+  Future<void> _saveSessionCache(String rawJson) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_sessionCacheKey, rawJson);
+    } catch (_) {
+      // Best effort
+    }
   }
 
   // ==================== SSE ====================
@@ -235,6 +275,9 @@ class DaemonAPIService extends ChangeNotifier {
 
       _consecutiveFailures = 0;
       _connected = true;
+      // SSE is healthy — stop fallback polling
+      _pollTimer?.cancel();
+      _pollTimer = null;
       notifyListeners();
 
       String buffer = '';
@@ -266,6 +309,8 @@ class DaemonAPIService extends ChangeNotifier {
     }
 
     _connected = false;
+    // SSE dropped — start fallback polling if this is the active host
+    if (_isActiveHost && _pollTimer == null) _startPolling();
     notifyListeners();
     _scheduleReconnect();
   }
@@ -275,10 +320,14 @@ class DaemonAPIService extends ChangeNotifier {
     _eventController.add(event);
     onSSEEvent?.call(hostId, event);
 
-    // Always refresh notifications on any event (even background hosts)
-    fetchNotifications();
+    // Debounce notification fetches — multiple SSE events within 500ms
+    // collapse into a single HTTP call.
+    _notificationDebounce?.cancel();
+    _notificationDebounce = Timer(const Duration(milliseconds: 500), () {
+      fetchNotifications();
+    });
 
-    // Only refresh sessions if this is the active host
+    // Debounce session fetches for active host
     if (_isActiveHost &&
         (type == 'session_status' ||
             type == 'session_updated' ||
@@ -286,7 +335,10 @@ class DaemonAPIService extends ChangeNotifier {
             type == 'notification' ||
             type == 'notification_resolved' ||
             type == 'subagent_status')) {
-      fetchSessions();
+      _sessionDebounce?.cancel();
+      _sessionDebounce = Timer(const Duration(milliseconds: 500), () {
+        fetchSessions();
+      });
     }
   }
 
@@ -299,6 +351,14 @@ class DaemonAPIService extends ChangeNotifier {
     );
     debugPrint('[$hostId] reconnecting in ${delay.inSeconds}s (failures=$_consecutiveFailures)');
     _reconnectTimer = Timer(delay, _connect);
+  }
+
+  /// Force an immediate reconnect attempt, resetting failure count.
+  void reconnect() {
+    _reconnectTimer?.cancel();
+    _consecutiveFailures = 0;
+    notifyListeners();
+    _connect();
   }
 
   // ==================== Health ====================
@@ -409,6 +469,12 @@ class DaemonAPIService extends ChangeNotifier {
         _sessions = list.map((s) => Session.fromJson(s, hostId: hostId)).toList();
         _sessionsLoaded = true;
         notifyListeners();
+        // Cache the full unfiltered list for instant display on next launch
+        final isUnfiltered = (effectiveQ == null || effectiveQ.isEmpty) &&
+            (effectiveCwd == null || effectiveCwd.isEmpty);
+        if (isUnfiltered) {
+          _saveSessionCache(jsonEncode(list));
+        }
       }
     } catch (e) {
       debugPrint('[$hostId] Failed to fetch sessions: $e');

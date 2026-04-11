@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'providers/theme_provider.dart';
 import 'services/host_manager.dart';
 import 'services/notification_service.dart';
 import 'screens/setup_screen.dart';
@@ -12,8 +13,11 @@ void main() async {
   await NotificationService.instance.init();
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => HostManager(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => HostManager()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+      ],
       child: const HeliosApp(),
     ),
   );
@@ -24,6 +28,7 @@ class HeliosApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeMode = context.watch<ThemeProvider>().mode;
     return MaterialApp(
       title: 'Helios',
       debugShowCheckedModeBanner: false,
@@ -37,7 +42,7 @@ class HeliosApp extends StatelessWidget {
         useMaterial3: true,
         brightness: Brightness.dark,
       ),
-      themeMode: ThemeMode.system,
+      themeMode: themeMode,
       home: const AuthGate(),
     );
   }

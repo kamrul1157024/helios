@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/message.dart';
 
@@ -31,26 +32,30 @@ class _UserMessageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final content = message.content ?? '';
     return Align(
       alignment: Alignment.centerRight,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.primaryContainer,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(16),
-            bottomRight: Radius.circular(4),
+      child: GestureDetector(
+        onLongPress: () => _copyToClipboard(context, content),
+        child: Container(
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(16),
+              topRight: Radius.circular(16),
+              bottomLeft: Radius.circular(16),
+              bottomRight: Radius.circular(4),
+            ),
           ),
-        ),
-        child: SelectableText(
-          message.content ?? '',
-          style: TextStyle(
-            fontSize: 14,
-            color: theme.colorScheme.onPrimaryContainer,
+          child: SelectableText(
+            content,
+            style: TextStyle(
+              fontSize: 14,
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
           ),
         ),
       ),
@@ -70,45 +75,48 @@ class _AssistantMessageCard extends StatelessWidget {
 
     return Align(
       alignment: Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(4),
-            bottomRight: Radius.circular(16),
+      child: GestureDetector(
+        onLongPress: () => _copyToClipboard(context, content),
+        child: Container(
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(16),
+              topRight: Radius.circular(16),
+              bottomLeft: Radius.circular(4),
+              bottomRight: Radius.circular(16),
+            ),
           ),
-        ),
-        child: MarkdownBody(
-          data: content,
-          selectable: true,
-          styleSheet: MarkdownStyleSheet(
-            p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-            code: TextStyle(
-              fontSize: 12,
-              fontFamily: 'monospace',
-              color: theme.colorScheme.onSurface,
-              backgroundColor: theme.colorScheme.surfaceContainerHigh,
-            ),
-            codeblockDecoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            codeblockPadding: const EdgeInsets.all(10),
-            blockquoteDecoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: theme.colorScheme.primary, width: 3),
+          child: MarkdownBody(
+            data: content,
+            selectable: true,
+            styleSheet: MarkdownStyleSheet(
+              p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+              code: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: theme.colorScheme.onSurface,
+                backgroundColor: theme.colorScheme.surfaceContainerHigh,
               ),
+              codeblockDecoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              codeblockPadding: const EdgeInsets.all(10),
+              blockquoteDecoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: theme.colorScheme.primary, width: 3),
+                ),
+              ),
+              blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
+              h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+              h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+              h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
+              listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
             ),
-            blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
-            h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-            h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-            h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
-            listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
           ),
         ),
       ),
@@ -248,6 +256,18 @@ class _ToolUseCardState extends State<_ToolUseCard> {
         return Icons.build;
     }
   }
+}
+
+void _copyToClipboard(BuildContext context, String text) {
+  Clipboard.setData(ClipboardData(text: text));
+  HapticFeedback.lightImpact();
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('Copied to clipboard'),
+      duration: Duration(seconds: 1),
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
 }
 
 class _ToolResultCard extends StatelessWidget {
