@@ -6,6 +6,7 @@ import '../models/message.dart';
 import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
+import '../providers/claude/verbs.dart';
 import '../services/sse_service.dart';
 import '../widgets/message_card.dart';
 import '../widgets/skeleton.dart';
@@ -28,11 +29,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   int _total = 0;
   bool _hasMore = false;
   StreamSubscription<SSEEvent>? _eventSub;
+  String _currentVerb = randomClaudeVerb();
+  Timer? _verbTimer;
 
   @override
   void initState() {
     super.initState();
     _loadTranscript();
+    _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) setState(() => _currentVerb = randomClaudeVerb());
+    });
     _eventSub = context.read<SSEService>().events.listen((event) {
       if (event.data is Map) {
         final data = event.data as Map;
@@ -54,6 +60,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     _promptController.dispose();
     _scrollController.dispose();
     _eventSub?.cancel();
+    _verbTimer?.cancel();
     super.dispose();
   }
 
@@ -455,29 +462,61 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               tooltip: 'Commands',
             ),
           Expanded(
-            child: TextField(
-              controller: _promptController,
-              enabled: canSend && !_sending,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => canSend ? _sendPrompt() : null,
-              maxLines: 3,
-              minLines: 1,
-              decoration: InputDecoration(
-                hintText: canSend
-                    ? 'Send a prompt...'
-                    : session.isActive
-                        ? 'Session is busy...'
-                        : 'Session ${session.status}',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
+            child: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                TextField(
+                  controller: _promptController,
+                  enabled: canSend && !_sending,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => canSend ? _sendPrompt() : null,
+                  maxLines: 3,
+                  minLines: 1,
+                  decoration: InputDecoration(
+                    hintText: canSend
+                        ? 'Send a prompt...'
+                        : session.isActive
+                            ? '' // handled by animated overlay
+                            : 'Session ${session.status}',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: theme.colorScheme.surfaceContainerHighest,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    isDense: true,
+                  ),
+                  style: const TextStyle(fontSize: 14),
                 ),
-                filled: true,
-                fillColor: theme.colorScheme.surfaceContainerHighest,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                isDense: true,
-              ),
-              style: const TextStyle(fontSize: 14),
+                if (session.isActive && !canSend)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: IgnorePointer(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 400),
+                        transitionBuilder: (child, animation) {
+                          final slideIn = Tween<Offset>(
+                            begin: const Offset(0, 0.5),
+                            end: Offset.zero,
+                          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                          return SlideTransition(
+                            position: slideIn,
+                            child: FadeTransition(opacity: animation, child: child),
+                          );
+                        },
+                        child: Text(
+                          '$_currentVerb...',
+                          key: ValueKey(_currentVerb),
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(width: 8),
