@@ -372,6 +372,12 @@ Helios treats AI sessions like infrastructure — something to be managed, monit
 ## Architecture
 
 ```
+  CLI / TUI                                          Mobile / Desktop App
+  (local machine)                                    (your phone or laptop)
+       │                                                      │
+       │ localhost                                             │ HTTPS
+       │                                                      │
+       ▼                                                      ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                              helios daemon                                   │
 │                                                                              │
@@ -388,39 +394,39 @@ Helios treats AI sessions like infrastructure — something to be managed, monit
 │  │  /internal/tunnel/stop              │  │  GET  /api/sessions            │ │
 │  │  /internal/logs                     │  │  GET  /api/sse  (realtime)     │ │
 │  │  /hooks/permission (Claude hooks)   │  │                                │ │
-│  └─────────────────────────────────────┘  └────────────────────────────────┘ │
-│                                                                              │
-│  ┌──────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────────────┐ │
-│  │  SQLite  │  │ VAPID Keys │  │ Session      │  │  Tunnel Manager        │ │
-│  │ helios.db│  │ (Web Push) │  │ Reaper       │  │  (cloudflare/ngrok/..) │ │
-│  └──────────┘  └────────────┘  └──────────────┘  └────────────────────────┘ │
-│                                                                              │
-│                              tmux server                                     │
-│                    ┌─────────────┬─────────────┐                             │
-│                    │             │             │                              │
-│               claude #1    claude #2    aider #3                             │
-│               (session)    (session)    (session)                            │
+│  └─────────────────────────────────────┘  └───────────────┬────────────────┘ │
+│                                                           │                  │
+│  ┌──────────┐  ┌──────────────┐  ┌────────────────────────┐                │
+│  │  SQLite  │  │ Session      │  │  Tunnel Manager        │                │
+│  │ helios.db│  │ Reaper       │  │  (cloudflare/ngrok/..) │                │
+│  └──────────┘  └──────────────┘  └───────────┬────────────┘                │
+│                                               │                              │
+│                              tmux server      │                              │
+│                    ┌─────────────┬─────────┐  │                              │
+│                    │             │         │  │                               │
+│               claude #1    claude #2  aider #3                               │
+│               (session)    (session)  (session)                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-                         │
-                         │ tunnel (cloudflare/ngrok/tailscale)
-                         │
-                         ▼
-                ┌──────────────────┐
-                │  Public Internet │
-                │  https://abc.cf  │
-                └────────┬─────────┘
-                         │
-              ┌──────────┴──────────┐
-              │                     │
-     ┌────────┴───────┐   ┌────────┴───────┐
-     │  Mobile App    │   │  Desktop App   │
-     │  (Android)     │   │  (macOS)       │
-     │                │   │                │
-     │  Sessions      │   │  Sessions      │
-     │  Notifications │   │  Notifications │
-     │  Approve/Deny  │   │  Approve/Deny  │
-     │  SSE realtime  │   │  SSE realtime  │
-     └────────────────┘   └────────────────┘
+                                                │
+                                                │ tunnel
+                                                │ (cloudflare/ngrok/tailscale)
+                                                ▼
+                                       ┌──────────────────┐
+                                       │  Public Internet │
+                                       │  https://abc.cf  │
+                                       └────────┬─────────┘
+                                                │
+                                     ┌──────────┴──────────┐
+                                     │                     │
+                            ┌────────┴───────┐   ┌────────┴───────┐
+                            │  Mobile App    │   │  Desktop App   │
+                            │  (Android)     │   │  (macOS)       │
+                            │                │   │                │
+                            │  Sessions      │   │  Sessions      │
+                            │  Notifications │   │  Notifications │
+                            │  Approve/Deny  │   │  Approve/Deny  │
+                            │  SSE realtime  │   │  SSE realtime  │
+                            └────────────────┘   └────────────────┘
 ```
 
 ```
@@ -433,8 +439,6 @@ Helios treats AI sessions like infrastructure — something to be managed, monit
 │  │                      sessions, etc.) │
 │  ├── daemon.pid       ← running PID    │
 │  ├── helios.apk       ← built APK copy │
-│  ├── vapid_private.pem← push keys      │
-│  ├── vapid_public.pem │                 │
 │  └── logs/                              │
 │      └── daemon.log   ← daemon logs    │
 │                                         │
