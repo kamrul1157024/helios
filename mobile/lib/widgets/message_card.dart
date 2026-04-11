@@ -46,7 +46,7 @@ class _UserMessageCard extends StatelessWidget {
             bottomRight: Radius.circular(4),
           ),
         ),
-        child: Text(
+        child: SelectableText(
           message.content ?? '',
           style: TextStyle(
             fontSize: 14,
