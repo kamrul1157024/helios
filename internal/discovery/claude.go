@@ -126,7 +126,7 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 256*1024), 256*1024) // 256KB line buffer
 
-	var cwd, firstTimestamp, lastTimestamp, model string
+	var cwd, firstTimestamp, lastTimestamp, model, lastUserMessage string
 	linesRead := 0
 
 	for scanner.Scan() {
@@ -153,6 +153,13 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 			cwd = entry.CWD
 		}
 
+		// Track last user message
+		if entry.Type == "user" && len(entry.Message) > 0 {
+			if msg := extractUserMessage(entry.Message); msg != "" {
+				lastUserMessage = msg
+			}
+		}
+
 		// Get model from first assistant entry
 		if model == "" && entry.Type == "assistant" && len(entry.Message) > 0 {
 			var meta claudeMessageMeta
@@ -163,7 +170,7 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 
 		// Stop after we have what we need or after reading 50 lines
 		linesRead++
-		if cwd != "" && model != "" {
+		if cwd != "" && model != "" && lastUserMessage != "" {
 			break
 		}
 		if linesRead > 50 {
@@ -175,9 +182,12 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 		return nil // not enough info
 	}
 
-	// Get last timestamp from file (read last few lines)
+	// Get last timestamp and last user message from file tail
 	if lt := lastTimestampFromFile(path); lt != "" {
 		lastTimestamp = lt
+	}
+	if lum := lastUserMessageFromFile(path); lum != "" {
+		lastUserMessage = lum
 	}
 
 	sess := &store.Session{
@@ -198,6 +208,10 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 
 	if lastTimestamp != "" {
 		sess.LastEventAt = &lastTimestamp
+	}
+
+	if lastUserMessage != "" {
+		sess.LastUserMessage = &lastUserMessage
 	}
 
 	return sess
@@ -244,6 +258,78 @@ func lastTimestampFromFile(path string) string {
 	}
 
 	return lastTS
+}
+
+// extractUserMessage extracts the text content from a Claude user message JSON.
+func extractUserMessage(raw json.RawMessage) string {
+	var msg struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &msg) != nil {
+		return ""
+	}
+
+	// Content can be a simple string
+	var text string
+	if json.Unmarshal(msg.Content, &text) == nil {
+		return text
+	}
+
+	// Or an array of content blocks — extract text blocks
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(msg.Content, &blocks) == nil {
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				return b.Text
+			}
+		}
+	}
+
+	return ""
+}
+
+// lastUserMessageFromFile reads the tail of a JSONL file to find the last user message.
+func lastUserMessageFromFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+
+	// Read last 16KB to find user messages
+	readSize := int64(16384)
+	offset := stat.Size() - readSize
+	if offset < 0 {
+		offset = 0
+		readSize = stat.Size()
+	}
+
+	buf := make([]byte, readSize)
+	f.ReadAt(buf, offset)
+
+	var lastMsg string
+	for _, line := range strings.Split(string(buf), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry claudeJSONLEntry
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Type == "user" {
+			if msg := extractUserMessage(entry.Message); msg != "" {
+				lastMsg = msg
+			}
+		}
+	}
+
+	return lastMsg
 }
 
 func strPtr(s string) *string {

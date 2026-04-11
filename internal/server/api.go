@@ -510,6 +510,7 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		}
 		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
 		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+		s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
 		log.Printf("session-send: resumed session %s in pane %s", id, paneID)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true, "resumed": true, "tmux_pane": paneID,
@@ -529,6 +530,7 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		}
 		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
 		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+		s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true, "resumed": true, "tmux_pane": paneID,
 		})
@@ -542,6 +544,7 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+	s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
 	log.Printf("session-send: sent keys to pane %s for session %s", *session.TmuxPane, id)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }

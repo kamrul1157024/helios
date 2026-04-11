@@ -504,9 +504,14 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "UserPromptSubmit")
 	updateSessionTranscript(ctx, &input)
 
+	if input.Message != "" {
+		ctx.DB.UpdateSessionLastUserMessage(input.SessionID, input.Message)
+	}
+
 	ctx.Notify("session_status", map[string]interface{}{
-		"session_id": input.SessionID,
-		"status":     "active",
+		"session_id":        input.SessionID,
+		"status":            "active",
+		"last_user_message": input.Message,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

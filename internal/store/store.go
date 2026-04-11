@@ -60,6 +60,7 @@ func (s *Store) migrate() error {
 			status TEXT NOT NULL DEFAULT 'active',
 			last_event TEXT,
 			last_event_at TEXT,
+			last_user_message TEXT,
 			tmux_pane TEXT,
 			tmux_pid INTEGER,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -128,6 +129,7 @@ func (s *Store) migrate() error {
 		{"migrate_hook_sessions_to_sessions", `INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, status, last_event, last_event_at, created_at)
 			SELECT claude_session_id, 'claude', cwd, '', 'ended', last_event, last_event_at, created_at
 			FROM hook_sessions WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='hook_sessions')`},
+		{"add_sessions_last_user_message", `ALTER TABLE sessions ADD COLUMN last_user_message TEXT`},
 	}
 
 	for _, cm := range columnMigrations {

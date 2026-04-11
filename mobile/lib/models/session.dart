@@ -8,6 +8,7 @@ class Session {
   final String status;
   final String? lastEvent;
   final String? lastEventAt;
+  final String? lastUserMessage;
   final String? tmuxPane;
   final int? tmuxPid;
   final String createdAt;
@@ -23,6 +24,7 @@ class Session {
     required this.status,
     this.lastEvent,
     this.lastEventAt,
+    this.lastUserMessage,
     this.tmuxPane,
     this.tmuxPid,
     required this.createdAt,
@@ -40,6 +42,7 @@ class Session {
       status: json['status'] as String,
       lastEvent: json['last_event'] as String?,
       lastEventAt: json['last_event_at'] as String?,
+      lastUserMessage: json['last_user_message'] as String?,
       tmuxPane: json['tmux_pane'] as String?,
       tmuxPid: json['tmux_pid'] as int?,
       createdAt: json['created_at'] as String,

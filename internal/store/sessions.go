@@ -7,19 +7,20 @@ import (
 )
 
 type Session struct {
-	SessionID      string  `json:"session_id"`
-	Source         string  `json:"source"`
-	CWD            string  `json:"cwd"`
-	Project        string  `json:"project"`
-	TranscriptPath *string `json:"transcript_path,omitempty"`
-	Model          *string `json:"model,omitempty"`
-	Status         string  `json:"status"`
-	LastEvent      *string `json:"last_event,omitempty"`
-	LastEventAt    *string `json:"last_event_at,omitempty"`
-	TmuxPane       *string `json:"tmux_pane,omitempty"`
-	TmuxPID        *int    `json:"tmux_pid,omitempty"`
-	CreatedAt      string  `json:"created_at"`
-	EndedAt        *string `json:"ended_at,omitempty"`
+	SessionID       string  `json:"session_id"`
+	Source          string  `json:"source"`
+	CWD             string  `json:"cwd"`
+	Project         string  `json:"project"`
+	TranscriptPath  *string `json:"transcript_path,omitempty"`
+	Model           *string `json:"model,omitempty"`
+	Status          string  `json:"status"`
+	LastEvent       *string `json:"last_event,omitempty"`
+	LastEventAt     *string `json:"last_event_at,omitempty"`
+	LastUserMessage *string `json:"last_user_message,omitempty"`
+	TmuxPane        *string `json:"tmux_pane,omitempty"`
+	TmuxPID         *int    `json:"tmux_pid,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	EndedAt         *string `json:"ended_at,omitempty"`
 }
 
 type Subagent struct {
@@ -66,11 +67,11 @@ func (s *Store) InsertDiscoveredSession(sess *Session) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, transcript_path, model, status, last_event, last_event_at, tmux_pane, tmux_pid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, transcript_path, model, status, last_event, last_event_at, last_user_message, tmux_pane, tmux_pid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
 		sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, sess.LastEventAt,
-		sess.TmuxPane, sess.TmuxPID,
+		sess.LastUserMessage, sess.TmuxPane, sess.TmuxPID,
 	)
 	return err
 }
@@ -90,6 +91,15 @@ func (s *Store) UpdateSessionStatus(sessionID, status, event string) error {
 	args = append(args, sessionID)
 
 	_, err := s.db.Exec(query, args...)
+	return err
+}
+
+// UpdateSessionLastUserMessage stores the last user prompt for a session.
+func (s *Store) UpdateSessionLastUserMessage(sessionID, message string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET last_user_message = ? WHERE session_id = ?`,
+		message, sessionID,
+	)
 	return err
 }
 
@@ -116,11 +126,11 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, transcript_path, model, status,
-		        last_event, last_event_at, tmux_pane, tmux_pid, created_at, ended_at
+		        last_event, last_event_at, last_user_message, tmux_pane, tmux_pid, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.TranscriptPath, &sess.Model, &sess.Status,
-		&sess.LastEvent, &sess.LastEventAt, &sess.TmuxPane, &sess.TmuxPID,
+		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.TmuxPane, &sess.TmuxPID,
 		&sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -132,7 +142,7 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(
 		`SELECT session_id, source, cwd, project, transcript_path, model, status,
-		        last_event, last_event_at, tmux_pane, tmux_pid, created_at, ended_at
+		        last_event, last_event_at, last_user_message, tmux_pane, tmux_pid, created_at, ended_at
 		 FROM sessions ORDER BY COALESCE(last_event_at, created_at) DESC LIMIT 100`,
 	)
 	if err != nil {
@@ -145,7 +155,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.TmuxPane, &sess.TmuxPID,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.TmuxPane, &sess.TmuxPID,
 			&sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}

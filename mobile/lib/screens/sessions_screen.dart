@@ -160,13 +160,26 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 ],
               ),
               const SizedBox(height: 8),
+              // Last user message
+              if (session.lastUserMessage != null) ...[
+                Text(
+                  session.lastUserMessage!,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+              ],
               // CWD
               Text(
                 session.shortCwd,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   fontFamily: 'monospace',
-                  color: theme.colorScheme.onSurface,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -176,8 +189,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 Text(
                   session.lastEvent!,
                   style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
