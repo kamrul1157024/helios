@@ -396,6 +396,17 @@ func handleNotification(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 
 	updateSessionTranscript(ctx, &input)
 
+	// idle_prompt fires when Claude returns to its input prompt (e.g. after
+	// the user interrupts with Escape/Ctrl+C). Claude does not fire a Stop
+	// hook for interrupts, so we transition to idle here.
+	if input.HookEventName == "idle_prompt" {
+		ctx.DB.UpdateSessionStatus(input.SessionID, "idle", "IdlePrompt")
+		ctx.Notify("session_status", map[string]interface{}{
+			"session_id": input.SessionID,
+			"status":     "idle",
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -422,7 +433,7 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		CWD:            input.CWD,
 		TranscriptPath: transcriptPath,
 		Model:          model,
-		Status:         "active",
+		Status:         "idle",
 		LastEvent:      strPtr("SessionStart"),
 	}
 	ctx.DB.UpsertSession(sess)
@@ -439,7 +450,7 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	sseData := map[string]interface{}{
 		"session_id": input.SessionID,
 		"cwd":        input.CWD,
-		"status":     "active",
+		"status":     "idle",
 		"model":      input.Model,
 	}
 	if paneID != "" {
