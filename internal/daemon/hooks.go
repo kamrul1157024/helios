@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -252,6 +254,43 @@ func InstallHooksIfMissing() {
 	if _, ok := m["hooks"]; !ok {
 		InstallHooks(false)
 	}
+}
+
+// HookConfigHash returns the SHA256 hash of the expected hook config JSON.
+func HookConfigHash() string {
+	cfg := DefaultConfig()
+	hooks := hookConfig(cfg.Server.InternalPort)
+	data, _ := json.Marshal(hooks["hooks"])
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// HooksOutdated checks if the installed hooks differ from the expected config.
+// Returns true when hooks are present but their content doesn't match the
+// current hook config (e.g. after a helios upgrade that added new hooks).
+func HooksOutdated() bool {
+	home, _ := os.UserHomeDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return false // no file — not outdated, just missing
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+
+	installed, ok := settings["hooks"]
+	if !ok {
+		return false // no hooks key — not outdated, just missing
+	}
+
+	installedJSON, _ := json.Marshal(installed)
+	installedSum := sha256.Sum256(installedJSON)
+
+	return hex.EncodeToString(installedSum[:]) != HookConfigHash()
 }
 
 func ShowHooks() {

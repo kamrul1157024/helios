@@ -50,6 +50,8 @@ func (m StartModel) View() string {
 		return m.viewLoading()
 	case screenHooksInstall:
 		return m.viewHooksInstall()
+	case screenHooksUpdate:
+		return m.viewHooksUpdate()
 	case screenTunnelSelect:
 		return m.viewTunnelSelect()
 	case screenBinaryMissing:
@@ -83,8 +85,10 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Daemon not running"))
 		}
 
-		if m.hooksOK {
+		if m.hooksOK && !m.hooksOutdated {
 			b.WriteString(check("Claude hooks installed"))
+		} else if m.hooksOK && m.hooksOutdated {
+			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
 		} else {
 			b.WriteString(cross("Claude hooks not installed"))
 		}
@@ -136,6 +140,22 @@ func (m StartModel) viewHooksInstall() string {
 	b.WriteString(subtitleStyle.Render("  and forward them to your phone for approval."))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  enter install  s skip  q quit"))
+
+	return b.String()
+}
+
+func (m StartModel) viewHooksUpdate() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — Claude Hooks"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks are outdated"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  A newer hook configuration is available."))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  Update to ensure all hooks work correctly."))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  enter update  s skip  q quit"))
 
 	return b.String()
 }
@@ -211,8 +231,10 @@ func (m StartModel) viewMain() string {
 
 	// Status
 	b.WriteString(check("Daemon running"))
-	if m.hooksOK {
+	if m.hooksOK && !m.hooksOutdated {
 		b.WriteString(check("Claude hooks installed"))
+	} else if m.hooksOK {
+		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
 	}
 	if m.tmux.Installed {
 		b.WriteString(check(fmt.Sprintf("tmux (%s)", m.tmux.Version)))

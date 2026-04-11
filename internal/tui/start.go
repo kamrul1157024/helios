@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/daemon"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +22,7 @@ type screen int
 const (
 	screenLoading        screen = iota // checking daemon, starting if needed
 	screenHooksInstall                 // prompt to install Claude hooks
+	screenHooksUpdate                  // prompt to update outdated hooks
 	screenTunnelSelect                 // first time only: pick tunnel provider
 	screenBinaryMissing                // tunnel binary not found
 	screenTunnelStarting               // starting tunnel...
@@ -51,15 +54,16 @@ type tmuxStatus struct {
 }
 
 type statusCheckDone struct {
-	daemonOK    bool
-	hooksOK     bool
-	tunnelOK    bool
-	tunnelURL   string
-	tunnelProv  string
-	deviceCount int
-	devices     []deviceInfo
-	tmux        tmuxStatus
-	err         error
+	daemonOK      bool
+	hooksOK       bool
+	hooksOutdated bool
+	tunnelOK      bool
+	tunnelURL     string
+	tunnelProv    string
+	deviceCount   int
+	devices       []deviceInfo
+	tmux          tmuxStatus
+	err           error
 }
 
 type tunnelStarted struct {
@@ -99,9 +103,10 @@ type StartModel struct {
 	publicPort int
 
 	// Status check results
-	daemonOK    bool
-	hooksOK     bool
-	tunnelOK    bool
+	daemonOK      bool
+	hooksOK       bool
+	hooksOutdated bool
+	tunnelOK      bool
 	tunnelURL   string
 	tunnelProv  string
 	deviceCount int
@@ -195,6 +200,7 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.hooksOK = true
+		m.hooksOutdated = false
 		return m.proceedAfterHooks()
 
 	case deviceActionDone:
@@ -234,7 +240,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenMain:
 			return m, tea.Quit
-		case screenHooksInstall, screenTunnelSelect, screenBinaryMissing, screenError:
+		case screenHooksInstall, screenHooksUpdate, screenTunnelSelect, screenBinaryMissing, screenError:
 			return m, tea.Quit
 		}
 
@@ -270,7 +276,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "s":
-		if m.screen == screenHooksInstall {
+		if m.screen == screenHooksInstall || m.screen == screenHooksUpdate {
 			return m.proceedAfterHooks()
 		}
 	}
@@ -290,6 +296,10 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.screen = screenHooksInstall
 			return m, nil
 		}
+		if m.hooksOutdated {
+			m.screen = screenHooksUpdate
+			return m, nil
+		}
 		if !m.tunnelOK {
 			m.screen = screenTunnelSelect
 			return m, nil
@@ -299,6 +309,9 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
 
 	case screenHooksInstall:
+		return m, installHooksCmd()
+
+	case screenHooksUpdate:
 		return m, installHooksCmd()
 
 	case screenTunnelSelect:
@@ -358,6 +371,7 @@ func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) {
 	m.daemonOK = msg.daemonOK
 	m.hooksOK = msg.hooksOK
+	m.hooksOutdated = msg.hooksOutdated
 	m.tunnelOK = msg.tunnelOK
 	m.tunnelURL = msg.tunnelURL
 	m.tunnelProv = msg.tunnelProv
@@ -505,6 +519,9 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 
 		// Check hooks
 		result.hooksOK = hooksInstalled()
+		if result.hooksOK {
+			result.hooksOutdated = daemon.HooksOutdated()
+		}
 
 		// Check tunnel
 		ts, err := c.tunnelStatus()
