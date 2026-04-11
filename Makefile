@@ -1,5 +1,5 @@
 .PHONY: build clean install uninstall test
-.PHONY: apk apk-release apk-install apk-run apk-clean apk-device mobile
+.PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
 .PHONY: dmg dmg-dev release
 
 VERSION = 0.2.0
@@ -67,6 +67,13 @@ apk-install: apk
 	@adb devices | grep -q 'device$$' || (echo "No Android device connected. Connect via USB and enable USB debugging." && exit 1)
 	adb install -r $(APK_DEBUG)
 	@echo "Installed on device."
+
+## Force rebuild debug APK and install on first connected device
+apk-debug:
+	@adb devices | grep -q 'device$$' || (echo "No Android device connected. Connect via USB and enable USB debugging." && exit 1)
+	cd mobile && flutter build apk --debug
+	adb install -r $(APK_DEBUG)
+	@echo "Built and installed on device."
 
 ## Build, install, and launch on device
 apk-run: apk-install
