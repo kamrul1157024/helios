@@ -118,12 +118,12 @@ dmg-dev:
 # ─── Release ─────────────────────────────────────────────────────
 
 ## Create a GitHub release with available artifacts (APK required, DMG optional)
-## If a release with the same tag already exists, it is deleted and recreated.
+## Fails if a release with the same tag already exists.
 release: apk-release
 	@echo "Creating GitHub release v$(VERSION)..."
 	@if gh release view v$(VERSION) --repo $(REPO) > /dev/null 2>&1; then \
-		echo "Release v$(VERSION) already exists — deleting it first..."; \
-		gh release delete v$(VERSION) --repo $(REPO) --yes --cleanup-tag; \
+		echo "Error: Release v$(VERSION) already exists. Bump VERSION in the Makefile." >&2; \
+		exit 1; \
 	fi
 	cp $(APK_RELEASE) helios.apk
 	@ASSETS="helios.apk"; \
