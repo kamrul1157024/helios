@@ -1032,38 +1032,11 @@ func (s *InternalServer) handleDeviceRevoke(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleAppDownload serves the APK — local file if available, otherwise redirects to GitHub release.
-func (s *PublicServer) handleAppDownload(w http.ResponseWriter, r *http.Request) {
-	// Try local APK first
-	if APKPath != "" {
-		if f, err := os.Open(APKPath); err == nil {
-			defer f.Close()
-			if stat, err := f.Stat(); err == nil {
-				w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-				w.Header().Set("Content-Disposition", "attachment; filename=\"helios.apk\"")
-				http.ServeContent(w, r, "helios.apk", stat.ModTime(), f)
-				return
-			}
-		}
-	}
+// APKDownloadURL is the GitHub release URL for the APK (always points to latest release).
+var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/latest/download/helios.apk"
 
-	// Fall back to GitHub release
-	if APKDownloadURL != "" {
-		http.Redirect(w, r, APKDownloadURL, http.StatusFound)
-		return
-	}
-
-	jsonError(w, "APK not available — build with: make apk", http.StatusNotFound)
-}
-
-// APKPath is set by daemon to the path of the local APK file.
-var APKPath string
-
-// APKDownloadURL is the GitHub release URL for the APK (pinned to version).
-var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/v0.2.0/helios.apk"
-
-// DMGDownloadURL is the GitHub release URL for the macOS DMG (pinned to version).
-var DMGDownloadURL = "https://github.com/kamrul1157024/helios/releases/download/v0.2.0/helios.dmg"
+// DMGDownloadURL is the GitHub release URL for the macOS DMG (always points to latest release).
+var DMGDownloadURL = "https://github.com/kamrul1157024/helios/releases/latest/download/helios.dmg"
 
 // ==================== Commands ====================
 

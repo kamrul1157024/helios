@@ -33,7 +33,6 @@ func Start(cfg *Config) error {
 		return fmt.Errorf("create logs dir: %w", err)
 	}
 	server.LogsDir = logsDir
-	server.APKPath = filepath.Join(HeliosDir(), "helios.apk")
 
 	daemonLogPath := filepath.Join(logsDir, "daemon.log")
 	logFile, err := os.OpenFile(daemonLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
