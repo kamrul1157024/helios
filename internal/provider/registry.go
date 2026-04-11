@@ -16,7 +16,7 @@ type HookContext struct {
 	Tmux             *tmux.Client
 	Notify           func(eventType string, data interface{})  // SSE broadcast
 	Push             func(notifType, id, title, body string)    // push notification
-	RemovePendingPane func(cwd string)                          // remove pane from pending map by CWD
+	RemovePendingPane func(cwd string) string                    // remove pane from pending map by CWD, returns pane ID
 }
 
 // HookHandler processes an incoming hook request and writes the response.

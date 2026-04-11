@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const defaultSession = "helios"
@@ -95,6 +96,17 @@ func (c *Client) CreateWindow(cwd, command string) (string, error) {
 	}
 
 	return paneID, nil
+}
+
+// Attach attaches the current terminal to the helios tmux session,
+// selecting the given pane. This replaces the current process.
+func (c *Client) Attach(paneID string) error {
+	// Select the target pane first so the user lands on the right window.
+	exec.Command(c.tmuxCmd(), "select-window", "-t", paneID).Run()
+	exec.Command(c.tmuxCmd(), "select-pane", "-t", paneID).Run()
+
+	bin := c.tmuxCmd()
+	return syscall.Exec(bin, []string{bin, "attach-session", "-t", defaultSession}, os.Environ())
 }
 
 // SendKeys sends text to a pane followed by Enter.

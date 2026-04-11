@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/tmux"
 	"github.com/kamrul1157024/helios/internal/tui"
 )
 
@@ -40,8 +43,12 @@ func main() {
 		handleDaemon(os.Args[2:])
 	case "auth":
 		handleAuth(os.Args[2:])
+	case "wrap":
+		handleWrap(os.Args[2:])
 	case "hooks":
 		handleHooks(os.Args[2:])
+	case "setup":
+		handleSetup(os.Args[2:])
 	case "cleanup":
 		handleCleanup(os.Args[2:])
 	case "logs":
@@ -327,6 +334,63 @@ func handleNew(args []string) {
 	fmt.Println("  Attach with: tmux attach -t helios")
 }
 
+func handleWrap(args []string) {
+	// Find "--" separator
+	cmdStart := -1
+	for i, a := range args {
+		if a == "--" {
+			cmdStart = i + 1
+			break
+		}
+	}
+
+	if cmdStart < 0 || cmdStart >= len(args) {
+		fmt.Fprintln(os.Stderr, "Usage: helios wrap -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "Example: helios wrap -- claude")
+		os.Exit(1)
+	}
+
+	command := strings.Join(args[cmdStart:], " ")
+	cwd, _ := os.Getwd()
+
+	tc := tmux.NewClient()
+
+	// If already inside tmux, just exec the command directly
+	if os.Getenv("TMUX") != "" {
+		parts := args[cmdStart:]
+		binary, err := exec.LookPath(parts[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
+			os.Exit(1)
+		}
+		syscall.Exec(binary, parts, os.Environ())
+		return
+	}
+
+	// Create a new tmux window with the command
+	paneID, err := tc.CreateWindow(cwd, command)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create tmux session: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Is tmux installed? brew install tmux")
+		os.Exit(1)
+	}
+
+	// Notify the daemon about this pane so it can track it
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+	body, _ := json.Marshal(map[string]string{
+		"pane_id": paneID,
+		"cwd":     cwd,
+	})
+	http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
+
+	// Attach to the tmux session on the new pane
+	if err := tc.Attach(paneID); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to attach to tmux: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func handleSessions(args []string) {
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
@@ -533,6 +597,93 @@ func handleHooks(args []string) {
 	}
 }
 
+func handleSetup(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|editor|all>")
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "shell":
+		info := daemon.DetectShell()
+		if daemon.ShellWrapperInstalled(info) {
+			fmt.Printf("Shell wrapper already installed in %s\n", info.RCPath)
+			return
+		}
+		if err := daemon.InstallShellWrapper(info); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+			fmt.Println(daemon.ManualShellInstructions(info, err))
+			os.Exit(1)
+		}
+		fmt.Printf("Shell wrapper installed in %s\n", info.RCPath)
+		fmt.Println("Restart your shell or run: source", info.RCPath)
+
+	case "editor":
+		tmuxPath := findTmuxBinary()
+		editors := daemon.DetectEditors()
+		if len(editors) == 0 {
+			fmt.Println("No supported editors found.")
+			return
+		}
+		for _, editor := range editors {
+			if editor.Configured {
+				fmt.Printf("  ✓ %s — already configured\n", editor.Name)
+				continue
+			}
+			if err := daemon.ConfigureEditor(editor, tmuxPath); err != nil {
+				fmt.Printf("  ✗ %s — %v\n", editor.Name, err)
+				fmt.Println(daemon.ManualEditorInstructions(editor, tmuxPath, err))
+			} else {
+				fmt.Printf("  ✓ %s — configured\n", editor.Name)
+			}
+		}
+
+	case "all":
+		// Shell
+		info := daemon.DetectShell()
+		if daemon.ShellWrapperInstalled(info) {
+			fmt.Printf("  ✓ Shell wrapper (%s)\n", info.Name)
+		} else if err := daemon.InstallShellWrapper(info); err != nil {
+			fmt.Printf("  ✗ Shell wrapper — %v\n", err)
+			fmt.Println(daemon.ManualShellInstructions(info, err))
+		} else {
+			fmt.Printf("  ✓ Shell wrapper installed (%s)\n", info.Name)
+		}
+
+		// Editors
+		tmuxPath := findTmuxBinary()
+		editors := daemon.DetectEditors()
+		for _, editor := range editors {
+			if editor.Configured {
+				fmt.Printf("  ✓ %s — already configured\n", editor.Name)
+				continue
+			}
+			if err := daemon.ConfigureEditor(editor, tmuxPath); err != nil {
+				fmt.Printf("  ✗ %s — %v\n", editor.Name, err)
+				fmt.Println(daemon.ManualEditorInstructions(editor, tmuxPath, err))
+			} else {
+				fmt.Printf("  ✓ %s — configured\n", editor.Name)
+			}
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|editor|all>\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func findTmuxBinary() string {
+	if p, err := exec.LookPath("tmux"); err == nil {
+		return p
+	}
+	for _, p := range []string{"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "tmux"
+}
+
 func printUsage() {
 	fmt.Println(`helios - orchestrates AI coding agents on your machine
 
@@ -545,6 +696,8 @@ Commands:
   devices               Device management (TUI)
   new "prompt" [flags]  Launch Claude in a managed tmux pane
                         --cwd PATH  Working directory (default: current)
+  wrap -- <cmd> [args]  Run a command in a helios-managed tmux pane
+                        Example: helios wrap -- claude
   sessions              List all tracked sessions
 
   daemon start [flags]  Start the helios daemon directly
@@ -553,6 +706,10 @@ Commands:
                         --public-port P   Public port (default: 7655)
   daemon stop           Stop the running daemon
   daemon status         Show daemon status
+
+  setup shell           Install shell wrapper (claude → helios wrap)
+  setup editor          Configure editor terminals to use tmux
+  setup all             Install shell wrapper + configure editors
 
   auth init             Generate pairing QR (non-interactive)
   auth devices          List trusted devices

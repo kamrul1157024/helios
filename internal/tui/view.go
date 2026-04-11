@@ -52,6 +52,10 @@ func (m StartModel) View() string {
 		return m.viewHooksInstall()
 	case screenHooksUpdate:
 		return m.viewHooksUpdate()
+	case screenShellSetup:
+		return m.viewShellSetup()
+	case screenEditorSetup:
+		return m.viewEditorSetup()
 	case screenTunnelSelect:
 		return m.viewTunnelSelect()
 	case screenBinaryMissing:
@@ -97,6 +101,27 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(check(fmt.Sprintf("tmux installed (%s)", m.tmux.Version)))
 		} else {
 			b.WriteString(cross("tmux not installed — session management unavailable"))
+		}
+
+		if m.shellInstalled {
+			b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
+		} else if m.shellInfo.RCPath != "" {
+			b.WriteString(cross(fmt.Sprintf("Shell wrapper not installed (%s)", m.shellInfo.Name)))
+		}
+
+		editorCount := len(m.editors)
+		if editorCount > 0 {
+			configured := 0
+			for _, e := range m.editors {
+				if e.Configured {
+					configured++
+				}
+			}
+			if configured == editorCount {
+				b.WriteString(check(fmt.Sprintf("%d editor(s) configured", configured)))
+			} else {
+				b.WriteString(cross(fmt.Sprintf("%d of %d editor(s) configured", configured, editorCount)))
+			}
 		}
 
 		if m.tunnelOK {
@@ -156,6 +181,78 @@ func (m StartModel) viewHooksUpdate() string {
 	b.WriteString(subtitleStyle.Render("  Update to ensure all hooks work correctly."))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  enter update  s skip  q quit"))
+
+	return b.String()
+}
+
+func (m StartModel) viewShellSetup() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — Shell Wrapper"))
+	b.WriteString("\n\n")
+
+	if m.shellManual != "" {
+		// Auto-install failed — show manual instructions
+		b.WriteString(cross("Could not auto-configure shell"))
+		b.WriteString("\n")
+		b.WriteString(m.shellManual)
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  enter continue  q quit"))
+		return b.String()
+	}
+
+	b.WriteString(cross(fmt.Sprintf("Shell wrapper not installed (%s)", m.shellInfo.Name)))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  When you type 'claude' in your terminal, helios will"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  automatically wrap it in a managed tmux session."))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  This lets you send prompts and control sessions from your phone."))
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render(fmt.Sprintf("  Will add wrapper to: %s", m.shellInfo.RCPath)))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  enter install  s skip  q quit"))
+
+	return b.String()
+}
+
+func (m StartModel) viewEditorSetup() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — Editor Terminal Setup"))
+	b.WriteString("\n\n")
+
+	if m.editorManual != "" {
+		// Some editors failed — show results + manual instructions
+		for _, r := range m.editorResults {
+			if r.Success {
+				b.WriteString(check(fmt.Sprintf("%s — configured", r.Editor.Name)))
+			} else {
+				b.WriteString(cross(fmt.Sprintf("%s — failed", r.Editor.Name)))
+			}
+		}
+		b.WriteString("\n")
+		b.WriteString(m.editorManual)
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  enter continue  q quit"))
+		return b.String()
+	}
+
+	b.WriteString(subtitleStyle.Render("  Configure editor terminals to use tmux?"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  This ensures Claude sessions in your editor are managed by helios."))
+	b.WriteString("\n\n")
+
+	for _, e := range m.editors {
+		if e.Configured {
+			b.WriteString(check(fmt.Sprintf("%s — already configured", e.Name)))
+		} else {
+			b.WriteString(cross(fmt.Sprintf("%s — needs configuration", e.Name)))
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  enter configure  s skip  q quit"))
 
 	return b.String()
 }
@@ -240,6 +337,14 @@ func (m StartModel) viewMain() string {
 		b.WriteString(check(fmt.Sprintf("tmux (%s)", m.tmux.Version)))
 	} else {
 		b.WriteString(cross("tmux not installed — session management disabled"))
+	}
+	if m.shellInstalled {
+		b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
+	}
+	for _, e := range m.editors {
+		if e.Configured {
+			b.WriteString(check(fmt.Sprintf("%s terminal", e.Name)))
+		}
 	}
 	if m.tunnelOK {
 		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))

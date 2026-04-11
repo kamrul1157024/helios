@@ -427,17 +427,25 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	}
 	ctx.DB.UpsertSession(sess)
 
-	// Remove from pending panes — Claude has started successfully.
+	// Remove from pending panes and associate the tmux pane with this session.
+	var paneID string
 	if ctx.RemovePendingPane != nil {
-		ctx.RemovePendingPane(input.CWD)
+		paneID = ctx.RemovePendingPane(input.CWD)
+	}
+	if paneID != "" {
+		ctx.DB.UpdateSessionTmuxPane(input.SessionID, paneID, 0)
 	}
 
-	ctx.Notify("session_status", map[string]interface{}{
+	sseData := map[string]interface{}{
 		"session_id": input.SessionID,
 		"cwd":        input.CWD,
 		"status":     "active",
 		"model":      input.Model,
-	})
+	}
+	if paneID != "" {
+		sseData["tmux_pane"] = paneID
+	}
+	ctx.Notify("session_status", sseData)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)

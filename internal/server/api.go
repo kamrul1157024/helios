@@ -812,6 +812,19 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	})
 }
 
+func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PaneID string `json:"pane_id"`
+		CWD    string `json:"cwd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PaneID == "" {
+		jsonError(w, "missing pane_id", http.StatusBadRequest)
+		return
+	}
+	s.shared.PendingPanes.Add(req.PaneID, req.CWD)
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 func (s *InternalServer) handleInternalHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"status":        "ok",

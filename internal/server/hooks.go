@@ -62,8 +62,8 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 				})
 			}
 		},
-		RemovePendingPane: func(cwd string) {
-			s.shared.PendingPanes.RemoveByCWD(cwd)
+		RemovePendingPane: func(cwd string) string {
+			return s.shared.PendingPanes.RemoveByCWD(cwd)
 		},
 	}
 }

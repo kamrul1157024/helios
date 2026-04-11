@@ -68,6 +68,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("POST /internal/device/rekey", s.handleDeviceRekey)
 	mux.HandleFunc("GET /internal/device/list", s.handleDeviceList)
 	mux.HandleFunc("POST /internal/device/revoke", s.handleDeviceRevoke)
+	mux.HandleFunc("POST /internal/wrap", s.handleWrap)
 	mux.HandleFunc("GET /internal/logs", s.handleInternalLogs)
 
 	s.httpServer = &http.Server{

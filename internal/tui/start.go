@@ -23,6 +23,8 @@ const (
 	screenLoading        screen = iota // checking daemon, starting if needed
 	screenHooksInstall                 // prompt to install Claude hooks
 	screenHooksUpdate                  // prompt to update outdated hooks
+	screenShellSetup                   // prompt to install shell wrapper
+	screenEditorSetup                  // prompt to configure editor terminals
 	screenTunnelSelect                 // first time only: pick tunnel provider
 	screenBinaryMissing                // tunnel binary not found
 	screenTunnelStarting               // starting tunnel...
@@ -54,16 +56,19 @@ type tmuxStatus struct {
 }
 
 type statusCheckDone struct {
-	daemonOK      bool
-	hooksOK       bool
-	hooksOutdated bool
-	tunnelOK      bool
-	tunnelURL     string
-	tunnelProv    string
-	deviceCount   int
-	devices       []deviceInfo
-	tmux          tmuxStatus
-	err           error
+	daemonOK       bool
+	hooksOK        bool
+	hooksOutdated  bool
+	shellInfo      daemon.ShellInfo
+	shellInstalled bool
+	editors        []daemon.EditorInfo
+	tunnelOK       bool
+	tunnelURL      string
+	tunnelProv     string
+	deviceCount    int
+	devices        []deviceInfo
+	tmux           tmuxStatus
+	err            error
 }
 
 type tunnelStarted struct {
@@ -91,6 +96,17 @@ type hooksInstallDone struct {
 	err error
 }
 
+type shellSetupDone struct {
+	installed bool
+	err       error
+	manual    string // manual instructions if failed
+}
+
+type editorSetupDone struct {
+	results []daemon.EditorSetupResult
+	manual  string // manual instructions for failed editors
+}
+
 type tickMsg time.Time
 type tokenTickMsg time.Time
 
@@ -112,6 +128,16 @@ type StartModel struct {
 	deviceCount int
 	devices     []deviceInfo
 	tmux        tmuxStatus
+
+	// Shell setup
+	shellInfo      daemon.ShellInfo
+	shellInstalled bool
+	shellManual    string // non-empty if auto-install failed
+
+	// Editor setup
+	editors       []daemon.EditorInfo
+	editorResults []daemon.EditorSetupResult
+	editorManual  string // non-empty if any editor failed
 
 	// Tunnel selection
 	tunnelCursor int
@@ -203,6 +229,21 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hooksOutdated = false
 		return m.proceedAfterHooks()
 
+	case shellSetupDone:
+		if msg.err != nil {
+			m.shellManual = msg.manual
+		} else {
+			m.shellInstalled = true
+		}
+		return m.proceedAfterShell()
+
+	case editorSetupDone:
+		m.editorResults = msg.results
+		if msg.manual != "" {
+			m.editorManual = msg.manual
+		}
+		return m.proceedAfterEditor()
+
 	case deviceActionDone:
 		return m.handleDeviceAction(msg)
 
@@ -240,7 +281,8 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenMain:
 			return m, tea.Quit
-		case screenHooksInstall, screenHooksUpdate, screenTunnelSelect, screenBinaryMissing, screenError:
+		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenEditorSetup,
+			screenTunnelSelect, screenBinaryMissing, screenError:
 			return m, tea.Quit
 		}
 
@@ -276,8 +318,13 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "s":
-		if m.screen == screenHooksInstall || m.screen == screenHooksUpdate {
+		switch m.screen {
+		case screenHooksInstall, screenHooksUpdate:
 			return m.proceedAfterHooks()
+		case screenShellSetup:
+			return m.proceedAfterShell()
+		case screenEditorSetup:
+			return m.proceedAfterEditor()
 		}
 	}
 
@@ -300,19 +347,27 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.screen = screenHooksUpdate
 			return m, nil
 		}
-		if !m.tunnelOK {
-			m.screen = screenTunnelSelect
-			return m, nil
-		}
-		// Tunnel OK — go to main
-		m.screen = screenMain
-		return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
+		return m.proceedAfterHooks()
 
 	case screenHooksInstall:
 		return m, installHooksCmd()
 
 	case screenHooksUpdate:
 		return m, installHooksCmd()
+
+	case screenShellSetup:
+		if m.shellManual != "" {
+			// Manual instructions shown — just continue
+			return m.proceedAfterShell()
+		}
+		return m, installShellWrapperCmd(m.shellInfo)
+
+	case screenEditorSetup:
+		if m.editorManual != "" {
+			// Manual instructions shown — just continue
+			return m.proceedAfterEditor()
+		}
+		return m, configureEditorsCmd(m.editors)
 
 	case screenTunnelSelect:
 		provider := tunnelProviders[m.tunnelCursor]
@@ -360,6 +415,31 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
+	// Shell wrapper setup (skip if already installed or unsupported shell)
+	if !m.shellInstalled && m.shellInfo.Syntax != "unknown" && m.shellInfo.RCPath != "" {
+		m.screen = screenShellSetup
+		return m, nil
+	}
+	return m.proceedAfterShell()
+}
+
+func (m StartModel) proceedAfterShell() (tea.Model, tea.Cmd) {
+	// Editor setup (skip if no editors found or all already configured)
+	unconfigured := false
+	for _, e := range m.editors {
+		if !e.Configured {
+			unconfigured = true
+			break
+		}
+	}
+	if unconfigured {
+		m.screen = screenEditorSetup
+		return m, nil
+	}
+	return m.proceedAfterEditor()
+}
+
+func (m StartModel) proceedAfterEditor() (tea.Model, tea.Cmd) {
 	if !m.tunnelOK {
 		m.screen = screenTunnelSelect
 		return m, nil
@@ -372,6 +452,9 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.daemonOK = msg.daemonOK
 	m.hooksOK = msg.hooksOK
 	m.hooksOutdated = msg.hooksOutdated
+	m.shellInfo = msg.shellInfo
+	m.shellInstalled = msg.shellInstalled
+	m.editors = msg.editors
 	m.tunnelOK = msg.tunnelOK
 	m.tunnelURL = msg.tunnelURL
 	m.tunnelProv = msg.tunnelProv
@@ -523,6 +606,13 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 			result.hooksOutdated = daemon.HooksOutdated()
 		}
 
+		// Check shell wrapper
+		result.shellInfo = daemon.DetectShell()
+		result.shellInstalled = daemon.ShellWrapperInstalled(result.shellInfo)
+
+		// Check editors
+		result.editors = daemon.DetectEditors()
+
 		// Check tunnel
 		ts, err := c.tunnelStatus()
 		if err == nil && ts.Active {
@@ -631,6 +721,61 @@ func rejectDevice(c *client, kid string) tea.Cmd {
 		err := c.deviceRevoke(kid)
 		return deviceActionDone{err: err}
 	}
+}
+
+func installShellWrapperCmd(info daemon.ShellInfo) tea.Cmd {
+	return func() tea.Msg {
+		err := daemon.InstallShellWrapper(info)
+		if err != nil {
+			return shellSetupDone{
+				err:    err,
+				manual: daemon.ManualShellInstructions(info, err),
+			}
+		}
+		return shellSetupDone{installed: true}
+	}
+}
+
+func configureEditorsCmd(editors []daemon.EditorInfo) tea.Cmd {
+	return func() tea.Msg {
+		// Find tmux path
+		tmuxPath := findTmuxPath()
+
+		results := make([]daemon.EditorSetupResult, len(editors))
+		var manualParts []string
+
+		for i, editor := range editors {
+			results[i] = daemon.EditorSetupResult{Editor: editor}
+			if editor.Configured {
+				results[i].Success = true
+				continue
+			}
+			err := daemon.ConfigureEditor(editor, tmuxPath)
+			results[i].Success = err == nil
+			results[i].Error = err
+			if err != nil {
+				manualParts = append(manualParts, daemon.ManualEditorInstructions(editor, tmuxPath, err))
+			}
+		}
+
+		return editorSetupDone{
+			results: results,
+			manual:  strings.Join(manualParts, "\n"),
+		}
+	}
+}
+
+func findTmuxPath() string {
+	if p, err := exec.LookPath("tmux"); err == nil {
+		return p
+	}
+	// Common locations
+	for _, p := range []string{"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "tmux"
 }
 
 func hooksInstalled() bool {

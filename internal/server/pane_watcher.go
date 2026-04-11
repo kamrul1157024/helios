@@ -49,16 +49,18 @@ func (m *PendingPaneMap) Remove(paneID string) {
 	delete(m.panes, paneID)
 }
 
-// RemoveByCWD removes the first pending pane matching the given CWD.
-func (m *PendingPaneMap) RemoveByCWD(cwd string) {
+// RemoveByCWD removes the first pending pane matching the given CWD
+// and returns its pane ID (empty string if not found).
+func (m *PendingPaneMap) RemoveByCWD(cwd string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, p := range m.panes {
 		if p.CWD == cwd {
 			delete(m.panes, id)
-			return
+			return p.PaneID
 		}
 	}
+	return ""
 }
 
 // List returns a snapshot of all pending panes.
