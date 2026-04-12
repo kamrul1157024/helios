@@ -1,9 +1,15 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import '../services/host_manager.dart';
 import 'home_screen.dart';
+
+/// Whether QR scanning should be the default input mode.
+/// Disabled on web and desktop platforms where camera scanning is impractical.
+bool get _defaultToScanner =>
+    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 class SetupScreen extends StatefulWidget {
   final String? deepLinkToken;
@@ -17,7 +23,7 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   final _urlController = TextEditingController();
-  bool _scanning = !kIsWeb;
+  bool _scanning = _defaultToScanner;
   bool _loading = false;
   String? _error;
   final List<String> _statusMessages = [];
@@ -212,7 +218,7 @@ class _SetupScreenState extends State<SetupScreen> {
             onPressed: _handleManualSubmit,
             child: const Text('Connect'),
           ),
-          if (!kIsWeb) ...[
+          if (_defaultToScanner) ...[
             const SizedBox(height: 16),
             TextButton(
               onPressed: () => setState(() => _scanning = true),
@@ -405,7 +411,7 @@ class _SetupScreenState extends State<SetupScreen> {
                           _error = null;
                           _loading = false;
                           _statusMessages.clear();
-                          _scanning = !kIsWeb;
+                          _scanning = _defaultToScanner;
                         });
                       },
                       child: const Text('Try Again'),

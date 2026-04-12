@@ -519,7 +519,19 @@ class HostManager extends ChangeNotifier {
   }
 
   Future<void> _updateDeviceMetadata(String serverUrl, String cookie) async {
-    final platform = defaultTargetPlatform == TargetPlatform.android ? 'Android' : 'iOS';
+    String platform;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        platform = 'Android';
+      case TargetPlatform.macOS:
+        platform = 'macOS';
+      case TargetPlatform.linux:
+        platform = 'Linux';
+      case TargetPlatform.windows:
+        platform = 'Windows';
+      default:
+        platform = 'iOS';
+    }
     final name = '$platform — Helios App';
     try {
       await http.post(

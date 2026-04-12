@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -54,6 +55,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _checkNotificationPermission() async {
+    // permission_handler is not supported on macOS
+    if (Platform.isMacOS) return;
     final granted = await NotificationService.instance.requestPermission();
     if (mounted) setState(() => _notifPermissionDenied = !granted);
   }

@@ -48,14 +48,18 @@ class NotificationService {
     _vibrationEnabled = prefs.getBool(_keyVibrationEnabled) ?? true;
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosSettings = DarwinInitializationSettings(
+    const darwinSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
     );
 
     await _plugin.initialize(
-      const InitializationSettings(android: androidSettings, iOS: iosSettings),
+      const InitializationSettings(
+        android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
+      ),
       onDidReceiveNotificationResponse: _onResponse,
     );
 
@@ -134,6 +138,13 @@ class NotificationService {
         IOSFlutterLocalNotificationsPlugin>();
     if (ios != null) {
       final granted = await ios.requestPermissions(alert: true, badge: true, sound: true);
+      return granted ?? false;
+    }
+
+    final macos = _plugin.resolvePlatformSpecificImplementation<
+        MacOSFlutterLocalNotificationsPlugin>();
+    if (macos != null) {
+      final granted = await macos.requestPermissions(alert: true, badge: true, sound: true);
       return granted ?? false;
     }
 
