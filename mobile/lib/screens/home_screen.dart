@@ -47,11 +47,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _subscribeToAllHosts();
 
     // Wire narration service to daemon API
-    NarrationService.instance.onNarrate = (hostId, events, sessionContext, systemPrompt) {
+    NarrationService.instance.onNarrate = (hostId, events, sessionContext, sessionCwd, systemPrompt) {
       final service = _hm.serviceFor(hostId);
       if (service == null) return Future.value(null);
-      return service.smallModelText(events,
+      return service.narrate(events,
           sessionContext: sessionContext,
+          sessionCwd: sessionCwd,
           systemPrompt: systemPrompt);
     };
   }
@@ -106,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               hostId, sessionId,
               NarrationEvent.fromStatus(status),
               sessionContext: session?.displayTitle,
+              sessionCwd: session?.cwd,
             );
           } else {
             final spoken = TTSTransformer.transformSessionStatus(
@@ -181,6 +183,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             hostId, sessionId,
             NarrationEvent.fromNotification(n),
             sessionContext: session?.displayTitle,
+            sessionCwd: session?.cwd,
           );
         }
         return;

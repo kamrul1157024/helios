@@ -110,7 +110,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/commands", s.handleListCommands)
 	protectedMux.HandleFunc("GET /api/providers", s.handleListProviders)
 	protectedMux.HandleFunc("POST /api/sessions", s.handleCreateSession)
-	protectedMux.HandleFunc("POST /api/small-model-text", s.handleSmallModelText)
+	protectedMux.HandleFunc("POST /api/narrate", s.handleSmallModelText)
 
 	// Dynamic path handlers for providers
 	protectedMux.HandleFunc("/api/providers/", func(w http.ResponseWriter, r *http.Request) {
