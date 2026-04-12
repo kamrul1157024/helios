@@ -275,7 +275,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
         }
 
         final isSearchActive = _searchExpanded && _searchController.text.trim().isNotEmpty;
-        final isFilterActive = isSearchActive || _cwdFilter != null;
+        final isFilterActive = isSearchActive || _cwdFilter != null || _filter != SessionFilter.all;
 
         if (sessions.isEmpty && !isFilterActive) {
           return _buildEmptyState();
