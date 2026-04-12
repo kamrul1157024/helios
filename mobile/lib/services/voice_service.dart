@@ -5,6 +5,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class VoiceService {
   VoiceService._();
@@ -36,6 +37,7 @@ class VoiceService {
   bool get autoReadEnabled => _autoReadEnabled;
   double get speechRate => _speechRate;
   String get language => _language;
+  bool get ttsReady => _ttsReady;
   bool get sttAvailable => _sttAvailable;
   bool get isListening => _isListening;
   bool get isSpeaking => _isSpeaking;
@@ -198,6 +200,37 @@ class VoiceService {
 
   // ==================== Diagnostics ====================
 
+  /// Open the Android TTS settings screen so the user can install languages.
+  Future<bool> openTtsSettings() async {
+    final uri = Uri.parse(
+      'intent:#Intent;action=com.android.settings.TTS_SETTINGS;end',
+    );
+    try {
+      final ok = await launchUrl(uri);
+      if (ok) return true;
+    } catch (_) {}
+    return openAppSettings();
+  }
+
+  /// Open the Android voice input / STT settings screen.
+  Future<bool> openSttSettings() async {
+    final uri = Uri.parse(
+      'intent:#Intent;action=com.android.settings.VOICE_INPUT_SETTINGS;end',
+    );
+    try {
+      final ok = await launchUrl(uri);
+      if (ok) return true;
+    } catch (_) {}
+    return openAppSettings();
+  }
+
+  /// Open the appropriate settings screen based on which service(s) failed.
+  Future<bool> openVoiceSettings() async {
+    if (!_ttsReady && !_sttAvailable) return openTtsSettings();
+    if (!_ttsReady) return openTtsSettings();
+    return openSttSettings();
+  }
+
   /// Check if TTS engine is available. Returns null if OK, or an error message.
   Future<String?> checkTtsAvailability() async {
     try {
@@ -226,6 +259,40 @@ class VoiceService {
     } catch (e) {
       return 'STT check failed: $e';
     }
+  }
+
+  // ==================== Auto-Start ====================
+
+  /// Try to auto-start both TTS and STT. Returns a warning string if either
+  /// failed to start, or null if both are ready.
+  Future<String?> ensureServicesReady() async {
+    final warnings = <String>[];
+
+    // Try to auto-start TTS
+    final ttsOk = await _ensureTtsReady();
+    if (!ttsOk) {
+      // Use checkTtsAvailability for a detailed diagnostic (it only queries
+      // engines/languages, no reinit).
+      final ttsWarning = await checkTtsAvailability();
+      warnings.add(ttsWarning ?? 'Text-to-speech failed to start.');
+    }
+
+    // Try to auto-start STT (don't call checkSttAvailability — it would
+    // re-initialize the engine a second time).
+    try {
+      _sttAvailable = await _stt.initialize();
+    } catch (_) {
+      _sttAvailable = false;
+    }
+    if (!_sttAvailable) {
+      warnings.add(
+        'Speech recognition not available. '
+        'Ensure the Google app is installed and enabled in Settings → Apps.',
+      );
+    }
+
+    if (warnings.isEmpty) return null;
+    return warnings.join('\n\n');
   }
 
   // ==================== STT ====================

@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
+  bool _voiceLoading = false;
 
   @override
   void initState() {
@@ -211,24 +212,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final newState = !VoiceService.instance.globalVoiceActive;
 
     if (newState) {
-      // Check TTS availability before enabling
-      final warning = await VoiceService.instance.checkTtsAvailability();
-      if (warning != null && mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            icon: Icon(Icons.warning_amber_rounded, color: Theme.of(ctx).colorScheme.error, size: 32),
-            title: const Text('Service unavailable'),
-            content: Text(warning),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('OK'),
-              ),
-            ],
+      // Try to auto-start TTS engine
+      setState(() => _voiceLoading = true);
+      final warning = await VoiceService.instance.ensureServicesReady();
+      if (!mounted) return;
+      setState(() => _voiceLoading = false);
+      if (!VoiceService.instance.ttsReady) {
+        // TTS failed — don't activate global voice
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(warning ?? 'Voice services unavailable.'),
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'TTS Settings',
+              onPressed: () => VoiceService.instance.openTtsSettings(),
+            ),
           ),
         );
         return;
+      }
+      if (warning != null) {
+        // TTS ok but STT failed — that's fine for global announcements, just warn
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(warning),
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'STT Settings',
+              onPressed: () => VoiceService.instance.openSttSettings(),
+            ),
+          ),
+        );
       }
     }
 
@@ -473,18 +487,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             actions: [
               _buildConnectionDots(),
               IconButton(
-                icon: Icon(
-                  VoiceService.instance.globalVoiceActive
-                      ? Icons.volume_up
-                      : Icons.volume_off_outlined,
-                  color: VoiceService.instance.globalVoiceActive
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
+                icon: _voiceLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        VoiceService.instance.globalVoiceActive
+                            ? Icons.volume_up
+                            : Icons.volume_off_outlined,
+                        color: VoiceService.instance.globalVoiceActive
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
                 tooltip: VoiceService.instance.globalVoiceActive
                     ? 'Voice announcements on'
                     : 'Voice announcements off',
-                onPressed: _toggleGlobalVoice,
+                onPressed: _voiceLoading ? null : _toggleGlobalVoice,
               ),
               IconButton(
                 icon: const Icon(Icons.settings_outlined),

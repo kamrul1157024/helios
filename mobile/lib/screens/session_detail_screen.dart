@@ -39,6 +39,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   late final AnimationController _breathController;
   bool _breathingActive = false;
   bool _isRecording = false;
+  bool _voiceLoading = false;
 
   bool get _isVoiceActive => VoiceService.instance.isSessionActive(widget.session.sessionId);
 
@@ -452,31 +453,55 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     // Voice mode toggle
     actions.add(
       IconButton(
-        icon: Icon(
-          _isVoiceActive ? Icons.headset : Icons.headset_off,
-          color: _isVoiceActive ? Theme.of(context).colorScheme.primary : null,
-        ),
+        icon: _voiceLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                _isVoiceActive ? Icons.headset : Icons.headset_off,
+                color: _isVoiceActive ? Theme.of(context).colorScheme.primary : null,
+              ),
         tooltip: _isVoiceActive ? 'Voice mode on' : 'Voice mode off',
-        onPressed: () async {
+        onPressed: _voiceLoading
+            ? null
+            : () async {
           if (!_isVoiceActive) {
-            // Check TTS availability before enabling
-            final warning = await VoiceService.instance.checkTtsAvailability();
-            if (warning != null && mounted) {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  icon: Icon(Icons.warning_amber_rounded, color: Theme.of(ctx).colorScheme.error, size: 32),
-                  title: const Text('Service unavailable'),
-                  content: Text(warning),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('OK'),
-                    ),
-                  ],
+            // Try to auto-start TTS and STT services
+            setState(() => _voiceLoading = true);
+            final warning = await VoiceService.instance.ensureServicesReady();
+            if (!mounted) return;
+            setState(() => _voiceLoading = false);
+            final ttsReady = VoiceService.instance.ttsReady;
+            final sttReady = VoiceService.instance.sttAvailable;
+            if (!ttsReady && !sttReady) {
+              // Both services failed — don't activate voice mode
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(warning ?? 'Voice services unavailable.'),
+                  duration: const Duration(seconds: 8),
+                  action: SnackBarAction(
+                    label: 'Settings',
+                    onPressed: () => VoiceService.instance.openVoiceSettings(),
+                  ),
                 ),
               );
               return;
+            }
+            if (warning != null) {
+              // One service failed — activate but warn
+              final label = !ttsReady ? 'TTS Settings' : 'STT Settings';
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(warning),
+                  duration: const Duration(seconds: 8),
+                  action: SnackBarAction(
+                    label: label,
+                    onPressed: () => VoiceService.instance.openVoiceSettings(),
+                  ),
+                ),
+              );
             }
             final wasGlobalActive = VoiceService.instance.globalVoiceActive;
             setState(() {
