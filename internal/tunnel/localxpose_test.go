@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"os/exec"
 	"regexp"
 	"testing"
 )
@@ -44,37 +45,37 @@ func TestLocalxposeBuildArgs(t *testing.T) {
 			name:     "basic",
 			tunnel:   &LocalxposeTunnel{},
 			port:     8080,
-			wantArgs: []string{"tunnel", "http", "--port", "8080", "--raw-mode"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:8080"},
 		},
 		{
 			name:     "with subdomain",
 			tunnel:   &LocalxposeTunnel{subdomain: "my-helios"},
 			port:     8080,
-			wantArgs: []string{"tunnel", "http", "--port", "8080", "--raw-mode", "--subdomain", "my-helios"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:8080", "--subdomain", "my-helios"},
 		},
 		{
 			name:     "with reserved domain",
 			tunnel:   &LocalxposeTunnel{reservedDomain: "my-helios.loclx.io"},
 			port:     8080,
-			wantArgs: []string{"tunnel", "http", "--port", "8080", "--raw-mode", "--reserved-domain", "my-helios.loclx.io"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:8080", "--reserved-domain", "my-helios.loclx.io"},
 		},
 		{
 			name:     "reserved domain takes precedence over subdomain",
 			tunnel:   &LocalxposeTunnel{subdomain: "sub", reservedDomain: "my-helios.loclx.io"},
 			port:     8080,
-			wantArgs: []string{"tunnel", "http", "--port", "8080", "--raw-mode", "--reserved-domain", "my-helios.loclx.io"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:8080", "--reserved-domain", "my-helios.loclx.io"},
 		},
 		{
 			name:     "with region",
 			tunnel:   &LocalxposeTunnel{region: "eu"},
 			port:     3000,
-			wantArgs: []string{"tunnel", "http", "--port", "3000", "--raw-mode", "--region", "eu"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:3000", "--region", "eu"},
 		},
 		{
 			name:     "with basic auth",
 			tunnel:   &LocalxposeTunnel{basicAuth: "admin:secret"},
 			port:     8080,
-			wantArgs: []string{"tunnel", "http", "--port", "8080", "--raw-mode", "--basic-auth", "admin:secret"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:8080", "--basic-auth", "admin:secret"},
 		},
 		{
 			name: "full config",
@@ -84,7 +85,7 @@ func TestLocalxposeBuildArgs(t *testing.T) {
 				basicAuth:      "user:pass",
 			},
 			port:     7655,
-			wantArgs: []string{"tunnel", "http", "--port", "7655", "--raw-mode", "--reserved-domain", "my-helios.loclx.io", "--region", "ap", "--basic-auth", "user:pass"},
+			wantArgs: []string{"tunnel", "http", "--to", "127.0.0.1:7655", "--reserved-domain", "my-helios.loclx.io", "--region", "ap", "--basic-auth", "user:pass"},
 		},
 	}
 
@@ -103,19 +104,19 @@ func TestLocalxposeBuildArgs(t *testing.T) {
 	}
 }
 
-func TestLocalxposeBuildArgsAlwaysHasRawMode(t *testing.T) {
+func TestLocalxposeBuildArgsHasTo(t *testing.T) {
 	lx := &LocalxposeTunnel{}
 	args := lx.buildArgs(8080)
 
 	found := false
-	for _, arg := range args {
-		if arg == "--raw-mode" {
+	for i, arg := range args {
+		if arg == "--to" && i+1 < len(args) && args[i+1] == "127.0.0.1:8080" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("args should always contain --raw-mode for headless operation")
+		t.Errorf("args should contain --to 127.0.0.1:8080, got %v", args)
 	}
 }
 
@@ -155,6 +156,10 @@ func TestLocalxposeURLRegex(t *testing.T) {
 }
 
 func TestManagerStartLocalxposeNoBinary(t *testing.T) {
+	if _, err := exec.LookPath("loclx"); err == nil {
+		t.Skip("loclx is installed, skipping not-found test")
+	}
+
 	dir := t.TempDir()
 	mgr := NewManager(dir)
 	mgr.SetProviderConfig(ProviderConfig{
@@ -164,7 +169,7 @@ func TestManagerStartLocalxposeNoBinary(t *testing.T) {
 	_, err := mgr.Start("localxpose", "", 8080)
 	if err == nil {
 		mgr.Stop()
-		t.Skip("localxpose is installed, skipping not-found test")
+		t.Fatal("expected error when localxpose is not installed")
 	}
 
 	if got := err.Error(); !regexp.MustCompile(`localxpose not found`).MatchString(got) {

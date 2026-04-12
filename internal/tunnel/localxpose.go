@@ -59,8 +59,7 @@ func (t *LocalxposeTunnel) Start(localPort int) error {
 func (t *LocalxposeTunnel) buildArgs(localPort int) []string {
 	args := []string{
 		"tunnel", "http",
-		"--port", fmt.Sprintf("%d", localPort),
-		"--raw-mode",
+		"--to", fmt.Sprintf("127.0.0.1:%d", localPort),
 	}
 
 	if t.reservedDomain != "" {
