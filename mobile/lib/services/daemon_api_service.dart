@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/narration_event.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/session.dart';
@@ -78,6 +77,8 @@ class DaemonAPIService extends ChangeNotifier {
     required this.serverUrl,
     String? cookie,
   }) : _cookie = cookie;
+
+  String get cookie => _cookie ?? '';
 
   void setCookie(String cookie) {
     _cookie = cookie;
@@ -652,41 +653,30 @@ class DaemonAPIService extends ChangeNotifier {
     }
   }
 
-  // ==================== Narration API ====================
+  // ==================== Settings API ====================
 
-  /// Call the backend's small model for AI narration.
-  /// Returns the generated narration text, or null on failure.
-  Future<String?> narrate(
-    List<NarrationEvent> events, {
-    String? sessionContext,
-    String? sessionCwd,
-    String? systemPrompt,
-  }) async {
+  /// Fetch all settings and personas from the backend.
+  Future<Map<String, dynamic>?> getSettings() async {
     try {
-      final body = <String, dynamic>{
-        'events': events.map((e) => e.toJson()).toList(),
-      };
-      if (sessionContext != null && sessionContext.isNotEmpty) {
-        body['session_context'] = sessionContext;
-      }
-      if (sessionCwd != null && sessionCwd.isNotEmpty) {
-        body['session_cwd'] = sessionCwd;
-      }
-      if (systemPrompt != null && systemPrompt.isNotEmpty) {
-        body['system_prompt'] = systemPrompt;
-      }
-
-      final resp = await _authPost('/api/narrate', body: body)
-          .timeout(const Duration(seconds: 10));
+      final resp = await _authGet('/api/settings');
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        final narration = data['narration'] as String?;
-        return (narration != null && narration.isNotEmpty) ? narration : null;
+        return jsonDecode(resp.body) as Map<String, dynamic>;
       }
     } catch (e) {
-      debugPrint('[$hostId] Narrate error: $e');
+      debugPrint('[$hostId] getSettings error: $e');
     }
     return null;
+  }
+
+  /// Update settings on the backend (bulk upsert).
+  Future<bool> updateSettings(Map<String, String> settings) async {
+    try {
+      final resp = await _authPost('/api/settings', body: settings);
+      return resp.statusCode == 200;
+    } catch (e) {
+      debugPrint('[$hostId] updateSettings error: $e');
+    }
+    return false;
   }
 
   // ==================== Providers & Models API ====================

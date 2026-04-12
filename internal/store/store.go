@@ -135,6 +135,7 @@ func (s *Store) migrate() error {
 		{"add_sessions_pinned", `ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`},
 		{"add_sessions_archived", `ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
 		{"add_sessions_title", `ALTER TABLE sessions ADD COLUMN title TEXT`},
+		{"create_settings_table", `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`},
 	}
 
 	for _, cm := range columnMigrations {

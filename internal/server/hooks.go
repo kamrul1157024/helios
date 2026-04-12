@@ -12,6 +12,7 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/push"
+	"github.com/kamrul1157024/helios/internal/reporter"
 )
 
 // handleHook is the single entry point for POST /hooks/{hookType...}.
@@ -64,6 +65,19 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		},
 		RemovePendingPane: func(cwd string) string {
 			return s.shared.PendingPanes.RemoveByCWD(cwd)
+		},
+		Report: func(event provider.ReportEvent) {
+			s.shared.Reporter.AddEvent(reporter.Event{
+				Type:      event.Type,
+				SessionID: event.SessionID,
+				CWD:       event.CWD,
+				ToolName:  event.ToolName,
+				ToolInput: event.ToolInput,
+				Message:   event.Message,
+				Status:    event.Status,
+				AgentType: event.AgentType,
+				Detail:    event.Detail,
+			})
 		},
 	}
 }

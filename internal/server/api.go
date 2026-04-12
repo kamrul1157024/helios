@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/auth"
-	"github.com/kamrul1157024/helios/internal/narration"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
 )
@@ -1098,32 +1098,75 @@ func (s *PublicServer) handleListCommands(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// ==================== Small Model Text ====================
+// ==================== Reporter ====================
 
-func (s *PublicServer) handleSmallModelText(w http.ResponseWriter, r *http.Request) {
-	var req narration.Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+func (s *PublicServer) handleReporter(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	sessionFilter := r.URL.Query().Get("session")
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	listener := s.shared.Reporter.Subscribe(sessionFilter)
+	defer s.shared.Reporter.Unsubscribe(listener)
+
+	fmt.Fprintf(w, ": connected\n\n")
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case n := <-listener.Ch:
+			data, _ := json.Marshal(n)
+			fmt.Fprintf(w, "event: narration\ndata: %s\n\n", data)
+			flusher.Flush()
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+// ==================== Settings ====================
+
+func (s *PublicServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.shared.DB.GetAllSettings()
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to read settings: %v", err), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"settings":    settings,
+		"personas":    reporter.Personas,
+		"event_types": provider.GetAllEventTypes(),
+	})
+}
+
+func (s *PublicServer) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var settings map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	if len(req.Events) == 0 {
-		jsonResponse(w, http.StatusOK, narration.Response{})
+	if len(settings) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	// Log request for debugging
-	for i, e := range req.Events {
-		log.Printf("[narrate] event[%d]: type=%s tool=%s content=%s status=%s", i, e.Type, e.Tool, truncate(e.Content, 80), e.Status)
+	if err := s.shared.DB.SetSettings(settings); err != nil {
+		jsonError(w, fmt.Sprintf("failed to save settings: %v", err), http.StatusInternalServerError)
+		return
 	}
-	if req.SessionContext != "" {
-		log.Printf("[narrate] session_context=%s", truncate(req.SessionContext, 80))
-	}
-
-	resp := narration.Generate(r.Context(), req, "claude")
-
-	log.Printf("[narrate] narration=%q", resp.Narration)
-	jsonResponse(w, http.StatusOK, resp)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ==================== Providers & Models ====================

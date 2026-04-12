@@ -97,6 +97,25 @@ func Register() {
 		return result.Result, nil
 	})
 
+	// Event types for reporter filtering
+	provider.RegisterEventTypes("claude", []provider.EventTypeInfo{
+		{Type: "tool_pre", Label: "Tool Started", Description: "A tool is about to run", Category: "tools"},
+		{Type: "tool_post", Label: "Tool Completed", Description: "A tool finished successfully", Category: "tools"},
+		{Type: "tool_post_failure", Label: "Tool Failed", Description: "A tool finished with an error", Category: "tools"},
+		{Type: "prompt_submit", Label: "Prompt Submitted", Description: "User sent a new prompt", Category: "actions"},
+		{Type: "permission", Label: "Permission Needed", Description: "Waiting for user to approve an action", Category: "actions"},
+		{Type: "question", Label: "Question Asked", Description: "Claude is asking a question", Category: "actions"},
+		{Type: "stop", Label: "Session Stopped", Description: "Session finished normally", Category: "lifecycle"},
+		{Type: "stop_failure", Label: "Session Error", Description: "Session stopped due to an error", Category: "lifecycle"},
+		{Type: "session_start", Label: "Session Started", Description: "A new session began", Category: "lifecycle"},
+		{Type: "session_end", Label: "Session Ended", Description: "Session was closed", Category: "lifecycle"},
+		{Type: "compact_pre", Label: "Compacting", Description: "Context compaction is starting", Category: "context"},
+		{Type: "compact_post", Label: "Compacted", Description: "Context compaction finished", Category: "context"},
+		{Type: "subagent_start", Label: "Subagent Started", Description: "A subagent was spawned", Category: "subagents"},
+		{Type: "subagent_stop", Label: "Subagent Stopped", Description: "A subagent finished", Category: "subagents"},
+		{Type: "notification", Label: "Notification", Description: "A general notification from Claude", Category: "other"},
+	})
+
 	// Slash commands available in the Claude CLI
 	provider.RegisterCommands([]provider.Command{
 		{Name: "/compact", Description: "Compact conversation context", Icon: "compress"},

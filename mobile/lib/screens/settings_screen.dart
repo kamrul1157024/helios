@@ -4,8 +4,8 @@ import '../models/host_connection.dart';
 import '../providers/theme_provider.dart';
 import '../services/host_manager.dart';
 import '../services/notification_service.dart';
-import '../services/narration_service.dart';
 import '../services/voice_service.dart';
+import 'event_filter_screen.dart';
 import 'host_detail_screen.dart';
 import 'setup_screen.dart';
 
@@ -23,7 +23,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _autoReadEnabled;
   late bool _toolCallTtsEnabled;
   late double _speechRate;
-  late bool _aiNarrationEnabled;
+
+  // Reporter settings from backend
+  String _activePersonaId = 'default';
+  int _debounceSeconds = 10;
+  String _customPrompt = '';
+  List<Map<String, dynamic>> _personas = [];
+  Map<String, List<Map<String, dynamic>>> _eventTypes = {};
+  String? _globalFilterJson;
+  String? _sessionFilterJson;
+  bool _settingsLoaded = false;
 
   @override
   void initState() {
@@ -34,7 +43,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _autoReadEnabled = VoiceService.instance.autoReadEnabled;
     _toolCallTtsEnabled = VoiceService.instance.toolCallTtsEnabled;
     _speechRate = VoiceService.instance.speechRate;
-    _aiNarrationEnabled = NarrationService.instance.aiNarrationEnabled;
+    _loadReporterSettings();
+  }
+
+  Future<void> _loadReporterSettings() async {
+    final hm = context.read<HostManager>();
+    // Use the first connected host for settings
+    for (final host in hm.hosts) {
+      final service = hm.serviceFor(host.id);
+      if (service == null || !service.connected) continue;
+      final data = await service.getSettings();
+      if (data != null && mounted) {
+        final settings = (data['settings'] as Map<String, dynamic>?) ?? {};
+        final personas = (data['personas'] as List?)
+                ?.map((p) => Map<String, dynamic>.from(p as Map))
+                .toList() ??
+            [];
+        final rawEventTypes = data['event_types'] as Map<String, dynamic>? ?? {};
+        final parsedEventTypes = <String, List<Map<String, dynamic>>>{};
+        for (final entry in rawEventTypes.entries) {
+          parsedEventTypes[entry.key] = (entry.value as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+        }
+        setState(() {
+          _activePersonaId = (settings['reporter.persona'] as String?) ?? 'default';
+          final debounceStr = settings['reporter.debounce_seconds'] as String?;
+          _debounceSeconds = int.tryParse(debounceStr ?? '') ?? 10;
+          _customPrompt = (settings['reporter.custom_prompt'] as String?) ?? '';
+          _personas = personas;
+          _eventTypes = parsedEventTypes;
+          _globalFilterJson = settings['reporter.filter.global'] as String?;
+          _sessionFilterJson = settings['reporter.filter.session'] as String?;
+          _settingsLoaded = true;
+        });
+      }
+      break;
+    }
+  }
+
+  Future<void> _updateReporterSetting(String key, String value) async {
+    final hm = context.read<HostManager>();
+    for (final host in hm.hosts) {
+      final service = hm.serviceFor(host.id);
+      if (service == null || !service.connected) continue;
+      await service.updateSettings({key: value});
+      break;
+    }
   }
 
   @override
@@ -132,30 +187,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
               ),
-              SwitchListTile(
-                title: const Text('AI narration'),
-                subtitle: const Text('Use AI to generate natural narration'),
-                value: _aiNarrationEnabled,
-                onChanged: (value) {
-                  setState(() => _aiNarrationEnabled = value);
-                  NarrationService.instance.setAINarrationEnabled(value);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.edit_note),
-                title: const Text('Narrator prompt'),
-                subtitle: Text(
-                  NarrationService.instance.customPrompt.isNotEmpty
-                      ? NarrationService.instance.customPrompt
-                      : 'Default (casual first-person)',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              const _SectionHeader('AI Narrator'),
+              if (!_settingsLoaded)
+                const ListTile(
+                  leading: SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  title: Text('Loading narrator settings...'),
                 ),
-                trailing: const Icon(Icons.chevron_right, size: 20),
-                enabled: _aiNarrationEnabled,
-                onTap: _aiNarrationEnabled ? _showNarratorPromptDialog : null,
-              ),
+              if (_settingsLoaded) ...[
+                ListTile(
+                  leading: const Icon(Icons.person),
+                  title: const Text('Narrator persona'),
+                  subtitle: Text(
+                    _personas
+                        .where((p) => p['id'] == _activePersonaId)
+                        .map((p) => '${p['name']} — ${p['description']}')
+                        .firstOrNull ?? _activePersonaId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: _showPersonaPicker,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.timer),
+                  title: const Text('Narration delay'),
+                  subtitle: Text(
+                    '${_debounceSeconds}s — batches events before narrating',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: _showDebounceDialog,
+                ),
+                if (_activePersonaId == 'custom')
+                  ListTile(
+                    leading: const Icon(Icons.edit_note),
+                    title: const Text('Custom prompt'),
+                    subtitle: Text(
+                      _customPrompt.isNotEmpty ? _customPrompt : 'No custom prompt set',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    onTap: _showCustomPromptDialog,
+                  ),
+                if (_eventTypes.isNotEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.filter_list),
+                    title: const Text('Event filters'),
+                    subtitle: Text(
+                      'Choose which events trigger narration',
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => EventFilterScreen(
+                            eventTypes: _eventTypes,
+                            globalFilterJson: _globalFilterJson,
+                            sessionFilterJson: _sessionFilterJson,
+                            onUpdate: _updateReporterSetting,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
             ],
           ),
         );
@@ -163,55 +265,136 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showNarratorPromptDialog() {
-    final controller = TextEditingController(
-      text: NarrationService.instance.customPrompt,
+  void _showPersonaPicker() {
+    final allOptions = [
+      ..._personas,
+      {'id': 'custom', 'name': 'Custom', 'description': 'Your own narrator prompt'},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Narrator Persona', style: Theme.of(ctx).textTheme.titleSmall),
+              ),
+              ...allOptions.map((p) {
+                final id = p['id'] as String;
+                final isSelected = id == _activePersonaId;
+                return ListTile(
+                  leading: Icon(
+                    isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                    color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
+                  ),
+                  title: Text(
+                    p['name'] as String,
+                    style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
+                  ),
+                  subtitle: Text(
+                    p['description'] as String,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    setState(() => _activePersonaId = id);
+                    _updateReporterSetting('reporter.persona', id);
+                    if (id == 'custom') {
+                      Future.delayed(const Duration(milliseconds: 300), _showCustomPromptDialog);
+                    }
+                  },
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  void _showDebounceDialog() {
+    int value = _debounceSeconds;
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Text('Narration Delay'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Wait ${value}s after the last event before generating narration.',
+                    style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 16),
+                  Slider(
+                    value: value.toDouble(),
+                    min: 2,
+                    max: 60,
+                    divisions: 29,
+                    label: '${value}s',
+                    onChanged: (v) => setDialogState(() => value = v.round()),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    setState(() => _debounceSeconds = value);
+                    _updateReporterSetting('reporter.debounce_seconds', value.toString());
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showCustomPromptDialog() {
+    final controller = TextEditingController(text: _customPrompt);
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('Narrator Prompt'),
+          title: const Text('Custom Narrator Prompt'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Customize how the AI narrator speaks. Leave empty for the default casual style.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                ),
+                'Write a system prompt for your custom narrator personality.',
+                style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
-                maxLines: 4,
+                maxLines: 5,
                 decoration: InputDecoration(
-                  hintText: 'e.g. You are a sarcastic British butler narrating code changes.',
+                  hintText: 'e.g. You are a zen monk who speaks in haiku...',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
             ],
           ),
           actions: [
-            TextButton(
-              onPressed: () {
-                controller.text = '';
-              },
-              child: const Text('Reset'),
-            ),
-            const Spacer(),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
             FilledButton(
               onPressed: () {
                 Navigator.pop(ctx);
                 final prompt = controller.text.trim();
-                NarrationService.instance.setCustomPrompt(prompt);
-                setState(() {});
+                setState(() => _customPrompt = prompt);
+                _updateReporterSetting('reporter.custom_prompt', prompt);
               },
               child: const Text('Save'),
             ),

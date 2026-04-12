@@ -77,6 +77,16 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	ctx.Notify("notification", notif)
 	ctx.Push("claude.permission", notifID, "Claude needs permission", detail)
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "permission",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			ToolName:  input.ToolName,
+			ToolInput: summarizeToolInput(input.ToolInput),
+		})
+	}
+
 	decision := waitForDecision(ctx, notifID, r)
 	if decision == nil {
 		return
@@ -174,6 +184,25 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 
 	ctx.Notify("notification", notif)
 	ctx.Push("claude.question", notifID, title, detail)
+
+	if ctx.Report != nil {
+		questionText := ""
+		var qi map[string]interface{}
+		if json.Unmarshal(input.ToolInput, &qi) == nil {
+			if q, ok := qi["question"].(string); ok {
+				questionText = q
+			}
+		}
+		if questionText == "" {
+			questionText = "Answer required to continue"
+		}
+		ctx.Report(provider.ReportEvent{
+			Type:      "question",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			Message:   questionText,
+		})
+	}
 
 	decision := waitForDecision(ctx, notifID, r)
 	if decision == nil {
@@ -344,6 +373,15 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 		"status":     "idle",
 	})
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "stop",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			Detail:    lastDetail,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -383,6 +421,15 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		"status":     "error",
 	})
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "stop_failure",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			Detail:    lastDetail,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -404,6 +451,15 @@ func handleNotification(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		ctx.Notify("session_status", map[string]interface{}{
 			"session_id": input.SessionID,
 			"status":     "idle",
+		})
+	}
+
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "notification",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			Message:   input.HookEventName,
 		})
 	}
 
@@ -458,6 +514,14 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	}
 	ctx.Notify("session_status", sseData)
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "session_start",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -476,6 +540,14 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		"cwd":        input.CWD,
 		"status":     "ended",
 	})
+
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "session_end",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -533,6 +605,15 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		"last_user_message": input.Message,
 	})
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "prompt_submit",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			Message:   input.Message,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -553,6 +634,16 @@ func handleToolPre(ctx *provider.HookContext, w http.ResponseWriter, r *http.Req
 		"last_event": "PreToolUse:" + input.ToolName,
 	})
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "tool_pre",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			ToolName:  input.ToolName,
+			ToolInput: summarizeToolInput(input.ToolInput),
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -567,6 +658,16 @@ func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUse:"+input.ToolName)
 	updateSessionTranscript(ctx, &input)
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "tool_post",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			ToolName:  input.ToolName,
+			ToolInput: summarizeToolInput(input.ToolInput),
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -580,6 +681,16 @@ func handleToolPostFailure(ctx *provider.HookContext, w http.ResponseWriter, r *
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUseFailure:"+input.ToolName)
 	updateSessionTranscript(ctx, &input)
+
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "tool_post_failure",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			ToolName:  input.ToolName,
+			ToolInput: summarizeToolInput(input.ToolInput),
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -602,6 +713,14 @@ func handlePreCompact(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		"status":     "compacting",
 	})
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "compact_pre",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -620,6 +739,14 @@ func handlePostCompact(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		"session_id": input.SessionID,
 		"status":     "active",
 	})
+
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "compact_post",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
@@ -655,6 +782,16 @@ func handleSubagentStart(ctx *provider.HookContext, w http.ResponseWriter, r *ht
 		"status":            "active",
 	})
 
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "subagent_start",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+			AgentType: input.AgentType,
+			Detail:    input.Description,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }
@@ -673,6 +810,14 @@ func handleSubagentStop(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		"parent_session_id": input.SessionID,
 		"status":            "completed",
 	})
+
+	if ctx.Report != nil {
+		ctx.Report(provider.ReportEvent{
+			Type:      "subagent_stop",
+			SessionID: input.SessionID,
+			CWD:       input.CWD,
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)

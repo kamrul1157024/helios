@@ -11,9 +11,7 @@ import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
 import '../services/voice_service.dart';
-import '../services/tts_transformer.dart';
 import '../services/narration_service.dart';
-import '../models/narration_event.dart';
 import '../widgets/skeleton.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -41,7 +39,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   late final AnimationController _breathController;
   bool _breathingActive = false;
   bool _isRecording = false;
-  int _lastReadTotal = 0;
 
   bool get _isVoiceActive => VoiceService.instance.isSessionActive(widget.session.sessionId);
 
@@ -71,30 +68,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
             _loadTranscript();
           });
-          // Speak session completion/error when voice is active
-          if (_isVoiceActive) {
-            final status = data['status']?.toString() ?? '';
-            if (status == 'idle' || status == 'error') {
-              if (NarrationService.instance.aiNarrationEnabled) {
-                NarrationService.instance.addEvent(
-                  widget.session.hostId, widget.session.sessionId,
-                  NarrationEvent.fromStatus(status),
-                );
-              } else {
-                final spoken = TTSTransformer.transformSessionStatus(
-                  status, widget.session.displayTitle);
-                if (spoken != null) VoiceService.instance.speak(spoken);
-              }
-            }
-          }
+          // Voice mode narration is handled by reporter SSE — no manual event pushing needed
         }
         if (event.type == 'notification' || event.type == 'notification_resolved') {
           // Notifications refresh via DaemonAPIService.fetchNotifications — just rebuild
           if (mounted) setState(() {});
-          // Auto-read notification via TTS
-          if (_isVoiceActive && event.type == 'notification' && data['session_id'] == widget.session.sessionId) {
-            _speakNotificationFromSSE(data);
-          }
         }
       }
     });
@@ -109,7 +87,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _verbTimer?.cancel();
     _transcriptDebounce?.cancel();
     if (_isRecording) VoiceService.instance.stopListening();
-    if (_isVoiceActive) VoiceService.instance.setActiveSession(null);
+    if (_isVoiceActive) {
+      VoiceService.instance.setActiveSession(null);
+      NarrationService.instance.disconnectAll();
+    }
     super.dispose();
   }
 
@@ -132,35 +113,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     if (sse == null) return;
     final result = await sse.fetchTranscript(widget.session.sessionId, limit: 200);
     if (result != null && mounted) {
-      // Auto-read new messages when voice mode is active
-      if (_isVoiceActive && VoiceService.instance.autoReadEnabled && _lastReadTotal > 0) {
-        final newCount = result.total - _lastReadTotal;
-        if (newCount > 0) {
-          final startIdx = result.messages.length - newCount;
-          if (startIdx >= 0) {
-            if (NarrationService.instance.aiNarrationEnabled) {
-              // AI narration: feed new messages into NarrationService's debounce
-              for (var i = startIdx; i < result.messages.length; i++) {
-                if (result.messages[i].isUser) continue;
-                NarrationService.instance.addEvent(
-                  widget.session.hostId,
-                  widget.session.sessionId,
-                  NarrationEvent.fromMessage(result.messages[i]),
-                );
-              }
-            } else {
-              // Template-based narration
-              for (var i = startIdx; i < result.messages.length; i++) {
-                final spoken = TTSTransformer.transformMessage(result.messages[i]);
-                if (spoken != null) {
-                  VoiceService.instance.speak(spoken);
-                }
-              }
-            }
-          }
-        }
-      }
-      _lastReadTotal = result.total;
+      // Narration is handled by reporter SSE — no manual event pushing needed
       setState(() {
         _messages = result.messages;
         _total = result.total;
@@ -493,30 +446,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     });
   }
 
-  void _speakNotificationFromSSE(Map data) {
-    if (!VoiceService.instance.autoReadEnabled) return;
-    // If global voice is on, the home screen handler already speaks all notifications
-    if (VoiceService.instance.globalVoiceActive) return;
-    if (!_isVoiceActive) return;
-    try {
-      final json = Map<String, dynamic>.from(data);
-      final n = HeliosNotification.fromJson(json);
-      if (n.sourceSession != widget.session.sessionId) return;
-      if (NarrationService.instance.aiNarrationEnabled) {
-        NarrationService.instance.addEvent(
-          widget.session.hostId,
-          widget.session.sessionId,
-          NarrationEvent.fromNotification(n),
-        );
-      } else {
-        final spoken = TTSTransformer.transformNotification(n);
-        if (spoken != null) VoiceService.instance.speak(spoken);
-      }
-    } catch (_) {
-      // SSE data may not have full notification shape — ignore
-    }
-  }
-
   List<Widget> _buildActions(Session session) {
     final actions = <Widget>[];
 
@@ -553,6 +482,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             setState(() {
               VoiceService.instance.setActiveSession(widget.session.sessionId);
             });
+            // Connect reporter SSE for this session (disconnects all others)
+            final svc = _sse;
+            if (svc != null) {
+              NarrationService.instance.connectSession(
+                host: ReporterHost(
+                  hostId: widget.session.hostId,
+                  serverUrl: svc.serverUrl,
+                  cookie: svc.cookie,
+                ),
+                sessionId: widget.session.sessionId,
+              );
+            }
             if (wasGlobalActive && mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -562,6 +503,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               );
             }
           } else {
+            NarrationService.instance.disconnectAll();
             setState(() {
               VoiceService.instance.setActiveSession(null);
               if (_isRecording) {
