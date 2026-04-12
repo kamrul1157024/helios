@@ -1,7 +1,6 @@
 package server
 
 import (
-	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -267,54 +266,6 @@ func (s *PublicServer) handlePair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLogin sets the HttpOnly cookie after verifying the JWT.
-func (s *PublicServer) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
-		jsonError(w, "missing token", http.StatusBadRequest)
-		return
-	}
-
-	kid, err := auth.ValidateJWT(req.Token, func(kid string) (ed25519.PublicKey, error) {
-		// Accept both pending and active devices for login
-		device, err := s.shared.DB.GetDevice(kid)
-		if err != nil {
-			return nil, err
-		}
-		if device == nil {
-			return nil, fmt.Errorf("device not found")
-		}
-		if device.Status == "revoked" {
-			return nil, fmt.Errorf("device revoked")
-		}
-		return auth.PublicKeyFromBase64(device.PublicKey)
-	})
-	if err != nil {
-		jsonError(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	// Device stays pending until CLI user approves via /internal/device/activate
-	s.shared.DB.UpdateDeviceLastSeen(kid)
-
-	// Set HttpOnly cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    req.Token,
-		Path:     "/",
-		MaxAge:   30 * 24 * 60 * 60, // 30 days
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"kid":     kid,
-	})
-}
 
 // handleDeviceMe returns the current device's info.
 func (s *PublicServer) handleDeviceMe(w http.ResponseWriter, r *http.Request) {

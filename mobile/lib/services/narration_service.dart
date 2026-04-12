@@ -8,12 +8,12 @@ import 'voice_service.dart';
 class ReporterHost {
   final String hostId;
   final String serverUrl;
-  final String cookie;
+  final Future<String> Function() getToken;
 
   const ReporterHost({
     required this.hostId,
     required this.serverUrl,
-    required this.cookie,
+    required this.getToken,
   });
 }
 
@@ -35,7 +35,7 @@ class NarrationService {
     for (final host in hosts) {
       _connections[host.hostId] = _ReporterConnection(
         serverUrl: host.serverUrl,
-        cookie: host.cookie,
+        getToken: host.getToken,
         sessionId: null,
         onNarration: _handleNarration,
       )..connect();
@@ -52,7 +52,7 @@ class NarrationService {
     final key = '${host.hostId}:$sessionId';
     _connections[key] = _ReporterConnection(
       serverUrl: host.serverUrl,
-      cookie: host.cookie,
+      getToken: host.getToken,
       sessionId: sessionId,
       onNarration: _handleNarration,
     )..connect();
@@ -79,7 +79,7 @@ class NarrationService {
 /// A single SSE connection to GET /api/reporter.
 class _ReporterConnection {
   final String serverUrl;
-  final String cookie;
+  final Future<String> Function() getToken;
   final String? sessionId;
   final void Function(String narration) onNarration;
 
@@ -89,7 +89,7 @@ class _ReporterConnection {
 
   _ReporterConnection({
     required this.serverUrl,
-    required this.cookie,
+    required this.getToken,
     required this.sessionId,
     required this.onNarration,
   });
@@ -111,9 +111,10 @@ class _ReporterConnection {
         path += '?session=$sessionId';
       }
 
+      final token = await getToken();
       final request = http.Request('GET', Uri.parse('$serverUrl$path'));
       request.headers.addAll({
-        'Cookie': 'helios_token=$cookie',
+        'Authorization': 'Bearer $token',
         'Accept': 'text/event-stream',
         'Cache-Control': 'no-cache',
       });

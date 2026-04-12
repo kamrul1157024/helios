@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,7 +15,12 @@ typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
 class DaemonAPIService extends ChangeNotifier {
   final String hostId;
   final String serverUrl;
-  String? _cookie;
+  final String _deviceId;
+  final Uint8List _privateKeySeed;
+
+  // In-memory JWT cache — re-signed only when expired
+  String? _cachedToken;
+  DateTime? _tokenExpiresAt;
 
   http.Client? _client;
   Timer? _reconnectTimer;
@@ -75,56 +81,101 @@ class DaemonAPIService extends ChangeNotifier {
   DaemonAPIService({
     required this.hostId,
     required this.serverUrl,
-    String? cookie,
-  }) : _cookie = cookie;
-
-  String get cookie => _cookie ?? '';
-
-  void setCookie(String cookie) {
-    _cookie = cookie;
-  }
+    required String deviceId,
+    required Uint8List privateKeySeed,
+  })  : _deviceId = deviceId,
+        _privateKeySeed = privateKeySeed;
 
   // ==================== Auth Helpers ====================
 
-  Map<String, String> _authHeaders() {
-    return {
-      'Cookie': 'helios_token=$_cookie',
-    };
+  /// Returns a cached JWT if still valid (>5 min until expiry), otherwise
+  /// signs a fresh one. ~1 sign per hour during active use.
+  Future<String> getToken() async {
+    final now = DateTime.now().toUtc();
+    if (_cachedToken != null &&
+        _tokenExpiresAt != null &&
+        _tokenExpiresAt!.isAfter(now.add(const Duration(minutes: 5)))) {
+      return _cachedToken!;
+    }
+    _cachedToken = await _signJWT();
+    _tokenExpiresAt = now.add(const Duration(hours: 1));
+    return _cachedToken!;
   }
 
-  Future<http.Response> _authGet(String path) {
+  void _invalidateToken() {
+    _cachedToken = null;
+    _tokenExpiresAt = null;
+  }
+
+  Future<String> _signJWT() async {
+    final header = {'alg': 'EdDSA', 'typ': 'JWT', 'kid': _deviceId};
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final payload = {
+      'iat': now,
+      'exp': now + 3600,
+      'sub': 'helios-client',
+    };
+
+    final encodedHeader = _base64urlEncode(
+        Uint8List.fromList(utf8.encode(jsonEncode(header))));
+    final encodedPayload = _base64urlEncode(
+        Uint8List.fromList(utf8.encode(jsonEncode(payload))));
+    final signingInput = '$encodedHeader.$encodedPayload';
+
+    final algorithm = Ed25519();
+    final keyPair = await algorithm.newKeyPairFromSeed(_privateKeySeed);
+    final signature = await algorithm.sign(
+      utf8.encode(signingInput),
+      keyPair: keyPair,
+    );
+
+    final encodedSignature =
+        _base64urlEncode(Uint8List.fromList(signature.bytes));
+    return '$signingInput.$encodedSignature';
+  }
+
+  String _base64urlEncode(Uint8List bytes) {
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  Future<Map<String, String>> _authHeaders() async {
+    final token = await getToken();
+    return {'Authorization': 'Bearer $token'};
+  }
+
+  Future<http.Response> _authGet(String path) async {
     return http.get(
       Uri.parse('$serverUrl$path'),
-      headers: _authHeaders(),
+      headers: await _authHeaders(),
     );
   }
 
-  Future<http.Response> _authPost(String path, {Map<String, dynamic>? body}) {
+  Future<http.Response> _authPost(String path, {Map<String, dynamic>? body}) async {
     return http.post(
       Uri.parse('$serverUrl$path'),
       headers: {
-        ..._authHeaders(),
+        ...await _authHeaders(),
         'Content-Type': 'application/json',
       },
       body: body != null ? jsonEncode(body) : null,
     );
   }
 
-  Future<http.Response> _authPatch(String path, {Map<String, dynamic>? body}) {
+  Future<http.Response> _authPatch(String path, {Map<String, dynamic>? body}) async {
     return http.patch(
       Uri.parse('$serverUrl$path'),
       headers: {
-        ..._authHeaders(),
+        ...await _authHeaders(),
         'Content-Type': 'application/json',
       },
       body: body != null ? jsonEncode(body) : null,
     );
   }
 
-  Future<http.Response> _authDelete(String path) {
+  Future<http.Response> _authDelete(String path) async {
     return http.delete(
       Uri.parse('$serverUrl$path'),
-      headers: _authHeaders(),
+      headers: await _authHeaders(),
     );
   }
 
@@ -260,13 +311,19 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final request = http.Request('GET', Uri.parse('$serverUrl/api/events'));
       request.headers.addAll({
-        'Cookie': 'helios_token=$_cookie',
+        ...await _authHeaders(),
         'Accept': 'text/event-stream',
         'Cache-Control': 'no-cache',
       });
 
       final response = await _client!.send(request);
 
+      if (response.statusCode == 401) {
+        debugPrint('[$hostId] SSE auth failed — refreshing token');
+        _invalidateToken();
+        _scheduleReconnect();
+        return;
+      }
       if (response.statusCode != 200) {
         debugPrint('[$hostId] SSE connect failed: HTTP ${response.statusCode}');
         _consecutiveFailures++;

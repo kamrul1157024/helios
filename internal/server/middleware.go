@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -14,28 +15,29 @@ type contextKey string
 
 const deviceKIDKey contextKey = "device_kid"
 
-const cookieName = "helios_token"
-
-// cookieAuthMiddleware reads JWT from the helios_token cookie. Requires active device status.
-func cookieAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
-	return jwtCookieMiddleware(db, false)
+// bearerAuthMiddleware validates an Ed25519-signed JWT from the Authorization
+// header. Requires the device to have "active" status.
+func bearerAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
+	return jwtBearerMiddleware(db, false)
 }
 
-// pendingOrActiveAuthMiddleware reads JWT from the helios_token cookie. Accepts pending or active devices.
-func pendingOrActiveAuthMiddleware(db *store.Store) func(http.Handler) http.Handler {
-	return jwtCookieMiddleware(db, true)
+// pendingOrActiveBearerMiddleware is like bearerAuthMiddleware but also
+// accepts devices in "pending" status (used during pairing approval polling).
+func pendingOrActiveBearerMiddleware(db *store.Store) func(http.Handler) http.Handler {
+	return jwtBearerMiddleware(db, true)
 }
 
-func jwtCookieMiddleware(db *store.Store, allowPending bool) func(http.Handler) http.Handler {
+func jwtBearerMiddleware(db *store.Store, allowPending bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie(cookieName)
-			if err != nil || cookie.Value == "" {
-				http.Error(w, `{"error":"unauthorized","message":"missing auth cookie"}`, http.StatusUnauthorized)
+			authHeader := r.Header.Get("Authorization")
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				http.Error(w, `{"error":"unauthorized","message":"missing Authorization header"}`, http.StatusUnauthorized)
 				return
 			}
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-			kid, err := auth.ValidateJWT(cookie.Value, func(kid string) (ed25519.PublicKey, error) {
+			kid, err := auth.ValidateJWT(tokenString, func(kid string) (ed25519.PublicKey, error) {
 				var device *store.Device
 				var lookupErr error
 				if allowPending {
@@ -64,4 +66,3 @@ func jwtCookieMiddleware(db *store.Store, allowPending bool) func(http.Handler) 
 		})
 	}
 }
-

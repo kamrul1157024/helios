@@ -261,7 +261,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           hosts.add(ReporterHost(
             hostId: host.id,
             serverUrl: service.serverUrl,
-            cookie: service.cookie,
+            getToken: service.getToken,
           ));
         }
       }

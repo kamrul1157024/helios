@@ -32,7 +32,7 @@ type InternalServer struct {
 }
 
 // PublicServer handles the frontend, push API, and notification actions.
-// Binds to 0.0.0.0, exposed via tunnel. Cookie-based JWT auth.
+// Binds to 0.0.0.0, exposed via tunnel. Bearer JWT auth.
 type PublicServer struct {
 	httpServer *http.Server
 	shared     *Shared
@@ -93,11 +93,10 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
-	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/pair", s.handlePair)
 
 	// Auth-protected API endpoints
-	cookieAuth := cookieAuthMiddleware(shared.DB)
+	bearerAuth := bearerAuthMiddleware(shared.DB)
 
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("GET /api/push/vapid-public-key", s.handleVAPIDPublicKey)
@@ -178,15 +177,15 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	})
 
 	// Pending-ok routes (pending devices can poll their own status)
-	pendingAuth := pendingOrActiveAuthMiddleware(shared.DB)
+	pendingAuth := pendingOrActiveBearerMiddleware(shared.DB)
 	pendingMux := http.NewServeMux()
 	pendingMux.HandleFunc("GET /api/auth/device/me", s.handleDeviceMe)
 	pendingMux.HandleFunc("POST /api/auth/device/me", s.handleUpdateDeviceMe)
 	mux.Handle("GET /api/auth/device/me", pendingAuth(pendingMux))
 	mux.Handle("POST /api/auth/device/me", pendingAuth(pendingMux))
 
-	// Wire protected routes through cookie auth middleware
-	mux.Handle("/api/", cookieAuth(protectedMux))
+	// Wire protected routes through Bearer auth middleware
+	mux.Handle("/api/", bearerAuth(protectedMux))
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", port),

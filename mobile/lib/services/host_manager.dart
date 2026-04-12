@@ -14,11 +14,6 @@ class HostManager extends ChangeNotifier {
   static const _hostsKey = 'helios_hosts';
   static const _activeHostKey = 'helios_active_host_id';
 
-  // Legacy single-host keys (for migration)
-  static const _legacyKeyStorageKey = 'helios_private_key';
-  static const _legacyDeviceIdKey = 'helios_device_id';
-  static const _legacyServerUrlKey = 'helios_server_url';
-  static const _legacyCookieKey = 'helios_cookie';
 
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
@@ -108,11 +103,9 @@ class HostManager extends ChangeNotifier {
 
   // ==================== Lifecycle ====================
 
-  /// Load stored hosts on app start. Migrates from single-host if needed.
+  /// Load stored hosts on app start.
   Future<void> loadStoredHosts() async {
     try {
-      await _migrateFromLegacy();
-
       final raw = await _secureStorage.read(key: _hostsKey);
       if (raw != null) {
         final list = jsonDecode(raw) as List;
@@ -142,13 +135,16 @@ class HostManager extends ChangeNotifier {
   }
 
   Future<void> _startServiceFor(HostConnection host) async {
-    final cookie = await _secureStorage.read(key: 'helios_host_${host.id}_cookie');
-    if (cookie == null) return;
+    final seedB64 = await _secureStorage.read(key: 'helios_host_${host.id}_key');
+    if (seedB64 == null) return;
+
+    final seed = _base64urlDecode(seedB64);
 
     final service = DaemonAPIService(
       hostId: host.id,
       serverUrl: host.serverUrl,
-      cookie: cookie,
+      deviceId: host.deviceId,
+      privateKeySeed: seed,
     );
 
     // Forward SSE events to notify HostManager listeners
@@ -243,50 +239,20 @@ class HostManager extends ChangeNotifier {
         return SetupResult.error(pairData['message'] ?? 'Failed to register device');
       }
 
-      // 5. Sign JWT and login
-      onStatus?.call('Authenticating...');
-      final jwt = await _signJWT(keyPair, deviceId);
-      final http.Response loginResp;
-      try {
-        loginResp = await http.post(
-          Uri.parse('$serverUrl/api/auth/login'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'token': jwt}),
-        );
-      } catch (e) {
-        return SetupResult.error(
-          'Could not reach server during login.\n'
-          'Check that the tunnel is running and try again.',
-        );
-      }
-
-      if (loginResp.statusCode != 200) {
-        return SetupResult.error('Login failed (HTTP ${loginResp.statusCode})');
-      }
-
-      // Extract cookie
-      String? cookie;
-      final setCookie = loginResp.headers['set-cookie'];
-      if (setCookie != null) {
-        final match = RegExp(r'helios_token=([^;]+)').firstMatch(setCookie);
-        if (match != null) cookie = match.group(1);
-      }
-      cookie ??= jwt;
-
-      // 6. Store private key seed
+      // 5. Store private key seed
       final extractedSeed = await keyPair.extractPrivateKeyBytes();
       final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
 
-      // 7. Update device metadata
-      await _updateDeviceMetadata(serverUrl, cookie);
+      // 6. Update device metadata (uses Bearer auth)
+      await _updateDeviceMetadata(serverUrl, keyPair, deviceId);
 
-      // 8. Wait for approval (host is NOT added to _hosts yet)
+      // 7. Wait for approval (host is NOT added to _hosts yet)
       onStatus?.call('Waiting for approval on terminal...');
       _pendingDeviceId = deviceId;
       _isPendingApproval = true;
       notifyListeners();
 
-      final approved = await _waitForApproval(serverUrl, cookie);
+      final approved = await _waitForApproval(serverUrl, keyPair, deviceId);
       _isPendingApproval = false;
       _pendingDeviceId = null;
 
@@ -295,7 +261,7 @@ class HostManager extends ChangeNotifier {
         return SetupResult.error('Device was rejected by the terminal user.');
       }
 
-      // 9. Approved — now create and persist the host
+      // 8. Approved — now create and persist the host
       final nextColorIndex = _hosts.isEmpty ? 0 : (_hosts.map((h) => h.colorIndex).reduce((a, b) => a > b ? a : b) + 1);
       final host = HostConnection(
         id: const Uuid().v4(),
@@ -307,17 +273,16 @@ class HostManager extends ChangeNotifier {
       );
 
       await _secureStorage.write(key: 'helios_host_${host.id}_key', value: _base64urlEncode(seed));
-      await _secureStorage.write(key: 'helios_host_${host.id}_cookie', value: cookie);
       _hosts.add(host);
       await _saveHosts();
 
-      // 10. Set as active and start service
+      // 9. Set as active and start service
       _activeHostId = host.id;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_activeHostKey, host.id);
 
       // Try to fetch hostname for a better label
-      await _fetchAndSetHostname(host, cookie);
+      await _fetchAndSetHostname(host, seed);
 
       await _startServiceFor(host);
 
@@ -350,7 +315,6 @@ class HostManager extends ChangeNotifier {
     await _saveHosts();
 
     await _secureStorage.delete(key: 'helios_host_${hostId}_key');
-    await _secureStorage.delete(key: 'helios_host_${hostId}_cookie');
 
     if (_activeHostId == hostId) {
       _activeHostId = _hosts.isNotEmpty ? _hosts.first.id : null;
@@ -456,20 +420,6 @@ class HostManager extends ChangeNotifier {
     await _secureStorage.write(key: _hostsKey, value: json);
   }
 
-  /// Wipe legacy single-host storage so the user re-pairs with the new multi-host flow.
-  Future<void> _migrateFromLegacy() async {
-    final legacyKey = await _secureStorage.read(key: _legacyKeyStorageKey);
-    if (legacyKey == null) return; // No legacy data
-
-    debugPrint('Clearing legacy single-host data — user will re-pair.');
-
-    await _secureStorage.delete(key: _legacyKeyStorageKey);
-    await _secureStorage.delete(key: _legacyDeviceIdKey);
-    await _secureStorage.delete(key: _legacyCookieKey);
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_legacyServerUrlKey);
-  }
 
   Future<String> _signJWT(SimpleKeyPair keyPair, String deviceId) async {
     final header = {'alg': 'EdDSA', 'typ': 'JWT', 'kid': deviceId};
@@ -494,14 +444,15 @@ class HostManager extends ChangeNotifier {
     return '$signingInput.$encodedSignature';
   }
 
-  Future<bool> _waitForApproval(String serverUrl, String cookie) async {
+  Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String deviceId) async {
     const maxAttempts = 150; // 5 minutes at 2s intervals
     for (var i = 0; i < maxAttempts; i++) {
       await Future.delayed(const Duration(seconds: 2));
       try {
+        final jwt = await _signJWT(keyPair, deviceId);
         final resp = await http.get(
           Uri.parse('$serverUrl/api/auth/device/me'),
-          headers: {'Cookie': 'helios_token=$cookie'},
+          headers: {'Authorization': 'Bearer $jwt'},
         );
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body);
@@ -518,7 +469,7 @@ class HostManager extends ChangeNotifier {
     return false;
   }
 
-  Future<void> _updateDeviceMetadata(String serverUrl, String cookie) async {
+  Future<void> _updateDeviceMetadata(String serverUrl, SimpleKeyPair keyPair, String deviceId) async {
     String platform;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -534,10 +485,11 @@ class HostManager extends ChangeNotifier {
     }
     final name = '$platform — Helios App';
     try {
+      final jwt = await _signJWT(keyPair, deviceId);
       await http.post(
         Uri.parse('$serverUrl/api/auth/device/me'),
         headers: {
-          'Cookie': 'helios_token=$cookie',
+          'Authorization': 'Bearer $jwt',
           'Content-Type': 'application/json',
         },
         body: jsonEncode({
@@ -551,11 +503,14 @@ class HostManager extends ChangeNotifier {
     }
   }
 
-  Future<void> _fetchAndSetHostname(HostConnection host, String cookie) async {
+  Future<void> _fetchAndSetHostname(HostConnection host, Uint8List seed) async {
     try {
+      final algorithm = Ed25519();
+      final keyPair = await algorithm.newKeyPairFromSeed(seed);
+      final jwt = await _signJWT(keyPair, host.deviceId);
       final resp = await http.get(
         Uri.parse('${host.serverUrl}/api/health'),
-        headers: {'Cookie': 'helios_token=$cookie'},
+        headers: {'Authorization': 'Bearer $jwt'},
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
@@ -575,6 +530,12 @@ class HostManager extends ChangeNotifier {
 
   String _base64urlEncode(Uint8List bytes) {
     return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  Uint8List _base64urlDecode(String encoded) {
+    // Re-add padding removed during encode
+    final padded = encoded.padRight((encoded.length + 3) & ~3, '=');
+    return base64Url.decode(padded);
   }
 
   @override

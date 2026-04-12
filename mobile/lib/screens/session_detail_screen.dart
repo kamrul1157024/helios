@@ -514,7 +514,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 host: ReporterHost(
                   hostId: widget.session.hostId,
                   serverUrl: svc.serverUrl,
-                  cookie: svc.cookie,
+                  getToken: svc.getToken,
                 ),
                 sessionId: widget.session.sessionId,
               );
