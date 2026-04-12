@@ -10,7 +10,14 @@ import (
 func Register() {
 	// Provider registration
 	provider.RegisterProvider(
-		provider.ProviderInfo{ID: "claude", Name: "Claude Code", Icon: "terminal"},
+		provider.ProviderInfo{
+			ID:   "claude",
+			Name: "Claude Code",
+			Icon: "terminal",
+			Capabilities: provider.ProviderCapabilities{
+				PromptQueue: true,
+			},
+		},
 		// SessionBuilder
 		func(prompt, model, cwd string) string {
 			cmd := "claude"

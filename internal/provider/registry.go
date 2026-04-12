@@ -77,11 +77,17 @@ type ModelInfo struct {
 	ContextWindow string `json:"context_window,omitempty"`
 }
 
+// ProviderCapabilities describes what a provider supports.
+type ProviderCapabilities struct {
+	PromptQueue bool `json:"prompt_queue"` // supports queuing prompts while active via tmux send-keys
+}
+
 // ProviderInfo describes a registered session provider.
 type ProviderInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Icon string `json:"icon"`
+	ID           string               `json:"id"`
+	Name         string               `json:"name"`
+	Icon         string               `json:"icon"`
+	Capabilities ProviderCapabilities `json:"capabilities"`
 }
 
 // SessionBuilder builds the shell command to start a new session.
@@ -118,4 +124,12 @@ func GetSessionBuilder(providerID string) SessionBuilder {
 // GetModelsFetcher returns the models fetcher for a provider, or nil.
 func GetModelsFetcher(providerID string) ModelsFetcher {
 	return modelsFetchers[providerID]
+}
+
+// GetCapabilities returns the capabilities for a provider.
+func GetCapabilities(providerID string) ProviderCapabilities {
+	if p, ok := providers[providerID]; ok {
+		return p.Capabilities
+	}
+	return ProviderCapabilities{}
 }

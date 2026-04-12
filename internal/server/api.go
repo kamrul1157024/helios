@@ -362,6 +362,12 @@ func (s *PublicServer) handleUpdateDeviceMe(w http.ResponseWriter, r *http.Reque
 
 // ==================== Session API ====================
 
+// enrichSession sets computed fields (e.g. SupportsPromptQueue) using provider capabilities.
+func enrichSession(sess *store.Session) {
+	caps := provider.GetCapabilities(sess.Source)
+	sess.ComputePromptQueue(caps.PromptQueue)
+}
+
 func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	status := r.URL.Query().Get("status")
@@ -372,6 +378,9 @@ func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
 		return
+	}
+	for i := range sessions {
+		enrichSession(&sessions[i])
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -403,6 +412,7 @@ func (s *PublicServer) handleGetSession(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
+	enrichSession(session)
 
 	// Get pending permission count for this session
 	pendingNotifs, _ := s.shared.DB.ListNotifications("claude", "pending", "")
@@ -510,6 +520,19 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 	log.Printf("session-send: session=%s status=%s tmux_pane=%v", id, session.Status, session.TmuxPane)
 
 	if session.Status == "active" || session.Status == "waiting_permission" {
+		// Provider supports prompt queue via tmux send-keys
+		caps := provider.GetCapabilities(session.Source)
+		if caps.PromptQueue && session.TmuxPane != nil && *session.TmuxPane != "" {
+			if err := s.shared.Tmux.SendKeys(*session.TmuxPane, req.Message); err != nil {
+				log.Printf("session-send: queue SendKeys failed for pane %s: %v", *session.TmuxPane, err)
+				jsonError(w, fmt.Sprintf("failed to queue: %v", err), http.StatusInternalServerError)
+				return
+			}
+			s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
+			log.Printf("session-send: queued prompt to pane %s for session %s", *session.TmuxPane, id)
+			jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "queued": true})
+			return
+		}
 		jsonResponse(w, http.StatusConflict, map[string]interface{}{
 			"success": false, "error": "session_busy",
 		})
@@ -779,6 +802,9 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
 		return
+	}
+	for i := range sessions {
+		enrichSession(&sessions[i])
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"sessions": sessions,

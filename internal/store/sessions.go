@@ -21,10 +21,17 @@ type Session struct {
 	LastUserMessage *string `json:"last_user_message,omitempty"`
 	Pinned          bool    `json:"pinned"`
 	Archived        bool    `json:"archived"`
-	TmuxPane        *string `json:"tmux_pane,omitempty"`
-	TmuxPID         *int    `json:"tmux_pid,omitempty"`
-	CreatedAt       string  `json:"created_at"`
-	EndedAt         *string `json:"ended_at,omitempty"`
+	TmuxPane             *string `json:"tmux_pane,omitempty"`
+	TmuxPID              *int    `json:"tmux_pid,omitempty"`
+	CreatedAt            string  `json:"created_at"`
+	EndedAt              *string `json:"ended_at,omitempty"`
+	SupportsPromptQueue  bool    `json:"supports_prompt_queue"`
+}
+
+// ComputePromptQueue sets SupportsPromptQueue based on provider capabilities and tmux state.
+// providerSupportsQueue should come from provider.GetCapabilities(source).PromptQueue.
+func (s *Session) ComputePromptQueue(providerSupportsQueue bool) {
+	s.SupportsPromptQueue = providerSupportsQueue && s.TmuxPane != nil && *s.TmuxPane != ""
 }
 
 type Subagent struct {

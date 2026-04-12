@@ -15,6 +15,7 @@ class Session {
   final bool archived;
   final String? tmuxPane;
   final int? tmuxPid;
+  final bool supportsPromptQueue;
   final String createdAt;
   final String? endedAt;
 
@@ -35,6 +36,7 @@ class Session {
     this.archived = false,
     this.tmuxPane,
     this.tmuxPid,
+    this.supportsPromptQueue = false,
     required this.createdAt,
     this.endedAt,
   });
@@ -57,6 +59,7 @@ class Session {
       archived: json['archived'] == true || json['archived'] == 1,
       tmuxPane: json['tmux_pane'] as String?,
       tmuxPid: json['tmux_pid'] as int?,
+      supportsPromptQueue: json['supports_prompt_queue'] == true,
       createdAt: json['created_at'] as String,
       endedAt: json['ended_at'] as String?,
     );
@@ -69,11 +72,17 @@ class Session {
   bool get isEnded => status == 'ended';
   bool get isSuspended => status == 'suspended';
   bool get isStale => status == 'stale';
-  bool get canSendPrompt => status == 'idle' || status == 'ended' || status == 'suspended' || status == 'stale';
+  bool get canSendPrompt {
+    if (status == 'idle' || status == 'ended' || status == 'suspended' || status == 'stale') return true;
+    if (supportsPromptQueue && isActive) return true;
+    return false;
+  }
+  bool get isQueueing => supportsPromptQueue && isActive;
 
   String get displayTitle => title ?? lastUserMessage ?? shortCwd;
-  bool get canStop => status == 'active' || status == 'waiting_permission' || status == 'compacting';
-  bool get canSuspend => isActive || isIdle;
+  bool get hasTmux => tmuxPane != null && tmuxPane!.isNotEmpty;
+  bool get canStop => hasTmux && (status == 'active' || status == 'waiting_permission' || status == 'compacting');
+  bool get canSuspend => hasTmux && (isActive || isIdle);
   bool get canResume => isEnded || isSuspended || isStale;
 
   Session copyWith({
@@ -98,6 +107,7 @@ class Session {
       archived: archived ?? this.archived,
       tmuxPane: tmuxPane,
       tmuxPid: tmuxPid,
+      supportsPromptQueue: supportsPromptQueue,
       createdAt: createdAt,
       endedAt: endedAt,
     );

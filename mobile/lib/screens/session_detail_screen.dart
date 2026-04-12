@@ -149,6 +149,28 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     ).then((_) => controller.dispose());
   }
 
+  void _showNoTmuxInfo() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.warning_amber, color: Colors.amber.shade700),
+        title: const Text('No tmux pane'),
+        content: const Text(
+          'This session was started outside Helios, so there is no tmux pane attached.\n\n'
+          'Stop and pause controls are unavailable.\n\n'
+          'Sending a prompt will open a new tmux pane, but live bidirectional updates '
+          'won\'t be available until then.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _stop() async {
     await _sse?.stopSession(widget.session.sessionId);
   }
@@ -198,6 +220,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                       fontSize: 11,
                       color: _statusColor(session.status, Theme.of(context)),
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
@@ -326,6 +349,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
   List<Widget> _buildActions(Session session) {
     final actions = <Widget>[];
+
+    if (!session.hasTmux && !session.isEnded) {
+      actions.add(
+        IconButton(
+          icon: Icon(Icons.warning_amber, color: Colors.amber.shade700),
+          tooltip: 'No tmux pane',
+          onPressed: _showNoTmuxInfo,
+        ),
+      );
+    }
 
     if (session.canStop) {
       actions.add(
@@ -493,6 +526,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
   Widget _buildPromptBar(Session session) {
     final canSend = session.canSendPrompt;
+    final isQueueing = session.isQueueing;
     final theme = Theme.of(context);
     final hasCommands = (_sse?.commands ?? []).isNotEmpty;
 
@@ -509,109 +543,157 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           top: BorderSide(color: theme.colorScheme.outlineVariant),
         ),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (hasCommands)
-            IconButton(
-              onPressed: canSend && !_sending ? _showCommandSheet : null,
-              icon: const Text('/', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              tooltip: 'Commands',
-            ),
-          Expanded(
-            child: AnimatedBuilder(
+          // Verb animation above the input when queueing
+          if (isQueueing)
+            AnimatedBuilder(
               animation: _breathController,
               builder: (context, _) {
-                final isBreathing = session.isActive && !canSend;
-                final t = _breathController.value; // 0..1..0 (reverse: true)
-
-                // Morph border radius: pill (24) -> squircle (16) -> pill
-                final radius = isBreathing ? 24.0 - 8.0 * t : 24.0;
-
+                final t = _breathController.value;
                 final accentColor = theme.colorScheme.primary;
-
-                // Verb text: fade between muted and slightly tinted
-                final verbColor = isBreathing
-                    ? Color.lerp(
-                        theme.colorScheme.onSurfaceVariant,
-                        accentColor,
-                        0.3 + 0.3 * t,
-                      )!
-                    : theme.colorScheme.onSurfaceVariant;
-
-                return Stack(
-                  alignment: Alignment.centerLeft,
-                  children: [
-                    TextField(
-                      controller: _promptController,
-                      enabled: canSend && !_sending,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => canSend ? _sendPrompt() : null,
-                      maxLines: 3,
-                      minLines: 1,
-                      decoration: InputDecoration(
-                        hintText: canSend
-                            ? 'Send a prompt...'
-                            : session.isActive
-                                ? ''
-                                : 'Session ${session.status}',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(radius),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(radius),
-                          borderSide: BorderSide.none,
-                        ),
-                        disabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(radius),
-                          borderSide: BorderSide.none,
-                        ),
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        isDense: true,
+                final verbColor = Color.lerp(
+                  theme.colorScheme.onSurfaceVariant,
+                  accentColor,
+                  0.3 + 0.3 * t,
+                )!;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 400),
+                    transitionBuilder: (child, animation) {
+                      final slideIn = Tween<Offset>(
+                        begin: const Offset(0, 0.5),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                      return SlideTransition(
+                        position: slideIn,
+                        child: FadeTransition(opacity: animation, child: child),
+                      );
+                    },
+                    child: Text(
+                      '$_currentVerb...',
+                      key: ValueKey(_currentVerb),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: verbColor,
+                        fontWeight: FontWeight.w500,
                       ),
-                      style: const TextStyle(fontSize: 14),
                     ),
-                    if (isBreathing)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 16),
-                        child: IgnorePointer(
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 400),
-                            transitionBuilder: (child, animation) {
-                              final slideIn = Tween<Offset>(
-                                begin: const Offset(0, 0.5),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
-                              return SlideTransition(
-                                position: slideIn,
-                                child: FadeTransition(opacity: animation, child: child),
-                              );
-                            },
-                            child: Text(
-                              '$_currentVerb...',
-                              key: ValueKey(_currentVerb),
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: verbColor,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                  ),
                 );
               },
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            onPressed: canSend && !_sending ? _sendPrompt : null,
-            icon: _sending
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.send, size: 20),
+          Row(
+            children: [
+              if (hasCommands)
+                IconButton(
+                  onPressed: canSend && !_sending ? _showCommandSheet : null,
+                  icon: const Text('/', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  tooltip: 'Commands',
+                ),
+              Expanded(
+                child: AnimatedBuilder(
+                  animation: _breathController,
+                  builder: (context, _) {
+                    final isBreathing = session.isActive && !canSend;
+                    final t = _breathController.value;
+
+                    // Morph border radius: pill (24) -> squircle (16) -> pill
+                    final breathingAnim = isBreathing || isQueueing;
+                    final radius = breathingAnim ? 24.0 - 8.0 * t : 24.0;
+
+                    final accentColor = theme.colorScheme.primary;
+
+                    // Verb text: fade between muted and slightly tinted
+                    final verbColor = isBreathing
+                        ? Color.lerp(
+                            theme.colorScheme.onSurfaceVariant,
+                            accentColor,
+                            0.3 + 0.3 * t,
+                          )!
+                        : theme.colorScheme.onSurfaceVariant;
+
+                    return Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        TextField(
+                          controller: _promptController,
+                          enabled: canSend && !_sending,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => canSend ? _sendPrompt() : null,
+                          maxLines: 3,
+                          minLines: 1,
+                          decoration: InputDecoration(
+                            hintText: isQueueing
+                                ? 'Queue a prompt...'
+                                : canSend
+                                    ? 'Send a prompt...'
+                                    : session.isActive
+                                        ? ''
+                                        : 'Session ${session.status}',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(radius),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(radius),
+                              borderSide: BorderSide.none,
+                            ),
+                            disabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(radius),
+                              borderSide: BorderSide.none,
+                            ),
+                            filled: true,
+                            fillColor: theme.colorScheme.surfaceContainerHighest,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            isDense: true,
+                          ),
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        // Verb animation inside the disabled field (non-queue active sessions)
+                        if (isBreathing)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 16),
+                            child: IgnorePointer(
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 400),
+                                transitionBuilder: (child, animation) {
+                                  final slideIn = Tween<Offset>(
+                                    begin: const Offset(0, 0.5),
+                                    end: Offset.zero,
+                                  ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                                  return SlideTransition(
+                                    position: slideIn,
+                                    child: FadeTransition(opacity: animation, child: child),
+                                  );
+                                },
+                                child: Text(
+                                  '$_currentVerb...',
+                                  key: ValueKey(_currentVerb),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: verbColor,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: canSend && !_sending ? _sendPrompt : null,
+                icon: _sending
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send, size: 20),
+              ),
+            ],
           ),
         ],
       ),

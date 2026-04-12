@@ -614,6 +614,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
                                     style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
                                   ),
                                 ),
+                                if (!session.hasTmux && !session.isEnded) ...[
+                                  const SizedBox(width: 6),
+                                  Tooltip(
+                                    message: 'No tmux pane attached',
+                                    child: Icon(Icons.warning_amber, size: 14, color: Colors.amber.shade700),
+                                  ),
+                                ],
                                 if (session.pinned) ...[
                                   const SizedBox(width: 6),
                                   Icon(Icons.push_pin, size: 14, color: theme.colorScheme.primary),
