@@ -41,7 +41,11 @@ var tunnelProviders = []struct {
 	label string
 }{
 	{"cloudflare", "Cloudflare Tunnel (recommended)"},
+	{"zrok", "zrok (open-source, stable URLs)"},
 	{"ngrok", "ngrok"},
+	{"localtunnel", "localtunnel (zero signup)"},
+	{"localhostrun", "localhost.run (no install — uses SSH)"},
+	{"localxpose", "localxpose (regional, reserved domains)"},
 	{"tailscale", "Tailscale"},
 	{"local", "Local Network (no HTTPS)"},
 	{"custom", "Custom URL"},
@@ -351,7 +355,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "t":
-		if m.screen == screenMain {
+		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
 			m.screen = screenTunnelSelect
 			return m, nil
 		}
@@ -418,14 +422,16 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.textInput.Focus()
 			return m, textinput.Blink
 		}
-		// Check if binary exists for non-custom/non-local
-		if provider.id != "local" {
+		// Check if binary exists (skip for local and localhostrun which use built-in tools)
+		if provider.id != "local" && provider.id != "localhostrun" {
 			binary := providerBinary(provider.id)
-			if _, err := exec.LookPath(binary); err != nil {
-				m.missingBinary = binary
-				m.installHint = providerInstallHint(provider.id)
-				m.screen = screenBinaryMissing
-				return m, nil
+			if binary != "" {
+				if _, err := exec.LookPath(binary); err != nil {
+					m.missingBinary = binary
+					m.installHint = providerInstallHint(provider.id)
+					m.screen = screenBinaryMissing
+					return m, nil
+				}
 			}
 		}
 		m.screen = screenTunnelStarting
@@ -633,11 +639,23 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 			if exeErr != nil {
 				exe = "helios"
 			}
+			dnIn, _ := os.Open(os.DevNull)
+			dnOut, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+			dnErr, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 			proc, startErr := os.StartProcess(exe, []string{exe, "daemon", "start"}, &os.ProcAttr{
 				Dir:   "/",
 				Env:   os.Environ(),
-				Files: []*os.File{os.Stdin, nil, nil},
+				Files: []*os.File{dnIn, dnOut, dnErr},
 			})
+			if dnIn != nil {
+				dnIn.Close()
+			}
+			if dnOut != nil {
+				dnOut.Close()
+			}
+			if dnErr != nil {
+				dnErr.Close()
+			}
 			if startErr == nil {
 				proc.Release()
 				// Wait for daemon to be ready
@@ -868,6 +886,18 @@ func providerBinary(provider string) string {
 		return "ngrok"
 	case "tailscale":
 		return "tailscale"
+	case "zrok":
+		// zrok v2 installs as "zrok2"
+		if _, err := exec.LookPath("zrok"); err == nil {
+			return "zrok"
+		}
+		return "zrok2"
+	case "localtunnel":
+		return "lt"
+	case "localhostrun":
+		return "ssh"
+	case "localxpose":
+		return "loclx"
 	default:
 		return ""
 	}
@@ -881,6 +911,14 @@ func providerInstallHint(provider string) string {
 		return "brew install ngrok  (or https://ngrok.com/download)"
 	case "tailscale":
 		return "brew install tailscale  (or https://tailscale.com/download)"
+	case "zrok":
+		return "brew install openziti/tap/zrok  (or zrok2: https://zrok.io)"
+	case "localtunnel":
+		return "npm install -g localtunnel  (or brew install localtunnel)"
+	case "localhostrun":
+		return "ssh is built-in — this should not happen"
+	case "localxpose":
+		return "npm install -g loclx  (or https://localxpose.io/download)"
 	default:
 		return ""
 	}

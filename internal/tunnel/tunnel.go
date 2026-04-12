@@ -16,15 +16,66 @@ type Tunnel interface {
 	PID() int
 }
 
+// ProviderConfig holds provider-specific settings passed from daemon config.
+type ProviderConfig struct {
+	Zrok         ZrokProviderConfig
+	Localtunnel  LocaltunnelProviderConfig
+	LocalhostRun LocalhostRunProviderConfig
+	Localxpose   LocalxposeProviderConfig
+}
+
+// ZrokProviderConfig holds zrok-specific settings.
+type ZrokProviderConfig struct {
+	ShareMode  string
+	ShareToken string
+}
+
+// LocaltunnelProviderConfig holds localtunnel-specific settings.
+type LocaltunnelProviderConfig struct {
+	Subdomain string
+	Host      string
+}
+
+// LocalhostRunProviderConfig holds localhost.run-specific settings.
+type LocalhostRunProviderConfig struct {
+	SSHUser           string
+	CustomDomain      string
+	KeepaliveInterval int
+	UseAutossh        bool
+}
+
+// LocalxposeProviderConfig holds localxpose-specific settings.
+type LocalxposeProviderConfig struct {
+	Subdomain      string
+	ReservedDomain string
+	Region         string
+	BasicAuth      string
+	AccessToken    string
+}
+
 // Manager manages a single active tunnel.
 type Manager struct {
-	mu        sync.Mutex
-	active    Tunnel
-	heliosDir string
+	mu             sync.Mutex
+	active         Tunnel
+	heliosDir      string
+	providerConfig ProviderConfig
+
+	// OnZrokTokenCreated is called when a new zrok reservation token is created.
+	OnZrokTokenCreated func(token string)
+
+	// OnLocaltunnelSubdomainAssigned is called when localtunnel assigns a subdomain.
+	OnLocaltunnelSubdomainAssigned func(subdomain string)
 }
 
 func NewManager(heliosDir string) *Manager {
 	return &Manager{heliosDir: heliosDir}
+}
+
+// SetProviderConfig updates the provider-specific configuration.
+func (m *Manager) SetProviderConfig(cfg ProviderConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.providerConfig = cfg
 }
 
 func (m *Manager) Status() map[string]interface{} {
@@ -97,6 +148,33 @@ func (m *Manager) Start(provider string, customURL string, localPort int) (strin
 		t = &LocalTunnel{}
 	case "custom":
 		t = &CustomTunnel{customURL: customURL}
+	case "zrok":
+		t = &ZrokTunnel{
+			shareMode:      m.providerConfig.Zrok.ShareMode,
+			shareToken:     m.providerConfig.Zrok.ShareToken,
+			onTokenCreated: m.OnZrokTokenCreated,
+		}
+	case "localtunnel":
+		t = &LocaltunnelTunnel{
+			subdomain:           m.providerConfig.Localtunnel.Subdomain,
+			host:                m.providerConfig.Localtunnel.Host,
+			onSubdomainAssigned: m.OnLocaltunnelSubdomainAssigned,
+		}
+	case "localhostrun":
+		t = &LocalhostRunTunnel{
+			sshUser:      m.providerConfig.LocalhostRun.SSHUser,
+			customDomain: m.providerConfig.LocalhostRun.CustomDomain,
+			keepalive:    m.providerConfig.LocalhostRun.KeepaliveInterval,
+			useAutossh:   m.providerConfig.LocalhostRun.UseAutossh,
+		}
+	case "localxpose":
+		t = &LocalxposeTunnel{
+			subdomain:      m.providerConfig.Localxpose.Subdomain,
+			reservedDomain: m.providerConfig.Localxpose.ReservedDomain,
+			region:         m.providerConfig.Localxpose.Region,
+			basicAuth:      m.providerConfig.Localxpose.BasicAuth,
+			accessToken:    m.providerConfig.Localxpose.AccessToken,
+		}
 	default:
 		return "", fmt.Errorf("unknown tunnel provider: %s", provider)
 	}

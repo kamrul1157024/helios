@@ -83,6 +83,42 @@ func startDaemon(cfg *Config) error {
 
 	// Create tunnel manager
 	tunnelMgr := tunnel.NewManager(HeliosDir())
+	tunnelMgr.SetProviderConfig(tunnel.ProviderConfig{
+		Zrok: tunnel.ZrokProviderConfig{
+			ShareMode:  cfg.Tunnel.Zrok.ShareMode,
+			ShareToken: cfg.Tunnel.Zrok.ShareToken,
+		},
+		Localtunnel: tunnel.LocaltunnelProviderConfig{
+			Subdomain: cfg.Tunnel.Localtunnel.Subdomain,
+			Host:      cfg.Tunnel.Localtunnel.Host,
+		},
+		LocalhostRun: tunnel.LocalhostRunProviderConfig{
+			SSHUser:           cfg.Tunnel.LocalhostRun.SSHUser,
+			CustomDomain:      cfg.Tunnel.LocalhostRun.CustomDomain,
+			KeepaliveInterval: cfg.Tunnel.LocalhostRun.KeepaliveInterval,
+			UseAutossh:        cfg.Tunnel.LocalhostRun.UseAutossh,
+		},
+		Localxpose: tunnel.LocalxposeProviderConfig{
+			Subdomain:      cfg.Tunnel.Localxpose.Subdomain,
+			ReservedDomain: cfg.Tunnel.Localxpose.ReservedDomain,
+			Region:         cfg.Tunnel.Localxpose.Region,
+			BasicAuth:      cfg.Tunnel.Localxpose.BasicAuth,
+			AccessToken:    cfg.Tunnel.Localxpose.AccessToken,
+		},
+	})
+
+	// Persist zrok reserved share tokens to config.yaml
+	tunnelMgr.OnZrokTokenCreated = func(token string) {
+		cfg.Tunnel.Zrok.ShareToken = token
+		SaveConfig(cfg)
+	}
+
+	// Persist localtunnel subdomain assignments to config.yaml
+	tunnelMgr.OnLocaltunnelSubdomainAssigned = func(subdomain string) {
+		cfg.Tunnel.Localtunnel.Subdomain = subdomain
+		SaveConfig(cfg)
+	}
+
 	server.TunnelManager = tunnelMgr
 
 	// Persist tunnel config changes to config.yaml

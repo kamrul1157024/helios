@@ -21,8 +21,37 @@ type AuthConfig struct {
 }
 
 type TunnelConfig struct {
-	Provider  string `yaml:"provider"`   // cloudflare | ngrok | tailscale | local | custom
-	CustomURL string `yaml:"custom_url"` // only used when provider=custom
+	Provider     string             `yaml:"provider"`      // cloudflare | ngrok | tailscale | local | custom | zrok | localtunnel | localhostrun | localxpose
+	CustomURL    string             `yaml:"custom_url"`    // only used when provider=custom
+	Zrok         ZrokConfig         `yaml:"zrok"`          // zrok-specific settings
+	Localtunnel  LocaltunnelConfig  `yaml:"localtunnel"`   // localtunnel-specific settings
+	LocalhostRun LocalhostRunConfig `yaml:"localhostrun"`  // localhost.run-specific settings
+	Localxpose   LocalxposeConfig   `yaml:"localxpose"`    // localxpose-specific settings
+}
+
+type ZrokConfig struct {
+	ShareMode  string `yaml:"share_mode"`  // public | reserved (default: reserved)
+	ShareToken string `yaml:"share_token"` // reserved share token (auto-populated)
+}
+
+type LocaltunnelConfig struct {
+	Subdomain string `yaml:"subdomain"` // requested subdomain (empty = random)
+	Host      string `yaml:"host"`      // custom server URL (empty = default loca.lt)
+}
+
+type LocalhostRunConfig struct {
+	SSHUser           string `yaml:"ssh_user"`           // "" | "nokey" (anonymous) | "plan" (custom domain)
+	CustomDomain      string `yaml:"custom_domain"`      // custom domain (e.g., "myapp.lhr.rocks")
+	KeepaliveInterval int    `yaml:"keepalive_interval"` // ServerAliveInterval in seconds (default: 60)
+	UseAutossh        bool   `yaml:"use_autossh"`        // use autossh for auto-reconnect if available
+}
+
+type LocalxposeConfig struct {
+	Subdomain      string `yaml:"subdomain"`       // ephemeral subdomain
+	ReservedDomain string `yaml:"reserved_domain"`  // reserved domain (e.g., "my-helios.loclx.io")
+	Region         string `yaml:"region"`           // us | eu | ap
+	BasicAuth      string `yaml:"basic_auth"`       // user:pass for built-in auth
+	AccessToken    string `yaml:"access_token"`     // access token (overrides loclx account login)
 }
 
 type DBConfig struct {

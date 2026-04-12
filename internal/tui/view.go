@@ -149,7 +149,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString("\n")
 		}
 
-		b.WriteString(helpStyle.Render("  enter continue  q quit"))
+		b.WriteString(helpStyle.Render("  enter continue  t change tunnel  q quit"))
 	}
 
 	return b.String()
