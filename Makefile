@@ -1,6 +1,6 @@
 .PHONY: build clean install uninstall test
 .PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
-.PHONY: dmg dmg-dev release
+.PHONY: dmg dmg-dev changelog release
 
 VERSION = 0.2.0
 REPO = kamrul1157024/helios
@@ -117,7 +117,12 @@ dmg-dev:
 
 # ─── Release ─────────────────────────────────────────────────────
 
+## Generate changelog from conventional commits since the last tag
+changelog:
+	@./scripts/changelog.sh
+
 ## Create a GitHub release with available artifacts (APK required, DMG optional)
+## Changelog is auto-generated from conventional commits since the last tag.
 ## Fails if a release with the same tag already exists.
 release: apk-release
 	@echo "Creating GitHub release v$(VERSION)..."
@@ -125,6 +130,10 @@ release: apk-release
 		echo "Error: Release v$(VERSION) already exists. Bump VERSION in the Makefile." >&2; \
 		exit 1; \
 	fi
+	@./scripts/changelog.sh > /tmp/helios-changelog.md
+	@echo "--- Changelog ---"
+	@cat /tmp/helios-changelog.md
+	@echo "---"
 	cp $(APK_RELEASE) helios.apk
 	@ASSETS="helios.apk"; \
 	if [ -f "$(DMG_PATH)" ]; then \
@@ -136,9 +145,9 @@ release: apk-release
 	gh release create v$(VERSION) \
 		--repo $(REPO) \
 		--title "helios v$(VERSION)" \
-		--notes "Helios v$(VERSION) — orchestrate AI coding agents from your phone and desktop." \
+		--notes-file /tmp/helios-changelog.md \
 		$$ASSETS
-	rm -f helios.apk
+	rm -f helios.apk /tmp/helios-changelog.md
 	@echo ""
 	@echo "Release created: https://github.com/$(REPO)/releases/tag/v$(VERSION)"
 	@echo "APK download:    https://github.com/$(REPO)/releases/download/v$(VERSION)/helios.apk"
