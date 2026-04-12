@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/host_connection.dart';
@@ -22,6 +23,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _voiceInputEnabled;
   late bool _autoReadEnabled;
   late double _speechRate;
+  late double _pitch;
+  Map<String, String>? _selectedVoice;
+  Timer? _sampleDebounce;
 
   // Reporter settings from backend
   String _activePersonaId = 'default';
@@ -41,7 +45,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _voiceInputEnabled = VoiceService.instance.voiceInputEnabled;
     _autoReadEnabled = VoiceService.instance.autoReadEnabled;
     _speechRate = VoiceService.instance.speechRate;
+    _pitch = VoiceService.instance.pitch;
+    _selectedVoice = VoiceService.instance.selectedVoice;
     _loadReporterSettings();
+  }
+
+  @override
+  void dispose() {
+    _sampleDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _debounceSample() {
+    _sampleDebounce?.cancel();
+    _sampleDebounce = Timer(const Duration(milliseconds: 500), () {
+      VoiceService.instance.speakSample();
+    });
   }
 
   Future<void> _loadReporterSettings() async {
@@ -173,8 +192,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: (value) {
                     setState(() => _speechRate = value);
                     VoiceService.instance.setSpeechRate(value);
+                    _debounceSample();
                   },
                 ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.tune),
+                title: const Text('Pitch'),
+                subtitle: Slider(
+                  value: _pitch,
+                  min: 0.5,
+                  max: 2.0,
+                  divisions: 15,
+                  label: _pitch.toStringAsFixed(1),
+                  onChanged: (value) {
+                    setState(() => _pitch = value);
+                    VoiceService.instance.setPitch(value);
+                    _debounceSample();
+                  },
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.record_voice_over),
+                title: const Text('Voice'),
+                subtitle: Text(
+                  _selectedVoice != null
+                      ? VoiceService.displayName(_selectedVoice!['name'] ?? '')
+                      : 'System default',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 20),
+                onTap: _showVoicePicker,
               ),
               const _SectionHeader('AI Narrator'),
               if (!_settingsLoaded)
@@ -402,6 +452,99 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: const Text('Save'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  void _showVoicePicker() async {
+    final voices = await VoiceService.instance.getAvailableVoices();
+    if (!mounted) return;
+
+    if (voices.isEmpty) {
+      _showServiceWarning('No voices available for the current language.');
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (ctx, scrollController) {
+            return SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Select Voice', style: Theme.of(ctx).textTheme.titleSmall),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      itemCount: voices.length + 1,
+                      itemBuilder: (ctx, index) {
+                        // First item is "System default"
+                        if (index == 0) {
+                          final isSelected = _selectedVoice == null;
+                          return ListTile(
+                            leading: Icon(
+                              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                              color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
+                            ),
+                            title: Text(
+                              'System default',
+                              style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
+                            ),
+                            subtitle: const Text('Use device default voice', style: TextStyle(fontSize: 12)),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              setState(() => _selectedVoice = null);
+                              VoiceService.instance.setSelectedVoice(null);
+                            },
+                          );
+                        }
+                        final voice = voices[index - 1];
+                        final name = voice['name'] ?? '';
+                        final locale = voice['locale'] ?? '';
+                        final displayName = VoiceService.displayName(name);
+                        final gender = VoiceService.guessGender(name);
+                        final isSelected = _selectedVoice?['name'] == name;
+                        return ListTile(
+                          leading: Icon(
+                            isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                            color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
+                          ),
+                          title: Text(
+                            displayName,
+                            style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
+                          ),
+                          subtitle: Text(
+                            gender != null ? '$locale  ·  $gender' : locale,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.play_arrow, size: 20),
+                            tooltip: 'Preview',
+                            onPressed: () => VoiceService.instance.previewVoice(voice),
+                          ),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            setState(() => _selectedVoice = voice);
+                            VoiceService.instance.setSelectedVoice(voice);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );

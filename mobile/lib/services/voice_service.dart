@@ -18,7 +18,9 @@ class VoiceService {
   bool _voiceInputEnabled = true;
   bool _autoReadEnabled = true;
   double _speechRate = 0.5;
+  double _pitch = 1.0;
   String _language = 'en-US';
+  Map<String, String>? _selectedVoice;
 
   // Runtime state
   bool _sttAvailable = false;
@@ -36,7 +38,9 @@ class VoiceService {
   bool get voiceInputEnabled => _voiceInputEnabled;
   bool get autoReadEnabled => _autoReadEnabled;
   double get speechRate => _speechRate;
+  double get pitch => _pitch;
   String get language => _language;
+  Map<String, String>? get selectedVoice => _selectedVoice;
   bool get ttsReady => _ttsReady;
   bool get sttAvailable => _sttAvailable;
   bool get isListening => _isListening;
@@ -50,14 +54,23 @@ class VoiceService {
   static const _keyVoiceInput = 'voice_input_enabled';
   static const _keyAutoRead = 'voice_auto_read_enabled';
   static const _keySpeechRate = 'voice_speech_rate';
+  static const _keyPitch = 'voice_pitch';
   static const _keyLanguage = 'voice_language';
+  static const _keyVoiceName = 'voice_name';
+  static const _keyVoiceLocale = 'voice_locale';
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _voiceInputEnabled = prefs.getBool(_keyVoiceInput) ?? true;
     _autoReadEnabled = prefs.getBool(_keyAutoRead) ?? true;
     _speechRate = prefs.getDouble(_keySpeechRate) ?? 0.5;
+    _pitch = prefs.getDouble(_keyPitch) ?? 1.0;
     _language = prefs.getString(_keyLanguage) ?? 'en-US';
+    final voiceName = prefs.getString(_keyVoiceName);
+    final voiceLocale = prefs.getString(_keyVoiceLocale);
+    if (voiceName != null && voiceLocale != null) {
+      _selectedVoice = {'name': voiceName, 'locale': voiceLocale};
+    }
 
     // Register TTS handlers early — engine setup is deferred to first speak()
     _tts.setCompletionHandler(() {
@@ -102,6 +115,10 @@ class VoiceService {
           await _tts.setLanguage('en');
         }
         await _tts.setSpeechRate(_speechRate);
+        await _tts.setPitch(_pitch);
+        if (_selectedVoice != null) {
+          await _tts.setVoice(_selectedVoice!);
+        }
         await _tts.awaitSpeakCompletion(false);
         _ttsReady = true;
         debugPrint('[VoiceService] TTS ready via default engine');
@@ -128,6 +145,10 @@ class VoiceService {
               await _tts.setLanguage('en');
             }
             await _tts.setSpeechRate(_speechRate);
+            await _tts.setPitch(_pitch);
+            if (_selectedVoice != null) {
+              await _tts.setVoice(_selectedVoice!);
+            }
             await _tts.awaitSpeakCompletion(false);
             _ttsReady = true;
             debugPrint('[VoiceService] TTS ready via engine: $engine');
@@ -190,12 +211,145 @@ class VoiceService {
     await prefs.setDouble(_keySpeechRate, value);
   }
 
+  Future<void> setPitch(double value) async {
+    _pitch = value;
+    await _ensureTtsReady();
+    await _tts.setPitch(value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_keyPitch, value);
+  }
+
   Future<void> setLanguage(String value) async {
     _language = value;
     await _ensureTtsReady();
     await _tts.setLanguage(value);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLanguage, value);
+  }
+
+  /// Returns available voices filtered by the current language.
+  /// Each voice is a map with at least 'name' and 'locale' keys.
+  Future<List<Map<String, String>>> getAvailableVoices() async {
+    await _ensureTtsReady();
+    final voices = await _tts.getVoices;
+    if (voices == null) return [];
+    final langPrefix = _language.split('-').first.toLowerCase();
+    final result = <Map<String, String>>[];
+    for (final v in voices) {
+      final map = Map<String, String>.from(
+        (v as Map).map((k, v) => MapEntry(k.toString(), v.toString())),
+      );
+      final locale = (map['locale'] ?? '').toLowerCase();
+      if (locale.startsWith(langPrefix)) {
+        result.add(map);
+      }
+    }
+    result.sort((a, b) => (a['name'] ?? '').compareTo(b['name'] ?? ''));
+    return result;
+  }
+
+  Future<void> setSelectedVoice(Map<String, String>? voice) async {
+    _selectedVoice = voice;
+    final prefs = await SharedPreferences.getInstance();
+    if (voice != null) {
+      await _tts.setVoice(voice);
+      await prefs.setString(_keyVoiceName, voice['name'] ?? '');
+      await prefs.setString(_keyVoiceLocale, voice['locale'] ?? '');
+    } else {
+      await prefs.remove(_keyVoiceName);
+      await prefs.remove(_keyVoiceLocale);
+      // Reset TTS to pick up system default
+      _ttsReady = false;
+      await _ensureTtsReady();
+    }
+  }
+
+  /// Speak a short sample with the current voice/rate/pitch settings.
+  Future<void> speakSample() async {
+    await _ensureTtsReady();
+    await _tts.stop();
+    await _tts.speak('This is how I sound now.');
+  }
+
+  /// Speak a short preview with a specific voice (used in voice picker).
+  Future<void> previewVoice(Map<String, String> voice) async {
+    await _ensureTtsReady();
+    await _tts.setVoice(voice);
+    await _tts.speak('Hello, this is how I sound.');
+  }
+
+  // Google TTS voice ID → gender mapping (Android x-<id>-local/network pattern)
+  static const _googleVoiceGender = <String, String>{
+    // Female voices
+    'iob': 'Female', 'ioc': 'Female', 'iod': 'Female',
+    'iof': 'Female', 'iog': 'Female', 'ioh': 'Female',
+    'sfg': 'Female', 'tpc': 'Female', 'tpd': 'Female',
+    'tpf': 'Female',
+    // Male voices
+    'ioa': 'Male', 'ioe': 'Male', 'iol': 'Male',
+    'iom': 'Male', 'ion': 'Male',
+    'sfa': 'Male', 'sfb': 'Male',
+    'tpa': 'Male', 'tpb': 'Male', 'tpe': 'Male',
+  };
+
+  /// Extract the voice variant ID from an Android Google TTS name.
+  /// e.g. "en-us-x-iol-local" → "iol", "en-AU-language" → null
+  static String? _extractGoogleVoiceId(String name) {
+    final match = RegExp(r'-x-([a-z]+)-').firstMatch(name.toLowerCase());
+    return match?.group(1);
+  }
+
+  /// Guess gender from voice name. Returns 'Female', 'Male', or null.
+  static String? guessGender(String name) {
+    // Try Google TTS x-<id> pattern first (most Android devices)
+    final gid = _extractGoogleVoiceId(name);
+    if (gid != null && _googleVoiceGender.containsKey(gid)) {
+      return _googleVoiceGender[gid];
+    }
+
+    final lower = name.toLowerCase();
+    const femaleHints = [
+      'female', '#female', '-f-', '_f_', '.f.',
+      'samantha', 'karen', 'moira', 'tessa', 'fiona', 'victoria',
+      'allison', 'ava', 'susan', 'zira', 'hazel', 'heera',
+    ];
+    const maleHints = [
+      'male', '#male', '-m-', '_m_', '.m.',
+      'daniel', 'thomas', 'oliver', 'james', 'david', 'mark',
+      'aaron', 'rishi', 'tom',
+    ];
+    for (final hint in femaleHints) {
+      if (lower.contains(hint)) return 'Female';
+    }
+    for (final hint in maleHints) {
+      if (lower.contains(hint)) return 'Male';
+    }
+    return null;
+  }
+
+  /// Build a human-friendly display name from a raw TTS voice name.
+  /// "en-us-x-iol-local" → "Voice iol (local)"
+  /// "en-AU-language" → "en-AU (language)"
+  static String displayName(String name) {
+    // Google TTS: en-us-x-<id>-local or en-us-x-<id>-network
+    final gMatch = RegExp(r'^([a-z]{2}-[a-z]{2})-x-([a-z]+)-(local|network)$', caseSensitive: false)
+        .firstMatch(name);
+    if (gMatch != null) {
+      final id = gMatch.group(2)!;
+      final quality = gMatch.group(3)!;
+      final qualityLabel = quality == 'network' ? 'HD' : 'offline';
+      return 'Voice $id ($qualityLabel)';
+    }
+
+    // Pattern like "en-AU-language"
+    final langMatch = RegExp(r'^([a-z]{2}-[A-Z]{2})-(.+)$').firstMatch(name);
+    if (langMatch != null) {
+      final locale = langMatch.group(1)!;
+      final variant = langMatch.group(2)!;
+      return '$locale ($variant)';
+    }
+
+    return name;
   }
 
   // ==================== Diagnostics ====================
