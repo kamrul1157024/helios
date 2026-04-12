@@ -2,7 +2,7 @@
 .PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
 .PHONY: dmg dmg-dev changelog release
 
-VERSION = 0.2.0
+VERSION = 0.2.5
 REPO = kamrul1157024/helios
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
