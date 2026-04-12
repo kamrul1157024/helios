@@ -34,9 +34,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         final notifications = hm.filteredNotifications;
 
-        final pendingActions = notifications.where((n) => registry.needsAction(n)).toList();
-        final activeStatuses = notifications.where((n) => n.isPending && !registry.needsAction(n)).toList();
-        final resolved = notifications.where((n) => !n.isPending).toList();
+        final pendingActions = <HeliosNotification>[];
+        final activeStatuses = <HeliosNotification>[];
+        final resolved = <HeliosNotification>[];
+        for (final n in notifications) {
+          if (!n.isPending) {
+            resolved.add(n);
+          } else if (registry.needsAction(n)) {
+            pendingActions.add(n);
+          } else {
+            activeStatuses.add(n);
+          }
+        }
 
         if (pendingActions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
           return _buildEmptyState();

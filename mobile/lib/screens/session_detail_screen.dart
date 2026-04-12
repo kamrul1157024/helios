@@ -33,7 +33,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   StreamSubscription<SSEEvent>? _eventSub;
   String _currentVerb = randomClaudeVerb();
   Timer? _verbTimer;
+  Timer? _transcriptDebounce;
   late final AnimationController _breathController;
+  bool _breathingActive = false;
 
   @override
   void initState() {
@@ -41,7 +43,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _breathController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2500),
-    )..repeat(reverse: true);
+    );
+    if (widget.session.isActive) {
+      _breathController.repeat(reverse: true);
+      _breathingActive = true;
+    }
     _loadTranscript();
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomClaudeVerb());
@@ -53,7 +59,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         // Refresh on session status changes and notification events for this session
         if (event.type == 'session_status' &&
             data['session_id'] == widget.session.sessionId) {
-          _loadTranscript();
+          _transcriptDebounce?.cancel();
+          _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
+            _loadTranscript();
+          });
         }
         if (event.type == 'notification' || event.type == 'notification_resolved') {
           // Notifications refresh via DaemonAPIService.fetchNotifications — just rebuild
@@ -70,7 +79,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _scrollController.dispose();
     _eventSub?.cancel();
     _verbTimer?.cancel();
+    _transcriptDebounce?.cancel();
     super.dispose();
+  }
+
+  void _updateBreathAnimation(Session session) {
+    final shouldAnimate = session.isActive;
+    if (shouldAnimate && !_breathingActive) {
+      _breathController.repeat(reverse: true);
+      _breathingActive = true;
+    } else if (!shouldAnimate && _breathingActive) {
+      _breathController.stop();
+      _breathController.reset();
+      _breathingActive = false;
+    }
   }
 
   DaemonAPIService? get _sse => context.read<HostManager>().serviceFor(widget.session.hostId);
@@ -199,6 +221,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           (s) => s.sessionId == widget.session.sessionId,
           orElse: () => widget.session,
         ) ?? widget.session;
+        _updateBreathAnimation(session);
         final pendingNotifs = sse != null ? _pendingNotifications(sse) : <HeliosNotification>[];
 
         return Scaffold(
