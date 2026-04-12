@@ -8,6 +8,7 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/push"
+	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tmux"
 )
@@ -20,6 +21,7 @@ type Shared struct {
 	Pusher       *push.Sender
 	Tmux         *tmux.Client
 	PendingPanes *PendingPaneMap
+	Reporter     *reporter.Reporter
 }
 
 // InternalServer handles hooks (Claude) and admin API (CLI).
@@ -44,6 +46,7 @@ func NewShared(db *store.Store, mgr *notifications.Manager, pusher *push.Sender)
 		Pusher:       pusher,
 		Tmux:         tmux.NewClient(),
 		PendingPanes: NewPendingPaneMap(),
+		Reporter:     reporter.New("claude", db),
 	}
 }
 
@@ -110,7 +113,9 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/commands", s.handleListCommands)
 	protectedMux.HandleFunc("GET /api/providers", s.handleListProviders)
 	protectedMux.HandleFunc("POST /api/sessions", s.handleCreateSession)
-	protectedMux.HandleFunc("POST /api/narrate", s.handleSmallModelText)
+	protectedMux.HandleFunc("GET /api/reporter", s.handleReporter)
+	protectedMux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	protectedMux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 
 	// Dynamic path handlers for providers
 	protectedMux.HandleFunc("/api/providers/", func(w http.ResponseWriter, r *http.Request) {

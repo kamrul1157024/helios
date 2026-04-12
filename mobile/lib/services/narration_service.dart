@@ -1,116 +1,179 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../models/narration_event.dart';
+import 'package:http/http.dart' as http;
 import 'voice_service.dart';
 
-/// Manages AI-powered narration via the backend's /api/narrate endpoint.
+/// Host connection info needed to open a reporter SSE stream.
+class ReporterHost {
+  final String hostId;
+  final String serverUrl;
+  final String cookie;
+
+  const ReporterHost({
+    required this.hostId,
+    required this.serverUrl,
+    required this.cookie,
+  });
+}
+
+/// Manages AI-powered narration via the backend's push-based Reporter SSE.
 ///
-/// Events are batched per session with a 2-second debounce window, then sent to
-/// the backend for Haiku-generated narration text, which is spoken via TTS.
+/// Only one mode is active at a time: global (multiple hosts) or session
+/// (single host, single session). Calling either connect method disconnects
+/// everything first.
 class NarrationService {
   NarrationService._();
   static final instance = NarrationService._();
 
-  // Persisted settings
-  bool _aiNarrationEnabled = true;
-  String _customPrompt = '';
+  final Map<String, _ReporterConnection> _connections = {};
 
-  bool get aiNarrationEnabled => _aiNarrationEnabled;
-  String get customPrompt => _customPrompt;
-
-  // Debounce state per session
-  final Map<String, List<NarrationEvent>> _pendingEvents = {};
-  final Map<String, Timer?> _debounceTimers = {};
-  final Map<String, String?> _sessionContexts = {};
-  final Map<String, String?> _sessionCwds = {};
-
-  /// Callback to call the backend. Set by the app on startup.
-  Future<String?> Function(
-    String hostId,
-    List<NarrationEvent> events,
-    String? sessionContext,
-    String? sessionCwd,
-    String? systemPrompt,
-  )? onNarrate;
-
-  Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    _aiNarrationEnabled = prefs.getBool('ai_narration_enabled') ?? true;
-    _customPrompt = prefs.getString('narrator_prompt') ?? '';
-  }
-
-  Future<void> setAINarrationEnabled(bool value) async {
-    _aiNarrationEnabled = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('ai_narration_enabled', value);
-    if (!value) clear();
-  }
-
-  Future<void> setCustomPrompt(String value) async {
-    _customPrompt = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('narrator_prompt', value);
-  }
-
-  /// Queue an event for narration. Events are batched per session with 2s debounce.
-  /// [sessionContext] and [sessionCwd] are only passed for global voice mode.
-  void addEvent(String hostId, String sessionId, NarrationEvent event,
-      {String? sessionContext, String? sessionCwd}) {
-    if (!_aiNarrationEnabled) return;
-
-    final key = '$hostId:$sessionId';
-    _pendingEvents.putIfAbsent(key, () => []);
-    _pendingEvents[key]!.add(event);
-
-    if (sessionContext != null) {
-      _sessionContexts[key] = sessionContext;
+  /// Connect globally to all provided hosts (no session filter).
+  /// Disconnects any existing connections first.
+  void connectGlobal(List<ReporterHost> hosts) {
+    disconnectAll();
+    for (final host in hosts) {
+      _connections[host.hostId] = _ReporterConnection(
+        serverUrl: host.serverUrl,
+        cookie: host.cookie,
+        sessionId: null,
+        onNarration: _handleNarration,
+      )..connect();
     }
-    if (sessionCwd != null) {
-      _sessionCwds[key] = sessionCwd;
-    }
-
-    _debounceTimers[key]?.cancel();
-    _debounceTimers[key] = Timer(const Duration(seconds: 2), () {
-      _flush(hostId, sessionId);
-    });
   }
 
-  /// Flush pending events: call /api/narrate, speak result.
-  Future<void> _flush(String hostId, String sessionId) async {
-    final key = '$hostId:$sessionId';
-    final events = _pendingEvents.remove(key);
-    final context = _sessionContexts.remove(key);
-    final cwd = _sessionCwds.remove(key);
-    _debounceTimers.remove(key);
-    if (events == null || events.isEmpty) return;
+  /// Connect to a single session on its host.
+  /// Disconnects any existing connections first.
+  void connectSession({
+    required ReporterHost host,
+    required String sessionId,
+  }) {
+    disconnectAll();
+    final key = '${host.hostId}:$sessionId';
+    _connections[key] = _ReporterConnection(
+      serverUrl: host.serverUrl,
+      cookie: host.cookie,
+      sessionId: sessionId,
+      onNarration: _handleNarration,
+    )..connect();
+  }
 
-    if (onNarrate == null) return;
+  /// Disconnect all reporter connections.
+  void disconnectAll() {
+    for (final conn in _connections.values) {
+      conn.close();
+    }
+    _connections.clear();
+  }
+
+  /// Whether any connections are active.
+  bool get isActive => _connections.isNotEmpty;
+
+  void _handleNarration(String narration) {
+    if (narration.isNotEmpty) {
+      VoiceService.instance.speak(narration);
+    }
+  }
+}
+
+/// A single SSE connection to GET /api/reporter.
+class _ReporterConnection {
+  final String serverUrl;
+  final String cookie;
+  final String? sessionId;
+  final void Function(String narration) onNarration;
+
+  http.Client? _client;
+  bool _running = false;
+  Timer? _reconnectTimer;
+
+  _ReporterConnection({
+    required this.serverUrl,
+    required this.cookie,
+    required this.sessionId,
+    required this.onNarration,
+  });
+
+  void connect() {
+    _running = true;
+    _doConnect();
+  }
+
+  Future<void> _doConnect() async {
+    if (!_running) return;
+
+    _client?.close();
+    _client = http.Client();
 
     try {
-      final narration = await onNarrate!(
-        hostId,
-        events,
-        context,
-        cwd,
-        _customPrompt.isNotEmpty ? _customPrompt : null,
-      );
-      if (narration != null && narration.isNotEmpty) {
-        VoiceService.instance.speak(narration);
+      var path = '/api/reporter';
+      if (sessionId != null) {
+        path += '?session=$sessionId';
+      }
+
+      final request = http.Request('GET', Uri.parse('$serverUrl$path'));
+      request.headers.addAll({
+        'Cookie': 'helios_token=$cookie',
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      });
+
+      final response = await _client!.send(request);
+
+      if (response.statusCode != 200) {
+        debugPrint('[NarrationService] reporter SSE failed: HTTP ${response.statusCode}');
+        _scheduleReconnect();
+        return;
+      }
+
+      String buffer = '';
+      String currentEvent = '';
+
+      await for (final chunk in response.stream.transform(utf8.decoder)) {
+        if (!_running) break;
+
+        buffer += chunk;
+        final lines = buffer.split('\n');
+        buffer = lines.removeLast();
+
+        for (final line in lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('data: ') && currentEvent.isNotEmpty) {
+            if (currentEvent == 'narration') {
+              try {
+                final data = jsonDecode(line.substring(6));
+                final text = data['text'] as String? ?? '';
+                if (text.isNotEmpty) {
+                  onNarration(text);
+                }
+              } catch (e) {
+                debugPrint('[NarrationService] parse error: $e');
+              }
+            }
+            currentEvent = '';
+          }
+        }
       }
     } catch (e) {
-      debugPrint('Narration flush error: $e');
+      if (!_running) return;
+      debugPrint('[NarrationService] reporter SSE error: $e');
     }
+
+    if (_running) _scheduleReconnect();
   }
 
-  /// Clear all pending events (e.g., when voice mode is turned off).
-  void clear() {
-    for (final timer in _debounceTimers.values) {
-      timer?.cancel();
-    }
-    _debounceTimers.clear();
-    _pendingEvents.clear();
-    _sessionContexts.clear();
-    _sessionCwds.clear();
+  void _scheduleReconnect() {
+    if (!_running) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 5), _doConnect);
+  }
+
+  void close() {
+    _running = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _client?.close();
+    _client = null;
   }
 }

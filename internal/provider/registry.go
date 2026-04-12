@@ -10,6 +10,20 @@ import (
 	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
+// ReportEvent is a narration event passed to the Reporter.
+// Defined here to avoid circular imports (reporter imports provider).
+type ReportEvent struct {
+	Type      string
+	SessionID string
+	CWD       string
+	ToolName  string
+	ToolInput string // summarized tool input
+	Message   string
+	Status    string
+	AgentType string
+	Detail    string
+}
+
 // HookContext provides everything a hook handler needs without importing server.
 type HookContext struct {
 	DB               *store.Store
@@ -18,6 +32,7 @@ type HookContext struct {
 	Notify           func(eventType string, data interface{})  // SSE broadcast
 	Push             func(notifType, id, title, body string)    // push notification
 	RemovePendingPane func(cwd string) string                    // remove pane from pending map by CWD, returns pane ID
+	Report           func(event ReportEvent)                     // push event to Reporter for narration
 }
 
 // HookHandler processes an incoming hook request and writes the response.
@@ -152,4 +167,26 @@ func RegisterSmallModelCaller(providerID string, caller SmallModelCaller) {
 // GetSmallModelCaller returns the small model caller for a provider, or nil.
 func GetSmallModelCaller(providerID string) SmallModelCaller {
 	return smallModelCallers[providerID]
+}
+
+// ==================== Event Types ====================
+
+// EventTypeInfo describes a reportable event type from a provider.
+type EventTypeInfo struct {
+	Type        string `json:"type"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Category    string `json:"category"` // "tools", "actions", "lifecycle", "context", "subagents", "other"
+}
+
+var eventTypes = map[string][]EventTypeInfo{}
+
+// RegisterEventTypes registers event types for a provider.
+func RegisterEventTypes(providerID string, types []EventTypeInfo) {
+	eventTypes[providerID] = types
+}
+
+// GetAllEventTypes returns all registered event types grouped by provider.
+func GetAllEventTypes() map[string][]EventTypeInfo {
+	return eventTypes
 }

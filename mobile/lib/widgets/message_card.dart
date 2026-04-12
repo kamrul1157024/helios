@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/message.dart';
 import '../services/voice_service.dart';
-import '../services/tts_transformer.dart';
+import '../utils/markdown_stripper.dart';
 
 class MessageCard extends StatelessWidget {
   final Message message;
@@ -77,7 +77,8 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
   bool _isSpeaking = false;
 
   void _speakMessage() async {
-    final spoken = TTSTransformer.transformMessage(widget.message);
+    final content = widget.message.content;
+    final spoken = (content != null && content.isNotEmpty) ? stripMarkdown(content) : null;
     debugPrint('[MessageCard] _speakMessage: spoken=${spoken != null ? '"${spoken.length > 80 ? '${spoken.substring(0, 80)}...' : spoken}"' : 'null'}');
     if (spoken != null) {
       setState(() => _isSpeaking = true);
