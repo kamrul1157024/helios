@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,12 +30,6 @@ jobs:
 
       - name: Install Flutter dependencies
         run: cd mobile && flutter pub get
-
-      - name: Build macOS app
-        run: cd mobile && flutter build macos --release
-
-      - name: Create DMG
-        run: ./scripts/create-dmg.sh
 
       - name: Build APK and create GitHub release
         env:
