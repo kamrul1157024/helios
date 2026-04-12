@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/narration_event.dart';
 import 'voice_service.dart';
 
-/// Manages AI-powered narration via the backend's /api/small-model-text endpoint.
+/// Manages AI-powered narration via the backend's /api/narrate endpoint.
 ///
 /// Events are batched per session with a 2-second debounce window, then sent to
 /// the backend for Haiku-generated narration text, which is spoken via TTS.
@@ -23,12 +23,14 @@ class NarrationService {
   final Map<String, List<NarrationEvent>> _pendingEvents = {};
   final Map<String, Timer?> _debounceTimers = {};
   final Map<String, String?> _sessionContexts = {};
+  final Map<String, String?> _sessionCwds = {};
 
   /// Callback to call the backend. Set by the app on startup.
   Future<String?> Function(
     String hostId,
     List<NarrationEvent> events,
     String? sessionContext,
+    String? sessionCwd,
     String? systemPrompt,
   )? onNarrate;
 
@@ -52,9 +54,9 @@ class NarrationService {
   }
 
   /// Queue an event for narration. Events are batched per session with 2s debounce.
-  /// [sessionContext] is the last user message — only pass for global voice mode.
+  /// [sessionContext] and [sessionCwd] are only passed for global voice mode.
   void addEvent(String hostId, String sessionId, NarrationEvent event,
-      {String? sessionContext}) {
+      {String? sessionContext, String? sessionCwd}) {
     if (!_aiNarrationEnabled) return;
 
     final key = '$hostId:$sessionId';
@@ -64,6 +66,9 @@ class NarrationService {
     if (sessionContext != null) {
       _sessionContexts[key] = sessionContext;
     }
+    if (sessionCwd != null) {
+      _sessionCwds[key] = sessionCwd;
+    }
 
     _debounceTimers[key]?.cancel();
     _debounceTimers[key] = Timer(const Duration(seconds: 2), () {
@@ -71,11 +76,12 @@ class NarrationService {
     });
   }
 
-  /// Flush pending events: call /api/small-model-text, speak result.
+  /// Flush pending events: call /api/narrate, speak result.
   Future<void> _flush(String hostId, String sessionId) async {
     final key = '$hostId:$sessionId';
     final events = _pendingEvents.remove(key);
     final context = _sessionContexts.remove(key);
+    final cwd = _sessionCwds.remove(key);
     _debounceTimers.remove(key);
     if (events == null || events.isEmpty) return;
 
@@ -86,6 +92,7 @@ class NarrationService {
         hostId,
         events,
         context,
+        cwd,
         _customPrompt.isNotEmpty ? _customPrompt : null,
       );
       if (narration != null && narration.isNotEmpty) {
@@ -104,5 +111,6 @@ class NarrationService {
     _debounceTimers.clear();
     _pendingEvents.clear();
     _sessionContexts.clear();
+    _sessionCwds.clear();
   }
 }

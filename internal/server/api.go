@@ -1114,15 +1114,15 @@ func (s *PublicServer) handleSmallModelText(w http.ResponseWriter, r *http.Reque
 
 	// Log request for debugging
 	for i, e := range req.Events {
-		log.Printf("[small-model-text] event[%d]: type=%s tool=%s target=%s summary=%s status=%s", i, e.Type, e.Tool, e.Target, e.Summary, e.Status)
+		log.Printf("[narrate] event[%d]: type=%s tool=%s content=%s status=%s", i, e.Type, e.Tool, truncate(e.Content, 80), e.Status)
 	}
 	if req.SessionContext != "" {
-		log.Printf("[small-model-text] session_context=%s", req.SessionContext)
+		log.Printf("[narrate] session_context=%s", truncate(req.SessionContext, 80))
 	}
 
 	resp := narration.Generate(r.Context(), req, "claude")
 
-	log.Printf("[small-model-text] narration=%q", resp.Narration)
+	log.Printf("[narrate] narration=%q", resp.Narration)
 	jsonResponse(w, http.StatusOK, resp)
 }
 

@@ -2,6 +2,7 @@ package narration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -9,20 +10,21 @@ import (
 )
 
 // Event represents a single narration-worthy event from the mobile client.
+// Mobile sends raw data; the backend handles truncation and prompt formatting.
 type Event struct {
-	Type    string `json:"type"`              // "tool_use", "tool_result", "assistant", "notification", "status"
-	Tool    string `json:"tool,omitempty"`     // tool name (Read, Edit, Bash, etc.)
-	Target  string `json:"target,omitempty"`   // file path, command, etc.
-	Summary string `json:"summary,omitempty"` // human-readable summary
-	Content string `json:"content,omitempty"` // assistant response text (truncated to 500 chars by mobile)
-	Success *bool  `json:"success,omitempty"` // tool_result success/failure
-	Status  string `json:"status,omitempty"`  // "idle", "error" for status events
+	Type    string                 `json:"type"`              // "tool_use", "tool_result", "assistant", "user", "notification", "status"
+	Tool    string                 `json:"tool,omitempty"`    // tool name (Read, Edit, Bash, etc.)
+	Content string                 `json:"content,omitempty"` // raw text content (assistant response, user message, notification type, tool input)
+	Success *bool                  `json:"success,omitempty"` // tool_result success/failure
+	Status  string                 `json:"status,omitempty"`  // "idle", "error" for status events
+	Payload map[string]interface{} `json:"payload,omitempty"` // raw notification payload
 }
 
 // Request is the payload sent by the mobile client.
 type Request struct {
 	Events         []Event `json:"events"`
-	SessionContext string  `json:"session_context,omitempty"` // user's prompt / session title
+	SessionContext string  `json:"session_context,omitempty"` // last user message (global voice only)
+	SessionCWD     string  `json:"session_cwd,omitempty"`     // working directory (global voice only)
 	SystemPrompt   string  `json:"system_prompt,omitempty"`   // custom narrator prompt override
 }
 
@@ -71,6 +73,15 @@ func Generate(ctx context.Context, req Request, providerID string) *Response {
 	return &Response{Narration: result}
 }
 
+const maxContentLen = 300
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
 func buildPrompt(req Request) string {
 	if len(req.Events) == 0 {
 		return ""
@@ -78,8 +89,15 @@ func buildPrompt(req Request) string {
 
 	var sb strings.Builder
 
-	if req.SessionContext != "" {
-		sb.WriteString(fmt.Sprintf("Session context: %s\n\n", req.SessionContext))
+	if req.SessionCWD != "" || req.SessionContext != "" {
+		sb.WriteString("Session:\n")
+		if req.SessionCWD != "" {
+			sb.WriteString(fmt.Sprintf("- Working directory: %s\n", req.SessionCWD))
+		}
+		if req.SessionContext != "" {
+			sb.WriteString(fmt.Sprintf("- Task: %s\n", truncate(req.SessionContext, 200)))
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("Events:\n")
@@ -87,14 +105,13 @@ func buildPrompt(req Request) string {
 		sb.WriteString(fmt.Sprintf("%d. ", i+1))
 		switch e.Type {
 		case "assistant":
-			sb.WriteString(fmt.Sprintf("[assistant] %s", e.Content))
+			sb.WriteString(fmt.Sprintf("[assistant] %s", truncate(e.Content, maxContentLen)))
+		case "user":
+			sb.WriteString(fmt.Sprintf("[user] %s", truncate(e.Content, maxContentLen)))
 		case "tool_use":
 			sb.WriteString(fmt.Sprintf("[tool_use] %s", e.Tool))
-			if e.Target != "" {
-				sb.WriteString(fmt.Sprintf(" %s", e.Target))
-			}
-			if e.Summary != "" {
-				sb.WriteString(fmt.Sprintf(" — %s", e.Summary))
+			if e.Content != "" {
+				sb.WriteString(fmt.Sprintf(" — %s", truncate(e.Content, maxContentLen)))
 			}
 		case "tool_result":
 			sb.WriteString(fmt.Sprintf("[tool_result] %s", e.Tool))
@@ -105,15 +122,23 @@ func buildPrompt(req Request) string {
 					sb.WriteString(" — failed")
 				}
 			}
+			if e.Content != "" {
+				sb.WriteString(fmt.Sprintf(": %s", truncate(e.Content, maxContentLen)))
+			}
 		case "notification":
-			sb.WriteString(fmt.Sprintf("[notification] %s", e.Tool))
-			if e.Summary != "" {
-				sb.WriteString(fmt.Sprintf(" — %s", e.Summary))
+			sb.WriteString(fmt.Sprintf("[notification] %s", e.Content))
+			if e.Payload != nil {
+				if raw, err := json.Marshal(e.Payload); err == nil {
+					sb.WriteString(fmt.Sprintf(" %s", truncate(string(raw), maxContentLen)))
+				}
 			}
 		case "status":
 			sb.WriteString(fmt.Sprintf("[status] %s", e.Status))
 		default:
 			sb.WriteString(fmt.Sprintf("[%s]", e.Type))
+			if e.Content != "" {
+				sb.WriteString(fmt.Sprintf(" %s", truncate(e.Content, maxContentLen)))
+			}
 		}
 		sb.WriteString("\n")
 	}

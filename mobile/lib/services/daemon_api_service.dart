@@ -652,13 +652,14 @@ class DaemonAPIService extends ChangeNotifier {
     }
   }
 
-  // ==================== Small Model Text API ====================
+  // ==================== Narration API ====================
 
   /// Call the backend's small model for AI narration.
   /// Returns the generated narration text, or null on failure.
-  Future<String?> smallModelText(
+  Future<String?> narrate(
     List<NarrationEvent> events, {
     String? sessionContext,
+    String? sessionCwd,
     String? systemPrompt,
   }) async {
     try {
@@ -668,11 +669,14 @@ class DaemonAPIService extends ChangeNotifier {
       if (sessionContext != null && sessionContext.isNotEmpty) {
         body['session_context'] = sessionContext;
       }
+      if (sessionCwd != null && sessionCwd.isNotEmpty) {
+        body['session_cwd'] = sessionCwd;
+      }
       if (systemPrompt != null && systemPrompt.isNotEmpty) {
         body['system_prompt'] = systemPrompt;
       }
 
-      final resp = await _authPost('/api/small-model-text', body: body)
+      final resp = await _authPost('/api/narrate', body: body)
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
@@ -680,7 +684,7 @@ class DaemonAPIService extends ChangeNotifier {
         return (narration != null && narration.isNotEmpty) ? narration : null;
       }
     } catch (e) {
-      debugPrint('[$hostId] Small model text error: $e');
+      debugPrint('[$hostId] Narrate error: $e');
     }
     return null;
   }
