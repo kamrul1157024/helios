@@ -16,7 +16,6 @@ class VoiceService {
   // Persisted settings
   bool _voiceInputEnabled = true;
   bool _autoReadEnabled = true;
-  bool _toolCallTtsEnabled = true;
   double _speechRate = 0.5;
   String _language = 'en-US';
 
@@ -35,7 +34,6 @@ class VoiceService {
 
   bool get voiceInputEnabled => _voiceInputEnabled;
   bool get autoReadEnabled => _autoReadEnabled;
-  bool get toolCallTtsEnabled => _toolCallTtsEnabled;
   double get speechRate => _speechRate;
   String get language => _language;
   bool get sttAvailable => _sttAvailable;
@@ -49,7 +47,6 @@ class VoiceService {
 
   static const _keyVoiceInput = 'voice_input_enabled';
   static const _keyAutoRead = 'voice_auto_read_enabled';
-  static const _keyToolCallTts = 'voice_tool_call_tts_enabled';
   static const _keySpeechRate = 'voice_speech_rate';
   static const _keyLanguage = 'voice_language';
 
@@ -57,7 +54,6 @@ class VoiceService {
     final prefs = await SharedPreferences.getInstance();
     _voiceInputEnabled = prefs.getBool(_keyVoiceInput) ?? true;
     _autoReadEnabled = prefs.getBool(_keyAutoRead) ?? true;
-    _toolCallTtsEnabled = prefs.getBool(_keyToolCallTts) ?? true;
     _speechRate = prefs.getDouble(_keySpeechRate) ?? 0.5;
     _language = prefs.getString(_keyLanguage) ?? 'en-US';
 
@@ -182,12 +178,6 @@ class VoiceService {
     _autoReadEnabled = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyAutoRead, value);
-  }
-
-  Future<void> setToolCallTtsEnabled(bool value) async {
-    _toolCallTtsEnabled = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_keyToolCallTts, value);
   }
 
   Future<void> setSpeechRate(double value) async {

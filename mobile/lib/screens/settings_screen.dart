@@ -21,7 +21,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _vibrationEnabled;
   late bool _voiceInputEnabled;
   late bool _autoReadEnabled;
-  late bool _toolCallTtsEnabled;
   late double _speechRate;
 
   // Reporter settings from backend
@@ -41,7 +40,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _vibrationEnabled = NotificationService.instance.vibrationEnabled;
     _voiceInputEnabled = VoiceService.instance.voiceInputEnabled;
     _autoReadEnabled = VoiceService.instance.autoReadEnabled;
-    _toolCallTtsEnabled = VoiceService.instance.toolCallTtsEnabled;
     _speechRate = VoiceService.instance.speechRate;
     _loadReporterSettings();
   }
@@ -163,15 +161,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   }
                 },
               ),
-              SwitchListTile(
-                title: const Text('Read tool actions'),
-                subtitle: const Text('Announce tool calls like Read, Edit, Bash'),
-                value: _toolCallTtsEnabled,
-                onChanged: (value) {
-                  setState(() => _toolCallTtsEnabled = value);
-                  VoiceService.instance.setToolCallTtsEnabled(value);
-                },
-              ),
               ListTile(
                 leading: const Icon(Icons.speed),
                 title: const Text('Speech rate'),
@@ -273,44 +262,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('Narrator Persona', style: Theme.of(ctx).textTheme.titleSmall),
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (ctx, scrollController) {
+            return SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Narrator Persona', style: Theme.of(ctx).textTheme.titleSmall),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      itemCount: allOptions.length,
+                      itemBuilder: (ctx, index) {
+                        final p = allOptions[index];
+                        final id = p['id'] as String;
+                        final isSelected = id == _activePersonaId;
+                        return ListTile(
+                          leading: Icon(
+                            isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                            color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
+                          ),
+                          title: Text(
+                            p['name'] as String,
+                            style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
+                          ),
+                          subtitle: Text(
+                            p['description'] as String,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            setState(() => _activePersonaId = id);
+                            _updateReporterSetting('reporter.persona', id);
+                            if (id == 'custom') {
+                              Future.delayed(const Duration(milliseconds: 300), _showCustomPromptDialog);
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-              ...allOptions.map((p) {
-                final id = p['id'] as String;
-                final isSelected = id == _activePersonaId;
-                return ListTile(
-                  leading: Icon(
-                    isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                    color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
-                  ),
-                  title: Text(
-                    p['name'] as String,
-                    style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
-                  ),
-                  subtitle: Text(
-                    p['description'] as String,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    setState(() => _activePersonaId = id);
-                    _updateReporterSetting('reporter.persona', id);
-                    if (id == 'custom') {
-                      Future.delayed(const Duration(milliseconds: 300), _showCustomPromptDialog);
-                    }
-                  },
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
-          ),
+            );
+          },
         );
       },
     );
