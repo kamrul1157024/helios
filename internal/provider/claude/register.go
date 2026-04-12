@@ -1,7 +1,11 @@
 package claude
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/kamrul1157024/helios/internal/provider"
 )
@@ -64,6 +68,34 @@ func Register() {
 	provider.RegisterAction("claude.elicitation.form", handleElicitationAction)
 	provider.RegisterAction("claude.elicitation.url", handleElicitationAction)
 	provider.RegisterAction("claude.trust", handleTrustAction)
+
+	// Small model caller — runs claude CLI with haiku for lightweight text generation
+	provider.RegisterSmallModelCaller("claude", func(ctx context.Context, system, prompt string) (string, error) {
+		cmd := exec.CommandContext(ctx, "claude",
+			"-p",
+			"--bare",
+			"--model", "haiku",
+			"--tools", "",
+			"--no-session-persistence",
+			"--output-format", "json",
+			"--system-prompt", system,
+		)
+		cmd.Stdin = strings.NewReader(prompt)
+
+		output, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("claude cli: %w", err)
+		}
+
+		var result struct {
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal(output, &result); err != nil {
+			return "", fmt.Errorf("parse response: %w", err)
+		}
+
+		return result.Result, nil
+	})
 
 	// Slash commands available in the Claude CLI
 	provider.RegisterCommands([]provider.Command{

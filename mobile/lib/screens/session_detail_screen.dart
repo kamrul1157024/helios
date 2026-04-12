@@ -10,6 +10,10 @@ import '../providers/claude/verbs.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
+import '../services/voice_service.dart';
+import '../services/tts_transformer.dart';
+import '../services/narration_service.dart';
+import '../models/narration_event.dart';
 import '../widgets/skeleton.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -36,6 +40,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   Timer? _transcriptDebounce;
   late final AnimationController _breathController;
   bool _breathingActive = false;
+  bool _isRecording = false;
+  int _lastReadTotal = 0;
+
+  bool get _isVoiceActive => VoiceService.instance.isSessionActive(widget.session.sessionId);
 
   @override
   void initState() {
@@ -63,10 +71,30 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
             _loadTranscript();
           });
+          // Speak session completion/error when voice is active
+          if (_isVoiceActive) {
+            final status = data['status']?.toString() ?? '';
+            if (status == 'idle' || status == 'error') {
+              if (NarrationService.instance.aiNarrationEnabled) {
+                NarrationService.instance.addEvent(
+                  widget.session.hostId, widget.session.sessionId,
+                  NarrationEvent.fromStatus(status),
+                );
+              } else {
+                final spoken = TTSTransformer.transformSessionStatus(
+                  status, widget.session.displayTitle);
+                if (spoken != null) VoiceService.instance.speak(spoken);
+              }
+            }
+          }
         }
         if (event.type == 'notification' || event.type == 'notification_resolved') {
           // Notifications refresh via DaemonAPIService.fetchNotifications — just rebuild
           if (mounted) setState(() {});
+          // Auto-read notification via TTS
+          if (_isVoiceActive && event.type == 'notification' && data['session_id'] == widget.session.sessionId) {
+            _speakNotificationFromSSE(data);
+          }
         }
       }
     });
@@ -80,6 +108,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _eventSub?.cancel();
     _verbTimer?.cancel();
     _transcriptDebounce?.cancel();
+    if (_isRecording) VoiceService.instance.stopListening();
+    if (_isVoiceActive) VoiceService.instance.setActiveSession(null);
     super.dispose();
   }
 
@@ -102,6 +132,35 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     if (sse == null) return;
     final result = await sse.fetchTranscript(widget.session.sessionId, limit: 200);
     if (result != null && mounted) {
+      // Auto-read new messages when voice mode is active
+      if (_isVoiceActive && VoiceService.instance.autoReadEnabled && _lastReadTotal > 0) {
+        final newCount = result.total - _lastReadTotal;
+        if (newCount > 0) {
+          final startIdx = result.messages.length - newCount;
+          if (startIdx >= 0) {
+            if (NarrationService.instance.aiNarrationEnabled) {
+              // AI narration: feed new messages into NarrationService's debounce
+              for (var i = startIdx; i < result.messages.length; i++) {
+                if (result.messages[i].isUser) continue;
+                NarrationService.instance.addEvent(
+                  widget.session.hostId,
+                  widget.session.sessionId,
+                  NarrationEvent.fromMessage(result.messages[i]),
+                );
+              }
+            } else {
+              // Template-based narration
+              for (var i = startIdx; i < result.messages.length; i++) {
+                final spoken = TTSTransformer.transformMessage(result.messages[i]);
+                if (spoken != null) {
+                  VoiceService.instance.speak(spoken);
+                }
+              }
+            }
+          }
+        }
+      }
+      _lastReadTotal = result.total;
       setState(() {
         _messages = result.messages;
         _total = result.total;
@@ -370,8 +429,150 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     );
   }
 
+  void _toggleRecording() async {
+    debugPrint('[SessionDetail] _toggleRecording() _isRecording=$_isRecording');
+    if (_isRecording) {
+      VoiceService.instance.stopListening();
+      setState(() => _isRecording = false);
+      // If there's text in the field, send it
+      final text = _promptController.text.trim();
+      debugPrint('[SessionDetail] stopped recording, text in field: "$text"');
+      if (text.isNotEmpty) {
+        _sendPrompt();
+      }
+      return;
+    }
+
+    // Stop TTS before starting STT to prevent feedback / audio session conflict
+    await VoiceService.instance.stopSpeaking();
+    // Brief delay to let the audio session release
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    debugPrint('[SessionDetail] calling startListening...');
+    VoiceService.instance.startListening(
+      onResult: (text, finalResult) {
+        debugPrint('[SessionDetail] onResult: "$text" final=$finalResult');
+        if (!mounted) return;
+        setState(() {
+          _promptController.text = text;
+          _promptController.selection = TextSelection.fromPosition(
+            TextPosition(offset: text.length),
+          );
+        });
+        // Auto-send when speech engine detects a pause (finalResult)
+        if (finalResult && text.trim().isNotEmpty) {
+          debugPrint('[SessionDetail] finalResult detected, auto-sending');
+          setState(() => _isRecording = false);
+          _sendPrompt();
+        }
+      },
+      onDone: () {
+        debugPrint('[SessionDetail] onDone called');
+        if (mounted) setState(() => _isRecording = false);
+      },
+      onError: (error) {
+        debugPrint('[SessionDetail] onError: $error');
+        if (mounted) {
+          setState(() => _isRecording = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Voice input error: $error'), duration: const Duration(seconds: 2)),
+          );
+        }
+      },
+    ).then((started) {
+      debugPrint('[SessionDetail] startListening returned: $started');
+      if (mounted) {
+        if (started) {
+          setState(() => _isRecording = true);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission denied'), duration: Duration(seconds: 2)),
+          );
+        }
+      }
+    });
+  }
+
+  void _speakNotificationFromSSE(Map data) {
+    if (!VoiceService.instance.autoReadEnabled) return;
+    // If global voice is on, the home screen handler already speaks all notifications
+    if (VoiceService.instance.globalVoiceActive) return;
+    if (!_isVoiceActive) return;
+    try {
+      final json = Map<String, dynamic>.from(data);
+      final n = HeliosNotification.fromJson(json);
+      if (n.sourceSession != widget.session.sessionId) return;
+      if (NarrationService.instance.aiNarrationEnabled) {
+        NarrationService.instance.addEvent(
+          widget.session.hostId,
+          widget.session.sessionId,
+          NarrationEvent.fromNotification(n),
+        );
+      } else {
+        final spoken = TTSTransformer.transformNotification(n);
+        if (spoken != null) VoiceService.instance.speak(spoken);
+      }
+    } catch (_) {
+      // SSE data may not have full notification shape — ignore
+    }
+  }
+
   List<Widget> _buildActions(Session session) {
     final actions = <Widget>[];
+
+    // Voice mode toggle
+    actions.add(
+      IconButton(
+        icon: Icon(
+          _isVoiceActive ? Icons.headset : Icons.headset_off,
+          color: _isVoiceActive ? Theme.of(context).colorScheme.primary : null,
+        ),
+        tooltip: _isVoiceActive ? 'Voice mode on' : 'Voice mode off',
+        onPressed: () async {
+          if (!_isVoiceActive) {
+            // Check TTS availability before enabling
+            final warning = await VoiceService.instance.checkTtsAvailability();
+            if (warning != null && mounted) {
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  icon: Icon(Icons.warning_amber_rounded, color: Theme.of(ctx).colorScheme.error, size: 32),
+                  title: const Text('Service unavailable'),
+                  content: Text(warning),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+              return;
+            }
+            final wasGlobalActive = VoiceService.instance.globalVoiceActive;
+            setState(() {
+              VoiceService.instance.setActiveSession(widget.session.sessionId);
+            });
+            if (wasGlobalActive && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Global announcements turned off'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+          } else {
+            setState(() {
+              VoiceService.instance.setActiveSession(null);
+              if (_isRecording) {
+                VoiceService.instance.stopListening();
+                _isRecording = false;
+              }
+            });
+          }
+        },
+      ),
+    );
 
     if (!session.hasTmux && !session.isEnded) {
       actions.add(
@@ -716,6 +917,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   },
                 ),
               ),
+              if (_isVoiceActive && VoiceService.instance.voiceInputEnabled)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: IconButton(
+                    onPressed: canSend && !_sending ? _toggleRecording : null,
+                    icon: Icon(
+                      _isRecording ? Icons.stop : Icons.mic,
+                      color: _isRecording ? theme.colorScheme.error : null,
+                      size: 22,
+                    ),
+                    tooltip: _isRecording ? 'Stop recording' : 'Voice input',
+                  ),
+                ),
               const SizedBox(width: 8),
               IconButton.filled(
                 onPressed: canSend && !_sending ? _sendPrompt : null,

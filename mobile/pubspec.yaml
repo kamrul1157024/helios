@@ -36,6 +36,10 @@ dependencies:
   shared_preferences: ^2.5.3
   # Markdown rendering
   flutter_markdown: ^0.7.6
+  # Speech-to-text (voice input)
+  speech_to_text: ^7.0.0
+  # Text-to-speech (voice output)
+  flutter_tts: ^4.2.0
 
 dev_dependencies:
   flutter_test:

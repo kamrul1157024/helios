@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/narration_event.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/session.dart';
@@ -649,6 +650,39 @@ class DaemonAPIService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[$hostId] Failed to fetch commands: $e');
     }
+  }
+
+  // ==================== Small Model Text API ====================
+
+  /// Call the backend's small model for AI narration.
+  /// Returns the generated narration text, or null on failure.
+  Future<String?> smallModelText(
+    List<NarrationEvent> events, {
+    String? sessionContext,
+    String? systemPrompt,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'events': events.map((e) => e.toJson()).toList(),
+      };
+      if (sessionContext != null && sessionContext.isNotEmpty) {
+        body['session_context'] = sessionContext;
+      }
+      if (systemPrompt != null && systemPrompt.isNotEmpty) {
+        body['system_prompt'] = systemPrompt;
+      }
+
+      final resp = await _authPost('/api/small-model-text', body: body)
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final narration = data['narration'] as String?;
+        return (narration != null && narration.isNotEmpty) ? narration : null;
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Small model text error: $e');
+    }
+    return null;
   }
 
   // ==================== Providers & Models API ====================
