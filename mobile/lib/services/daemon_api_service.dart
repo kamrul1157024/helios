@@ -25,7 +25,7 @@ class DaemonAPIService extends ChangeNotifier {
   bool _connected = false;
   bool _isActiveHost = false;
   int _consecutiveFailures = 0;
-  static const _offlineThreshold = 1;
+  static const _offlineThreshold = 2;
 
   List<HeliosNotification> _notifications = [];
   List<HeliosNotification> get notifications => _notifications;
