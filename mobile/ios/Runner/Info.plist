@@ -47,6 +47,10 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Helios uses the microphone for voice input to send prompts.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Helios uses speech recognition to convert your voice to text prompts.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

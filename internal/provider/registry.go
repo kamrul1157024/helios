@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -132,4 +133,23 @@ func GetCapabilities(providerID string) ProviderCapabilities {
 		return p.Capabilities
 	}
 	return ProviderCapabilities{}
+}
+
+// ==================== Small Model Caller ====================
+
+// SmallModelCaller runs a provider's cheapest model for short text generation.
+// Used for narration, summarization, and other lightweight AI calls.
+// Implementations should use the provider's CLI to respect the user's existing auth.
+type SmallModelCaller func(ctx context.Context, system, prompt string) (string, error)
+
+var smallModelCallers = map[string]SmallModelCaller{}
+
+// RegisterSmallModelCaller registers a small model caller for a provider.
+func RegisterSmallModelCaller(providerID string, caller SmallModelCaller) {
+	smallModelCallers[providerID] = caller
+}
+
+// GetSmallModelCaller returns the small model caller for a provider, or nil.
+func GetSmallModelCaller(providerID string) SmallModelCaller {
+	return smallModelCallers[providerID]
 }

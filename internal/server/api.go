@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/auth"
+	"github.com/kamrul1157024/helios/internal/narration"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -1095,6 +1096,34 @@ func (s *PublicServer) handleListCommands(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"commands": provider.GetCommands(),
 	})
+}
+
+// ==================== Small Model Text ====================
+
+func (s *PublicServer) handleSmallModelText(w http.ResponseWriter, r *http.Request) {
+	var req narration.Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Events) == 0 {
+		jsonResponse(w, http.StatusOK, narration.Response{})
+		return
+	}
+
+	// Log request for debugging
+	for i, e := range req.Events {
+		log.Printf("[small-model-text] event[%d]: type=%s tool=%s target=%s summary=%s status=%s", i, e.Type, e.Tool, e.Target, e.Summary, e.Status)
+	}
+	if req.SessionContext != "" {
+		log.Printf("[small-model-text] session_context=%s", req.SessionContext)
+	}
+
+	resp := narration.Generate(r.Context(), req, "claude")
+
+	log.Printf("[small-model-text] narration=%q", resp.Narration)
+	jsonResponse(w, http.StatusOK, resp)
 }
 
 // ==================== Providers & Models ====================

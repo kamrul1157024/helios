@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/message.dart';
+import '../services/voice_service.dart';
+import '../services/tts_transformer.dart';
 
 class MessageCard extends StatelessWidget {
   final Message message;
@@ -63,14 +65,54 @@ class _UserMessageCard extends StatelessWidget {
   }
 }
 
-class _AssistantMessageCard extends StatelessWidget {
+class _AssistantMessageCard extends StatefulWidget {
   final Message message;
   const _AssistantMessageCard({required this.message});
 
   @override
+  State<_AssistantMessageCard> createState() => _AssistantMessageCardState();
+}
+
+class _AssistantMessageCardState extends State<_AssistantMessageCard> {
+  bool _isSpeaking = false;
+
+  void _speakMessage() async {
+    final spoken = TTSTransformer.transformMessage(widget.message);
+    debugPrint('[MessageCard] _speakMessage: spoken=${spoken != null ? '"${spoken.length > 80 ? '${spoken.substring(0, 80)}...' : spoken}"' : 'null'}');
+    if (spoken != null) {
+      setState(() => _isSpeaking = true);
+      final ok = await VoiceService.instance.speak(spoken);
+      if (!ok && mounted) {
+        setState(() => _isSpeaking = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('TTS unavailable. Check that Google Text-to-Speech is installed and enabled in Settings.'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+      // Listen for completion
+      final prevCallback = VoiceService.instance.onStateChanged;
+      VoiceService.instance.onStateChanged = () {
+        prevCallback?.call();
+        if (!VoiceService.instance.isSpeaking && mounted) {
+          setState(() => _isSpeaking = false);
+          VoiceService.instance.onStateChanged = prevCallback;
+        }
+      };
+    }
+  }
+
+  void _stopSpeaking() {
+    VoiceService.instance.stopSpeaking();
+    if (mounted) setState(() => _isSpeaking = false);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final content = message.content ?? '';
+    final content = widget.message.content ?? '';
     if (content.isEmpty) return const SizedBox.shrink();
 
     return Align(
@@ -90,33 +132,54 @@ class _AssistantMessageCard extends StatelessWidget {
               bottomRight: Radius.circular(16),
             ),
           ),
-          child: MarkdownBody(
-            data: content,
-            selectable: true,
-            styleSheet: MarkdownStyleSheet(
-              p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-              code: TextStyle(
-                fontSize: 12,
-                fontFamily: 'monospace',
-                color: theme.colorScheme.onSurface,
-                backgroundColor: theme.colorScheme.surfaceContainerHigh,
-              ),
-              codeblockDecoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              codeblockPadding: const EdgeInsets.all(10),
-              blockquoteDecoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: theme.colorScheme.primary, width: 3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              MarkdownBody(
+                data: content,
+                selectable: true,
+                styleSheet: MarkdownStyleSheet(
+                  p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+                  code: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.onSurface,
+                    backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                  ),
+                  codeblockDecoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  codeblockPadding: const EdgeInsets.all(10),
+                  blockquoteDecoration: BoxDecoration(
+                    border: Border(
+                      left: BorderSide(color: theme.colorScheme.primary, width: 3),
+                    ),
+                  ),
+                  blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
+                  h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+                  h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+                  h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
+                  listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
                 ),
               ),
-              blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
-              h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-              h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-              h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
-              listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-            ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: _isSpeaking ? _stopSpeaking : _speakMessage,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Icon(
+                      _isSpeaking ? Icons.stop : Icons.volume_up,
+                      size: 16,
+                      color: _isSpeaking
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

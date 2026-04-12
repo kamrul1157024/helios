@@ -5,9 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../models/host_connection.dart';
+import '../models/notification.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../services/notification_service.dart';
+import '../services/voice_service.dart';
+import '../services/tts_transformer.dart';
+import '../services/narration_service.dart';
+import '../models/narration_event.dart';
 import '../providers/card_registry.dart' as registry;
 import 'setup_screen.dart';
 import 'sessions_screen.dart';
@@ -27,6 +32,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
+  int _pendingActionCount = 0;
+  Timer? _batchSpeakTimer;
+  HeliosNotification? _firstBatchedNotification;
 
   @override
   void initState() {
@@ -37,6 +45,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _checkNotificationPermission();
     NotificationService.instance.onAction = _handleNotificationAction;
     _subscribeToAllHosts();
+
+    // Wire narration service to daemon API
+    NarrationService.instance.onNarrate = (hostId, events, sessionContext, systemPrompt) {
+      final service = _hm.serviceFor(hostId);
+      if (service == null) return Future.value(null);
+      return service.smallModelText(events,
+          sessionContext: sessionContext,
+          systemPrompt: systemPrompt);
+    };
   }
 
   void _subscribeToAllHosts() {
@@ -72,6 +89,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _handleSSEEvent(String hostId, SSEEvent event) {
     debugPrint('[HomeScreen] SSE event: type=${event.type} hostId=$hostId');
+
+    // Speak session completion/error in global voice mode
+    if (event.type == 'session_status' && VoiceService.instance.globalVoiceActive) {
+      if (event.data is Map) {
+        final data = event.data as Map;
+        final status = data['status']?.toString() ?? '';
+        if (status == 'idle' || status == 'error') {
+          final sessionId = data['session_id']?.toString();
+          final sessions = _hm.allSessions;
+          final session = sessionId != null
+              ? sessions.where((s) => s.sessionId == sessionId).firstOrNull
+              : null;
+          if (NarrationService.instance.aiNarrationEnabled && sessionId != null) {
+            NarrationService.instance.addEvent(
+              hostId, sessionId,
+              NarrationEvent.fromStatus(status),
+              sessionContext: session?.displayTitle,
+            );
+          } else {
+            final spoken = TTSTransformer.transformSessionStatus(
+              status, session?.displayTitle, global: true);
+            if (spoken != null) VoiceService.instance.speak(spoken);
+          }
+        }
+      }
+    }
+
     if (event.type != 'notification') return;
     if (event.data is! Map) {
       debugPrint('[HomeScreen] notification data is not Map: ${event.data.runtimeType}');
@@ -90,12 +134,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Encode hostId into notification payload for routing on tap
     final payload = jsonEncode({'hostId': hostId, 'notificationId': id});
 
+    // Speak notification if global voice mode is active
+    if (VoiceService.instance.globalVoiceActive) {
+      _speakGlobalNotification(data, hostId);
+    }
+
     if (type == 'claude.permission') {
       debugPrint('[HomeScreen] showing OS permission notification');
       NotificationService.instance.showPermissionNotification(
         id: payload,
         toolName: '$prefix${data['title'] ?? 'Unknown tool'}',
         detail: data['detail']?.toString() ?? 'Permission requested',
+        silent: VoiceService.instance.globalVoiceActive,
       );
     } else if (type == 'claude.question') {
       debugPrint('[HomeScreen] showing OS question notification');
@@ -103,6 +153,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         id: payload,
         title: '${prefix}Claude has a question',
         body: data['detail']?.toString() ?? 'Answer required',
+        silent: VoiceService.instance.globalVoiceActive,
       );
     } else if (type.startsWith('claude.elicitation')) {
       debugPrint('[HomeScreen] showing OS elicitation notification');
@@ -110,7 +161,74 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         id: payload,
         title: '$prefix${data['title'] ?? 'Input requested'}',
         body: data['detail']?.toString() ?? 'Input required',
+        silent: VoiceService.instance.globalVoiceActive,
       );
+    }
+  }
+
+  void _speakGlobalNotification(Map data, String hostId) {
+    try {
+      final json = Map<String, dynamic>.from(data);
+      final n = HeliosNotification.fromJson(json, hostId: hostId);
+
+      // AI narration: feed notifications into NarrationService's debounce
+      if (NarrationService.instance.aiNarrationEnabled) {
+        final sessionId = n.sourceSession;
+        if (sessionId.isNotEmpty) {
+          final sessions = _hm.allSessions;
+          final session = sessions.where((s) => s.sessionId == sessionId).firstOrNull;
+          NarrationService.instance.addEvent(
+            hostId, sessionId,
+            NarrationEvent.fromNotification(n),
+            sessionContext: session?.displayTitle,
+          );
+        }
+        return;
+      }
+
+      // Fallback: template-based narration
+      // Batch actionable notifications (permissions, questions, elicitations)
+      // to avoid reading each one individually when many arrive at once
+      final isActionable = n.type == 'claude.permission' ||
+          n.type == 'claude.question' ||
+          n.type.startsWith('claude.elicitation');
+
+      if (isActionable) {
+        if (_pendingActionCount == 0) _firstBatchedNotification = n;
+        _pendingActionCount++;
+        _batchSpeakTimer?.cancel();
+        _batchSpeakTimer = Timer(const Duration(milliseconds: 1500), () {
+          final count = _pendingActionCount;
+          final first = _firstBatchedNotification;
+          _pendingActionCount = 0;
+          _firstBatchedNotification = null;
+          if (count == 1 && first != null) {
+            // Single notification — speak it with session context
+            final sessionId = first.sourceSession;
+            final sessions = _hm.allSessions;
+            final session = sessions.where((s) => s.sessionId == sessionId).firstOrNull;
+            final spoken = TTSTransformer.transformGlobalNotification(first, session?.displayTitle);
+            if (spoken != null) VoiceService.instance.speak(spoken);
+          } else {
+            // Multiple notifications batched
+            VoiceService.instance.speak('Hey, $count items need your attention.');
+          }
+        });
+        return;
+      }
+
+      // Non-actionable notifications (done, error) — speak immediately
+      final sessionId = n.sourceSession;
+      final sessions = _hm.allSessions;
+      final session = sessions.where((s) => s.sessionId == sessionId).firstOrNull;
+      final sessionTitle = session?.displayTitle;
+
+      final spoken = TTSTransformer.transformGlobalNotification(n, sessionTitle);
+      if (spoken != null) {
+        VoiceService.instance.speak(spoken);
+      }
+    } catch (e) {
+      debugPrint('[HomeScreen] speakGlobalNotification error: $e');
     }
   }
 
@@ -197,6 +315,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  void _toggleGlobalVoice() async {
+    final newState = !VoiceService.instance.globalVoiceActive;
+
+    if (newState) {
+      // Check TTS availability before enabling
+      final warning = await VoiceService.instance.checkTtsAvailability();
+      if (warning != null && mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            icon: Icon(Icons.warning_amber_rounded, color: Theme.of(ctx).colorScheme.error, size: 32),
+            title: const Text('Service unavailable'),
+            content: Text(warning),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    }
+
+    final wasSessionActive = VoiceService.instance.sessionVoiceActive;
+
+    setState(() {
+      VoiceService.instance.setGlobalVoiceActive(newState);
+    });
+
+    if (newState) {
+      if (wasSessionActive && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Session voice turned off'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      // Give a brief spoken confirmation
+      VoiceService.instance.speak('Voice announcements on. I\'ll keep you posted.');
+    }
   }
 
   void _showNewSessionSheet() {
@@ -374,6 +537,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _batchSpeakTimer?.cancel();
     for (final sub in _eventSubs.values) {
       sub.cancel();
     }
@@ -403,6 +567,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             centerTitle: true,
             actions: [
               _buildConnectionDots(),
+              IconButton(
+                icon: Icon(
+                  VoiceService.instance.globalVoiceActive
+                      ? Icons.volume_up
+                      : Icons.volume_off_outlined,
+                  color: VoiceService.instance.globalVoiceActive
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+                tooltip: VoiceService.instance.globalVoiceActive
+                    ? 'Voice announcements on'
+                    : 'Voice announcements off',
+                onPressed: _toggleGlobalVoice,
+              ),
               IconButton(
                 icon: const Icon(Icons.settings_outlined),
                 tooltip: 'Settings',

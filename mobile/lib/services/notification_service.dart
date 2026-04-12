@@ -156,6 +156,7 @@ class NotificationService {
     required String id,
     required String toolName,
     required String detail,
+    bool silent = false,
   }) async {
     final nid = _notifId(id);
     debugPrint('[NotificationService] showPermission id=$id nid=$nid tool=$toolName');
@@ -191,7 +192,7 @@ class NotificationService {
         NotificationDetails(android: androidDetails, iOS: iosDetails),
         payload: id,
       );
-      await _playSound();
+      if (!silent) await _playSound();
       debugPrint('[NotificationService] showPermission SUCCESS');
     } catch (e) {
       debugPrint('[NotificationService] showPermission ERROR: $e');
@@ -203,6 +204,7 @@ class NotificationService {
     required String id,
     required String title,
     required String body,
+    bool silent = false,
   }) async {
     final nid = _notifId(id);
     debugPrint('[NotificationService] showNotification id=$id nid=$nid title=$title');
@@ -234,7 +236,7 @@ class NotificationService {
         NotificationDetails(android: androidDetails, iOS: iosDetails),
         payload: id,
       );
-      await _playSound();
+      if (!silent) await _playSound();
       debugPrint('[NotificationService] showNotification SUCCESS');
     } catch (e) {
       debugPrint('[NotificationService] showNotification ERROR: $e');
