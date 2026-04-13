@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
@@ -987,16 +989,27 @@ func providerInstallHint(provider string) string {
 	}
 }
 
-// RunStart launches the bubbletea start TUI and subscribes to internal SSE
-// for desktop notifications.
+// RunStart launches the bubbletea start TUI.
 func RunStart(internalPort, publicPort int) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go subscribeDesktopNotifications(ctx, internalPort)
-
 	m := NewStartModel(internalPort, publicPort)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
+}
+
+// RunNotifier runs the desktop notification subscriber loop. It blocks until
+// ctx is cancelled or the process is signalled. Intended to be run as a
+// long-lived background process (helios notify).
+func RunNotifier(internalPort int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sig
+		cancel()
+	}()
+
+	subscribeDesktopNotifications(ctx, internalPort)
 }

@@ -48,6 +48,8 @@ func main() {
 		handleAuth(os.Args[2:])
 	case "attach":
 		handleAttach(os.Args[2:])
+	case "notify":
+		handleNotify()
 	case "wrap":
 		handleWrap(os.Args[2:])
 	case "hooks":
@@ -256,6 +258,15 @@ func handleStart() {
 		os.Exit(1)
 	}
 
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Spawn desktop notifier as a detached background process.
+	spawnNotifier(exe, cfg.Server.InternalPort)
+
 	// If already inside tmux, run the TUI directly in the current pane.
 	if os.Getenv("TMUX") != "" {
 		if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
@@ -268,11 +279,6 @@ func handleStart() {
 	// Outside tmux: open the TUI in a dedicated helios tmux window, then
 	// attach — so the user lands inside tmux without any manual step.
 	tc := tmux.NewClient()
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 
 	if _, err := tc.OpenWindow("helios", exe, "start"); err != nil {
 		// tmux not available — fall back to running TUI directly.
@@ -290,6 +296,59 @@ func handleStart() {
 	}
 }
 
+// spawnNotifier starts helios notify as a detached background process if one
+// is not already running. The PID is written to ~/.helios/notify.pid.
+func spawnNotifier(exe string, internalPort int) {
+	pidPath := filepath.Join(daemon.HeliosDir(), "notify.pid")
+
+	// Check if already running.
+	if data, err := os.ReadFile(pidPath); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			if proc, err := os.FindProcess(pid); err == nil {
+				if proc.Signal(syscall.Signal(0)) == nil {
+					return // already running
+				}
+			}
+		}
+		os.Remove(pidPath)
+	}
+
+	logPath := filepath.Join(daemon.HeliosDir(), "logs", "desktop-notif.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logFile = nil
+	}
+
+	portStr := strconv.Itoa(internalPort)
+	cmd := exec.Command(exe, "notify", "--port", portStr)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdin = nil
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	if logFile != nil {
+		logFile.Close()
+	}
+
+	os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0644)
+	cmd.Process.Release()
+}
+
+// handleNotify runs the desktop notification subscriber (internal command).
+func handleNotify() {
+	port := 7654 // default
+	for i, arg := range os.Args[2:] {
+		if arg == "--port" && i+1 < len(os.Args[2:]) {
+			if p, err := strconv.Atoi(os.Args[i+3]); err == nil {
+				port = p
+			}
+		}
+	}
+	tui.RunNotifier(port)
+}
+
 func handleDevices() {
 	cfg, _ := daemon.LoadConfig()
 	if err := tui.RunDevices(cfg.Server.InternalPort); err != nil {
@@ -299,11 +358,34 @@ func handleDevices() {
 }
 
 func handleStop() {
+	// Kill notifier if running.
+	stopNotifier()
+
 	// Stop daemon (or supervisor if running). Tunnel is left alive.
 	if err := daemon.StopSupervisor(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func stopNotifier() {
+	pidPath := filepath.Join(daemon.HeliosDir(), "notify.pid")
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		os.Remove(pidPath)
+		return
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		os.Remove(pidPath)
+		return
+	}
+	proc.Signal(syscall.SIGTERM)
+	os.Remove(pidPath)
 }
 
 func handleTunnel(args []string) {
