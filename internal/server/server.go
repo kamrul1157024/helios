@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
-	"github.com/kamrul1157024/helios/internal/notify"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tmux"
@@ -15,13 +14,12 @@ import (
 
 // Shared holds shared dependencies between internal and public servers.
 type Shared struct {
-	DB              *store.Store
-	Mgr             *notifications.Manager
-	SSE             *SSEBroadcaster
-	Tmux            *tmux.Client
-	PendingPanes    *PendingPaneMap
-	Reporter        *reporter.Reporter
-	DesktopNotifier *notify.Service
+	DB           *store.Store
+	Mgr          *notifications.Manager
+	SSE          *SSEBroadcaster
+	Tmux         *tmux.Client
+	PendingPanes *PendingPaneMap
+	Reporter     *reporter.Reporter
 }
 
 // InternalServer handles hooks (Claude) and admin API (CLI).
@@ -73,6 +71,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("POST /internal/wrap", s.handleWrap)
 	mux.HandleFunc("GET /internal/settings", s.handleInternalGetSettings)
 	mux.HandleFunc("PUT /internal/settings", s.handleInternalUpdateSettings)
+	mux.Handle("GET /internal/events", shared.SSE)
 	mux.HandleFunc("GET /internal/logs", s.handleInternalLogs)
 
 	s.httpServer = &http.Server{

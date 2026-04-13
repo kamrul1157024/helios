@@ -118,17 +118,6 @@ func (m StartModel) viewNotificationSettings() string {
 	b.WriteString(titleStyle.Render("helios — Notification Settings"))
 	b.WriteString("\n\n")
 
-	// Show binary status
-	if m.desktopNotif.Available {
-		b.WriteString(checkStyle.Render("  ✓"))
-		b.WriteString(fmt.Sprintf(" Desktop notifications available (%s)\n", m.desktopNotif.Binary))
-	} else {
-		b.WriteString(crossStyle.Render("  ✗"))
-		b.WriteString(fmt.Sprintf(" Desktop notifications unavailable — %s\n", m.desktopNotif.InstallHint))
-		b.WriteString(dimStyle.Render("    Toggles still apply when the binary is installed.\n"))
-	}
-	b.WriteString("\n")
-
 	values := m.notifSettingsValues
 	if values == nil {
 		values = defaultNotifSettings()

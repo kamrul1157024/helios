@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +9,6 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
-	"github.com/kamrul1157024/helios/internal/notify"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -75,8 +75,7 @@ type statusCheckDone struct {
 	deviceCount    int
 	devices        []deviceInfo
 	tmux           tmuxStatus
-	desktopNotif   notify.ServiceStatus
-	err            error
+	err error
 }
 
 type tunnelStarted struct {
@@ -149,8 +148,6 @@ type StartModel struct {
 	deviceCount  int
 	devices      []deviceInfo
 	tmux         tmuxStatus
-	desktopNotif notify.ServiceStatus
-
 	// Notification settings screen
 	notifSettingsCursor int
 	notifSettingsValues map[string]bool
@@ -578,7 +575,6 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.deviceCount = msg.deviceCount
 	m.devices = msg.devices
 	m.tmux = msg.tmux
-	m.desktopNotif = msg.desktopNotif
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -777,9 +773,6 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 				ContinuumPlugin: h.Tmux.ContinuumPlugin,
 			}
 		}
-
-		// Check desktop notification service
-		result.desktopNotif = notify.CheckStatus()
 
 		return result
 	}
@@ -988,8 +981,14 @@ func providerInstallHint(provider string) string {
 	}
 }
 
-// RunStart launches the bubbletea start TUI.
+// RunStart launches the bubbletea start TUI and subscribes to internal SSE
+// for desktop notifications.
 func RunStart(internalPort, publicPort int) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go subscribeDesktopNotifications(ctx, internalPort)
+
 	m := NewStartModel(internalPort, publicPort)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
