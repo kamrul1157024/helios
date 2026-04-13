@@ -227,38 +227,29 @@ func sendLinux(bin, notifType, body, paneID string) {
 func openTerminalCmd(heliosBin, paneID string) string {
 	attachCmd := fmt.Sprintf("%s attach %s", heliosBin, paneID)
 
+	// select-window runs before attach, so tmux already has the right window
+	// active. We just need to focus the terminal app that's running tmux.
 	// Detect terminal via env vars set by the terminal itself.
 	switch {
 	case os.Getenv("KITTY_PID") != "":
-		if kitty, err := exec.LookPath("kitty"); err == nil {
-			return fmt.Sprintf("%s %s", kitty, attachCmd)
-		}
+		// Focus existing Kitty window; tmux select-window handles the rest.
+		return fmt.Sprintf("%s && open -a kitty", attachCmd)
 	case os.Getenv("ITERM_SESSION_ID") != "":
-		return fmt.Sprintf("open -a iTerm '%s'", attachCmd)
+		return fmt.Sprintf("%s && open -a iTerm", attachCmd)
 	case os.Getenv("WARP_SESSION_ID") != "":
-		if warp, err := exec.LookPath("warp"); err == nil {
-			return fmt.Sprintf("%s %s", warp, attachCmd)
-		}
+		return fmt.Sprintf("%s && open -a Warp", attachCmd)
 	}
 
 	// Fallback: try common terminal emulators in PATH order.
 	switch runtime.GOOS {
 	case "darwin":
-		for _, t := range []struct{ bin, flag string }{
-			{"kitty", ""},
-			{"wezterm", "start --"},
-			{"alacritty", "-e"},
-			{"iterm2", ""},
-		} {
-			if p, err := exec.LookPath(t.bin); err == nil {
-				if t.flag != "" {
-					return fmt.Sprintf("%s %s %s", p, t.flag, attachCmd)
-				}
-				return fmt.Sprintf("%s %s", p, attachCmd)
+		for _, app := range []string{"kitty", "iTerm", "Warp", "WezTerm", "Alacritty"} {
+			if appExists(app) {
+				return fmt.Sprintf("%s && open -a '%s'", attachCmd, app)
 			}
 		}
-		// Last resort: open in Terminal.app via osascript.
-		return fmt.Sprintf(`osascript -e 'tell app "Terminal" to do script "%s"'`, attachCmd)
+		// Last resort: Terminal.app.
+		return fmt.Sprintf("%s && open -a Terminal", attachCmd)
 
 	case "linux":
 		for _, t := range []struct{ bin, flag string }{
@@ -278,6 +269,17 @@ func openTerminalCmd(heliosBin, paneID string) string {
 	}
 
 	return attachCmd
+}
+
+// appExists checks if a macOS .app bundle is present in /Applications or ~/Applications.
+func appExists(name string) bool {
+	home, _ := os.UserHomeDir()
+	for _, dir := range []string{"/Applications", filepath.Join(home, "Applications")} {
+		if _, err := os.Stat(filepath.Join(dir, name+".app")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func findNotifyBinary() (string, bool) {
