@@ -9,10 +9,25 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 )
+
+var notifLog *log.Logger
+
+func init() {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".helios", "logs")
+	os.MkdirAll(dir, 0755)
+	f, err := os.OpenFile(filepath.Join(dir, "desktop-notif.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		notifLog = log.New(os.Stderr, "desktop-notif: ", log.LstdFlags)
+		return
+	}
+	notifLog = log.New(f, "", log.LstdFlags)
+}
 
 // subscribeDesktopNotifications connects to the internal SSE endpoint and fires
 // terminal-notifier (macOS) or notify-send (Linux) for each notification event.
@@ -20,8 +35,10 @@ import (
 func subscribeDesktopNotifications(ctx context.Context, internalPort int) {
 	bin, ok := findNotifyBinary()
 	if !ok {
+		notifLog.Printf("no notification binary found (tried terminal-notifier / notify-send)")
 		return
 	}
+	notifLog.Printf("starting: bin=%s port=%d", bin, internalPort)
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", internalPort)
 
@@ -29,8 +46,9 @@ func subscribeDesktopNotifications(ctx context.Context, internalPort int) {
 		if ctx.Err() != nil {
 			return
 		}
+		notifLog.Printf("connecting to %s/internal/events", baseURL)
 		if err := listenSSE(ctx, baseURL, bin); err != nil {
-			log.Printf("desktop-notif: SSE disconnected (%v), reconnecting in 3s", err)
+			notifLog.Printf("SSE disconnected: %v — reconnecting in 3s", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -43,20 +61,23 @@ func subscribeDesktopNotifications(ctx context.Context, internalPort int) {
 func listenSSE(ctx context.Context, baseURL, bin string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/internal/events", nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer resp.Body.Close()
+	notifLog.Printf("connected (status %d)", resp.StatusCode)
 
 	// Load settings once per connection.
 	settings := loadSettings(baseURL)
+	notifLog.Printf("settings loaded: %v", settings)
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1 MB buffer for large payloads
 	var eventType, dataLine string
 
 	for scanner.Scan() {
@@ -67,6 +88,7 @@ func listenSSE(ctx context.Context, baseURL, bin string) error {
 		case strings.HasPrefix(line, "data: "):
 			dataLine = strings.TrimPrefix(line, "data: ")
 		case line == "":
+			notifLog.Printf("SSE event: type=%q data=%q", eventType, truncate(dataLine, 200))
 			if eventType == "notification" && dataLine != "" {
 				go handleNotificationEvent(bin, dataLine, settings)
 			}
@@ -81,6 +103,7 @@ func listenSSE(ctx context.Context, baseURL, bin string) error {
 func loadSettings(baseURL string) map[string]string {
 	resp, err := http.Get(baseURL + "/internal/settings")
 	if err != nil {
+		notifLog.Printf("loadSettings error: %v", err)
 		return map[string]string{}
 	}
 	defer resp.Body.Close()
@@ -105,13 +128,18 @@ type sseNotification struct {
 func handleNotificationEvent(bin, data string, settings map[string]string) {
 	var notif sseNotification
 	if err := json.Unmarshal([]byte(data), &notif); err != nil {
+		notifLog.Printf("unmarshal error: %v  data=%q", err, truncate(data, 200))
 		return
 	}
+	notifLog.Printf("notification: id=%s type=%s tmux_pane=%s", notif.ID, notif.Type, notif.TmuxPane)
 
 	if !settingBool(settings, "desktop.notify.enabled", true) {
+		notifLog.Printf("skipped: desktop.notify.enabled=false")
 		return
 	}
-	if !settingBool(settings, notifAlertKey(notif.Type), true) {
+	alertKey := notifAlertKey(notif.Type)
+	if alertKey != "" && !settingBool(settings, alertKey, true) {
+		notifLog.Printf("skipped: %s=false", alertKey)
 		return
 	}
 
@@ -124,6 +152,7 @@ func handleNotificationEvent(bin, data string, settings map[string]string) {
 	}
 
 	sound := settingBool(settings, "desktop.notify.sound", true)
+	notifLog.Printf("firing: os=%s bin=%s body=%q sound=%v pane=%s", runtime.GOOS, bin, truncate(body, 80), sound, notif.TmuxPane)
 
 	switch runtime.GOOS {
 	case "darwin":
@@ -149,8 +178,12 @@ func sendDarwin(bin, id, notifType, body, paneID string, sound bool) {
 			args = append(args, "-execute", fmt.Sprintf("%s attach %s", exe, paneID))
 		}
 	}
-	if err := exec.Command(bin, args...).Run(); err != nil {
-		log.Printf("desktop-notif: terminal-notifier: %v", err)
+	notifLog.Printf("terminal-notifier args: %v", args)
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	if err != nil {
+		notifLog.Printf("terminal-notifier error: %v output: %s", err, out)
+	} else {
+		notifLog.Printf("terminal-notifier ok output: %s", out)
 	}
 }
 
@@ -160,8 +193,9 @@ func sendLinux(bin, notifType, body string) {
 		urgency = "critical"
 	}
 	title := fmt.Sprintf("Helios — %s", notifTypeLabel(notifType))
-	if err := exec.Command(bin, title, body, "--urgency="+urgency, "--app-name=Helios").Run(); err != nil {
-		log.Printf("desktop-notif: notify-send: %v", err)
+	out, err := exec.Command(bin, title, body, "--urgency="+urgency, "--app-name=Helios").CombinedOutput()
+	if err != nil {
+		notifLog.Printf("notify-send error: %v output: %s", err, out)
 	}
 }
 
@@ -227,4 +261,11 @@ func isBlockingNotifType(notifType string) bool {
 	return notifType == "claude.permission" ||
 		notifType == "claude.question" ||
 		strings.HasPrefix(notifType, "claude.elicitation")
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
