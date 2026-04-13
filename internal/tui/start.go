@@ -329,7 +329,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		switch m.screen {
-		case screenMain:
+		case screenLoading, screenMain:
 			return m, tea.Quit
 		case screenTunnelSelect, screenBinaryMissing, screenCustomURL:
 			// If tunnel is already active, go back to main instead of quitting
