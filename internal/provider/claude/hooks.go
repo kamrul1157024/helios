@@ -853,34 +853,23 @@ func summarizeToolInput(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// sessionContext builds the notification detail line from the session's cwd,
-// title, and last user message.
-// Format: "opal-app: Fix auth bug — "can you fix the login flow""
+// sessionContext builds the notification body from cwd and session info.
+// Format: "opal-app: Fix auth bug" (title) or "opal-app: can you fix login" (last user message)
 func sessionContext(cwd string, sess *store.Session) string {
 	project := filepath.Base(cwd)
 
-	var title, lastMsg string
 	if sess != nil {
 		if sess.Title != nil && *sess.Title != "" {
-			title = *sess.Title
+			return fmt.Sprintf("%s: %s", project, *sess.Title)
 		}
 		if sess.LastUserMessage != nil && *sess.LastUserMessage != "" {
-			lastMsg = strings.TrimSpace(*sess.LastUserMessage)
-			// Truncate long messages.
-			if len(lastMsg) > 80 {
-				lastMsg = lastMsg[:80] + "..."
+			msg := strings.TrimSpace(*sess.LastUserMessage)
+			if len(msg) > 80 {
+				msg = msg[:80] + "..."
 			}
+			return fmt.Sprintf("%s: %s", project, msg)
 		}
 	}
 
-	switch {
-	case title != "" && lastMsg != "":
-		return fmt.Sprintf(`%s: %s — "%s"`, project, title, lastMsg)
-	case title != "":
-		return fmt.Sprintf("%s: %s", project, title)
-	case lastMsg != "":
-		return fmt.Sprintf(`%s: "%s"`, project, lastMsg)
-	default:
-		return project
-	}
+	return project
 }
