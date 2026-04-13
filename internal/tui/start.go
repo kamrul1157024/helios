@@ -75,7 +75,8 @@ type statusCheckDone struct {
 	deviceCount    int
 	devices        []deviceInfo
 	tmux           tmuxStatus
-	err error
+	notifyBin      string // path to terminal-notifier/notify-send, empty if not found
+	err            error
 }
 
 type tunnelStarted struct {
@@ -143,11 +144,13 @@ type StartModel struct {
 	hooksOK       bool
 	hooksOutdated bool
 	tunnelOK      bool
-	tunnelURL    string
-	tunnelProv   string
-	deviceCount  int
-	devices      []deviceInfo
-	tmux         tmuxStatus
+	tunnelURL     string
+	tunnelProv    string
+	deviceCount   int
+	devices       []deviceInfo
+	tmux          tmuxStatus
+	notifyBin     string // path to terminal-notifier/notify-send, empty if not found
+
 	// Notification settings screen
 	notifSettingsCursor int
 	notifSettingsValues map[string]bool
@@ -575,6 +578,7 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.deviceCount = msg.deviceCount
 	m.devices = msg.devices
 	m.tmux = msg.tmux
+	m.notifyBin = msg.notifyBin
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -773,6 +777,8 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 				ContinuumPlugin: h.Tmux.ContinuumPlugin,
 			}
 		}
+
+		result.notifyBin, _ = findNotifyBinary()
 
 		return result
 	}
