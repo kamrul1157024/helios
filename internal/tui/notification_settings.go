@@ -17,6 +17,7 @@ var notifSettingsKeys = []struct {
 }{
 	{"desktop.notify.enabled", "Desktop notifications"},
 	{"desktop.notify.sound", "Sound"},
+	{"desktop.notify.suppress_focused", "Suppress when pane is focused"},
 	{"desktop.notify.alert.permission", "Permission requests"},
 	{"desktop.notify.alert.question", "Questions"},
 	{"desktop.notify.alert.elicitation", "Elicitation"},
@@ -27,6 +28,7 @@ var notifSettingsKeys = []struct {
 var notifSettingDefaults = map[string]bool{
 	"desktop.notify.enabled":             true,
 	"desktop.notify.sound":               true,
+	"desktop.notify.suppress_focused":    true,
 	"desktop.notify.alert.permission":    true,
 	"desktop.notify.alert.question":      true,
 	"desktop.notify.alert.elicitation":   true,
@@ -128,7 +130,7 @@ func (m StartModel) viewNotificationSettings() string {
 	b.WriteString("\n\n")
 
 	for i, item := range notifSettingsKeys {
-		if i == 2 {
+		if i == 3 {
 			// Section divider before alert types
 			b.WriteString("\n")
 			b.WriteString(dimStyle.Render("  ─── Alert types ─────────────────────────────"))

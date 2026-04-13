@@ -152,7 +152,7 @@ func handleNotificationEvent(bin, data string, settings map[string]string) {
 		body = *notif.Title
 	}
 
-	if isUserFocusedOnPane(notif.TmuxPane) {
+	if settingBool(settings, "desktop.notify.suppress_focused", true) && isUserFocusedOnPane(notif.TmuxPane) {
 		notifLog.Printf("skipped: user focused on pane %s", notif.TmuxPane)
 		return
 	}
