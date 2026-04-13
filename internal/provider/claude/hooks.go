@@ -366,6 +366,7 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 		Detail:        &detail,
 	}
 	ctx.Mgr.CreateNotification(notif)
+	ctx.Notify("notification", notif)
 
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
@@ -414,6 +415,7 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		Detail:        &detail,
 	}
 	ctx.Mgr.CreateNotification(notif)
+	ctx.Notify("notification", notif)
 
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,

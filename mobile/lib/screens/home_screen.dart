@@ -96,29 +96,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Encode hostId into notification payload for routing on tap
     final payload = jsonEncode({'hostId': hostId, 'notificationId': id});
 
+    final notifSvc = NotificationService.instance;
+    final silent = !notifSvc.isAlertEnabled(type) || VoiceService.instance.globalVoiceActive;
+
     if (type == 'claude.permission') {
       debugPrint('[HomeScreen] showing OS permission notification');
-      NotificationService.instance.showPermissionNotification(
+      notifSvc.showPermissionNotification(
         id: payload,
         toolName: '$prefix${data['title'] ?? 'Unknown tool'}',
         detail: data['detail']?.toString() ?? 'Permission requested',
-        silent: VoiceService.instance.globalVoiceActive,
+        silent: silent,
       );
     } else if (type == 'claude.question') {
       debugPrint('[HomeScreen] showing OS question notification');
-      NotificationService.instance.showNotification(
+      notifSvc.showNotification(
         id: payload,
         title: '${prefix}Claude has a question',
         body: data['detail']?.toString() ?? 'Answer required',
-        silent: VoiceService.instance.globalVoiceActive,
+        silent: silent,
       );
     } else if (type.startsWith('claude.elicitation')) {
       debugPrint('[HomeScreen] showing OS elicitation notification');
-      NotificationService.instance.showNotification(
+      notifSvc.showNotification(
         id: payload,
         title: '$prefix${data['title'] ?? 'Input requested'}',
         body: data['detail']?.toString() ?? 'Input required',
-        silent: VoiceService.instance.globalVoiceActive,
+        silent: silent,
+      );
+    } else if (type == 'claude.done') {
+      debugPrint('[HomeScreen] showing OS done notification');
+      notifSvc.showNotification(
+        id: payload,
+        title: '${prefix}Task completed',
+        body: data['detail']?.toString() ?? 'Claude finished a task.',
+        silent: silent,
+      );
+    } else if (type == 'claude.error') {
+      debugPrint('[HomeScreen] showing OS error notification');
+      notifSvc.showNotification(
+        id: payload,
+        title: '${prefix}Session error',
+        body: data['detail']?.toString() ?? 'Claude stopped due to an error.',
+        silent: silent,
       );
     }
   }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -20,12 +21,26 @@ class NotificationService {
 
   static const _keySoundEnabled = 'notif_sound_enabled';
   static const _keyVibrationEnabled = 'notif_vibration_enabled';
+  static const _keyAlertTypes = 'notif_alert_types';
+
+  static const Map<String, bool> _defaultAlertTypes = {
+    'claude.permission':       true,
+    'claude.question':         true,
+    'claude.elicitation.form': true,
+    'claude.elicitation.url':  true,
+    'claude.done':             true,
+    'claude.error':            true,
+  };
 
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
+  Map<String, bool> _alertTypes = Map.of(_defaultAlertTypes);
 
   bool get soundEnabled => _soundEnabled;
   bool get vibrationEnabled => _vibrationEnabled;
+  Map<String, bool> get alertTypes => Map.unmodifiable(_alertTypes);
+
+  bool isAlertEnabled(String notifType) => _alertTypes[notifType] ?? true;
 
   Future<void> setSoundEnabled(bool value) async {
     _soundEnabled = value;
@@ -39,6 +54,18 @@ class NotificationService {
     await prefs.setBool(_keyVibrationEnabled, value);
   }
 
+  Future<void> setAlertEnabled(String notifType, bool value) async {
+    _alertTypes[notifType] = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyAlertTypes, jsonEncode(_alertTypes));
+  }
+
+  Future<void> resetAlertTypes() async {
+    _alertTypes = Map.of(_defaultAlertTypes);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyAlertTypes, jsonEncode(_alertTypes));
+  }
+
   /// Convert a string ID to a positive notification ID.
   static int _notifId(String id) => id.hashCode & 0x7FFFFFFF;
 
@@ -46,6 +73,18 @@ class NotificationService {
     final prefs = await SharedPreferences.getInstance();
     _soundEnabled = prefs.getBool(_keySoundEnabled) ?? true;
     _vibrationEnabled = prefs.getBool(_keyVibrationEnabled) ?? true;
+    final alertJson = prefs.getString(_keyAlertTypes);
+    if (alertJson != null) {
+      try {
+        final decoded = jsonDecode(alertJson) as Map<String, dynamic>;
+        _alertTypes = {
+          ..._defaultAlertTypes,
+          ...decoded.map((k, v) => MapEntry(k, v as bool)),
+        };
+      } catch (_) {
+        _alertTypes = Map.of(_defaultAlertTypes);
+      }
+    }
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const darwinSettings = DarwinInitializationSettings(

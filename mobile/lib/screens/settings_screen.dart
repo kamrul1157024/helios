@@ -8,6 +8,7 @@ import '../services/notification_service.dart';
 import '../services/voice_service.dart';
 import 'event_filter_screen.dart';
 import 'host_detail_screen.dart';
+import 'notification_settings_screen.dart';
 import 'setup_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -147,6 +148,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: (value) {
                   setState(() => _vibrationEnabled = value);
                   NotificationService.instance.setVibrationEnabled(value);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.notifications_outlined),
+                title: const Text('Alert settings'),
+                subtitle: const Text('Choose which notifications buzz and play sound'),
+                trailing: const Icon(Icons.chevron_right, size: 20),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationSettingsScreen(),
+                    ),
+                  );
                 },
               ),
               const _SectionHeader('Voice'),
