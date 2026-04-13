@@ -120,6 +120,22 @@ func (c *Client) AttachSession() error {
 	return syscall.Exec(bin, []string{bin, "attach-session", "-t", defaultSession}, os.Environ())
 }
 
+// OpenWindow opens a new window in the helios session running the given
+// command directly (not via a shell). The session is created if needed.
+// Returns the pane ID of the new window.
+func (c *Client) OpenWindow(name string, args ...string) (string, error) {
+	if err := c.EnsureSession(); err != nil {
+		return "", fmt.Errorf("ensure session: %w", err)
+	}
+	cmdArgs := []string{"new-window", "-t", defaultSession + ":", "-n", name, "-P", "-F", "#{pane_id}"}
+	cmdArgs = append(cmdArgs, args...)
+	out, err := exec.Command(c.tmuxCmd(), cmdArgs...).Output()
+	if err != nil {
+		return "", fmt.Errorf("open window: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // SendKeys sends text to a pane followed by Enter.
 func (c *Client) SendKeys(paneID, text string) error {
 	return exec.Command(c.tmuxCmd(), "send-keys", "-t", paneID, text, "Enter").Run()

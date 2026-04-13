@@ -255,16 +255,38 @@ func handleStart() {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-	if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
+
+	// If already inside tmux, run the TUI directly in the current pane.
+	if os.Getenv("TMUX") != "" {
+		if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Outside tmux: open the TUI in a dedicated helios tmux window, then
+	// attach — so the user lands inside tmux without any manual step.
+	tc := tmux.NewClient()
+	exe, err := os.Executable()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	// After the TUI exits, attach to the helios tmux session so the user
-	// lands directly in their workspace without a manual attach step.
-	tc := tmux.NewClient()
-	if attachErr := tc.AttachSession(); attachErr != nil {
-		// No session yet (e.g. no Claude sessions started) — just exit normally.
-		_ = attachErr
+
+	if _, err := tc.OpenWindow("helios", exe, "start"); err != nil {
+		// tmux not available — fall back to running TUI directly.
+		if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Replace this process with tmux attach — user is now inside tmux.
+	if err := tc.AttachSession(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error attaching to tmux: %v\n", err)
+		os.Exit(1)
 	}
 }
 
