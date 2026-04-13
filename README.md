@@ -4,7 +4,7 @@
 
 You run 5 Claude sessions across 3 projects. One needs permission to run a test. Another finished refactoring and is waiting for your next instruction. A third hit a rate limit 20 minutes ago. You don't know any of this because you're in a different terminal tab.
 
-Helios fixes this. It's a daemon that sits between you and your AI coding tools. It manages their sessions via tmux, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are.
+Helios fixes this. It's a daemon that sits between you and your AI coding tools. It manages their sessions via tmux, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are. It also narrates what your agents are doing in real time via voice reporting, so you can stay informed hands-free without watching the screen.
 
 **The killer feature:** Full session management and notifications from your phone — see all sessions across multiple machines, approve or deny permissions, send follow-up messages, create new tasks, and get push notifications the moment any session needs attention. No terminal required.
 
@@ -344,6 +344,8 @@ Helios is a **platform**, not a tool. It orchestrates AI coding agents on your l
 - **Clients** — TUI, browser, CLI, Telegram, Slack — all stateless, all interchangeable, all talking to the same daemon over HTTP. Use one, use all, use none
 - **Providers** — Claude Code is the first-class provider with native hook integration. But any AI tool that runs in a terminal (Aider, Codex, Gemini CLI) can be a provider plugin
 - **Channels** — notification delivery plugins. ntfy for instant mobile push. Telegram for approve/deny from chat. Slack for team visibility. Or build your own
+- **Desktop notifications** — native OS alerts (macOS via `terminal-notifier`, Linux via `notify-send`) with click-to-session support, sound control, and per-type alert settings
+- **Voice reporting** — Helios narrates what your agents are doing in real time: tool calls, permission requests, completions, and errors — spoken aloud so you can stay informed without watching the screen. Narration is AI-generated on the backend and streamed to your phone via SSE. You control what you hear and how you hear it: choose any system TTS voice, set speech rate and pitch, and pick a persona that styles the narration (Default, Butler, Casual, GenZ, or Sarcastic). This is session activity reporting — not AI responses read back to you
 
 ## Why?
 
@@ -498,6 +500,8 @@ helios resume 1
 - **Real-time**: SSE
 - **Auth**: Asymmetric JWT (Ed25519), QR code device pairing
 - **AI integration**: Claude Code hooks (native), pane scraping (others)
+- **Desktop notifications**: `terminal-notifier` (macOS), `notify-send` (Linux)
+- **Voice reporting**: AI-generated narration streamed from backend (SSE), Flutter TTS with configurable voice, rate, pitch, and persona
 - **Everything runs locally. No cloud. No subscriptions. No accounts.**
 
 ## Requirements
