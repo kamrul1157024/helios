@@ -173,10 +173,7 @@ func sendDarwin(bin, id, notifType, body, paneID string, sound bool) {
 		args = append(args, "-sound", "default")
 	}
 	if paneID != "" {
-		exe, err := os.Executable()
-		if err == nil {
-			args = append(args, "-execute", openTerminalCmd(exe, paneID))
-		}
+		args = append(args, "-execute", focusTerminalCmd(paneID))
 	}
 	notifLog.Printf("terminal-notifier args: %v", args)
 	out, err := exec.Command(bin, args...).CombinedOutput()
@@ -207,8 +204,7 @@ func sendLinux(bin, notifType, body, paneID string) {
 		}
 		// If user clicked, output contains the action key ("default").
 		if strings.TrimSpace(string(out)) == "default" {
-			heliosBin, _ := os.Executable()
-			termCmd := openTerminalCmd(heliosBin, paneID)
+			termCmd := focusTerminalCmd(paneID)
 			notifLog.Printf("linux click: running %s", termCmd)
 			exec.Command("sh", "-c", termCmd).Start()
 		}
@@ -221,54 +217,46 @@ func sendLinux(bin, notifType, body, paneID string) {
 	}
 }
 
-// openTerminalCmd returns a shell command string that opens a new terminal
-// window and runs `helios attach <paneID>`. It detects the current terminal
-// from environment variables and falls back to common ones.
-func openTerminalCmd(heliosBin, paneID string) string {
-	attachCmd := fmt.Sprintf("%s attach %s", heliosBin, paneID)
+// focusTerminalCmd returns a shell command that switches tmux to the target
+// pane and brings the terminal app to the foreground. This is used as the
+// -execute argument for terminal-notifier on macOS.
+func focusTerminalCmd(paneID string) string {
+	tmuxBin, err := exec.LookPath("tmux")
+	if err != nil {
+		tmuxBin = "tmux"
+	}
+	selectCmd := fmt.Sprintf("%s select-window -t '%s' && %s select-pane -t '%s'", tmuxBin, paneID, tmuxBin, paneID)
 
-	// select-window runs before attach, so tmux already has the right window
-	// active. We just need to focus the terminal app that's running tmux.
-	// Detect terminal via env vars set by the terminal itself.
+	// Detect terminal from env vars inherited when helios start was launched.
+	termApp := detectTerminalApp()
+	if termApp != "" {
+		return fmt.Sprintf("%s && open -a '%s'", selectCmd, termApp)
+	}
+	return selectCmd
+}
+
+// detectTerminalApp returns the macOS .app name of the current terminal.
+func detectTerminalApp() string {
+	// Env vars set by terminals themselves.
 	switch {
 	case os.Getenv("KITTY_PID") != "":
-		// Focus existing Kitty window; tmux select-window handles the rest.
-		return fmt.Sprintf("%s && open -a kitty", attachCmd)
+		return "kitty"
 	case os.Getenv("ITERM_SESSION_ID") != "":
-		return fmt.Sprintf("%s && open -a iTerm", attachCmd)
+		return "iTerm"
 	case os.Getenv("WARP_SESSION_ID") != "":
-		return fmt.Sprintf("%s && open -a Warp", attachCmd)
+		return "Warp"
+	case os.Getenv("TERM_PROGRAM") == "WezTerm":
+		return "WezTerm"
+	case os.Getenv("TERM_PROGRAM") == "Alacritty":
+		return "Alacritty"
 	}
-
-	// Fallback: try common terminal emulators in PATH order.
-	switch runtime.GOOS {
-	case "darwin":
-		for _, app := range []string{"kitty", "iTerm", "Warp", "WezTerm", "Alacritty"} {
-			if appExists(app) {
-				return fmt.Sprintf("%s && open -a '%s'", attachCmd, app)
-			}
-		}
-		// Last resort: Terminal.app.
-		return fmt.Sprintf("%s && open -a Terminal", attachCmd)
-
-	case "linux":
-		for _, t := range []struct{ bin, flag string }{
-			{"kitty", ""},
-			{"wezterm", "start --"},
-			{"alacritty", "-e"},
-			{"gnome-terminal", "--"},
-			{"xterm", "-e"},
-		} {
-			if p, err := exec.LookPath(t.bin); err == nil {
-				if t.flag != "" {
-					return fmt.Sprintf("%s %s %s", p, t.flag, attachCmd)
-				}
-				return fmt.Sprintf("%s %s", p, attachCmd)
-			}
+	// Fallback: check common apps in /Applications.
+	for _, app := range []string{"kitty", "iTerm", "Warp", "WezTerm", "Alacritty", "Terminal"} {
+		if appExists(app) {
+			return app
 		}
 	}
-
-	return attachCmd
+	return ""
 }
 
 // appExists checks if a macOS .app bundle is present in /Applications or ~/Applications.
