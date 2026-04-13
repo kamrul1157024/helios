@@ -138,8 +138,16 @@ func (m StartModel) viewLoading() string {
 
 		if m.notifyBin != "" {
 			b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))
+			if runtime.GOOS == "darwin" {
+				b.WriteString(dimStyle.Render("  · If notifications don't appear, enable in System Settings → Notifications → terminal-notifier"))
+				b.WriteString("\n")
+			}
 		} else {
 			b.WriteString(cross(desktopNotifyInstallHint()))
+			if runtime.GOOS == "darwin" {
+				b.WriteString(dimStyle.Render("  · After installing, enable in System Settings → Notifications → terminal-notifier"))
+				b.WriteString("\n")
+			}
 		}
 
 		if m.deviceCount > 0 {
