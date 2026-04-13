@@ -14,7 +14,6 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/notifications"
-	"github.com/kamrul1157024/helios/internal/notify"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -70,15 +69,6 @@ func startDaemon(cfg *Config) error {
 
 	// Give the claude action handlers access to the tmux client
 	claude.SetTmux(shared.Tmux)
-
-	// Desktop notification service
-	notifSvc := notify.New(db, shared.Tmux)
-	shared.DesktopNotifier = notifSvc
-	if notifSvc.Available() {
-		log.Printf("desktop notifications: %s", notifSvc.Status().Binary)
-	} else {
-		log.Printf("desktop notifications: unavailable (%s)", notifSvc.Status().InstallHint)
-	}
 
 	// Discover existing Claude sessions from transcript files + tmux
 	go discovery.DiscoverClaudeSessions(db, tmux.NewClient())

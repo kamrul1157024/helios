@@ -379,10 +379,6 @@ func (m StartModel) viewMain() string {
 	if m.tunnelOK {
 		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
 	}
-	if m.desktopNotif.Available {
-		b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", m.desktopNotif.Binary)))
-	}
-
 	// Devices
 	b.WriteString("\n")
 	activeDevices := 0

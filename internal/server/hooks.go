@@ -40,6 +40,30 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	handler(ctx, w, r, json.RawMessage(body))
 }
 
+// enrichNotification adds tmux_pane to a notification SSE event by looking
+// up the session associated with the notification.
+func enrichNotification(shared *Shared, data interface{}) interface{} {
+	// Marshal→unmarshal to get a plain map we can augment.
+	b, err := json.Marshal(data)
+	if err != nil {
+		return data
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return data
+	}
+	sessionID, _ := m["source_session"].(string)
+	if sessionID == "" {
+		return m
+	}
+	sess, err := shared.DB.GetSession(sessionID)
+	if err != nil || sess == nil || sess.TmuxPane == nil {
+		return m
+	}
+	m["tmux_pane"] = *sess.TmuxPane
+	return m
+}
+
 // hookContext builds a provider.HookContext from the shared state.
 func (s *InternalServer) hookContext() *provider.HookContext {
 	return &provider.HookContext{
@@ -47,12 +71,10 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		Mgr:  s.shared.Mgr,
 		Tmux: s.shared.Tmux,
 		Notify: func(eventType string, data interface{}) {
-			s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
-		},
-		Push: func(notifType, id, title, body, sessionID, paneID string) {
-			if s.shared.DesktopNotifier != nil {
-				go s.shared.DesktopNotifier.Send(id, notifType, title, body, sessionID, paneID)
+			if eventType == "notification" {
+				data = enrichNotification(s.shared, data)
 			}
+			s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
 		},
 		RemovePendingPane: func(cwd string) string {
 			return s.shared.PendingPanes.RemoveByCWD(cwd)
