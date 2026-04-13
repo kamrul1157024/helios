@@ -790,6 +790,39 @@ class DaemonAPIService extends ChangeNotifier {
     return _modelCache[providerId] ?? [];
   }
 
+  // ==================== File Browser API ====================
+
+  Future<FileListing?> listFiles(String path) async {
+    try {
+      final resp = await _authGet('/api/files?path=${Uri.encodeComponent(path)}');
+      if (resp.statusCode == 200) {
+        return FileListing.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to list files at $path: $e');
+    }
+    return null;
+  }
+
+  Future<FileReadResult?> readFile(String path) async {
+    try {
+      final resp = await _authGet('/api/file?path=${Uri.encodeComponent(path)}');
+      if (resp.statusCode == 413) {
+        final data = jsonDecode(resp.body);
+        return FileReadResult.tooLarge(
+          path: path,
+          size: data['size'] as int? ?? 0,
+        );
+      }
+      if (resp.statusCode == 200) {
+        return FileReadResult.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to read file $path: $e');
+    }
+    return null;
+  }
+
   Future<bool> createSession({
     required String provider,
     required String prompt,
@@ -829,6 +862,99 @@ class SSEEvent {
   final String type;
   final dynamic data;
   SSEEvent(this.type, this.data);
+}
+
+class FileEntry {
+  final String name;
+  final String path;
+  final bool isDir;
+  final int size;
+  final String modTime;
+
+  FileEntry({
+    required this.name,
+    required this.path,
+    required this.isDir,
+    required this.size,
+    required this.modTime,
+  });
+
+  factory FileEntry.fromJson(Map<String, dynamic> json) {
+    return FileEntry(
+      name: json['name'] as String,
+      path: json['path'] as String,
+      isDir: json['is_dir'] as bool? ?? false,
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      modTime: json['mod_time'] as String? ?? '',
+    );
+  }
+
+  String get formattedSize {
+    if (size < 1024) return '$size B';
+    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
+    if (size < 1024 * 1024 * 1024) return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(size / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+}
+
+class FileListing {
+  final String path;
+  final List<FileEntry> entries;
+
+  FileListing({required this.path, required this.entries});
+
+  factory FileListing.fromJson(Map<String, dynamic> json) {
+    final list = (json['entries'] as List?) ?? [];
+    return FileListing(
+      path: json['path'] as String,
+      entries: list.map((e) => FileEntry.fromJson(e as Map<String, dynamic>)).toList(),
+    );
+  }
+}
+
+class FileReadResult {
+  final String path;
+  final int size;
+  final String? content;
+  final bool isTooLarge;
+
+  FileReadResult({
+    required this.path,
+    required this.size,
+    this.content,
+    this.isTooLarge = false,
+  });
+
+  factory FileReadResult.fromJson(Map<String, dynamic> json) {
+    return FileReadResult(
+      path: json['path'] as String,
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      content: json['content'] as String?,
+    );
+  }
+
+  factory FileReadResult.tooLarge({required String path, required int size}) {
+    return FileReadResult(path: path, size: size, isTooLarge: true);
+  }
+
+  bool get isBinary {
+    final c = content;
+    if (c == null || c.isEmpty) return false;
+    // Sample first 8KB for binary detection
+    final sample = c.length > 8192 ? c.substring(0, 8192) : c;
+    int nonPrintable = 0;
+    for (final cp in sample.runes) {
+      if (cp == 0) return true; // null byte = definitely binary
+      if (cp < 9 || (cp > 13 && cp < 32)) nonPrintable++;
+    }
+    return nonPrintable / sample.runes.length > 0.30;
+  }
+
+  String get formattedSize {
+    if (size < 1024) return '$size B';
+    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
+    return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 }
 
 class SlashCommand {

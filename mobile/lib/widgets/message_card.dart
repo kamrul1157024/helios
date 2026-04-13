@@ -4,11 +4,23 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/message.dart';
 import '../services/voice_service.dart';
 import '../utils/markdown_stripper.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_highlight/themes/atom-one-dark.dart';
+import 'package:flutter_highlight/themes/atom-one-light.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../screens/file_browser_screen.dart';
 
 class MessageCard extends StatelessWidget {
   final Message message;
+  final String hostId;
+  final String sessionCwd;
 
-  const MessageCard({super.key, required this.message});
+  const MessageCard({
+    super.key,
+    required this.message,
+    this.hostId = '',
+    this.sessionCwd = '',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +28,11 @@ class MessageCard extends StatelessWidget {
       case 'user':
         return _UserMessageCard(message: message);
       case 'assistant':
-        return _AssistantMessageCard(message: message);
+        return _AssistantMessageCard(
+          message: message,
+          hostId: hostId,
+          sessionCwd: sessionCwd,
+        );
       case 'tool_use':
         return _ToolUseCard(message: message);
       case 'tool_result':
@@ -65,9 +81,33 @@ class _UserMessageCard extends StatelessWidget {
   }
 }
 
+/// Regex matching file paths likely to be on the daemon's filesystem.
+/// Matches:
+///   - Absolute paths: /foo/bar.go
+///   - Relative paths with at least one slash: internal/server/api.go
+/// Requires a file extension to reduce false positives.
+final _filePathPattern = RegExp(
+  r'(?<![(\[`])(/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+|[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_./-]+)+\.[a-zA-Z0-9]+)(?![)\]`])',
+);
+
+/// Rewrites markdown content so file paths become tappable links.
+/// Uses a custom scheme `helios-file://` to distinguish from real URLs.
+String _linkifyFilePaths(String content) {
+  return content.replaceAllMapped(_filePathPattern, (m) {
+    final path = m.group(0)!;
+    return '[$path](helios-file://$path)';
+  });
+}
+
 class _AssistantMessageCard extends StatefulWidget {
   final Message message;
-  const _AssistantMessageCard({required this.message});
+  final String hostId;
+  final String sessionCwd;
+  const _AssistantMessageCard({
+    required this.message,
+    required this.hostId,
+    required this.sessionCwd,
+  });
 
   @override
   State<_AssistantMessageCard> createState() => _AssistantMessageCardState();
@@ -110,11 +150,37 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
     if (mounted) setState(() => _isSpeaking = false);
   }
 
+  void _handleLinkTap(String text, String? href, String title) {
+    if (href == null) return;
+    if (href.startsWith('helios-file://')) {
+      final filePath = href.substring('helios-file://'.length);
+      final resolvedPath = filePath.startsWith('/')
+          ? filePath
+          : '${widget.sessionCwd}/$filePath';
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => FileBrowserScreen(
+            hostId: widget.hostId,
+            rootPath: widget.sessionCwd,
+            openFilePath: resolvedPath,
+          ),
+        ),
+      );
+      return;
+    }
+    final uri = Uri.tryParse(href);
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final content = widget.message.content ?? '';
     if (content.isEmpty) return const SizedBox.shrink();
+
+    final linkified = _linkifyFilePaths(content);
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -137,8 +203,14 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               MarkdownBody(
-                data: content,
+                data: linkified,
                 selectable: true,
+                onTapLink: _handleLinkTap,
+                builders: {
+                  'code': _SyntaxHighlightBuilder(
+                    isDark: Theme.of(context).brightness == Brightness.dark,
+                  ),
+                },
                 styleSheet: MarkdownStyleSheet(
                   p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
                   code: TextStyle(
@@ -261,22 +333,7 @@ class _ToolUseCardState extends State<_ToolUseCard> {
             ),
             if (_expanded && hasDetails) ...[
               const SizedBox(height: 6),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: SelectableText(
-                  _formatMetadata(meta),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    color: theme.colorScheme.onSurface,
-                  ),
-                ),
-              ),
+              _buildExpandedContent(context, theme, meta),
             ],
           ],
         ),
@@ -284,20 +341,150 @@ class _ToolUseCardState extends State<_ToolUseCard> {
     );
   }
 
-  String _formatMetadata(Map<String, dynamic> meta) {
+  Widget _buildExpandedContent(BuildContext context, ThemeData theme, Map<String, dynamic> meta) {
+    final tool = widget.message.tool ?? '';
+    final isDark = theme.brightness == Brightness.dark;
+
+    // For file-content tools, render code with syntax highlighting
+    if (tool == 'Read' || tool == 'Write' || tool == 'Edit') {
+      final filePath = (meta['file_path'] ?? meta['path'] ?? '') as String;
+      final ext = filePath.contains('.')
+          ? filePath.split('.').last.toLowerCase()
+          : '';
+      final language = _langForExt(ext);
+      final widgets = <Widget>[];
+
+      // Show non-content fields as plain text first (e.g. old_string label)
+      final contentKeys = {'content', 'new_string', 'old_string', 'new_content'};
+      final otherFields = meta.entries
+          .where((e) => !contentKeys.contains(e.key) && e.key != 'file_path' && e.key != 'path')
+          .toList();
+      if (otherFields.isNotEmpty) {
+        final plain = otherFields.map((e) => '${e.key}: ${e.value}').join('\n');
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+            child: SelectableText(
+              plain,
+              style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        );
+      }
+
+      // Render each content field with syntax highlighting
+      for (final key in ['content', 'new_content', 'new_string', 'old_string']) {
+        final value = meta[key];
+        if (value is! String || value.isEmpty) continue;
+        final label = key == 'new_string' ? 'new' : key == 'old_string' ? 'old' : null;
+        if (label != null) {
+          widgets.add(
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: Text(
+                label,
+                style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
+              ),
+            ),
+          );
+        }
+        widgets.add(
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: HighlightView(
+              value,
+              language: language ?? 'plaintext',
+              theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
+              padding: const EdgeInsets.all(8),
+              textStyle: const TextStyle(fontSize: 11, fontFamily: 'monospace', height: 1.4),
+            ),
+          ),
+        );
+      }
+
+      if (widgets.isNotEmpty) {
+        return Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: widgets,
+          ),
+        );
+      }
+    }
+
+    // Bash tool — render as shell
+    if (tool == 'Bash') {
+      final cmd = (meta['command'] ?? meta['cmd'] ?? '') as String;
+      if (cmd.isNotEmpty) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: HighlightView(
+            cmd,
+            language: 'bash',
+            theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
+            padding: const EdgeInsets.all(8),
+            textStyle: const TextStyle(fontSize: 11, fontFamily: 'monospace', height: 1.4),
+          ),
+        );
+      }
+    }
+
+    // Fallback: plain key:value text
     final lines = <String>[];
     for (final MapEntry(:key, :value) in meta.entries) {
       if (value is String) {
-        if (value.length > 500) {
-          lines.add('$key: ${value.substring(0, 500)}...');
-        } else {
-          lines.add('$key: $value');
-        }
+        lines.add(value.length > 500 ? '$key: ${value.substring(0, 500)}...' : '$key: $value');
       } else {
         lines.add('$key: $value');
       }
     }
-    return lines.join('\n');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: SelectableText(
+        lines.join('\n'),
+        style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+      ),
+    );
+  }
+
+  String? _langForExt(String ext) {
+    switch (ext) {
+      case 'dart': return 'dart';
+      case 'go': return 'go';
+      case 'py': return 'python';
+      case 'js': return 'javascript';
+      case 'ts': case 'tsx': return 'typescript';
+      case 'jsx': return 'javascript';
+      case 'java': return 'java';
+      case 'kt': return 'kotlin';
+      case 'swift': return 'swift';
+      case 'rs': return 'rust';
+      case 'c': case 'h': return 'c';
+      case 'cpp': return 'cpp';
+      case 'cs': return 'cs';
+      case 'rb': return 'ruby';
+      case 'sh': case 'bash': case 'zsh': return 'bash';
+      case 'json': return 'json';
+      case 'yaml': case 'yml': return 'yaml';
+      case 'toml': return 'ini';
+      case 'xml': return 'xml';
+      case 'html': return 'html';
+      case 'css': return 'css';
+      case 'scss': return 'scss';
+      case 'sql': return 'sql';
+      case 'md': return 'markdown';
+      default: return null;
+    }
   }
 
   IconData _toolIcon(String tool) {
@@ -362,6 +549,34 @@ class _ToolResultCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SyntaxHighlightBuilder extends MarkdownElementBuilder {
+  final bool isDark;
+  _SyntaxHighlightBuilder({required this.isDark});
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    dynamic element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final code = element.textContent as String? ?? '';
+    final rawLang = (element.attributes['class'] as String? ?? '');
+
+    // Inline code has no class attribute and no newlines — skip, let markdown render it normally.
+    if (rawLang.isEmpty && !code.contains('\n')) return null;
+
+    final lang = rawLang.replaceFirst('language-', '');
+    return HighlightView(
+      code.trimRight(),
+      language: lang.isNotEmpty ? lang : 'plaintext',
+      theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
+      padding: const EdgeInsets.all(10),
+      textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace', height: 1.5),
     );
   }
 }

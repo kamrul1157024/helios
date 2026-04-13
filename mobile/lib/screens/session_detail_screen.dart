@@ -13,6 +13,7 @@ import '../widgets/message_card.dart';
 import '../services/voice_service.dart';
 import '../services/narration_service.dart';
 import '../widgets/skeleton.dart';
+import 'file_browser_screen.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final Session session;
@@ -447,8 +448,28 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     });
   }
 
+  void _openFileBrowser(Session session) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FileBrowserScreen(
+          hostId: session.hostId,
+          rootPath: session.cwd,
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildActions(Session session) {
     final actions = <Widget>[];
+
+    // File browser
+    actions.add(
+      IconButton(
+        icon: const Icon(Icons.folder_outlined),
+        tooltip: 'Browse files',
+        onPressed: () => _openFileBrowser(session),
+      ),
+    );
 
     // Voice mode toggle
     actions.add(
@@ -640,7 +661,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         }
         // Reverse the index: index 0 → last message, index N → first message
         final msgIndex = _messages.length - 1 - index;
-        return MessageCard(message: _messages[msgIndex]);
+        return MessageCard(
+          message: _messages[msgIndex],
+          hostId: widget.session.hostId,
+          sessionCwd: widget.session.cwd,
+        );
       },
     );
   }
