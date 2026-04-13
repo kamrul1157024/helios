@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/reporter"
@@ -86,6 +87,9 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 func NewPublicServer(port int, shared *Shared) *PublicServer {
 	s := &PublicServer{shared: shared}
 
+	globalLimiter := newIPRateLimiter(60, time.Minute)
+	pairLimiter := newIPRateLimiter(5, time.Minute)
+
 	mux := http.NewServeMux()
 
 	// Landing page (no auth — download links, exact root path only)
@@ -93,7 +97,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
-	mux.HandleFunc("POST /api/auth/pair", s.handlePair)
+	mux.Handle("POST /api/auth/pair", pairLimiter.middleware(http.HandlerFunc(s.handlePair)))
 
 	// Auth-protected API endpoints
 	bearerAuth := bearerAuthMiddleware(shared.DB)
@@ -186,7 +190,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", port),
-		Handler: mux,
+		Handler: globalLimiter.middleware(mux),
 	}
 
 	return s

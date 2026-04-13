@@ -6,10 +6,81 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/store"
 )
+
+type rateBucket struct {
+	count       int
+	windowStart time.Time
+}
+
+type ipRateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*rateBucket
+	rate    int
+	window  time.Duration
+}
+
+func newIPRateLimiter(rate int, window time.Duration) *ipRateLimiter {
+	l := &ipRateLimiter{
+		buckets: make(map[string]*rateBucket),
+		rate:    rate,
+		window:  window,
+	}
+	go l.cleanup()
+	return l
+}
+
+func (l *ipRateLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	b, ok := l.buckets[ip]
+	if !ok || now.Sub(b.windowStart) >= l.window {
+		l.buckets[ip] = &rateBucket{count: 1, windowStart: now}
+		return true
+	}
+	if b.count >= l.rate {
+		return false
+	}
+	b.count++
+	return true
+}
+
+func (l *ipRateLimiter) cleanup() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		l.mu.Lock()
+		now := time.Now()
+		for ip, b := range l.buckets {
+			if now.Sub(b.windowStart) >= l.window {
+				delete(l.buckets, ip)
+			}
+		}
+		l.mu.Unlock()
+	}
+}
+
+func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := r.RemoteAddr
+		if idx := strings.LastIndex(ip, ":"); idx != -1 {
+			ip = ip[:idx]
+		}
+		if !l.allow(ip) {
+			w.Header().Set("Retry-After", "60")
+			jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 type contextKey string
 
