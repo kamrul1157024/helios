@@ -136,6 +136,12 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("No tunnel configured"))
 		}
 
+		if m.notifyBin != "" {
+			b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))
+		} else {
+			b.WriteString(cross(desktopNotifyInstallHint()))
+		}
+
 		if m.deviceCount > 0 {
 			label := "device connected"
 			if m.deviceCount > 1 {
@@ -153,7 +159,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString("\n")
 		}
 
-		b.WriteString(helpStyle.Render("  enter continue  t change tunnel  q quit"))
+		b.WriteString(helpStyle.Render("  enter continue  t change tunnel  N notifications  q quit"))
 	}
 
 	return b.String()
