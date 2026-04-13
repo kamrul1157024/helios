@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 import '../services/voice_service.dart';
 import '../utils/markdown_stripper.dart';
@@ -139,6 +140,14 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
               MarkdownBody(
                 data: content,
                 selectable: true,
+                onTapLink: (text, href, title) async {
+                  if (href != null) {
+                    final uri = Uri.tryParse(href);
+                    if (uri != null) {
+                      await launchUrl(uri);
+                    }
+                  }
+                },
                 styleSheet: MarkdownStyleSheet(
                   p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
                   code: TextStyle(
