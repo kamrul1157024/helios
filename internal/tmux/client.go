@@ -109,6 +109,17 @@ func (c *Client) Attach(paneID string) error {
 	return syscall.Exec(bin, []string{bin, "attach-session", "-t", defaultSession}, os.Environ())
 }
 
+// AttachSession attaches the current terminal to the helios tmux session
+// without selecting a specific pane. This replaces the current process.
+// Returns an error if the session does not exist.
+func (c *Client) AttachSession() error {
+	if !c.hasSession(defaultSession) {
+		return fmt.Errorf("no helios tmux session found")
+	}
+	bin := c.tmuxCmd()
+	return syscall.Exec(bin, []string{bin, "attach-session", "-t", defaultSession}, os.Environ())
+}
+
 // SendKeys sends text to a pane followed by Enter.
 func (c *Client) SendKeys(paneID, text string) error {
 	return exec.Command(c.tmuxCmd(), "send-keys", "-t", paneID, text, "Enter").Run()

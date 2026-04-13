@@ -259,6 +259,13 @@ func handleStart() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	// After the TUI exits, attach to the helios tmux session so the user
+	// lands directly in their workspace without a manual attach step.
+	tc := tmux.NewClient()
+	if attachErr := tc.AttachSession(); attachErr != nil {
+		// No session yet (e.g. no Claude sessions started) — just exit normally.
+		_ = attachErr
+	}
 }
 
 func handleDevices() {
