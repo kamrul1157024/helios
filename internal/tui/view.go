@@ -70,6 +70,8 @@ func (m StartModel) View() string {
 		return m.viewMain()
 	case screenConfirmDevice:
 		return m.viewConfirmDevice()
+	case screenNotificationSettings:
+		return m.viewNotificationSettings()
 	case screenError:
 		return m.viewError()
 	}
@@ -377,6 +379,9 @@ func (m StartModel) viewMain() string {
 	if m.tunnelOK {
 		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
 	}
+	if m.desktopNotif.Available {
+		b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", m.desktopNotif.Binary)))
+	}
 
 	// Devices
 	b.WriteString("\n")
@@ -481,7 +486,7 @@ func (m StartModel) viewMain() string {
 		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
 	}
 
-	b.WriteString(helpStyle.Render("  t change tunnel  q quit"))
+	b.WriteString(helpStyle.Render("  t change tunnel  N notifications  q quit"))
 
 	return b.String()
 }

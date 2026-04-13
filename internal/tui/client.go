@@ -169,3 +169,35 @@ func (c *client) deviceRevoke(kid string) error {
 	resp.Body.Close()
 	return nil
 }
+
+type settingsResponse struct {
+	Settings map[string]string `json:"settings"`
+}
+
+func (c *client) getSettings() (map[string]string, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/internal/settings")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r settingsResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	if r.Settings == nil {
+		r.Settings = map[string]string{}
+	}
+	return r.Settings, nil
+}
+
+func (c *client) updateSettings(settings map[string]string) error {
+	body, _ := json.Marshal(settings)
+	resp, err := c.httpClient.Do(func() *http.Request {
+		req, _ := http.NewRequest(http.MethodPut, c.baseURL+"/internal/settings", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}())
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/notify"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -32,6 +33,7 @@ const (
 	screenCustomURL                    // custom URL input
 	screenMain                         // main dashboard: status + devices + QRs
 	screenConfirmDevice                // "Allow this device? y/n"
+	screenNotificationSettings         // desktop notification alert settings
 	screenError                        // error
 )
 
@@ -73,6 +75,7 @@ type statusCheckDone struct {
 	deviceCount    int
 	devices        []deviceInfo
 	tmux           tmuxStatus
+	desktopNotif   notify.ServiceStatus
 	err            error
 }
 
@@ -119,6 +122,15 @@ type editorSetupDone struct {
 type tickMsg time.Time
 type tokenTickMsg time.Time
 
+type notifSettingsLoaded struct {
+	values map[string]bool
+	err    error
+}
+
+type notifSettingSaved struct {
+	err error
+}
+
 // Model
 type StartModel struct {
 	screen     screen
@@ -132,11 +144,16 @@ type StartModel struct {
 	hooksOK       bool
 	hooksOutdated bool
 	tunnelOK      bool
-	tunnelURL   string
-	tunnelProv  string
-	deviceCount int
-	devices     []deviceInfo
-	tmux        tmuxStatus
+	tunnelURL    string
+	tunnelProv   string
+	deviceCount  int
+	devices      []deviceInfo
+	tmux         tmuxStatus
+	desktopNotif notify.ServiceStatus
+
+	// Notification settings screen
+	notifSettingsCursor int
+	notifSettingsValues map[string]bool
 
 	// Shell setup
 	shellInfo         daemon.ShellInfo
@@ -286,6 +303,16 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
 			return tokenTickMsg(t)
 		})
+
+	case notifSettingsLoaded:
+		if msg.err == nil && msg.values != nil {
+			m.notifSettingsValues = msg.values
+		}
+		return m, nil
+
+	case notifSettingSaved:
+		// Ignore save errors silently — settings are best-effort.
+		return m, nil
 	}
 
 	// Handle text input updates
@@ -314,12 +341,20 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenTmuxRestart,
 			screenEditorSetup, screenError:
 			return m, tea.Quit
+		case screenNotificationSettings:
+			m.screen = screenMain
+			return m, nil
 		}
 
 	case "up", "k":
 		if m.screen == screenTunnelSelect {
 			if m.tunnelCursor > 0 {
 				m.tunnelCursor--
+			}
+		}
+		if m.screen == screenNotificationSettings {
+			if m.notifSettingsCursor > 0 {
+				m.notifSettingsCursor--
 			}
 		}
 
@@ -329,9 +364,27 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.tunnelCursor++
 			}
 		}
+		if m.screen == screenNotificationSettings {
+			if m.notifSettingsCursor < len(notifSettingsKeys)-1 {
+				m.notifSettingsCursor++
+			}
+		}
+
+	case " ":
+		if m.screen == screenNotificationSettings {
+			return m.toggleNotifSetting()
+		}
 
 	case "enter":
+		if m.screen == screenNotificationSettings {
+			return m.toggleNotifSetting()
+		}
 		return m.handleEnter()
+
+	case "r":
+		if m.screen == screenNotificationSettings {
+			return m.resetNotifSettings()
+		}
 
 	case "y":
 		if m.screen == screenConfirmDevice && m.pendingDevice != nil {
@@ -358,6 +411,13 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
 			m.screen = screenTunnelSelect
 			return m, nil
+		}
+
+	case "N":
+		if m.screen == screenMain {
+			m.screen = screenNotificationSettings
+			m.notifSettingsCursor = 0
+			return m, loadNotifSettings(m.client)
 		}
 
 	case "s":
@@ -518,6 +578,7 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.deviceCount = msg.deviceCount
 	m.devices = msg.devices
 	m.tmux = msg.tmux
+	m.desktopNotif = msg.desktopNotif
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -716,6 +777,9 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 				ContinuumPlugin: h.Tmux.ContinuumPlugin,
 			}
 		}
+
+		// Check desktop notification service
+		result.desktopNotif = notify.CheckStatus()
 
 		return result
 	}

@@ -46,6 +46,8 @@ func main() {
 		handleTunnel(os.Args[2:])
 	case "auth":
 		handleAuth(os.Args[2:])
+	case "attach":
+		handleAttach(os.Args[2:])
 	case "wrap":
 		handleWrap(os.Args[2:])
 	case "hooks":
@@ -465,6 +467,62 @@ func handleWrap(args []string) {
 		fmt.Fprintf(os.Stderr, "Failed to attach to tmux: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func handleAttach(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: helios attach <pane-id|session-id>")
+		os.Exit(1)
+	}
+
+	target := args[0]
+	tc := tmux.NewClient()
+
+	// If the target looks like a tmux pane ID (%N), attach directly.
+	if strings.HasPrefix(target, "%") {
+		if err := tc.Attach(target); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to attach to pane %s: %v\n", target, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Otherwise treat it as a session ID — look up the pane from the daemon.
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(internalURL + "/internal/sessions")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "helios is not running. Start it with: helios start")
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Sessions []struct {
+			SessionID string  `json:"session_id"`
+			TmuxPane  *string `json:"tmux_pane"`
+		} `json:"sessions"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, s := range result.Sessions {
+		if s.SessionID == target || strings.HasPrefix(s.SessionID, target) {
+			if s.TmuxPane == nil || *s.TmuxPane == "" {
+				fmt.Fprintf(os.Stderr, "Session %s has no active tmux pane\n", target)
+				os.Exit(1)
+			}
+			if err := tc.Attach(*s.TmuxPane); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to attach to pane %s: %v\n", *s.TmuxPane, err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Session not found: %s\n", target)
+	os.Exit(1)
 }
 
 func handleSessions(args []string) {

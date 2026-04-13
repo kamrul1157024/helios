@@ -828,6 +828,32 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+func (s *InternalServer) handleInternalGetSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.shared.DB.GetAllSettings()
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to read settings: %v", err), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"settings": settings})
+}
+
+func (s *InternalServer) handleInternalUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var settings map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(settings) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.shared.DB.SetSettings(settings); err != nil {
+		jsonError(w, fmt.Sprintf("failed to save settings: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *InternalServer) handleInternalHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"status":        "ok",

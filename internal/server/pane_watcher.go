@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
-	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -176,14 +175,4 @@ func createTrustNotification(shared *Shared, p *PendingPane, output string) {
 	}
 
 	shared.SSE.Broadcast(SSEEvent{Type: "notification", Data: notif})
-	go sendDesktopNotification(detail)
-
-	if shared.Pusher != nil {
-		go shared.Pusher.SendToAll(push.PushPayload{
-			Type:  "claude.trust",
-			ID:    notifID,
-			Title: title,
-			Body:  detail,
-		})
-	}
 }

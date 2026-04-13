@@ -29,9 +29,9 @@ type HookContext struct {
 	DB               *store.Store
 	Mgr              *notifications.Manager
 	Tmux             *tmux.Client
-	Notify           func(eventType string, data interface{})  // SSE broadcast
-	Push             func(notifType, id, title, body string)    // push notification
-	RemovePendingPane func(cwd string) string                    // remove pane from pending map by CWD, returns pane ID
+	Notify           func(eventType string, data interface{})                     // SSE broadcast
+	Push             func(notifType, id, title, body, sessionID, paneID string)  // desktop notification
+	RemovePendingPane func(cwd string) string                                     // remove pane from pending map by CWD, returns pane ID
 	Report           func(event ReportEvent)                     // push event to Reporter for narration
 }
 

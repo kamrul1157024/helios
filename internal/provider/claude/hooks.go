@@ -75,7 +75,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	}
 
 	ctx.Notify("notification", notif)
-	ctx.Push("claude.permission", notifID, "Claude needs permission", detail)
+	ctx.Push("claude.permission", notifID, "Claude needs permission", detail, input.SessionID, "")
 
 	if ctx.Report != nil {
 		ctx.Report(provider.ReportEvent{
@@ -183,7 +183,7 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 	}
 
 	ctx.Notify("notification", notif)
-	ctx.Push("claude.question", notifID, title, detail)
+	ctx.Push("claude.question", notifID, title, detail, input.SessionID, "")
 
 	if ctx.Report != nil {
 		questionText := ""
@@ -292,7 +292,7 @@ func handleElicitation(ctx *provider.HookContext, w http.ResponseWriter, r *http
 	}
 
 	ctx.Notify("notification", notif)
-	ctx.Push(notifType, notifID, title, detail)
+	ctx.Push(notifType, notifID, title, detail, input.SessionID, "")
 
 	decision := waitForDecision(ctx, notifID, r)
 	if decision == nil {

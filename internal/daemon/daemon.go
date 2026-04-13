@@ -14,8 +14,8 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/notify"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
-	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tmux"
@@ -65,18 +65,20 @@ func startDaemon(cfg *Config) error {
 	// Register providers
 	claude.Register()
 
-	// Initialize Web Push
-	vapidKeys, err := push.LoadOrGenerateVAPID(HeliosDir())
-	if err != nil {
-		return fmt.Errorf("init VAPID keys: %w", err)
-	}
-	pusher := push.NewSender(db, vapidKeys)
-
 	// Shared state between both servers
-	shared := server.NewShared(db, mgr, pusher)
+	shared := server.NewShared(db, mgr)
 
 	// Give the claude action handlers access to the tmux client
 	claude.SetTmux(shared.Tmux)
+
+	// Desktop notification service
+	notifSvc := notify.New(db, shared.Tmux)
+	shared.DesktopNotifier = notifSvc
+	if notifSvc.Available() {
+		log.Printf("desktop notifications: %s", notifSvc.Status().Binary)
+	} else {
+		log.Printf("desktop notifications: unavailable (%s)", notifSvc.Status().InstallHint)
+	}
 
 	// Discover existing Claude sessions from transcript files + tmux
 	go discovery.DiscoverClaudeSessions(db, tmux.NewClient())

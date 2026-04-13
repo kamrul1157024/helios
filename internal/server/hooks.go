@@ -6,12 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/provider"
-	"github.com/kamrul1157024/helios/internal/push"
 	"github.com/kamrul1157024/helios/internal/reporter"
 )
 
@@ -52,15 +49,9 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		Notify: func(eventType string, data interface{}) {
 			s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
 		},
-		Push: func(notifType, id, title, body string) {
-			go sendDesktopNotification(body)
-			if s.shared.Pusher != nil {
-				go s.shared.Pusher.SendToAll(push.PushPayload{
-					Type:  notifType,
-					ID:    id,
-					Title: title,
-					Body:  body,
-				})
+		Push: func(notifType, id, title, body, sessionID, paneID string) {
+			if s.shared.DesktopNotifier != nil {
+				go s.shared.DesktopNotifier.Send(id, notifType, title, body, sessionID, paneID)
 			}
 		},
 		RemovePendingPane: func(cwd string) string {
@@ -82,10 +73,3 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 	}
 }
 
-func sendDesktopNotification(detail string) {
-	if runtime.GOOS != "darwin" {
-		return
-	}
-	script := fmt.Sprintf(`display notification "%s" with title "helios" subtitle "Claude needs permission"`, detail)
-	exec.Command("osascript", "-e", script).Run()
-}

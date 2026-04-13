@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
-	"github.com/kamrul1157024/helios/internal/push"
+	"github.com/kamrul1157024/helios/internal/notify"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tmux"
@@ -15,13 +15,13 @@ import (
 
 // Shared holds shared dependencies between internal and public servers.
 type Shared struct {
-	DB           *store.Store
-	Mgr          *notifications.Manager
-	SSE          *SSEBroadcaster
-	Pusher       *push.Sender
-	Tmux         *tmux.Client
-	PendingPanes *PendingPaneMap
-	Reporter     *reporter.Reporter
+	DB              *store.Store
+	Mgr             *notifications.Manager
+	SSE             *SSEBroadcaster
+	Tmux            *tmux.Client
+	PendingPanes    *PendingPaneMap
+	Reporter        *reporter.Reporter
+	DesktopNotifier *notify.Service
 }
 
 // InternalServer handles hooks (Claude) and admin API (CLI).
@@ -38,12 +38,11 @@ type PublicServer struct {
 	shared     *Shared
 }
 
-func NewShared(db *store.Store, mgr *notifications.Manager, pusher *push.Sender) *Shared {
+func NewShared(db *store.Store, mgr *notifications.Manager) *Shared {
 	return &Shared{
 		DB:           db,
 		Mgr:          mgr,
 		SSE:          NewSSEBroadcaster(),
-		Pusher:       pusher,
 		Tmux:         tmux.NewClient(),
 		PendingPanes: NewPendingPaneMap(),
 		Reporter:     reporter.New("claude", db),
@@ -72,6 +71,8 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("GET /internal/device/list", s.handleDeviceList)
 	mux.HandleFunc("POST /internal/device/revoke", s.handleDeviceRevoke)
 	mux.HandleFunc("POST /internal/wrap", s.handleWrap)
+	mux.HandleFunc("GET /internal/settings", s.handleInternalGetSettings)
+	mux.HandleFunc("PUT /internal/settings", s.handleInternalUpdateSettings)
 	mux.HandleFunc("GET /internal/logs", s.handleInternalLogs)
 
 	s.httpServer = &http.Server{
@@ -99,15 +100,12 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	bearerAuth := bearerAuthMiddleware(shared.DB)
 
 	protectedMux := http.NewServeMux()
-	protectedMux.HandleFunc("GET /api/push/vapid-public-key", s.handleVAPIDPublicKey)
 	protectedMux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	protectedMux.HandleFunc("GET /api/sessions/directories", s.handleListDirectories)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
 	protectedMux.Handle("GET /api/events", shared.SSE)
 	protectedMux.HandleFunc("GET /api/auth/devices", s.handleListDevices)
-	protectedMux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
-	protectedMux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
 	protectedMux.HandleFunc("POST /api/device/logs", s.handleDeviceLogs)
 	protectedMux.HandleFunc("GET /api/commands", s.handleListCommands)
 	protectedMux.HandleFunc("GET /api/providers", s.handleListProviders)
