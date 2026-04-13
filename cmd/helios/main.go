@@ -385,6 +385,15 @@ func stopNotifier() {
 		return
 	}
 	proc.Signal(syscall.SIGTERM)
+
+	// Wait for the process to actually exit (up to 5 seconds).
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if proc.Signal(syscall.Signal(0)) != nil {
+			break
+		}
+	}
+
 	os.Remove(pidPath)
 }
 

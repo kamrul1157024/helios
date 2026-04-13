@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -151,6 +152,11 @@ func handleNotificationEvent(bin, data string, settings map[string]string) {
 		body = *notif.Title
 	}
 
+	if isUserFocusedOnPane(notif.TmuxPane) {
+		notifLog.Printf("skipped: user focused on pane %s", notif.TmuxPane)
+		return
+	}
+
 	sound := settingBool(settings, "desktop.notify.sound", true)
 	notifLog.Printf("firing: os=%s bin=%s body=%q sound=%v pane=%s", runtime.GOOS, bin, truncate(body, 80), sound, notif.TmuxPane)
 
@@ -204,9 +210,8 @@ func sendLinux(bin, notifType, body, paneID string) {
 		}
 		// If user clicked, output contains the action key ("default").
 		if strings.TrimSpace(string(out)) == "default" {
-			termCmd := focusTerminalCmd(paneID)
-			notifLog.Printf("linux click: running %s", termCmd)
-			exec.Command("sh", "-c", termCmd).Start()
+			notifLog.Printf("linux click: focusing pane %s", paneID)
+			focusPane(paneID)
 		}
 		return
 	}
@@ -217,57 +222,240 @@ func sendLinux(bin, notifType, body, paneID string) {
 	}
 }
 
-// focusTerminalCmd returns a shell command that switches tmux to the target
-// pane and brings the terminal app to the foreground. This is used as the
-// -execute argument for terminal-notifier on macOS.
-func focusTerminalCmd(paneID string) string {
+// paneClient holds information about the tmux client watching a pane.
+type paneClient struct {
+	tty string // e.g. /dev/ttys000
+	pid int    // tmux client pid
+	app string // host app name (e.g. "kitty", "Code")
+}
+
+// findPaneClient returns the tmux client currently focused on paneID, or nil
+// if no client is watching it.
+func findPaneClient(paneID string) *paneClient {
+	if paneID == "" {
+		return nil
+	}
+	out, err := exec.Command("tmux", "list-clients", "-F", "#{pane_id} #{client_tty} #{client_pid}").Output()
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] != paneID {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[2])
+		if err != nil {
+			continue
+		}
+		app := appFromPID(pid)
+		notifLog.Printf("findPaneClient: pane=%s tty=%s pid=%d app=%s", paneID, fields[1], pid, app)
+		return &paneClient{tty: fields[1], pid: pid, app: app}
+	}
+	return nil
+}
+
+// appFromPID walks up the process tree from a tmux client PID to find the
+// hosting application name (e.g. "kitty", "Code").
+func appFromPID(pid int) string {
+	// Walk up one level — tmux client's parent is the terminal/editor process.
+	ppid := parentPID(pid)
+	if ppid <= 1 {
+		return ""
+	}
+	comm := processComm(ppid)
+	if comm == "" {
+		return ""
+	}
+	// Extract the innermost .app bundle name from the path on macOS.
+	if runtime.GOOS == "darwin" {
+		// e.g. ".../kitty.app/Contents/MacOS/kitty" → "kitty"
+		// e.g. ".../Visual Studio Code 2.app/Contents/..." → "Visual Studio Code 2"
+		parts := strings.Split(comm, "/")
+		for _, part := range parts {
+			if strings.HasSuffix(part, ".app") {
+				return strings.TrimSuffix(part, ".app")
+			}
+		}
+	}
+	// On Linux or fallback: use the executable basename.
+	return filepath.Base(comm)
+}
+
+// parentPID returns the PPID of the given pid, or 0 on error.
+func parentPID(pid int) int {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "ppid=").Output()
+	if err != nil {
+		return 0
+	}
+	ppid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return ppid
+}
+
+// processComm returns the full executable path of a pid.
+func processComm(pid int) string {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// isUserFocusedOnPane returns true if a tmux client is focused on paneID and
+// the app hosting that client is the frontmost window.
+func isUserFocusedOnPane(paneID string) bool {
+	client := findPaneClient(paneID)
+	if client == nil {
+		return false
+	}
+	return isAppFrontmost(client.app)
+}
+
+// isAppFrontmost returns true if the named app is the frontmost window.
+// On macOS uses osascript; on Linux uses xdotool (X11) with a best-effort fallback.
+func isAppFrontmost(app string) bool {
+	if app == "" {
+		return false
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return darwinIsAppFrontmost(app)
+	case "linux":
+		return linuxIsAppFrontmost(app)
+	}
+	return false
+}
+
+func darwinIsAppFrontmost(app string) bool {
+	// Get the bundle identifier of the frontmost app.
+	frontmost, err := exec.Command("osascript", "-e",
+		`tell application "System Events" to get bundle identifier of first application process whose frontmost is true`,
+	).Output()
+	if err != nil {
+		return false
+	}
+	frontmostID := strings.TrimSpace(string(frontmost))
+
+	// Get the bundle identifier of the target app by name.
+	targetID, err := exec.Command("osascript", "-e",
+		fmt.Sprintf(`id of app "%s"`, app),
+	).Output()
+	if err != nil {
+		// Fallback: compare app name directly against frontmost process name.
+		name, err2 := exec.Command("osascript", "-e",
+			`tell application "System Events" to get name of first application process whose frontmost is true`,
+		).Output()
+		if err2 != nil {
+			return false
+		}
+		return strings.EqualFold(strings.TrimSpace(string(name)), app)
+	}
+
+	return strings.TrimSpace(string(targetID)) == frontmostID
+}
+
+func linuxIsAppFrontmost(app string) bool {
+	// Try xdotool (X11).
+	out, err := exec.Command("xdotool", "getactivewindow", "getwindowname").Output()
+	if err == nil {
+		return strings.Contains(strings.ToLower(string(out)), strings.ToLower(app))
+	}
+	// Try xprop (X11 fallback).
+	activeWin, err := exec.Command("sh", "-c",
+		`xprop -root _NET_ACTIVE_WINDOW | awk '{print $NF}'`,
+	).Output()
+	if err == nil {
+		wmClass, err := exec.Command("xprop", "-id", strings.TrimSpace(string(activeWin)), "WM_CLASS").Output()
+		if err == nil {
+			return strings.Contains(strings.ToLower(string(wmClass)), strings.ToLower(app))
+		}
+	}
+	// Wayland: no universal method, skip app check — pane match is enough.
+	return true
+}
+
+// focusPane switches the tmux client watching paneID to that pane and brings
+// the hosting app to the foreground.
+func focusPane(paneID string) {
+	client := findPaneClient(paneID)
+
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
 		tmuxBin = "tmux"
 	}
-	selectCmd := fmt.Sprintf("%s select-window -t '%s' && %s select-pane -t '%s'", tmuxBin, paneID, tmuxBin, paneID)
 
-	// Detect terminal from env vars inherited when helios start was launched.
-	termApp := detectTerminalApp()
-	if termApp != "" {
-		return fmt.Sprintf("%s && open -a '%s'", selectCmd, termApp)
+	if client != nil {
+		// Target the specific client that owns this pane.
+		exec.Command(tmuxBin, "switch-client", "-c", client.tty, "-t", paneID).Run()
+	} else {
+		// No client currently watching the pane — switch any available client.
+		exec.Command(tmuxBin, "select-window", "-t", paneID).Run()
+		exec.Command(tmuxBin, "select-pane", "-t", paneID).Run()
 	}
-	return selectCmd
+
+	activateApp(client)
 }
 
-// detectTerminalApp returns the macOS .app name of the current terminal.
-func detectTerminalApp() string {
-	// Env vars set by terminals themselves.
-	switch {
-	case os.Getenv("KITTY_PID") != "":
-		return "kitty"
-	case os.Getenv("ITERM_SESSION_ID") != "":
-		return "iTerm"
-	case os.Getenv("WARP_SESSION_ID") != "":
-		return "Warp"
-	case os.Getenv("TERM_PROGRAM") == "WezTerm":
-		return "WezTerm"
-	case os.Getenv("TERM_PROGRAM") == "Alacritty":
-		return "Alacritty"
+// focusTerminalCmd returns a shell command string that focuses the pane.
+// Used as the -execute argument for terminal-notifier on macOS.
+func focusTerminalCmd(paneID string) string {
+	// We resolve the client at notification-fire time so the command embedded
+	// in the notification banner is as accurate as possible.
+	client := findPaneClient(paneID)
+
+	tmuxBin, err := exec.LookPath("tmux")
+	if err != nil {
+		tmuxBin = "tmux"
 	}
-	// Fallback: check common apps in /Applications.
-	for _, app := range []string{"kitty", "iTerm", "Warp", "WezTerm", "Alacritty", "Terminal"} {
-		if appExists(app) {
-			return app
+
+	var switchCmd string
+	if client != nil {
+		switchCmd = fmt.Sprintf("%s switch-client -c '%s' -t '%s'", tmuxBin, client.tty, paneID)
+	} else {
+		switchCmd = fmt.Sprintf("%s select-window -t '%s' && %s select-pane -t '%s'", tmuxBin, paneID, tmuxBin, paneID)
+	}
+
+	app := ""
+	if client != nil {
+		app = client.app
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		if app != "" {
+			return fmt.Sprintf("%s && open -a '%s'", switchCmd, app)
+		}
+	case "linux":
+		if app != "" {
+			if _, err := exec.LookPath("wmctrl"); err == nil {
+				return fmt.Sprintf("%s && wmctrl -a '%s'", switchCmd, app)
+			}
+			if _, err := exec.LookPath("xdotool"); err == nil {
+				return fmt.Sprintf("%s && xdotool search --name '%s' windowactivate", switchCmd, app)
+			}
 		}
 	}
-	return ""
+	return switchCmd
 }
 
-// appExists checks if a macOS .app bundle is present in /Applications or ~/Applications.
-func appExists(name string) bool {
-	home, _ := os.UserHomeDir()
-	for _, dir := range []string{"/Applications", filepath.Join(home, "Applications")} {
-		if _, err := os.Stat(filepath.Join(dir, name+".app")); err == nil {
-			return true
+// activateApp brings the app hosting the given client to the foreground.
+func activateApp(client *paneClient) {
+	if client == nil || client.app == "" {
+		return
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("open", "-a", client.app).Run()
+	case "linux":
+		if _, err := exec.LookPath("wmctrl"); err == nil {
+			exec.Command("wmctrl", "-a", client.app).Run()
+		} else if _, err := exec.LookPath("xdotool"); err == nil {
+			exec.Command("xdotool", "search", "--name", client.app, "windowactivate").Run()
 		}
 	}
-	return false
 }
 
 func findNotifyBinary() (string, bool) {
