@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -379,6 +381,11 @@ func (m StartModel) viewMain() string {
 	if m.tunnelOK {
 		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
 	}
+	if m.notifyBin != "" {
+		b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))
+	} else {
+		b.WriteString(cross(desktopNotifyInstallHint()))
+	}
 	// Devices
 	b.WriteString("\n")
 	activeDevices := 0
@@ -532,4 +539,15 @@ func check(msg string) string {
 
 func cross(msg string) string {
 	return fmt.Sprintf("  %s %s\n", crossStyle.Render("✗"), msg)
+}
+
+func desktopNotifyInstallHint() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "Desktop notifications — brew install terminal-notifier"
+	case "linux":
+		return "Desktop notifications — sudo apt install libnotify-bin"
+	default:
+		return "Desktop notifications — not supported on this platform"
+	}
 }
