@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
@@ -347,11 +349,9 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 
 	notifID := notifications.GenerateNotificationID()
 	lastDetail := ctx.DB.LastSessionDetail(input.SessionID)
+	sess, _ := ctx.DB.GetSession(input.SessionID)
 	title := "Session completed"
-	detail := "Claude session completed"
-	if lastDetail != "" {
-		detail = "Session completed — last action: " + lastDetail
-	}
+	detail := sessionContext(input.CWD, sess)
 	notif := &store.Notification{
 		ID:            notifID,
 		Source:        "claude",
@@ -396,11 +396,9 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 
 	notifID := notifications.GenerateNotificationID()
 	lastDetail := ctx.DB.LastSessionDetail(input.SessionID)
+	sess, _ := ctx.DB.GetSession(input.SessionID)
 	title := "Session error"
-	detail := "Claude session stopped with an error"
-	if lastDetail != "" {
-		detail = "Session error — last action: " + lastDetail
-	}
+	detail := sessionContext(input.CWD, sess)
 	notif := &store.Notification{
 		ID:            notifID,
 		Source:        "claude",
@@ -853,4 +851,36 @@ func summarizeToolInput(raw json.RawMessage) string {
 		return string(raw[:100]) + "..."
 	}
 	return string(raw)
+}
+
+// sessionContext builds the notification detail line from the session's cwd,
+// title, and last user message.
+// Format: "opal-app: Fix auth bug — "can you fix the login flow""
+func sessionContext(cwd string, sess *store.Session) string {
+	project := filepath.Base(cwd)
+
+	var title, lastMsg string
+	if sess != nil {
+		if sess.Title != nil && *sess.Title != "" {
+			title = *sess.Title
+		}
+		if sess.LastUserMessage != nil && *sess.LastUserMessage != "" {
+			lastMsg = strings.TrimSpace(*sess.LastUserMessage)
+			// Truncate long messages.
+			if len(lastMsg) > 80 {
+				lastMsg = lastMsg[:80] + "..."
+			}
+		}
+	}
+
+	switch {
+	case title != "" && lastMsg != "":
+		return fmt.Sprintf(`%s: %s — "%s"`, project, title, lastMsg)
+	case title != "":
+		return fmt.Sprintf("%s: %s", project, title)
+	case lastMsg != "":
+		return fmt.Sprintf(`%s: "%s"`, project, lastMsg)
+	default:
+		return project
+	}
 }
