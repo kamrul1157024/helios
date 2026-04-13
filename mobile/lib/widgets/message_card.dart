@@ -275,10 +275,11 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                   ),
                 ],
               ),
-              // File path chips
+              // File path chips — SelectionContainer.disabled so taps aren't absorbed by MarkdownBody's selection area
               if (filePaths.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Wrap(
+                SelectionContainer.disabled(
+                child: Wrap(
                   spacing: 6,
                   runSpacing: 4,
                   children: filePaths.map((path) {
@@ -315,6 +316,7 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                       ),
                     );
                   }).toList(),
+                ),
                 ),
               ],
             ],
