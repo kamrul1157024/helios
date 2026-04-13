@@ -134,7 +134,9 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
             IconButton(
               icon: const Icon(Icons.chat_bubble_outline),
               tooltip: 'Back to chat',
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(context).popUntil(
+                (route) => route.settings.name != '/file-browser',
+              ),
             ),
           ],
           bottom: PreferredSize(
@@ -333,6 +335,19 @@ class _FileViewerScreenState extends State<_FileViewerScreen> {
     }
     final result = await svc.readFile(widget.path);
     if (!mounted) return;
+    if (result != null && result.isDirectory) {
+      // Replace this screen with a directory browser at that path.
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: '/file-browser'),
+          builder: (_) => FileBrowserScreen(
+            hostId: widget.hostId,
+            rootPath: widget.path,
+          ),
+        ),
+      );
+      return;
+    }
     setState(() {
       _result = result;
       _loading = false;

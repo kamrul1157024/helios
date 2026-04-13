@@ -81,22 +81,20 @@ class _UserMessageCard extends StatelessWidget {
   }
 }
 
-/// Regex matching file paths likely to be on the daemon's filesystem.
-/// Matches:
-///   - Absolute paths: /foo/bar.go
-///   - Relative paths with at least one slash: internal/server/api.go
-/// Requires a file extension to reduce false positives.
+/// Extracts unique file paths from message content for display as tappable chips.
 final _filePathPattern = RegExp(
-  r'(?<![(\[`])(/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+|[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_./-]+)+\.[a-zA-Z0-9]+)(?![)\]`])',
+  r'(^|[\s:,;(`])(~/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+|/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+|[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_.-]+){2,})',
+  multiLine: true,
 );
 
-/// Rewrites markdown content so file paths become tappable links.
-/// Uses a custom scheme `helios-file://` to distinguish from real URLs.
-String _linkifyFilePaths(String content) {
-  return content.replaceAllMapped(_filePathPattern, (m) {
-    final path = m.group(0)!;
-    return '[$path](helios-file://$path)';
-  });
+List<String> _extractFilePaths(String content) {
+  final seen = <String>{};
+  final paths = <String>[];
+  for (final m in _filePathPattern.allMatches(content)) {
+    final path = m.group(2)!;
+    if (seen.add(path)) paths.add(path);
+  }
+  return paths;
 }
 
 class _AssistantMessageCard extends StatefulWidget {
@@ -152,26 +150,40 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
 
   void _handleLinkTap(String text, String? href, String title) {
     if (href == null) return;
-    if (href.startsWith('helios-file://')) {
-      final filePath = href.substring('helios-file://'.length);
-      final resolvedPath = filePath.startsWith('/')
-          ? filePath
-          : '${widget.sessionCwd}/$filePath';
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => FileBrowserScreen(
-            hostId: widget.hostId,
-            rootPath: widget.sessionCwd,
-            openFilePath: resolvedPath,
-          ),
-        ),
-      );
-      return;
-    }
     final uri = Uri.tryParse(href);
     if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
       launchUrl(uri, mode: LaunchMode.externalApplication);
     }
+  }
+
+  void _openFilePath(String path) {
+    String resolvedPath;
+    if (path.startsWith('/') || path.startsWith('~')) {
+      resolvedPath = path;
+    } else {
+      // Relative path — try to resolve against sessionCwd.
+      // If the first segment of the relative path matches the last segment of
+      // sessionCwd (e.g. cwd=".../helios/mobile" and path="mobile/lib/..."),
+      // strip that duplicate segment.
+      final cwdLastSegment = widget.sessionCwd.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '';
+      final firstSegment = path.split('/').first;
+      if (cwdLastSegment.isNotEmpty && firstSegment == cwdLastSegment) {
+        final parent = widget.sessionCwd.substring(0, widget.sessionCwd.lastIndexOf('/'));
+        resolvedPath = '$parent/$path';
+      } else {
+        resolvedPath = '${widget.sessionCwd}/$path';
+      }
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/file-browser'),
+        builder: (_) => FileBrowserScreen(
+          hostId: widget.hostId,
+          rootPath: widget.sessionCwd,
+          openFilePath: resolvedPath,
+        ),
+      ),
+    );
   }
 
   @override
@@ -180,38 +192,36 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
     final content = widget.message.content ?? '';
     if (content.isEmpty) return const SizedBox.shrink();
 
-    final linkified = _linkifyFilePaths(content);
+    final filePaths = widget.hostId.isNotEmpty ? _extractFilePaths(content) : <String>[];
 
     return Align(
       alignment: Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () => _copyToClipboard(context, content),
-        child: Container(
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(16),
-              topRight: Radius.circular(16),
-              bottomLeft: Radius.circular(4),
-              bottomRight: Radius.circular(16),
-            ),
+      child: Container(
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
+            bottomLeft: Radius.circular(4),
+            bottomRight: Radius.circular(16),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              MarkdownBody(
-                data: linkified,
-                selectable: true,
-                onTapLink: _handleLinkTap,
-                builders: {
-                  'code': _SyntaxHighlightBuilder(
-                    isDark: Theme.of(context).brightness == Brightness.dark,
-                  ),
-                },
-                styleSheet: MarkdownStyleSheet(
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            MarkdownBody(
+              data: content,
+              selectable: true,
+              onTapLink: _handleLinkTap,
+              builders: {
+                'code': _SyntaxHighlightBuilder(
+                  isDark: Theme.of(context).brightness == Brightness.dark,
+                ),
+              },
+              styleSheet: MarkdownStyleSheet(
                   p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
                   code: TextStyle(
                     fontSize: 12,
@@ -236,26 +246,80 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                   listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
                 ),
               ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: GestureDetector(
-                  onTap: _isSpeaking ? _stopSpeaking : _speakMessage,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Icon(
-                      _isSpeaking ? Icons.stop : Icons.volume_up,
-                      size: 16,
-                      color: _isSpeaking
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  GestureDetector(
+                    onTap: () => _copyToClipboard(context, content),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 4, right: 8),
+                      child: Icon(
+                        Icons.copy,
+                        size: 14,
+                        color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      ),
                     ),
                   ),
-                ),
+                  GestureDetector(
+                    onTap: _isSpeaking ? _stopSpeaking : _speakMessage,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Icon(
+                        _isSpeaking ? Icons.stop : Icons.volume_up,
+                        size: 16,
+                        color: _isSpeaking
+                            ? theme.colorScheme.error
+                            : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+                ],
               ),
+              // File path chips
+              if (filePaths.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: filePaths.map((path) {
+                    final name = path.split('/').last;
+                    return GestureDetector(
+                      onTap: () => _openFilePath(path),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: theme.colorScheme.secondary.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.insert_drive_file, size: 12, color: theme.colorScheme.secondary),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                name,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontFamily: 'monospace',
+                                  color: theme.colorScheme.secondary,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
             ],
           ),
         ),
-      ),
     );
   }
 }

@@ -814,6 +814,12 @@ class DaemonAPIService extends ChangeNotifier {
           size: data['size'] as int? ?? 0,
         );
       }
+      if (resp.statusCode == 400) {
+        final data = jsonDecode(resp.body);
+        if ((data['message'] as String? ?? '').contains('directory')) {
+          return FileReadResult.directory(path: path);
+        }
+      }
       if (resp.statusCode == 200) {
         return FileReadResult.fromJson(jsonDecode(resp.body));
       }
@@ -917,12 +923,14 @@ class FileReadResult {
   final int size;
   final String? content;
   final bool isTooLarge;
+  final bool isDirectory;
 
   FileReadResult({
     required this.path,
     required this.size,
     this.content,
     this.isTooLarge = false,
+    this.isDirectory = false,
   });
 
   factory FileReadResult.fromJson(Map<String, dynamic> json) {
@@ -935,6 +943,10 @@ class FileReadResult {
 
   factory FileReadResult.tooLarge({required String path, required int size}) {
     return FileReadResult(path: path, size: size, isTooLarge: true);
+  }
+
+  factory FileReadResult.directory({required String path}) {
+    return FileReadResult(path: path, size: 0, isDirectory: true);
   }
 
   bool get isBinary {

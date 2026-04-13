@@ -451,6 +451,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   void _openFileBrowser(Session session) {
     Navigator.of(context).push(
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/file-browser'),
         builder: (_) => FileBrowserScreen(
           hostId: session.hostId,
           rootPath: session.cwd,

@@ -130,7 +130,15 @@ func (s *PublicServer) handleReadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveSafePath cleans and resolves the path, rejecting traversal attempts.
+// Expands a leading ~ to the current user's home directory.
 func resolveSafePath(path string) (string, error) {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, path[2:])
+	}
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", err
