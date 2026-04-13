@@ -158,7 +158,7 @@ func handleNotificationEvent(bin, data string, settings map[string]string) {
 	case "darwin":
 		sendDarwin(bin, notif.ID, notif.Type, body, notif.TmuxPane, sound)
 	case "linux":
-		sendLinux(bin, notif.Type, body)
+		sendLinux(bin, notif.Type, body, notif.TmuxPane)
 	}
 }
 
@@ -175,7 +175,7 @@ func sendDarwin(bin, id, notifType, body, paneID string, sound bool) {
 	if paneID != "" {
 		exe, err := os.Executable()
 		if err == nil {
-			args = append(args, "-execute", fmt.Sprintf("%s attach %s", exe, paneID))
+			args = append(args, "-execute", openTerminalCmd(exe, paneID))
 		}
 	}
 	notifLog.Printf("terminal-notifier args: %v", args)
@@ -187,16 +187,97 @@ func sendDarwin(bin, id, notifType, body, paneID string, sound bool) {
 	}
 }
 
-func sendLinux(bin, notifType, body string) {
+func sendLinux(bin, notifType, body, paneID string) {
 	urgency := "normal"
 	if isBlockingNotifType(notifType) {
 		urgency = "critical"
 	}
 	title := fmt.Sprintf("Helios — %s", notifTypeLabel(notifType))
-	out, err := exec.Command(bin, title, body, "--urgency="+urgency, "--app-name=Helios").CombinedOutput()
+
+	args := []string{title, body, "--urgency=" + urgency, "--app-name=Helios"}
+
+	if paneID != "" {
+		// --action requires libnotify ≥0.8; if unsupported it is ignored.
+		args = append(args, "--action=default=Open")
+		cmd := exec.Command(bin, args...)
+		out, err := cmd.Output()
+		if err != nil {
+			notifLog.Printf("notify-send error: %v", err)
+			return
+		}
+		// If user clicked, output contains the action key ("default").
+		if strings.TrimSpace(string(out)) == "default" {
+			heliosBin, _ := os.Executable()
+			termCmd := openTerminalCmd(heliosBin, paneID)
+			notifLog.Printf("linux click: running %s", termCmd)
+			exec.Command("sh", "-c", termCmd).Start()
+		}
+		return
+	}
+
+	out, err := exec.Command(bin, args...).CombinedOutput()
 	if err != nil {
 		notifLog.Printf("notify-send error: %v output: %s", err, out)
 	}
+}
+
+// openTerminalCmd returns a shell command string that opens a new terminal
+// window and runs `helios attach <paneID>`. It detects the current terminal
+// from environment variables and falls back to common ones.
+func openTerminalCmd(heliosBin, paneID string) string {
+	attachCmd := fmt.Sprintf("%s attach %s", heliosBin, paneID)
+
+	// Detect terminal via env vars set by the terminal itself.
+	switch {
+	case os.Getenv("KITTY_PID") != "":
+		if kitty, err := exec.LookPath("kitty"); err == nil {
+			return fmt.Sprintf("%s %s", kitty, attachCmd)
+		}
+	case os.Getenv("ITERM_SESSION_ID") != "":
+		return fmt.Sprintf("open -a iTerm '%s'", attachCmd)
+	case os.Getenv("WARP_SESSION_ID") != "":
+		if warp, err := exec.LookPath("warp"); err == nil {
+			return fmt.Sprintf("%s %s", warp, attachCmd)
+		}
+	}
+
+	// Fallback: try common terminal emulators in PATH order.
+	switch runtime.GOOS {
+	case "darwin":
+		for _, t := range []struct{ bin, flag string }{
+			{"kitty", ""},
+			{"wezterm", "start --"},
+			{"alacritty", "-e"},
+			{"iterm2", ""},
+		} {
+			if p, err := exec.LookPath(t.bin); err == nil {
+				if t.flag != "" {
+					return fmt.Sprintf("%s %s %s", p, t.flag, attachCmd)
+				}
+				return fmt.Sprintf("%s %s", p, attachCmd)
+			}
+		}
+		// Last resort: open in Terminal.app via osascript.
+		return fmt.Sprintf(`osascript -e 'tell app "Terminal" to do script "%s"'`, attachCmd)
+
+	case "linux":
+		for _, t := range []struct{ bin, flag string }{
+			{"kitty", ""},
+			{"wezterm", "start --"},
+			{"alacritty", "-e"},
+			{"gnome-terminal", "--"},
+			{"xterm", "-e"},
+		} {
+			if p, err := exec.LookPath(t.bin); err == nil {
+				if t.flag != "" {
+					return fmt.Sprintf("%s %s %s", p, t.flag, attachCmd)
+				}
+				return fmt.Sprintf("%s %s", p, attachCmd)
+			}
+		}
+	}
+
+	return attachCmd
 }
 
 func findNotifyBinary() (string, bool) {
