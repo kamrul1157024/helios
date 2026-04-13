@@ -28,7 +28,7 @@ var notifSettingsKeys = []struct {
 var notifSettingDefaults = map[string]bool{
 	"desktop.notify.enabled":             true,
 	"desktop.notify.sound":               true,
-	"desktop.notify.suppress_focused":    true,
+	"desktop.notify.suppress_focused":    false,
 	"desktop.notify.alert.permission":    true,
 	"desktop.notify.alert.question":      true,
 	"desktop.notify.alert.elicitation":   true,
