@@ -542,10 +542,10 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request) {
-	id := extractSessionID(r.URL.Path, "/stop")
+// ── Shared session control (used by both InternalServer and PublicServer) ──
 
-	session, err := s.shared.DB.GetSession(id)
+func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
+	session, err := sh.DB.GetSession(id)
 	if err != nil || session == nil {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
@@ -565,7 +565,7 @@ func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := s.shared.Tmux.SendEscape(*session.TmuxPane); err != nil {
+	if err := sh.Tmux.SendEscape(*session.TmuxPane); err != nil {
 		jsonError(w, fmt.Sprintf("failed to stop: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -573,10 +573,8 @@ func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *PublicServer) handleSessionSuspend(w http.ResponseWriter, r *http.Request) {
-	id := extractSessionID(r.URL.Path, "/suspend")
-
-	session, err := s.shared.DB.GetSession(id)
+func (sh *Shared) suspendSession(w http.ResponseWriter, id string) {
+	session, err := sh.DB.GetSession(id)
 	if err != nil || session == nil {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
@@ -596,21 +594,27 @@ func (s *PublicServer) handleSessionSuspend(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := s.shared.Tmux.Suspend(*session.TmuxPane); err != nil {
+	if err := sh.Tmux.Suspend(*session.TmuxPane); err != nil {
 		jsonError(w, fmt.Sprintf("failed to suspend: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	s.shared.DB.UpdateSessionStatus(id, "suspended", "RemoteSuspend")
+	sh.DB.UpdateSessionStatus(id, "suspended", "Suspend")
+	sh.SSE.Broadcast(SSEEvent{
+		Type: "session_status",
+		Data: map[string]interface{}{
+			"session_id": id,
+			"status":     "suspended",
+		},
+	})
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true, "status": "suspended",
 	})
 }
 
-func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Request) {
-	id := extractSessionID(r.URL.Path, "/resume")
-
-	session, err := s.shared.DB.GetSession(id)
+func (sh *Shared) resumeSession(w http.ResponseWriter, id string) {
+	session, err := sh.DB.GetSession(id)
 	if err != nil || session == nil {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
@@ -624,16 +628,16 @@ func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Reques
 	}
 
 	cmd := fmt.Sprintf("claude --resume %s", session.SessionID)
-	paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
+	paneID, err := sh.Tmux.CreateWindow(session.CWD, cmd)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
-	s.shared.DB.UpdateSessionStatus(id, "idle", "RemoteResume")
+	sh.DB.UpdateSessionTmuxPane(id, paneID, 0)
+	sh.DB.UpdateSessionStatus(id, "idle", "Resume")
 
-	s.shared.SSE.Broadcast(SSEEvent{
+	sh.SSE.Broadcast(SSEEvent{
 		Type: "session_status",
 		Data: map[string]interface{}{
 			"session_id": session.SessionID,
@@ -645,6 +649,20 @@ func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true, "status": "idle", "tmux_pane": paneID,
 	})
+}
+
+// ── Public server session control handlers (delegate to Shared) ──
+
+func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request) {
+	s.shared.stopSession(w, extractSessionID(r.URL.Path, "/stop"))
+}
+
+func (s *PublicServer) handleSessionSuspend(w http.ResponseWriter, r *http.Request) {
+	s.shared.suspendSession(w, extractSessionID(r.URL.Path, "/suspend"))
+}
+
+func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Request) {
+	s.shared.resumeSession(w, extractSessionID(r.URL.Path, "/resume"))
 }
 
 func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request) {
@@ -902,6 +920,20 @@ func (s *InternalServer) handleInternalPatchSession(w http.ResponseWriter, r *ht
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// ── Internal server session control handlers (delegate to Shared) ──
+
+func (s *InternalServer) handleInternalSessionStop(w http.ResponseWriter, r *http.Request) {
+	s.shared.stopSession(w, r.PathValue("id"))
+}
+
+func (s *InternalServer) handleInternalSessionSuspend(w http.ResponseWriter, r *http.Request) {
+	s.shared.suspendSession(w, r.PathValue("id"))
+}
+
+func (s *InternalServer) handleInternalSessionResume(w http.ResponseWriter, r *http.Request) {
+	s.shared.resumeSession(w, r.PathValue("id"))
 }
 
 func (s *InternalServer) handleInternalGetSettings(w http.ResponseWriter, r *http.Request) {

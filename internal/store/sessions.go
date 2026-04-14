@@ -28,6 +28,25 @@ type Session struct {
 	SupportsPromptQueue  bool    `json:"supports_prompt_queue"`
 }
 
+// Label returns the session's display label: title, or truncated last user message, or "".
+func (s *Session) Label(maxLen int) string {
+	if s.Title != nil && *s.Title != "" {
+		t := strings.TrimSpace(*s.Title)
+		if maxLen > 0 && len(t) > maxLen {
+			return t[:maxLen] + "…"
+		}
+		return t
+	}
+	if s.LastUserMessage != nil && *s.LastUserMessage != "" {
+		msg := strings.TrimSpace(*s.LastUserMessage)
+		if maxLen > 0 && len(msg) > maxLen {
+			return msg[:maxLen] + "…"
+		}
+		return msg
+	}
+	return ""
+}
+
 // ComputePromptQueue sets SupportsPromptQueue based on provider capabilities and tmux state.
 // providerSupportsQueue should come from provider.GetCapabilities(source).PromptQueue.
 func (s *Session) ComputePromptQueue(providerSupportsQueue bool) {

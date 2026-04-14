@@ -170,6 +170,76 @@ func (c *client) deviceRevoke(kid string) error {
 	return nil
 }
 
+type sessionInfo struct {
+	SessionID       string  `json:"session_id"`
+	CWD             string  `json:"cwd"`
+	Project         string  `json:"project"`
+	Title           *string `json:"title,omitempty"`
+	Status          string  `json:"status"`
+	Model           *string `json:"model,omitempty"`
+	TmuxPane        *string `json:"tmux_pane,omitempty"`
+	LastEvent       *string `json:"last_event,omitempty"`
+	LastEventAt     *string `json:"last_event_at,omitempty"`
+	LastUserMessage *string `json:"last_user_message,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+}
+
+func (s *sessionInfo) label() string {
+	if s.Title != nil && *s.Title != "" {
+		return *s.Title
+	}
+	if s.LastUserMessage != nil && *s.LastUserMessage != "" {
+		return *s.LastUserMessage
+	}
+	return ""
+}
+
+type sessionsListResponse struct {
+	Sessions []sessionInfo `json:"sessions"`
+}
+
+func (c *client) sessionsList() (*sessionsListResponse, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/internal/sessions")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r sessionsListResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	return &r, nil
+}
+
+func (c *client) sessionStop(sessionID string) error {
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/sessions/"+sessionID+"/stop", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func (c *client) sessionSuspend(sessionID string) error {
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/sessions/"+sessionID+"/suspend", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func (c *client) sessionResume(sessionID string) error {
+	resp, err := c.longHTTPClient.Post(c.baseURL+"/internal/sessions/"+sessionID+"/resume", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func (c *client) eventsURL() string {
+	return c.baseURL + "/internal/events"
+}
+
 type settingsResponse struct {
 	Settings map[string]string `json:"settings"`
 }

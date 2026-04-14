@@ -675,6 +675,23 @@ func handleAttach(args []string) {
 }
 
 func handleSessions(args []string) {
+	// --list flag: plain table output (old behavior)
+	for _, a := range args {
+		if a == "--list" || a == "-l" {
+			handleSessionsList()
+			return
+		}
+	}
+
+	// Default: interactive TUI
+	cfg, _ := daemon.LoadConfig()
+	if err := tui.RunSessions(cfg.Server.InternalPort); err != nil {
+		fmt.Fprintf(os.Stderr, "sessions TUI error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func handleSessionsList() {
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 
@@ -982,7 +999,8 @@ Commands:
                         --cwd PATH  Working directory (default: current)
   wrap -- <cmd> [args]  Run a command in a helios-managed tmux pane
                         Example: helios wrap -- claude
-  sessions              List all tracked sessions
+  sessions              Interactive session manager (TUI, requires tmux)
+                        --list  Plain table output
 
   daemon start [flags]  Start the helios daemon (with supervisor)
                         -d                Run in background (daemonize)

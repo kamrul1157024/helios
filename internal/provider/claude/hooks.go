@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 type hookInput struct {
@@ -45,6 +45,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "waiting_permission", "PermissionRequest")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "waiting_permission", input.CWD)
 
 	notifID := notifications.GenerateNotificationID()
 	detail := fmt.Sprintf("%s: %s", input.ToolName, summarizeToolInput(input.ToolInput))
@@ -95,6 +96,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 	// Permission resolved — set session back to active
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PermissionResolved")
+	renameSessionWindow(ctx, input.SessionID, "active", input.CWD)
 
 	type permResponse struct {
 		HookSpecificOutput struct {
@@ -160,6 +162,7 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "waiting_permission", "AskUserQuestion")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "waiting_permission", input.CWD)
 
 	notifID := notifications.GenerateNotificationID()
 	title := "Claude has a question"
@@ -250,6 +253,7 @@ func handleElicitation(ctx *provider.HookContext, w http.ResponseWriter, r *http
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "waiting_permission", "Elicitation")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "waiting_permission", input.CWD)
 
 	notifID := notifications.GenerateNotificationID()
 	title := fmt.Sprintf("%s needs input", input.MCPServerName)
@@ -339,6 +343,7 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "idle", "Stop")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)
 
 	// Resolve any pending notifications for this session (approved from CLI)
 	resolvedIDs, _ := ctx.DB.ResolveSessionNotifications(input.SessionID, "resolved", "claude")
@@ -393,6 +398,7 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "error", "StopFailure")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "error", input.CWD)
 
 	notifID := notifications.GenerateNotificationID()
 	lastDetail := ctx.DB.LastSessionDetail(input.SessionID)
@@ -445,6 +451,7 @@ func handleNotification(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	// hook for interrupts, so we transition to idle here.
 	if input.HookEventName == "idle_prompt" {
 		ctx.DB.UpdateSessionStatus(input.SessionID, "idle", "IdlePrompt")
+		renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)
 		ctx.Notify("session_status", map[string]interface{}{
 			"session_id": input.SessionID,
 			"status":     "idle",
@@ -506,6 +513,9 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		}
 	}
 
+	// Rename window now that session is registered and pane is known.
+	renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)
+
 	sseData := map[string]interface{}{
 		"session_id": input.SessionID,
 		"cwd":        input.CWD,
@@ -537,6 +547,7 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	}
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "ended", "SessionEnd")
+	killSessionWindow(ctx, input.SessionID)
 
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
@@ -597,6 +608,7 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "UserPromptSubmit")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "active", input.CWD)
 
 	if input.Message != "" {
 		ctx.DB.UpdateSessionLastUserMessage(input.SessionID, input.Message)
@@ -710,6 +722,7 @@ func handlePreCompact(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "compacting", "PreCompact")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "compacting", input.CWD)
 
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
@@ -737,6 +750,7 @@ func handlePostCompact(ctx *provider.HookContext, w http.ResponseWriter, r *http
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostCompact")
 	updateSessionTranscript(ctx, &input)
+	renameSessionWindow(ctx, input.SessionID, "active", input.CWD)
 
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
@@ -835,6 +849,31 @@ func updateSessionTranscript(ctx *provider.HookContext, input *hookInput) {
 	}
 }
 
+// renameSessionWindow renames the tmux window for a session based on its status.
+func renameSessionWindow(ctx *provider.HookContext, sessionID, status, cwd string) {
+	if ctx.Tmux == nil {
+		return
+	}
+	sess, _ := ctx.DB.GetSession(sessionID)
+	if sess == nil || sess.TmuxPane == nil || *sess.TmuxPane == "" {
+		return
+	}
+	name := tmux.WindowName(status, cwd, sess.Label(30))
+	ctx.Tmux.RenameWindow(*sess.TmuxPane, name)
+}
+
+// killSessionWindow kills the tmux window for a session.
+func killSessionWindow(ctx *provider.HookContext, sessionID string) {
+	if ctx.Tmux == nil {
+		return
+	}
+	sess, _ := ctx.DB.GetSession(sessionID)
+	if sess == nil || sess.TmuxPane == nil || *sess.TmuxPane == "" {
+		return
+	}
+	ctx.Tmux.KillWindow(*sess.TmuxPane)
+}
+
 func strPtr(s string) *string {
 	return &s
 }
@@ -863,19 +902,10 @@ func summarizeToolInput(raw json.RawMessage) string {
 // Format: "opal-app: Fix auth bug" (title) or "opal-app: can you fix login" (last user message)
 func sessionContext(cwd string, sess *store.Session) string {
 	project := filepath.Base(cwd)
-
 	if sess != nil {
-		if sess.Title != nil && *sess.Title != "" {
-			return fmt.Sprintf("%s: %s", project, *sess.Title)
-		}
-		if sess.LastUserMessage != nil && *sess.LastUserMessage != "" {
-			msg := strings.TrimSpace(*sess.LastUserMessage)
-			if len(msg) > 80 {
-				msg = msg[:80] + "..."
-			}
-			return fmt.Sprintf("%s: %s", project, msg)
+		if label := sess.Label(80); label != "" {
+			return fmt.Sprintf("%s: %s", project, label)
 		}
 	}
-
 	return project
 }

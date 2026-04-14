@@ -4,10 +4,52 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 )
+
+// Status icons for tmux window names.
+const (
+	iconHelios   = "🔥"
+	iconStarting = "◌"
+	iconActive   = "●"
+	iconWaiting  = "◆"
+	iconIdle     = "○"
+	iconCompact  = "↻"
+	iconError    = "✕"
+)
+
+// WindowName builds a tmux window name like "🔥● myapp: fix auth bug".
+func WindowName(status, cwd, title string) string {
+	icon := statusIcon(status)
+	project := filepath.Base(cwd)
+	if title != "" {
+		return fmt.Sprintf("%s%s %s: %s", iconHelios, icon, project, title)
+	}
+	return fmt.Sprintf("%s%s %s", iconHelios, icon, project)
+}
+
+func statusIcon(status string) string {
+	switch status {
+	case "starting":
+		return iconStarting
+	case "active", "compacting":
+		if status == "compacting" {
+			return iconCompact
+		}
+		return iconActive
+	case "waiting_permission":
+		return iconWaiting
+	case "idle":
+		return iconIdle
+	case "error":
+		return iconError
+	default:
+		return iconIdle
+	}
+}
 
 const defaultSession = "helios"
 
@@ -81,9 +123,11 @@ func (c *Client) CreateWindow(cwd, command string) (string, error) {
 		return "", fmt.Errorf("ensure session: %w", err)
 	}
 
+	name := WindowName("starting", cwd, "")
+
 	// Create a bare window (starts the user's default shell).
 	out, err := exec.Command(c.tmuxCmd(), "new-window", "-t", defaultSession+":",
-		"-c", cwd, "-P", "-F", "#{pane_id}").Output()
+		"-n", name, "-c", cwd, "-P", "-F", "#{pane_id}").Output()
 	if err != nil {
 		return "", fmt.Errorf("create window: %w", err)
 	}
@@ -96,6 +140,70 @@ func (c *Client) CreateWindow(cwd, command string) (string, error) {
 	}
 
 	return paneID, nil
+}
+
+// RenameWindow renames the window containing the given pane.
+func (c *Client) RenameWindow(paneID, name string) error {
+	return exec.Command(c.tmuxCmd(), "rename-window", "-t", paneID, name).Run()
+}
+
+// KillWindow kills the window containing the given pane.
+func (c *Client) KillWindow(paneID string) error {
+	return exec.Command(c.tmuxCmd(), "kill-window", "-t", paneID).Run()
+}
+
+// JoinPaneHorizontal moves srcPaneID into the window of targetPaneID
+// as a horizontal split (side-by-side). Uses -l to set the source pane
+// width as a percentage of the window.
+func (c *Client) JoinPaneHorizontal(srcPaneID, targetPaneID string, widthPercent int) error {
+	pct := fmt.Sprintf("%d%%", widthPercent)
+	return exec.Command(c.tmuxCmd(), "join-pane", "-h", "-l", pct, "-s", srcPaneID, "-t", targetPaneID).Run()
+}
+
+// BreakPane sends a pane back to its own window in the background.
+// The pane keeps running; focus stays on the current pane.
+func (c *Client) BreakPane(paneID string) error {
+	return exec.Command(c.tmuxCmd(), "break-pane", "-d", "-s", paneID).Run()
+}
+
+// SwapPane swaps two panes in the same window.
+func (c *Client) SwapPane(srcPaneID, dstPaneID string) error {
+	return exec.Command(c.tmuxCmd(), "swap-pane", "-s", srcPaneID, "-t", dstPaneID).Run()
+}
+
+// ResizePane resizes a pane to the given width in columns.
+func (c *Client) ResizePane(paneID string, width int) error {
+	return exec.Command(c.tmuxCmd(), "resize-pane", "-t", paneID, "-x", fmt.Sprintf("%d", width)).Run()
+}
+
+// SelectPane makes the given pane the active pane in its window.
+func (c *Client) SelectPane(paneID string) error {
+	return exec.Command(c.tmuxCmd(), "select-pane", "-t", paneID).Run()
+}
+
+// PaneInWindow checks if a pane belongs to the same window as targetPaneID.
+func (c *Client) PaneInWindow(paneID, targetPaneID string) bool {
+	// Get window ID for both panes
+	getWindow := func(pid string) string {
+		out, err := exec.Command(c.tmuxCmd(), "display-message", "-t", pid, "-p", "#{window_id}").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	w1 := getWindow(paneID)
+	w2 := getWindow(targetPaneID)
+	return w1 != "" && w1 == w2
+}
+
+// WindowWidth returns the total width (columns) of the window containing the given pane.
+func (c *Client) WindowWidth(paneID string) int {
+	out, err := exec.Command(c.tmuxCmd(), "display-message", "-t", paneID, "-p", "#{window_width}").Output()
+	if err != nil {
+		return 0
+	}
+	w, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return w
 }
 
 // Attach attaches the current terminal to the helios tmux session,
