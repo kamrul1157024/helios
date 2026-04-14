@@ -8,6 +8,7 @@ import 'services/notification_service.dart';
 import 'services/voice_service.dart';
 import 'screens/setup_screen.dart';
 import 'screens/home_screen.dart';
+import 'widgets/skeleton.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -109,8 +110,18 @@ class _AuthGateState extends State<AuthGate> {
     return Consumer<HostManager>(
       builder: (context, hm, _) {
         if (hm.isLoading) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  const SizedBox(height: 60),
+                  for (int i = 0; i < 4; i++) ...[
+                    const SessionCardSkeleton(),
+                  ],
+                ],
+              ),
+            ),
           );
         }
         if (hm.isAuthenticated) {

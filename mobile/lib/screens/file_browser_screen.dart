@@ -7,6 +7,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
+import '../widgets/skeleton.dart';
 
 class FileBrowserScreen extends StatefulWidget {
   final String hostId;
@@ -184,7 +185,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
   Widget _buildBody(ThemeData theme) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const _FileListSkeleton();
     }
     if (_error != null) {
       return Center(
@@ -407,7 +408,7 @@ class _FileViewerScreenState extends State<_FileViewerScreen> {
 
   Widget _buildContent(ThemeData theme) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const _FileContentSkeleton();
     }
     if (_result == null) {
       return Center(
@@ -617,6 +618,59 @@ class _FileViewerScreenState extends State<_FileViewerScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ==================== Skeletons ====================
+
+class _FileListSkeleton extends StatelessWidget {
+  const _FileListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        children: [
+          for (int i = 0; i < 10; i++) ...[
+            Row(
+              children: [
+                const Skeleton(width: 24, height: 24, borderRadius: BorderRadius.all(Radius.circular(4))),
+                const SizedBox(width: 12),
+                Skeleton(width: 80.0 + (i * 31 % 120), height: 16),
+                const Spacer(),
+                const Skeleton(width: 40, height: 14),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FileContentSkeleton extends StatelessWidget {
+  const _FileContentSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (int i = 0; i < 20; i++) ...[
+            Skeleton(
+              width: 40.0 + (i * 47 % 250),
+              height: 14,
+              borderRadius: const BorderRadius.all(Radius.circular(2)),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ],
       ),
     );
   }

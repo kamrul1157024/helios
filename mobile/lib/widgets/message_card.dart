@@ -284,6 +284,7 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                   runSpacing: 4,
                   children: filePaths.map((path) {
                     final name = path.split('/').last;
+                    final isDir = !name.contains('.');
                     return GestureDetector(
                       onTap: () => _openFilePath(path),
                       child: Container(
@@ -298,7 +299,7 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.insert_drive_file, size: 12, color: theme.colorScheme.secondary),
+                            Icon(isDir ? Icons.folder : Icons.insert_drive_file, size: 12, color: isDir ? Colors.amber.shade700 : theme.colorScheme.secondary),
                             const SizedBox(width: 4),
                             Flexible(
                               child: Text(

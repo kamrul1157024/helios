@@ -14,6 +14,7 @@ import '../services/voice_service.dart';
 import '../services/narration_service.dart';
 import '../widgets/skeleton.dart';
 import 'file_browser_screen.dart';
+import 'git_status_screen.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final Session session;
@@ -41,6 +42,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   bool _breathingActive = false;
   bool _isRecording = false;
   bool _voiceLoading = false;
+  GitStatus? _gitStatus;
 
   bool get _isVoiceActive => VoiceService.instance.isSessionActive(widget.session.sessionId);
 
@@ -56,6 +58,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       _breathingActive = true;
     }
     _loadTranscript();
+    _loadGitStatus();
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomClaudeVerb());
     });
@@ -125,6 +128,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     } else if (mounted) {
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadGitStatus() async {
+    final svc = _sse;
+    if (svc == null) return;
+    final status = await svc.gitStatus(widget.session.cwd);
+    if (mounted) setState(() => _gitStatus = status);
   }
 
   Future<void> _sendPrompt() async {
@@ -277,6 +287,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               // Inline HITL: pending notifications for this session
               if (pendingNotifs.isNotEmpty && sse != null)
                 _buildInlineNotifications(pendingNotifs, sse),
+              // Git status bar
+              if (_gitStatus != null) _buildGitBar(session),
               // Prompt bar
               _buildPromptBar(session),
             ],
@@ -746,6 +758,81 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       default:
         return Icons.terminal;
     }
+  }
+
+  Widget _buildGitBar(Session session) {
+    final theme = Theme.of(context);
+    final g = _gitStatus!;
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            settings: const RouteSettings(name: '/git-status'),
+            builder: (_) => GitStatusScreen(
+              hostId: session.hostId,
+              cwd: session.cwd,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          border: Border(
+            top: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.fork_right, size: 14, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                g.branch,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: theme.colorScheme.onSurface,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (g.staged.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Icon(Icons.check_circle_outline, size: 12, color: Colors.green.shade400),
+              const SizedBox(width: 2),
+              Text('${g.staged.length}', style: TextStyle(fontSize: 11, color: Colors.green.shade400)),
+            ],
+            if (g.unstaged.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.edit_outlined, size: 12, color: Colors.orange.shade400),
+              const SizedBox(width: 2),
+              Text('${g.unstaged.length}', style: TextStyle(fontSize: 11, color: Colors.orange.shade400)),
+            ],
+            if (g.untracked.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.add_circle_outline, size: 12, color: Colors.grey.shade500),
+              const SizedBox(width: 2),
+              Text('${g.untracked.length}', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            ],
+            if (g.ahead > 0) ...[
+              const SizedBox(width: 8),
+              Icon(Icons.arrow_upward, size: 12, color: Colors.green.shade400),
+              Text('${g.ahead}', style: TextStyle(fontSize: 11, color: Colors.green.shade400)),
+            ],
+            if (g.behind > 0) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.arrow_downward, size: 12, color: Colors.orange.shade400),
+              Text('${g.behind}', style: TextStyle(fontSize: 11, color: Colors.orange.shade400)),
+            ],
+            const Spacer(),
+            Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPromptBar(Session session) {

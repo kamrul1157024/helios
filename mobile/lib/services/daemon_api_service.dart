@@ -856,6 +856,33 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
+  Future<GitStatus?> gitStatus(String path) async {
+    try {
+      final resp = await _authGet('/api/git/status?path=${Uri.encodeComponent(path)}');
+      if (resp.statusCode == 200) {
+        return GitStatus.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to get git status for $path: $e');
+    }
+    return null;
+  }
+
+  Future<GitDiff?> gitDiff(String path, String file, {bool staged = false}) async {
+    try {
+      final stagedParam = staged ? '&staged=true' : '';
+      final resp = await _authGet(
+        '/api/git/diff?path=${Uri.encodeComponent(path)}&file=${Uri.encodeComponent(file)}$stagedParam',
+      );
+      if (resp.statusCode == 200) {
+        return GitDiff.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to get git diff for $file: $e');
+    }
+    return null;
+  }
+
   @override
   void dispose() {
     stop();
@@ -1011,6 +1038,82 @@ class DirectoryInfo {
     final parts = cwd.split('/');
     if (parts.length <= 3) return cwd;
     return '.../${parts.sublist(parts.length - 2).join('/')}';
+  }
+}
+
+class GitChange {
+  final String path;
+  final String status;
+
+  GitChange({required this.path, required this.status});
+
+  factory GitChange.fromJson(Map<String, dynamic> json) {
+    return GitChange(
+      path: json['path'] as String,
+      status: json['status'] as String? ?? '?',
+    );
+  }
+
+  String get fileName => path.split('/').last;
+}
+
+class GitStatus {
+  final String root;
+  final String branch;
+  final bool dirty;
+  final int ahead;
+  final int behind;
+  final List<GitChange> staged;
+  final List<GitChange> unstaged;
+  final List<GitChange> untracked;
+
+  GitStatus({
+    required this.root,
+    required this.branch,
+    required this.dirty,
+    required this.ahead,
+    required this.behind,
+    required this.staged,
+    required this.unstaged,
+    required this.untracked,
+  });
+
+  factory GitStatus.fromJson(Map<String, dynamic> json) {
+    return GitStatus(
+      root: json['root'] as String? ?? '',
+      branch: json['branch'] as String,
+      dirty: json['dirty'] as bool? ?? false,
+      ahead: json['ahead'] as int? ?? 0,
+      behind: json['behind'] as int? ?? 0,
+      staged: (json['staged'] as List?)?.map((e) => GitChange.fromJson(e)).toList() ?? [],
+      unstaged: (json['unstaged'] as List?)?.map((e) => GitChange.fromJson(e)).toList() ?? [],
+      untracked: (json['untracked'] as List?)?.map((e) => GitChange.fromJson(e)).toList() ?? [],
+    );
+  }
+
+  int get totalChanges => staged.length + unstaged.length + untracked.length;
+}
+
+class GitDiff {
+  final String file;
+  final String language;
+  final String diff;
+  final String stat;
+
+  GitDiff({
+    required this.file,
+    required this.language,
+    required this.diff,
+    required this.stat,
+  });
+
+  factory GitDiff.fromJson(Map<String, dynamic> json) {
+    return GitDiff(
+      file: json['file'] as String,
+      language: json['language'] as String? ?? '',
+      diff: json['diff'] as String? ?? '',
+      stat: json['stat'] as String? ?? '',
+    );
   }
 }
 
