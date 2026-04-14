@@ -8,17 +8,14 @@ Helios fixes this. It's a daemon that sits between you and your AI coding tools.
 
 **The killer feature:** Full session management and notifications from your phone — see all sessions across multiple machines, approve or deny permissions, send follow-up messages, create new tasks, and get push notifications the moment any session needs attention. No terminal required.
 
-```
-      Phone                    Internet                   Your Machine
-  ┌───────────┐          ┌──────────────┐          ┌──────────────────────┐
-  │ Helios App│◀── HTTPS ──▶│   Tunnel   │◀─────────│   helios daemon      │
-  │           │          │ (cloudflare)  │          │   ├── sessions       │
-  │ sessions  │          └──────────────┘          │   ├── hooks          │
-  │ approve   │                                    │   ├── notifications  │
-  │ deny      │                                    │   └── tmux           │
-  │ send msgs │                                    │       ├── claude #1  │
-  └───────────┘                                    │       └── claude #2  │
-                                                   └──────────────────────┘
+```mermaid
+graph LR
+    Phone["📱 Helios App<br/>sessions · approve<br/>deny · send msgs"]
+    Tunnel["🌐 Tunnel<br/>(Cloudflare)"]
+    Daemon["🖥️ helios daemon<br/>├── sessions<br/>├── hooks<br/>├── notifications<br/>└── tmux<br/>    ├── claude #1<br/>    └── claude #2"]
+
+    Phone <-->|HTTPS| Tunnel
+    Tunnel <-->|HTTPS| Daemon
 ```
 
 ### Multi-Host & Multi-Device
@@ -28,43 +25,54 @@ Helios supports **many-to-many** connectivity between devices and machines:
 - **Multiple hosts from one device** — connect your phone to your work laptop, home desktop, and cloud VM. All sessions from all machines appear in a single unified view, color-coded by host.
 - **Multiple devices on one host** — pair your phone, tablet, and desktop app to the same machine. Each device gets independent push notifications and can manage sessions simultaneously.
 
+```mermaid
+graph TB
+    subgraph Devices["Devices (many-to-many)"]
+        Phone["📱 Phone<br/>Helios App<br/><i>All sessions unified view<br/>color-coded by host</i>"]
+    end
+
+    subgraph MachineA["Machine A — Work Laptop"]
+        DA["helios daemon"]
+        DA --- C1["claude #1"]
+        DA --- C2["claude #2"]
+        DA --- A3["aider #3"]
+    end
+
+    subgraph MachineB["Machine B — Home Desktop"]
+        DB["helios daemon"]
+        DB --- C4["claude #4"]
+        DB --- C5["claude #5"]
+    end
+
+    subgraph MachineC["Machine C — Cloud VM"]
+        DC["helios daemon"]
+        DC --- X6["codex #6"]
+    end
+
+    Phone -->|tunnel| DA
+    Phone -->|tunnel| DB
+    Phone -->|tunnel| DC
 ```
-                          ┌──────────────────────────────┐
-                          │     Machine A (Work laptop)  │
-                     ┌───▶│     helios daemon             │
-                     │    │       ├── claude #1           │
-                     │    │       ├── claude #2           │
-  ┌──────────────┐   │    │       └── aider  #3           │
-  │  Phone       │───┤    └──────────────────────────────┘
-  │  Helios App  │   │
-  │              │   │    ┌──────────────────────────────┐
-  │  All sessions│   │    │     Machine B (Home desktop) │
-  │  unified view│   ├───▶│     helios daemon             │
-  │  color-coded │   │    │       ├── claude #4           │
-  │  by host     │   │    │       └── claude #5           │
-  └──────────────┘   │    └──────────────────────────────┘
-                     │
-                     │    ┌──────────────────────────────┐
-                     │    │     Machine C (Cloud VM)     │
-                     └───▶│     helios daemon             │
-                          │       └── codex  #6           │
-                          └──────────────────────────────┘
 
+```mermaid
+graph TB
+    subgraph MultiDevice["Multiple Devices → One Machine"]
+        Ph2["📱 Phone\nHelios App"]
+        Tab["📱 Tablet\nHelios App"]
+        Mac["💻 Desktop App\n(macOS)"]
+    end
 
-  ┌──────────────┐
-  │  Phone       │────┐
-  │  Helios App  │    │
-  └──────────────┘    │
-                      │   ┌──────────────────────────────┐
-  ┌──────────────┐    │   │     Machine A                │
-  │  Tablet      │────┼──▶│     helios daemon             │
-  │  Helios App  │    │   │       ├── claude #1           │
-  └──────────────┘    │   │       └── claude #2           │
-                      │   └──────────────────────────────┘
-  ┌──────────────┐    │
-  │  Desktop App │────┘   Each device pairs independently.
-  │  (macOS)     │        All receive push notifications
-  └──────────────┘        and can manage sessions.
+    subgraph MachineA2["Machine A"]
+        DA2["helios daemon"]
+        DA2 --- CC1["claude #1"]
+        DA2 --- CC2["claude #2"]
+    end
+
+    Ph2 -->|tunnel| DA2
+    Tab -->|tunnel| DA2
+    Mac -->|tunnel| DA2
+
+    note["Each device pairs independently.\nAll receive push notifications\nand can manage sessions."]
 ```
 
 Each connection is fully independent — separate pairing, separate credentials, separate SSE streams. The app maintains live connections to all hosts in the background, routing actions (approve, deny, send message) to the correct machine automatically.
@@ -361,62 +369,37 @@ Helios treats AI sessions like infrastructure — something to be managed, monit
 
 ## Architecture
 
-```
-  CLI / TUI                                          Mobile / Desktop App
-  (local machine)                                    (your phone or laptop)
-       │                                                      │
-       │ localhost                                             │ HTTPS
-       │                                                      │
-       ▼                                                      ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              helios daemon                                   │
-│                                                                              │
-│  ┌─────────────────────────────────────┐  ┌────────────────────────────────┐ │
-│  │  Internal Server (127.0.0.1:7654)   │  │  Public Server (0.0.0.0:7655)  │ │
-│  │                                     │  │                                │ │
-│  │  /internal/health                   │  │  GET  /          landing page  │ │
-│  │  /internal/sessions                 │  │  GET  /download  APK file      │ │
-│  │  /internal/device/create            │  │  POST /api/auth/pair           │ │
-│  │  /internal/device/list              │  │  POST /api/auth/login          │ │
-│  │  /internal/device/activate          │  │  GET  /api/auth/device/me      │ │
-│  │  /internal/device/revoke            │  │  GET  /api/notifications       │ │
-│  │  /internal/tunnel/start             │  │  POST /api/notifications/:id   │ │
-│  │  /internal/tunnel/stop              │  │  GET  /api/sessions            │ │
-│  │  /internal/logs                     │  │  GET  /api/sse  (realtime)     │ │
-│  │  /hooks/permission (Claude hooks)   │  │                                │ │
-│  └─────────────────────────────────────┘  └───────────────┬────────────────┘ │
-│                                                           │                  │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────────────┐                │
-│  │  SQLite  │  │ Session      │  │  Tunnel Manager        │                │
-│  │ helios.db│  │ Reaper       │  │  (cloudflare/ngrok/..) │                │
-│  └──────────┘  └──────────────┘  └───────────┬────────────┘                │
-│                                               │                              │
-│                              tmux server      │                              │
-│                    ┌─────────────┬─────────┐  │                              │
-│                    │             │         │  │                               │
-│               claude #1    claude #2  aider #3                               │
-│               (session)    (session)  (session)                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                                │
-                                                │ tunnel
-                                                │ (cloudflare/ngrok/tailscale)
-                                                ▼
-                                       ┌──────────────────┐
-                                       │  Public Internet │
-                                       │  https://abc.cf  │
-                                       └────────┬─────────┘
-                                                │
-                                     ┌──────────┴──────────┐
-                                     │                     │
-                            ┌────────┴───────┐   ┌────────┴───────┐
-                            │  Mobile App    │   │  Desktop App   │
-                            │  (Android)     │   │  (macOS)       │
-                            │                │   │                │
-                            │  Sessions      │   │  Sessions      │
-                            │  Notifications │   │  Notifications │
-                            │  Approve/Deny  │   │  Approve/Deny  │
-                            │  SSE realtime  │   │  SSE realtime  │
-                            └────────────────┘   └────────────────┘
+```mermaid
+graph TB
+    CLI["CLI / TUI\n(local machine)"]
+    Mobile["📱 Mobile / Desktop App\n(phone or laptop)"]
+
+    subgraph Daemon["helios daemon"]
+        Internal["Internal Server\n127.0.0.1:7654\n─────────────────\n/internal/health\n/internal/sessions\n/internal/device/create\n/internal/device/list\n/internal/device/activate\n/internal/device/revoke\n/internal/tunnel/start\n/internal/tunnel/stop\n/internal/logs\n/hooks/permission"]
+
+        Public["Public Server\n0.0.0.0:7655\n─────────────────\nGET  /  landing page\nGET  /download  APK\nPOST /api/auth/pair\nPOST /api/auth/login\nGET  /api/auth/device/me\nGET  /api/notifications\nPOST /api/notifications/:id\nGET  /api/sessions\nGET  /api/sse  (realtime)"]
+
+        SQLite["SQLite\nhelios.db"]
+        Reaper["Session\nReaper"]
+        Tunnel["Tunnel Manager\n(cloudflare/ngrok/..)"]
+
+        subgraph tmux["tmux server"]
+            S1["claude #1"]
+            S2["claude #2"]
+            S3["aider #3"]
+        end
+    end
+
+    Internet["🌐 Public Internet\nhttps://abc.cf"]
+    MobileApp["📱 Mobile App\n(Android)\nSessions · Notifications\nApprove/Deny · SSE"]
+    DesktopApp["💻 Desktop App\n(macOS)\nSessions · Notifications\nApprove/Deny · SSE"]
+
+    CLI -->|localhost| Internal
+    Mobile -->|HTTPS| Public
+    Public --> Tunnel
+    Tunnel -->|tunnel| Internet
+    Internet --> MobileApp
+    Internet --> DesktopApp
 ```
 
 ```
