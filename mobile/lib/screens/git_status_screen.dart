@@ -222,11 +222,9 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
     final root = _status!.root;
     Navigator.of(context).push(
       MaterialPageRoute(
-        settings: const RouteSettings(name: '/file-browser'),
-        builder: (_) => FileBrowserScreen(
+        builder: (_) => FileViewerScreen(
           hostId: widget.hostId,
-          rootPath: root,
-          openFilePath: '$root/$relativePath',
+          path: '$root/$relativePath',
         ),
       ),
     );

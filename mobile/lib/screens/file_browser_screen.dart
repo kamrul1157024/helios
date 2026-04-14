@@ -101,7 +101,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _FileViewerScreen(path: path, hostId: widget.hostId),
+        builder: (_) => FileViewerScreen(path: path, hostId: widget.hostId),
       ),
     );
   }
@@ -302,17 +302,17 @@ class _EntryTile extends StatelessWidget {
 
 // ==================== File Viewer Screen ====================
 
-class _FileViewerScreen extends StatefulWidget {
+class FileViewerScreen extends StatefulWidget {
   final String path;
   final String hostId;
 
-  const _FileViewerScreen({required this.path, required this.hostId});
+  const FileViewerScreen({super.key, required this.path, required this.hostId});
 
   @override
-  State<_FileViewerScreen> createState() => _FileViewerScreenState();
+  State<FileViewerScreen> createState() => _FileViewerScreenState();
 }
 
-class _FileViewerScreenState extends State<_FileViewerScreen> {
+class _FileViewerScreenState extends State<FileViewerScreen> {
   FileReadResult? _result;
   bool _loading = true;
   bool _userConfirmedLarge = false;

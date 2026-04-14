@@ -27,6 +27,10 @@ class SessionDetailScreen extends StatefulWidget {
 
 class _SessionDetailScreenState extends State<SessionDetailScreen>
     with SingleTickerProviderStateMixin {
+  // Persisted across session switches (static = app-lifetime)
+  static final _worktreeSelections = <String, String>{}; // sessionId → worktreePath
+  static final _lastSubRoute = <String, _SubRoute>{}; // sessionId → last sub-screen
+
   final _promptController = TextEditingController();
   final _scrollController = ScrollController();
   List<Message> _messages = [];
@@ -43,12 +47,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   bool _isRecording = false;
   bool _voiceLoading = false;
   GitStatus? _gitStatus;
+  List<Worktree> _worktrees = [];
+  Map<String, GitStatus> _worktreeStatuses = {};
+  String? _selectedWorktreePath;
+
+  String get _effectiveCwd => _selectedWorktreePath ?? widget.session.cwd;
 
   bool get _isVoiceActive => VoiceService.instance.isSessionActive(widget.session.sessionId);
 
   @override
   void initState() {
     super.initState();
+    // Restore persisted worktree selection
+    _selectedWorktreePath = _worktreeSelections[widget.session.sessionId];
     _breathController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2500),
@@ -73,14 +84,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
             _loadTranscript();
           });
-          // Voice mode narration is handled by reporter SSE — no manual event pushing needed
         }
         if (event.type == 'notification' || event.type == 'notification_resolved') {
-          // Notifications refresh via DaemonAPIService.fetchNotifications — just rebuild
           if (mounted) setState(() {});
         }
       }
     });
+    // Restore last sub-route after first frame
+    _restoreSubRoute();
   }
 
   @override
@@ -97,6 +108,23 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       NarrationService.instance.disconnectAll();
     }
     super.dispose();
+  }
+
+  void _restoreSubRoute() {
+    final saved = _lastSubRoute[widget.session.sessionId];
+    if (saved == null) return;
+    // Push after current frame so the base screen is mounted
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      switch (saved.type) {
+        case _SubRouteType.gitStatus:
+          _openGitStatus(widget.session);
+          break;
+        case _SubRouteType.fileBrowser:
+          _openFileBrowser(widget.session);
+          break;
+      }
+    });
   }
 
   void _updateBreathAnimation(Session session) {
@@ -133,8 +161,30 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   Future<void> _loadGitStatus() async {
     final svc = _sse;
     if (svc == null) return;
-    final status = await svc.gitStatus(widget.session.cwd);
-    if (mounted) setState(() => _gitStatus = status);
+    // First get git status — server resolves to git root from any subdirectory
+    final status = await svc.gitStatus(_effectiveCwd);
+    if (!mounted) return;
+    setState(() => _gitStatus = status);
+
+    // Use resolved git root for worktree listing
+    final gitRoot = status?.root ?? widget.session.cwd;
+    final worktrees = await svc.gitWorktrees(gitRoot);
+    if (!mounted) return;
+    setState(() => _worktrees = worktrees);
+
+    // Fetch git status for each worktree in parallel (for diff counts)
+    if (worktrees.length > 1) {
+      final statuses = await Future.wait(
+        worktrees.map((wt) => svc.gitStatus(wt.path)),
+      );
+      if (!mounted) return;
+      final map = <String, GitStatus>{};
+      for (var i = 0; i < worktrees.length; i++) {
+        final s = statuses[i];
+        if (s != null) map[worktrees[i].path] = s;
+      }
+      setState(() => _worktreeStatuses = map);
+    }
   }
 
   Future<void> _sendPrompt() async {
@@ -461,15 +511,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   }
 
   void _openFileBrowser(Session session) {
+    _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.fileBrowser);
     Navigator.of(context).push(
       MaterialPageRoute(
         settings: const RouteSettings(name: '/file-browser'),
         builder: (_) => FileBrowserScreen(
           hostId: session.hostId,
-          rootPath: session.cwd,
+          rootPath: _effectiveCwd,
         ),
       ),
-    );
+    ).then((_) {
+      _lastSubRoute.remove(session.sessionId);
+    });
   }
 
   List<Widget> _buildActions(Session session) {
@@ -760,78 +813,143 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     }
   }
 
+  void _openGitStatus(Session session) {
+    _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.gitStatus);
+    // Use resolved git root so diffs work from any subdirectory
+    final gitRoot = _gitStatus?.root ?? _effectiveCwd;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/git-status'),
+        builder: (_) => GitStatusScreen(
+          hostId: session.hostId,
+          cwd: gitRoot,
+        ),
+      ),
+    ).then((_) {
+      _lastSubRoute.remove(session.sessionId);
+    });
+  }
+
   Widget _buildGitBar(Session session) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final g = _gitStatus!;
+    final hasWorktrees = _worktrees.length > 1;
+
+    // Git-themed colors
+    const gitOrange = Color(0xFFF05033);
+    final barBg = isDark ? const Color(0xFF1B1F23) : const Color(0xFFF6F8FA);
+    final borderColor = isDark ? const Color(0xFF30363D) : const Color(0xFFD0D7DE);
+    final branchColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    final textMuted = isDark ? const Color(0xFF8B949E) : const Color(0xFF656D76);
+
     return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            settings: const RouteSettings(name: '/git-status'),
-            builder: (_) => GitStatusScreen(
-              hostId: session.hostId,
-              cwd: session.cwd,
-            ),
-          ),
-        );
-      },
+      onTap: () => _openGitStatus(session),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          border: Border(
-            top: BorderSide(color: theme.colorScheme.outlineVariant),
-          ),
+          color: barBg,
+          border: Border(top: BorderSide(color: borderColor)),
         ),
         child: Row(
           children: [
-            Icon(Icons.fork_right, size: 14, color: theme.colorScheme.primary),
+            // Git branch icon
+            Icon(Icons.fork_right, size: 14, color: gitOrange),
             const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                g.branch,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                  color: theme.colorScheme.onSurface,
-                  fontWeight: FontWeight.w500,
-                ),
-                overflow: TextOverflow.ellipsis,
+            // Branch name — long press for worktree picker
+            GestureDetector(
+              onTap: hasWorktrees
+                  ? () => _showWorktreePicker(session)
+                  : () => _openGitStatus(session),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 140),
+                    child: Text(
+                      g.branch,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        color: branchColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (hasWorktrees) ...[
+                    const SizedBox(width: 2),
+                    Icon(Icons.arrow_drop_down, size: 16, color: textMuted),
+                  ],
+                ],
               ),
             ),
             if (g.staged.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Icon(Icons.check_circle_outline, size: 12, color: Colors.green.shade400),
+              const SizedBox(width: 10),
+              const Icon(Icons.check_circle_outline, size: 12, color: Color(0xFF3FB950)),
               const SizedBox(width: 2),
-              Text('${g.staged.length}', style: TextStyle(fontSize: 11, color: Colors.green.shade400)),
+              Text('${g.staged.length}', style: const TextStyle(fontSize: 11, color: Color(0xFF3FB950))),
             ],
             if (g.unstaged.isNotEmpty) ...[
-              const SizedBox(width: 6),
-              Icon(Icons.edit_outlined, size: 12, color: Colors.orange.shade400),
+              const SizedBox(width: 8),
+              const Icon(Icons.edit_outlined, size: 12, color: Color(0xFFD29922)),
               const SizedBox(width: 2),
-              Text('${g.unstaged.length}', style: TextStyle(fontSize: 11, color: Colors.orange.shade400)),
+              Text('${g.unstaged.length}', style: const TextStyle(fontSize: 11, color: Color(0xFFD29922))),
             ],
             if (g.untracked.isNotEmpty) ...[
-              const SizedBox(width: 6),
-              Icon(Icons.add_circle_outline, size: 12, color: Colors.grey.shade500),
+              const SizedBox(width: 8),
+              Icon(Icons.add_circle_outline, size: 12, color: textMuted),
               const SizedBox(width: 2),
-              Text('${g.untracked.length}', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              Text('${g.untracked.length}', style: TextStyle(fontSize: 11, color: textMuted)),
             ],
             if (g.ahead > 0) ...[
-              const SizedBox(width: 8),
-              Icon(Icons.arrow_upward, size: 12, color: Colors.green.shade400),
-              Text('${g.ahead}', style: TextStyle(fontSize: 11, color: Colors.green.shade400)),
+              const SizedBox(width: 10),
+              const Icon(Icons.arrow_upward, size: 12, color: Color(0xFF3FB950)),
+              Text('${g.ahead}', style: const TextStyle(fontSize: 11, color: Color(0xFF3FB950))),
             ],
             if (g.behind > 0) ...[
               const SizedBox(width: 6),
-              Icon(Icons.arrow_downward, size: 12, color: Colors.orange.shade400),
-              Text('${g.behind}', style: TextStyle(fontSize: 11, color: Colors.orange.shade400)),
+              const Icon(Icons.arrow_downward, size: 12, color: Color(0xFFD29922)),
+              Text('${g.behind}', style: const TextStyle(fontSize: 11, color: Color(0xFFD29922))),
             ],
             const Spacer(),
-            Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+            Icon(Icons.chevron_right, size: 16, color: textMuted),
           ],
         ),
       ),
+    );
+  }
+
+  void _showWorktreePicker(Session session) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.6,
+      ),
+      builder: (ctx) {
+        return _WorktreePickerSheet(
+          worktrees: _worktrees,
+          worktreeStatuses: _worktreeStatuses,
+          effectiveCwd: _effectiveCwd,
+          selectedWorktreePath: _selectedWorktreePath,
+          isDark: isDark,
+          theme: theme,
+          onSelected: (wt) {
+            Navigator.pop(ctx);
+            final path = wt.isMain ? null : wt.path;
+            setState(() => _selectedWorktreePath = path);
+            if (path != null) {
+              _worktreeSelections[widget.session.sessionId] = path;
+            } else {
+              _worktreeSelections.remove(widget.session.sessionId);
+            }
+            _loadGitStatus();
+          },
+        );
+      },
     );
   }
 
@@ -1073,4 +1191,157 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         return status;
     }
   }
+}
+
+class _WorktreePickerSheet extends StatefulWidget {
+  final List<Worktree> worktrees;
+  final Map<String, GitStatus> worktreeStatuses;
+  final String effectiveCwd;
+  final String? selectedWorktreePath;
+  final bool isDark;
+  final ThemeData theme;
+  final ValueChanged<Worktree> onSelected;
+
+  const _WorktreePickerSheet({
+    required this.worktrees,
+    required this.worktreeStatuses,
+    required this.effectiveCwd,
+    required this.selectedWorktreePath,
+    required this.isDark,
+    required this.theme,
+    required this.onSelected,
+  });
+
+  @override
+  State<_WorktreePickerSheet> createState() => _WorktreePickerSheetState();
+}
+
+class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
+  String _query = '';
+
+  List<Worktree> get _filtered {
+    if (_query.isEmpty) return widget.worktrees;
+    final q = _query.toLowerCase();
+    return widget.worktrees
+        .where((wt) =>
+            wt.branch.toLowerCase().contains(q) ||
+            wt.path.toLowerCase().contains(q))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'Switch worktree',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: widget.theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+          if (widget.worktrees.length > 5)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                autofocus: false,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Search branch or path...',
+                  hintStyle: TextStyle(fontSize: 13, color: widget.theme.colorScheme.onSurfaceVariant),
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onChanged: (v) => setState(() => _query = v),
+              ),
+            ),
+          const SizedBox(height: 4),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: filtered.length,
+              itemBuilder: (ctx, i) {
+                final wt = filtered[i];
+                final isSelected = wt.path == widget.effectiveCwd ||
+                    (wt.isMain && widget.selectedWorktreePath == null);
+                final wtStatus = widget.worktreeStatuses[wt.path];
+                final changes = wtStatus?.totalChanges ?? 0;
+
+                return ListTile(
+                  leading: Icon(
+                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    size: 20,
+                    color: isSelected
+                        ? widget.theme.colorScheme.primary
+                        : widget.theme.colorScheme.onSurfaceVariant,
+                  ),
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          wt.branch,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontFamily: 'monospace',
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                            color: widget.theme.colorScheme.onSurface,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (changes > 0) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: widget.isDark ? const Color(0xFF2D1B00) : const Color(0xFFFFF3CD),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '$changes',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: widget.isDark ? const Color(0xFFD29922) : const Color(0xFF9A6700),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: Text(
+                    wt.shortPath,
+                    style: TextStyle(fontSize: 11, color: widget.theme.colorScheme.onSurfaceVariant),
+                  ),
+                  trailing: wt.isMain
+                      ? Text('main', style: TextStyle(fontSize: 10, color: widget.theme.colorScheme.onSurfaceVariant))
+                      : null,
+                  dense: true,
+                  onTap: () => widget.onSelected(wt),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+enum _SubRouteType { gitStatus, fileBrowser }
+
+class _SubRoute {
+  final _SubRouteType type;
+  _SubRoute(this.type);
 }

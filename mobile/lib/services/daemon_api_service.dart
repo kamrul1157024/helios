@@ -883,6 +883,19 @@ class DaemonAPIService extends ChangeNotifier {
     return null;
   }
 
+  Future<List<Worktree>> gitWorktrees(String path) async {
+    try {
+      final resp = await _authGet('/api/git/worktrees?path=${Uri.encodeComponent(path)}');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return (data['worktrees'] as List?)?.map((e) => Worktree.fromJson(e)).toList() ?? [];
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to get worktrees for $path: $e');
+    }
+    return [];
+  }
+
   @override
   void dispose() {
     stop();
@@ -1114,6 +1127,28 @@ class GitDiff {
       diff: json['diff'] as String? ?? '',
       stat: json['stat'] as String? ?? '',
     );
+  }
+}
+
+class Worktree {
+  final String path;
+  final String branch;
+  final bool isMain;
+
+  Worktree({required this.path, required this.branch, required this.isMain});
+
+  factory Worktree.fromJson(Map<String, dynamic> json) {
+    return Worktree(
+      path: json['path'] as String,
+      branch: json['branch'] as String? ?? '',
+      isMain: json['is_main'] as bool? ?? false,
+    );
+  }
+
+  String get shortPath {
+    final parts = path.split('/');
+    if (parts.length <= 3) return path;
+    return '.../${parts.sublist(parts.length - 2).join('/')}';
   }
 }
 

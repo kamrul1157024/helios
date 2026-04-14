@@ -109,6 +109,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/file", s.handleReadFile)
 	protectedMux.HandleFunc("GET /api/git/status", s.handleGitStatus)
 	protectedMux.HandleFunc("GET /api/git/diff", s.handleGitDiff)
+	protectedMux.HandleFunc("GET /api/git/worktrees", s.handleGitWorktrees)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
 	protectedMux.Handle("GET /api/events", shared.SSE)

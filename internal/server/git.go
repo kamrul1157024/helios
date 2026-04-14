@@ -144,6 +144,78 @@ func (s *PublicServer) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type worktreeEntry struct {
+	Path   string `json:"path"`
+	Branch string `json:"branch"`
+	IsMain bool   `json:"is_main"`
+}
+
+// handleGitWorktrees lists all worktrees for the repo containing the given path.
+func (s *PublicServer) handleGitWorktrees(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		jsonError(w, "missing path", http.StatusBadRequest)
+		return
+	}
+
+	clean, err := resolveSafePath(path)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	root, err := gitCmd(clean, "rev-parse", "--show-toplevel")
+	if err != nil {
+		jsonError(w, "not a git repository", http.StatusBadRequest)
+		return
+	}
+	root = strings.TrimSpace(root)
+
+	out, err := gitCmd(root, "worktree", "list", "--porcelain")
+	if err != nil {
+		jsonError(w, "failed to list worktrees", http.StatusInternalServerError)
+		return
+	}
+
+	worktrees := parseWorktreeList(out, root)
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"worktrees": worktrees,
+	})
+}
+
+// parseWorktreeList parses `git worktree list --porcelain` output.
+func parseWorktreeList(out string, mainRoot string) []worktreeEntry {
+	var worktrees []worktreeEntry
+	var current worktreeEntry
+
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if current.Path != "" {
+				worktrees = append(worktrees, current)
+			}
+			current = worktreeEntry{}
+			continue
+		}
+		if strings.HasPrefix(line, "worktree ") {
+			current.Path = strings.TrimPrefix(line, "worktree ")
+			current.IsMain = current.Path == mainRoot
+		} else if strings.HasPrefix(line, "branch ") {
+			// branch refs/heads/main -> main
+			ref := strings.TrimPrefix(line, "branch ")
+			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
+		} else if line == "detached" {
+			current.Branch = "(detached)"
+		}
+	}
+	// Flush last entry.
+	if current.Path != "" {
+		worktrees = append(worktrees, current)
+	}
+	return worktrees
+}
+
 // gitCmd runs a git command in the given directory and returns stdout.
 func gitCmd(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
