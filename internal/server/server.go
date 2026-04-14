@@ -91,7 +91,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 func NewPublicServer(port int, shared *Shared) *PublicServer {
 	s := &PublicServer{shared: shared}
 
-	globalLimiter := newIPRateLimiter(60, time.Minute)
+	globalLimiter := newIPRateLimiter(1000, time.Minute)
 	pairLimiter := newIPRateLimiter(5, time.Minute)
 
 	mux := http.NewServeMux()

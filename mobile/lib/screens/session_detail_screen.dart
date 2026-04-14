@@ -80,6 +80,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         // Refresh on session status changes and notification events for this session
         if (event.type == 'session_status' &&
             data['session_id'] == widget.session.sessionId) {
+          debugPrint('[Transcript][${widget.session.sessionId}] SSE session_status → reload transcript (status=${data['status']})');
           _transcriptDebounce?.cancel();
           _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
             _loadTranscript();
@@ -142,11 +143,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   DaemonAPIService? get _sse => context.read<HostManager>().serviceFor(widget.session.hostId);
 
   Future<void> _loadTranscript() async {
+    final sid = widget.session.sessionId;
+    debugPrint('[Transcript][$sid] _loadTranscript start, _loading=$_loading messages=${_messages.length}');
     final sse = _sse;
-    if (sse == null) return;
-    final result = await sse.fetchTranscript(widget.session.sessionId, limit: 200);
+    if (sse == null) {
+      debugPrint('[Transcript][$sid] no SSE service, aborting');
+      return;
+    }
+    final result = await sse.fetchTranscript(sid, limit: 200);
+    debugPrint('[Transcript][$sid] fetchTranscript result=${result == null ? "null" : "total=${result.total} returned=${result.messages.length} hasMore=${result.hasMore}"}');
     if (result != null && mounted) {
-      // Narration is handled by reporter SSE — no manual event pushing needed
       setState(() {
         _messages = result.messages;
         _total = result.total;
@@ -154,6 +160,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         _loading = false;
       });
     } else if (mounted) {
+      debugPrint('[Transcript][$sid] result null — setting loading=false, messages unchanged (${_messages.length})');
       setState(() => _loading = false);
     }
   }

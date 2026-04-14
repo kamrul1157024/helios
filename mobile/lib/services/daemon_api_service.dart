@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +7,7 @@ import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
+import 'api_client.dart';
 
 /// Callback fired when an SSE event arrives on this host.
 typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
@@ -15,12 +15,7 @@ typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
 class DaemonAPIService extends ChangeNotifier {
   final String hostId;
   final String serverUrl;
-  final String _deviceId;
-  final Uint8List _privateKeySeed;
-
-  // In-memory JWT cache — re-signed only when expired
-  String? _cachedToken;
-  DateTime? _tokenExpiresAt;
+  final ApiClient _api;
 
   http.Client? _client;
   Timer? _reconnectTimer;
@@ -81,103 +76,13 @@ class DaemonAPIService extends ChangeNotifier {
   DaemonAPIService({
     required this.hostId,
     required this.serverUrl,
-    required String deviceId,
-    required Uint8List privateKeySeed,
-  })  : _deviceId = deviceId,
-        _privateKeySeed = privateKeySeed;
+    required ApiClient api,
+  }) : _api = api;
 
   // ==================== Auth Helpers ====================
 
-  /// Returns a cached JWT if still valid (>5 min until expiry), otherwise
-  /// signs a fresh one. ~1 sign per hour during active use.
-  Future<String> getToken() async {
-    final now = DateTime.now().toUtc();
-    if (_cachedToken != null &&
-        _tokenExpiresAt != null &&
-        _tokenExpiresAt!.isAfter(now.add(const Duration(minutes: 5)))) {
-      return _cachedToken!;
-    }
-    _cachedToken = await _signJWT();
-    _tokenExpiresAt = now.add(const Duration(hours: 1));
-    return _cachedToken!;
-  }
-
-  void _invalidateToken() {
-    _cachedToken = null;
-    _tokenExpiresAt = null;
-  }
-
-  Future<String> _signJWT() async {
-    final header = {'alg': 'EdDSA', 'typ': 'JWT', 'kid': _deviceId};
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final payload = {
-      'iat': now,
-      'exp': now + 3600,
-      'sub': 'helios-client',
-    };
-
-    final encodedHeader = _base64urlEncode(
-        Uint8List.fromList(utf8.encode(jsonEncode(header))));
-    final encodedPayload = _base64urlEncode(
-        Uint8List.fromList(utf8.encode(jsonEncode(payload))));
-    final signingInput = '$encodedHeader.$encodedPayload';
-
-    final algorithm = Ed25519();
-    final keyPair = await algorithm.newKeyPairFromSeed(_privateKeySeed);
-    final signature = await algorithm.sign(
-      utf8.encode(signingInput),
-      keyPair: keyPair,
-    );
-
-    final encodedSignature =
-        _base64urlEncode(Uint8List.fromList(signature.bytes));
-    return '$signingInput.$encodedSignature';
-  }
-
-  String _base64urlEncode(Uint8List bytes) {
-    return base64Url.encode(bytes).replaceAll('=', '');
-  }
-
-  Future<Map<String, String>> _authHeaders() async {
-    final token = await getToken();
-    return {'Authorization': 'Bearer $token'};
-  }
-
-  Future<http.Response> _authGet(String path) async {
-    return http.get(
-      Uri.parse('$serverUrl$path'),
-      headers: await _authHeaders(),
-    );
-  }
-
-  Future<http.Response> _authPost(String path, {Map<String, dynamic>? body}) async {
-    return http.post(
-      Uri.parse('$serverUrl$path'),
-      headers: {
-        ...await _authHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: body != null ? jsonEncode(body) : null,
-    );
-  }
-
-  Future<http.Response> _authPatch(String path, {Map<String, dynamic>? body}) async {
-    return http.patch(
-      Uri.parse('$serverUrl$path'),
-      headers: {
-        ...await _authHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: body != null ? jsonEncode(body) : null,
-    );
-  }
-
-  Future<http.Response> _authDelete(String path) async {
-    return http.delete(
-      Uri.parse('$serverUrl$path'),
-      headers: await _authHeaders(),
-    );
-  }
+  /// Exposed so SSE connections (NarrationService) can get a token via callback.
+  Future<String> getToken() => _api.getToken();
 
   // ==================== Lifecycle ====================
 
@@ -311,7 +216,7 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final request = http.Request('GET', Uri.parse('$serverUrl/api/events'));
       request.headers.addAll({
-        ...await _authHeaders(),
+        'Authorization': 'Bearer ${await _api.getToken()}',
         'Accept': 'text/event-stream',
         'Cache-Control': 'no-cache',
       });
@@ -320,7 +225,7 @@ class DaemonAPIService extends ChangeNotifier {
 
       if (response.statusCode == 401) {
         debugPrint('[$hostId] SSE auth failed — refreshing token');
-        _invalidateToken();
+        _api.invalidateToken();
         _scheduleReconnect();
         return;
       }
@@ -424,7 +329,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<void> fetchHealth() async {
     try {
-      final resp = await _authGet('/api/health');
+      final resp = await _api.get('/api/health');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         if (data['tmux'] != null) {
@@ -441,7 +346,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<void> fetchNotifications() async {
     try {
-      final resp = await _authGet('/api/notifications');
+      final resp = await _api.get('/api/notifications');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['notifications'] as List?) ?? [];
@@ -456,7 +361,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> sendAction(String id, Map<String, dynamic> body) async {
     try {
-      final resp = await _authPost('/api/notifications/$id/action', body: body);
+      final resp = await _api.post('/api/notifications/$id/action', body: body);
       if (resp.statusCode == 200) {
         await fetchNotifications();
         return true;
@@ -469,7 +374,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> dismissNotification(String id) async {
     try {
-      final resp = await _authPost('/api/notifications/$id/dismiss');
+      final resp = await _api.post('/api/notifications/$id/dismiss');
       if (resp.statusCode == 200) {
         await fetchNotifications();
         return true;
@@ -482,7 +387,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> batchAction(List<String> ids, Map<String, dynamic> action) async {
     try {
-      final resp = await _authPost('/api/notifications/batch', body: {
+      final resp = await _api.post('/api/notifications/batch', body: {
         'notification_ids': ids,
         'action': action,
       });
@@ -521,7 +426,7 @@ class DaemonAPIService extends ChangeNotifier {
       final queryString = params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
       final path = queryString.isNotEmpty ? '/api/sessions?$queryString' : '/api/sessions';
 
-      final resp = await _authGet(path);
+      final resp = await _api.get(path);
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['sessions'] as List?) ?? [];
@@ -542,7 +447,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<List<DirectoryInfo>> fetchDirectories() async {
     try {
-      final resp = await _authGet('/api/sessions/directories');
+      final resp = await _api.get('/api/sessions/directories');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['directories'] as List?) ?? [];
@@ -556,19 +461,21 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<TranscriptResult?> fetchTranscript(String sessionId, {int limit = 200, int offset = 0}) async {
     try {
-      final resp = await _authGet('/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset');
+      final resp = await _api.get('/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset');
+      debugPrint('[$hostId] fetchTranscript[$sessionId] status=${resp.statusCode}');
       if (resp.statusCode == 200) {
         return TranscriptResult.fromJson(jsonDecode(resp.body));
       }
+      debugPrint('[$hostId] fetchTranscript[$sessionId] non-200 body=${resp.body}');
     } catch (e) {
-      debugPrint('[$hostId] Failed to fetch transcript: $e');
+      debugPrint('[$hostId] fetchTranscript[$sessionId] exception: $e');
     }
     return null;
   }
 
   Future<List<Subagent>> fetchSubagents(String sessionId) async {
     try {
-      final resp = await _authGet('/api/sessions/$sessionId/subagents');
+      final resp = await _api.get('/api/sessions/$sessionId/subagents');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['subagents'] as List?) ?? [];
@@ -582,7 +489,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> sendSessionPrompt(String sessionId, String message) async {
     try {
-      final resp = await _authPost('/api/sessions/$sessionId/send', body: {'message': message});
+      final resp = await _api.post('/api/sessions/$sessionId/send', body: {'message': message});
       debugPrint('[$hostId] sendSessionPrompt: status=${resp.statusCode} body=${resp.body}');
       if (resp.statusCode == 200) {
         await fetchSessions();
@@ -596,7 +503,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> stopSession(String sessionId) async {
     try {
-      final resp = await _authPost('/api/sessions/$sessionId/stop');
+      final resp = await _api.post('/api/sessions/$sessionId/stop');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
@@ -609,7 +516,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> suspendSession(String sessionId) async {
     try {
-      final resp = await _authPost('/api/sessions/$sessionId/suspend');
+      final resp = await _api.post('/api/sessions/$sessionId/suspend');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
@@ -622,7 +529,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> resumeSession(String sessionId) async {
     try {
-      final resp = await _authPost('/api/sessions/$sessionId/resume');
+      final resp = await _api.post('/api/sessions/$sessionId/resume');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
@@ -655,7 +562,7 @@ class DaemonAPIService extends ChangeNotifier {
       if (pinned != null) body['pinned'] = pinned;
       if (archived != null) body['archived'] = archived;
       if (title != null) body['title'] = title;
-      final resp = await _authPatch('/api/sessions/$sessionId', body: body);
+      final resp = await _api.patch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
@@ -679,7 +586,7 @@ class DaemonAPIService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
 
     try {
-      final resp = await _authDelete('/api/sessions/$sessionId');
+      final resp = await _api.delete('/api/sessions/$sessionId');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
@@ -698,7 +605,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<void> fetchCommands() async {
     try {
-      final resp = await _authGet('/api/commands');
+      final resp = await _api.get('/api/commands');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['commands'] as List?) ?? [];
@@ -715,7 +622,7 @@ class DaemonAPIService extends ChangeNotifier {
   /// Fetch all settings and personas from the backend.
   Future<Map<String, dynamic>?> getSettings() async {
     try {
-      final resp = await _authGet('/api/settings');
+      final resp = await _api.get('/api/settings');
       if (resp.statusCode == 200) {
         return jsonDecode(resp.body) as Map<String, dynamic>;
       }
@@ -728,7 +635,7 @@ class DaemonAPIService extends ChangeNotifier {
   /// Update settings on the backend (bulk upsert).
   Future<bool> updateSettings(Map<String, String> settings) async {
     try {
-      final resp = await _authPost('/api/settings', body: settings);
+      final resp = await _api.post('/api/settings', body: settings);
       return resp.statusCode == 200;
     } catch (e) {
       debugPrint('[$hostId] updateSettings error: $e');
@@ -740,7 +647,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<void> fetchProviders() async {
     try {
-      final resp = await _authGet('/api/providers');
+      final resp = await _api.get('/api/providers');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['providers'] as List?) ?? [];
@@ -773,8 +680,8 @@ class DaemonAPIService extends ChangeNotifier {
           ? '/api/providers/$providerId/models/refresh'
           : '/api/providers/$providerId/models';
       final resp = forceRefresh
-          ? await _authPost(endpoint)
-          : await _authGet(endpoint);
+          ? await _api.post(endpoint)
+          : await _api.get(endpoint);
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['models'] as List?) ?? [];
@@ -794,7 +701,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<FileListing?> listFiles(String path) async {
     try {
-      final resp = await _authGet('/api/files?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get('/api/files?path=${Uri.encodeComponent(path)}');
       if (resp.statusCode == 200) {
         return FileListing.fromJson(jsonDecode(resp.body));
       }
@@ -806,7 +713,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<FileReadResult?> readFile(String path) async {
     try {
-      final resp = await _authGet('/api/file?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get('/api/file?path=${Uri.encodeComponent(path)}');
       if (resp.statusCode == 413) {
         final data = jsonDecode(resp.body);
         return FileReadResult.tooLarge(
@@ -845,7 +752,7 @@ class DaemonAPIService extends ChangeNotifier {
       if (cwd != null && cwd.isNotEmpty) body['cwd'] = cwd;
       if (dangerouslySkipPermissions) body['dangerously_skip_permissions'] = true;
 
-      final resp = await _authPost('/api/sessions', body: body);
+      final resp = await _api.post('/api/sessions', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
@@ -858,7 +765,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<GitStatus?> gitStatus(String path) async {
     try {
-      final resp = await _authGet('/api/git/status?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get('/api/git/status?path=${Uri.encodeComponent(path)}');
       if (resp.statusCode == 200) {
         return GitStatus.fromJson(jsonDecode(resp.body));
       }
@@ -871,7 +778,7 @@ class DaemonAPIService extends ChangeNotifier {
   Future<GitDiff?> gitDiff(String path, String file, {bool staged = false}) async {
     try {
       final stagedParam = staged ? '&staged=true' : '';
-      final resp = await _authGet(
+      final resp = await _api.get(
         '/api/git/diff?path=${Uri.encodeComponent(path)}&file=${Uri.encodeComponent(file)}$stagedParam',
       );
       if (resp.statusCode == 200) {
@@ -885,7 +792,7 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<List<Worktree>> gitWorktrees(String path) async {
     try {
-      final resp = await _authGet('/api/git/worktrees?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get('/api/git/worktrees?path=${Uri.encodeComponent(path)}');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         return (data['worktrees'] as List?)?.map((e) => Worktree.fromJson(e)).toList() ?? [];

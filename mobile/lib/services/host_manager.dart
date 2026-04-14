@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/session.dart';
+import 'api_client.dart';
 import 'daemon_api_service.dart';
 
 class HostManager extends ChangeNotifier {
@@ -140,11 +141,15 @@ class HostManager extends ChangeNotifier {
 
     final seed = _base64urlDecode(seedB64);
 
-    final service = DaemonAPIService(
-      hostId: host.id,
+    final api = ApiClient(
       serverUrl: host.serverUrl,
       deviceId: host.deviceId,
       privateKeySeed: seed,
+    );
+    final service = DaemonAPIService(
+      hostId: host.id,
+      serverUrl: host.serverUrl,
+      api: api,
     );
 
     // Forward SSE events to notify HostManager listeners
@@ -421,45 +426,21 @@ class HostManager extends ChangeNotifier {
   }
 
 
-  Future<String> _signJWT(SimpleKeyPair keyPair, String deviceId) async {
-    final header = {'alg': 'EdDSA', 'typ': 'JWT', 'kid': deviceId};
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final payload = {
-      'iat': now,
-      'exp': now + 3600,
-      'sub': 'helios-client',
-    };
-
-    final encodedHeader = _base64urlEncode(Uint8List.fromList(utf8.encode(jsonEncode(header))));
-    final encodedPayload = _base64urlEncode(Uint8List.fromList(utf8.encode(jsonEncode(payload))));
-    final signingInput = '$encodedHeader.$encodedPayload';
-
-    final algorithm = Ed25519();
-    final signature = await algorithm.sign(
-      utf8.encode(signingInput),
-      keyPair: keyPair,
-    );
-
-    final encodedSignature = _base64urlEncode(Uint8List.fromList(signature.bytes));
-    return '$signingInput.$encodedSignature';
-  }
-
-  Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String deviceId) async {
+Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String deviceId) async {
+    final extractedSeed = await keyPair.extractPrivateKeyBytes();
+    final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
+    final api = ApiClient(serverUrl: serverUrl, deviceId: deviceId, privateKeySeed: seed);
     const maxAttempts = 150; // 5 minutes at 2s intervals
     for (var i = 0; i < maxAttempts; i++) {
       await Future.delayed(const Duration(seconds: 2));
       try {
-        final jwt = await _signJWT(keyPair, deviceId);
-        final resp = await http.get(
-          Uri.parse('$serverUrl/api/auth/device/me'),
-          headers: {'Authorization': 'Bearer $jwt'},
-        );
+        final resp = await api.get('/api/auth/device/me');
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body);
           final status = data['status'] as String?;
           if (status == 'active') return true;
           if (status == 'revoked') return false;
-        } else if (resp.statusCode == 401 || resp.statusCode == 403) {
+        } else if (resp.statusCode == 403) {
           return false;
         }
       } catch (_) {
@@ -485,19 +466,14 @@ class HostManager extends ChangeNotifier {
     }
     final name = '$platform — Helios App';
     try {
-      final jwt = await _signJWT(keyPair, deviceId);
-      await http.post(
-        Uri.parse('$serverUrl/api/auth/device/me'),
-        headers: {
-          'Authorization': 'Bearer $jwt',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'name': name,
-          'platform': platform,
-          'browser': 'Helios App',
-        }),
-      );
+      final extractedSeed = await keyPair.extractPrivateKeyBytes();
+      final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
+      final api = ApiClient(serverUrl: serverUrl, deviceId: deviceId, privateKeySeed: seed);
+      await api.post('/api/auth/device/me', body: {
+        'name': name,
+        'platform': platform,
+        'browser': 'Helios App',
+      });
     } catch (_) {
       // Best effort
     }
@@ -505,13 +481,12 @@ class HostManager extends ChangeNotifier {
 
   Future<void> _fetchAndSetHostname(HostConnection host, Uint8List seed) async {
     try {
-      final algorithm = Ed25519();
-      final keyPair = await algorithm.newKeyPairFromSeed(seed);
-      final jwt = await _signJWT(keyPair, host.deviceId);
-      final resp = await http.get(
-        Uri.parse('${host.serverUrl}/api/health'),
-        headers: {'Authorization': 'Bearer $jwt'},
+      final api = ApiClient(
+        serverUrl: host.serverUrl,
+        deviceId: host.deviceId,
+        privateKeySeed: seed,
       );
+      final resp = await api.get('/api/health');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final hostname = data['hostname'] as String?;
