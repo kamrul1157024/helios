@@ -518,6 +518,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         builder: (_) => FileBrowserScreen(
           hostId: session.hostId,
           rootPath: _effectiveCwd,
+          sessionId: session.sessionId,
         ),
       ),
     ).then((_) {
@@ -823,6 +824,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         builder: (_) => GitStatusScreen(
           hostId: session.hostId,
           cwd: gitRoot,
+          sessionId: session.sessionId,
         ),
       ),
     ).then((_) {

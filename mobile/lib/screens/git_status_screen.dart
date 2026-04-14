@@ -12,8 +12,9 @@ import 'file_browser_screen.dart';
 class GitStatusScreen extends StatefulWidget {
   final String hostId;
   final String cwd;
+  final String? sessionId;
 
-  const GitStatusScreen({super.key, required this.hostId, required this.cwd});
+  const GitStatusScreen({super.key, required this.hostId, required this.cwd, this.sessionId});
 
   @override
   State<GitStatusScreen> createState() => _GitStatusScreenState();
@@ -213,6 +214,7 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
           cwd: root,
           change: change,
           staged: staged,
+          sessionId: widget.sessionId,
         ),
       ),
     );
@@ -225,6 +227,7 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
         builder: (_) => FileViewerScreen(
           hostId: widget.hostId,
           path: '$root/$relativePath',
+          sessionId: widget.sessionId,
         ),
       ),
     );
@@ -307,6 +310,7 @@ class GitDiffScreen extends StatefulWidget {
   final String cwd;
   final GitChange change;
   final bool staged;
+  final String? sessionId;
 
   const GitDiffScreen({
     super.key,
@@ -314,6 +318,7 @@ class GitDiffScreen extends StatefulWidget {
     required this.cwd,
     required this.change,
     required this.staged,
+    this.sessionId,
   });
 
   @override
@@ -325,9 +330,47 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
   FileReadResult? _fullFile;
   bool _loading = true;
   DiffViewMode _mode = DiffViewMode.unified;
+  int? _selStart;
+  int? _selEnd;
 
   DaemonAPIService? get _svc =>
       context.read<HostManager>().serviceFor(widget.hostId);
+
+  bool get _hasSelection => _selStart != null;
+  String get _selLabel {
+    if (_selStart == null) return '';
+    if (_selEnd == null || _selStart == _selEnd) return 'L$_selStart';
+    return 'L$_selStart-$_selEnd';
+  }
+  int get _selCount {
+    if (_selStart == null) return 0;
+    if (_selEnd == null) return 1;
+    return (_selEnd! - _selStart!).abs() + 1;
+  }
+
+  void _onLineTap(int lineIdx) {
+    setState(() {
+      if (_selStart == null) {
+        _selStart = lineIdx;
+        _selEnd = null;
+      } else if (_selEnd == null && lineIdx == _selStart) {
+        _selStart = null;
+      } else if (_selEnd == null) {
+        final a = _selStart!;
+        _selStart = a < lineIdx ? a : lineIdx;
+        _selEnd = a < lineIdx ? lineIdx : a;
+      } else {
+        _selStart = lineIdx;
+        _selEnd = null;
+      }
+    });
+  }
+
+  bool _isLineSelected(int lineIdx) {
+    if (_selStart == null) return false;
+    if (_selEnd == null) return lineIdx == _selStart;
+    return lineIdx >= _selStart! && lineIdx <= _selEnd!;
+  }
 
   @override
   void initState() {
@@ -424,6 +467,147 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
                   ),
                 )
               : _buildDiffView(theme),
+      bottomNavigationBar: widget.sessionId != null
+          ? _buildAskAIBar(theme)
+          : null,
+    );
+  }
+
+  Widget _buildAskAIBar(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    return Container(
+      padding: EdgeInsets.only(
+        left: 12, right: 8, top: 8,
+        bottom: MediaQuery.of(context).padding.bottom + 8,
+      ),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.code, size: 16, color: accentColor),
+          const SizedBox(width: 6),
+          if (_hasSelection) ...[
+            Text(
+              '$_selLabel · $_selCount ${_selCount == 1 ? 'line' : 'lines'}',
+              style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(() { _selStart = null; _selEnd = null; }),
+              child: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ] else
+            Text(
+              'Tap lines to select',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          const Spacer(),
+          FilledButton.tonalIcon(
+            onPressed: () => _showAskAISheet(theme),
+            icon: const Icon(Icons.auto_awesome, size: 16),
+            label: const Text('Ask AI', style: TextStyle(fontSize: 12)),
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAskAISheet(ThemeData theme) {
+    final controller = TextEditingController();
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    final label = _hasSelection ? '${widget.change.fileName}:$_selLabel' : widget.change.path;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.insert_drive_file, size: 16, color: accentColor),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 13, fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
+                            color: accentColor,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    minLines: 1,
+                    maxLines: 4,
+                    style: const TextStyle(fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: _hasSelection ? 'Ask about this code...' : 'Ask about this diff...',
+                      hintStyle: TextStyle(fontSize: 14, color: theme.colorScheme.onSurfaceVariant),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.send, size: 20),
+                        onPressed: () => _sendAskAI(ctx, controller.text),
+                      ),
+                    ),
+                    onSubmitted: (v) => _sendAskAI(ctx, v),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _sendAskAI(BuildContext ctx, String question) async {
+    if (question.trim().isEmpty) return;
+    final svc = context.read<HostManager>().serviceFor(widget.hostId);
+    if (svc == null || widget.sessionId == null) return;
+
+    String prompt;
+    if (_hasSelection) {
+      final allLines = _parseDiff(_diff!.diff);
+      final start = (_selStart ?? 0).clamp(0, allLines.length);
+      final end = ((_selEnd ?? _selStart ?? 0) + 1).clamp(0, allLines.length);
+      final selectedTexts = allLines.sublist(start, end).map((l) {
+        final prefix = l.type == _DiffLineType.added ? '+' : l.type == _DiffLineType.removed ? '-' : ' ';
+        return '$prefix${l.text}';
+      }).join('\n');
+      final ext = _diff?.language ?? '';
+      prompt = 'Regarding diff of `${widget.change.path}` $_selLabel:\n```$ext\n$selectedTexts\n```\n${question.trim()}';
+    } else {
+      prompt = 'Regarding diff of `${widget.change.path}`:\n${question.trim()}';
+    }
+
+    final nav = Navigator.of(context);
+    Navigator.pop(ctx); // close sheet
+    await svc.sendSessionPrompt(widget.sessionId!, prompt);
+    if (!mounted) return;
+    nav.popUntil(
+      (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
     );
   }
 
@@ -559,10 +743,19 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
           );
         }
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
-          color: bgColor,
-          child: textWidget,
+        final selected = _isLineSelected(i);
+        final selectedBg = isDark ? const Color(0xFF1A3A5C) : const Color(0xFFD4E8FC);
+
+        return GestureDetector(
+          onTap: widget.sessionId != null ? () => _onLineTap(i) : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+            decoration: BoxDecoration(
+              color: selected ? selectedBg : bgColor,
+              border: selected ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 3)) : null,
+            ),
+            child: textWidget,
+          ),
         );
       },
     );
@@ -646,27 +839,35 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
           );
         }
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: bgColor,
-            border: isChanged
-                ? Border(left: BorderSide(color: Colors.green.shade400, width: 3))
-                : null,
-          ),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 36,
-                child: Text(
-                  '$lineNum',
-                  style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
-                  textAlign: TextAlign.right,
+        final selected = _isLineSelected(i);
+        final selectedBg = isDark ? const Color(0xFF1A3A5C) : const Color(0xFFD4E8FC);
+
+        return GestureDetector(
+          onTap: widget.sessionId != null ? () => _onLineTap(i) : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: selected ? selectedBg : bgColor,
+              border: selected
+                  ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))
+                  : isChanged
+                      ? Border(left: BorderSide(color: Colors.green.shade400, width: 3))
+                      : null,
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 36,
+                  child: Text(
+                    '$lineNum',
+                    style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                    textAlign: TextAlign.right,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: textWidget),
-            ],
+                const SizedBox(width: 8),
+                Expanded(child: textWidget),
+              ],
+            ),
           ),
         );
       },

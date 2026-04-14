@@ -4,6 +4,7 @@ import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:highlight/highlight.dart' show highlight;
 import 'package:provider/provider.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
@@ -14,12 +15,14 @@ class FileBrowserScreen extends StatefulWidget {
   final String rootPath;
   /// If set, the file viewer opens immediately for this path.
   final String? openFilePath;
+  final String? sessionId;
 
   const FileBrowserScreen({
     super.key,
     required this.hostId,
     required this.rootPath,
     this.openFilePath,
+    this.sessionId,
   });
 
   @override
@@ -101,7 +104,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => FileViewerScreen(path: path, hostId: widget.hostId),
+        builder: (_) => FileViewerScreen(path: path, hostId: widget.hostId, sessionId: widget.sessionId),
       ),
     );
   }
@@ -305,8 +308,9 @@ class _EntryTile extends StatelessWidget {
 class FileViewerScreen extends StatefulWidget {
   final String path;
   final String hostId;
+  final String? sessionId;
 
-  const FileViewerScreen({super.key, required this.path, required this.hostId});
+  const FileViewerScreen({super.key, required this.path, required this.hostId, this.sessionId});
 
   @override
   State<FileViewerScreen> createState() => _FileViewerScreenState();
@@ -317,9 +321,49 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
   bool _loading = true;
   bool _userConfirmedLarge = false;
   static const _softLimit = 1024 * 1024; // 1 MB
+  int? _selStart; // 1-based line number
+  int? _selEnd;   // 1-based line number
 
   DaemonAPIService? get _svc =>
       context.read<HostManager>().serviceFor(widget.hostId);
+
+  bool get _hasSelection => _selStart != null;
+  String get _selLabel {
+    if (_selStart == null) return '';
+    if (_selEnd == null || _selStart == _selEnd) return 'L$_selStart';
+    return 'L$_selStart-$_selEnd';
+  }
+  int get _selCount {
+    if (_selStart == null) return 0;
+    if (_selEnd == null) return 1;
+    return (_selEnd! - _selStart!).abs() + 1;
+  }
+
+  void _onLineTap(int lineNum) {
+    setState(() {
+      if (_selStart == null) {
+        _selStart = lineNum;
+        _selEnd = null;
+      } else if (_selEnd == null && lineNum == _selStart) {
+        _selStart = null; // clear
+      } else if (_selEnd == null) {
+        // Extend to range
+        final a = _selStart!;
+        _selStart = a < lineNum ? a : lineNum;
+        _selEnd = a < lineNum ? lineNum : a;
+      } else {
+        // New selection
+        _selStart = lineNum;
+        _selEnd = null;
+      }
+    });
+  }
+
+  bool _isLineSelected(int lineNum) {
+    if (_selStart == null) return false;
+    if (_selEnd == null) return lineNum == _selStart;
+    return lineNum >= _selStart! && lineNum <= _selEnd!;
+  }
 
   @override
   void initState() {
@@ -378,10 +422,9 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
             icon: const Icon(Icons.chat_bubble_outline),
             tooltip: 'Back to chat',
             onPressed: () {
-              // Pop both file viewer and file browser to return to session detail.
               final nav = Navigator.of(context);
-              nav.pop(); // file viewer screen
-              if (nav.canPop()) nav.pop(); // file browser screen
+              nav.pop();
+              if (nav.canPop()) nav.pop();
             },
           ),
           if (_result?.content != null && !_result!.isBinary)
@@ -403,6 +446,146 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
         ],
       ),
       body: _buildContent(theme),
+      bottomNavigationBar: widget.sessionId != null
+          ? _buildAskAIBar(theme)
+          : null,
+    );
+  }
+
+  Widget _buildAskAIBar(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    return Container(
+      padding: EdgeInsets.only(
+        left: 12, right: 8, top: 8,
+        bottom: MediaQuery.of(context).padding.bottom + 8,
+      ),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.code, size: 16, color: accentColor),
+          const SizedBox(width: 6),
+          if (_hasSelection) ...[
+            Text(
+              '$_selLabel · $_selCount ${_selCount == 1 ? 'line' : 'lines'}',
+              style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(() { _selStart = null; _selEnd = null; }),
+              child: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ] else
+            Text(
+              'Tap lines to select',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          const Spacer(),
+          FilledButton.tonalIcon(
+            onPressed: () => _showAskAISheet(theme),
+            icon: const Icon(Icons.auto_awesome, size: 16),
+            label: const Text('Ask AI', style: TextStyle(fontSize: 12)),
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAskAISheet(ThemeData theme) {
+    final controller = TextEditingController();
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    final label = _hasSelection ? '$_fileName:$_selLabel' : widget.path;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.insert_drive_file, size: 16, color: accentColor),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 13, fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
+                            color: accentColor,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    minLines: 1,
+                    maxLines: 4,
+                    style: const TextStyle(fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: _hasSelection ? 'Ask about this code...' : 'Ask about this file...',
+                      hintStyle: TextStyle(fontSize: 14, color: theme.colorScheme.onSurfaceVariant),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.send, size: 20),
+                        onPressed: () => _sendAskAI(ctx, controller.text),
+                      ),
+                    ),
+                    onSubmitted: (v) => _sendAskAI(ctx, v),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _sendAskAI(BuildContext ctx, String question) async {
+    if (question.trim().isEmpty) return;
+    final svc = context.read<HostManager>().serviceFor(widget.hostId);
+    if (svc == null || widget.sessionId == null) return;
+
+    String prompt;
+    if (_hasSelection) {
+      final content = _result?.content ?? '';
+      final lines = content.split('\n');
+      final start = (_selStart ?? 1) - 1;
+      final end = (_selEnd ?? _selStart ?? 1);
+      final selected = lines.sublist(start.clamp(0, lines.length), end.clamp(0, lines.length));
+      final ext = _fileName.contains('.') ? _fileName.split('.').last : '';
+      prompt = 'Regarding `${widget.path}` $_selLabel:\n```$ext\n${selected.join('\n')}\n```\n${question.trim()}';
+    } else {
+      prompt = 'Regarding file `${widget.path}`:\n${question.trim()}';
+    }
+
+    // Send first, then navigate
+    final nav = Navigator.of(context);
+    Navigator.pop(ctx); // close sheet
+    await svc.sendSessionPrompt(widget.sessionId!, prompt);
+    if (!mounted) return;
+    nav.popUntil(
+      (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
     );
   }
 
@@ -475,35 +658,116 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
       );
     }
 
-    // Code files — syntax highlighted
+    // Code files — syntax highlighted, line-by-line for selection
     final language = _languageForExt(ext);
+    final lines = content.split('\n');
+
+    return _buildLineListView(theme, lines, language, isDark);
+  }
+
+  Widget _buildLineListView(ThemeData theme, List<String> lines, String? language, bool isDark) {
+    // Syntax highlight all lines together for context
+    List<List<TextSpan>>? highlightedLines;
     if (language != null) {
-      return SingleChildScrollView(
-        controller: null,
-        child: HighlightView(
-          content,
-          language: language,
-          theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
-          padding: const EdgeInsets.all(16),
-          textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace', height: 1.5),
-        ),
-      );
+      highlightedLines = _highlightCodeLines(lines.join('\n'), language, isDark);
     }
 
-    // Plain text fallback
-    return SingleChildScrollView(
-      controller: null,
-      padding: const EdgeInsets.all(16),
-      child: SelectableText(
-        content,
-        style: TextStyle(
-          fontSize: 12,
-          fontFamily: 'monospace',
-          color: theme.colorScheme.onSurface,
-          height: 1.5,
-        ),
-      ),
+    final selectedBg = isDark ? const Color(0xFF1A3A5C) : const Color(0xFFD4E8FC);
+    final gutterColor = theme.colorScheme.onSurfaceVariant.withAlpha(120);
+
+    return ListView.builder(
+      itemCount: lines.length,
+      itemExtent: 20,
+      itemBuilder: (ctx, i) {
+        final lineNum = i + 1;
+        final selected = _isLineSelected(lineNum);
+
+        Widget textWidget;
+        if (highlightedLines != null && i < highlightedLines.length) {
+          textWidget = RichText(
+            text: TextSpan(children: highlightedLines[i]),
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+          );
+        } else {
+          textWidget = Text(
+            lines[i],
+            style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+          );
+        }
+
+        return GestureDetector(
+          onTap: widget.sessionId != null ? () => _onLineTap(lineNum) : null,
+          child: Container(
+            color: selected ? selectedBg : null,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 36,
+                  child: Text(
+                    '$lineNum',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: selected ? theme.colorScheme.primary : gutterColor),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: textWidget),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  List<List<TextSpan>> _highlightCodeLines(String code, String language, bool isDark) {
+    final themeMap = isDark ? atomOneDarkTheme : atomOneLightTheme;
+    final defaultStyle = TextStyle(
+      fontSize: 12, fontFamily: 'monospace',
+      color: isDark ? Colors.white70 : Colors.black87,
+    );
+    try {
+      final result = highlight.parse(code, language: language);
+      final allSpans = <TextSpan>[];
+      _buildHighlightSpans(result.nodes!, themeMap, defaultStyle, allSpans);
+      final lines = <List<TextSpan>>[[]];
+      for (final span in allSpans) {
+        final text = span.text ?? '';
+        if (!text.contains('\n')) {
+          lines.last.add(span);
+          continue;
+        }
+        final parts = text.split('\n');
+        for (int i = 0; i < parts.length; i++) {
+          if (i > 0) lines.add([]);
+          if (parts[i].isNotEmpty) {
+            lines.last.add(TextSpan(text: parts[i], style: span.style));
+          }
+        }
+      }
+      return lines;
+    } catch (_) {
+      return code.split('\n').map((l) => [TextSpan(text: l, style: defaultStyle)]).toList();
+    }
+  }
+
+  void _buildHighlightSpans(List<dynamic> nodes, Map<String, TextStyle> themeMap, TextStyle defaultStyle, List<TextSpan> out) {
+    for (final node in nodes) {
+      if (node.value != null) {
+        TextStyle style = defaultStyle;
+        if (node.className != null) {
+          final className = node.className as String;
+          style = themeMap[className] ?? themeMap['root'] ?? defaultStyle;
+          style = style.copyWith(fontSize: 12, fontFamily: 'monospace');
+        }
+        out.add(TextSpan(text: node.value as String, style: style));
+      } else if (node.children != null) {
+        _buildHighlightSpans(node.children as List<dynamic>, themeMap, defaultStyle, out);
+      }
+    }
   }
 
   String? _languageForExt(String ext) {
