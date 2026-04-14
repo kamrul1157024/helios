@@ -70,6 +70,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("GET /internal/device/list", s.handleDeviceList)
 	mux.HandleFunc("POST /internal/device/revoke", s.handleDeviceRevoke)
 	mux.HandleFunc("POST /internal/wrap", s.handleWrap)
+	mux.HandleFunc("PATCH /internal/sessions/{id}", s.handleInternalPatchSession)
 	mux.HandleFunc("GET /internal/settings", s.handleInternalGetSettings)
 	mux.HandleFunc("PUT /internal/settings", s.handleInternalUpdateSettings)
 	mux.Handle("GET /internal/events", shared.SSE)

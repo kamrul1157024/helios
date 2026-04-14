@@ -553,12 +553,14 @@ func handleWrap(args []string) {
 	}
 	command := strings.Join(parts, " ")
 
-	// If already inside tmux, register this pane with the daemon, then exec
+	// If already inside tmux, register this pane with the daemon, run claude,
+	// and notify daemon when it exits (handles Ctrl+C/crash where hooks don't fire).
 	if os.Getenv("TMUX") != "" {
 		paneID := os.Getenv("TMUX_PANE")
+		cfg, _ := daemon.LoadConfig()
+		internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+
 		if paneID != "" {
-			cfg, _ := daemon.LoadConfig()
-			internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 			body, _ := json.Marshal(map[string]string{
 				"pane_id":    paneID,
 				"cwd":        cwd,
@@ -566,12 +568,28 @@ func handleWrap(args []string) {
 			})
 			http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
 		}
+
 		binary, err := exec.LookPath(parts[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
 			os.Exit(1)
 		}
-		syscall.Exec(binary, parts, os.Environ())
+
+		cmd := exec.Command(binary, parts[1:]...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
+
+		// Claude exited — fire session.end hook so daemon runs full
+		// cleanup (status update, SSE broadcast, reporter event).
+		if sessionID != "" {
+			body, _ := json.Marshal(map[string]interface{}{
+				"session_id": sessionID,
+				"cwd":        cwd,
+			})
+			http.Post(internalURL+"/hooks/claude/session.end", "application/json", bytes.NewBuffer(body))
+		}
 		return
 	}
 

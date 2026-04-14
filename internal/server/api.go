@@ -664,6 +664,7 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 		Pinned   *bool   `json:"pinned"`
 		Archived *bool   `json:"archived"`
 		Title    *string `json:"title"`
+		Status   *string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -689,6 +690,17 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 			jsonError(w, "failed to update session title", http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if req.Status != nil {
+		s.shared.DB.UpdateSessionStatus(id, *req.Status, "PatchUpdate")
+		s.shared.SSE.Broadcast(SSEEvent{
+			Type: "session_status",
+			Data: map[string]interface{}{
+				"session_id": id,
+				"status":     *req.Status,
+			},
+		})
 	}
 
 	s.shared.SSE.Broadcast(SSEEvent{
@@ -859,6 +871,36 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 
 	// Keep PendingPanes for trust prompt detection in pane_watcher.
 	s.shared.PendingPanes.Add(req.PaneID, req.CWD)
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *InternalServer) handleInternalPatchSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Status *string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Status != nil {
+		s.shared.DB.UpdateSessionStatus(id, *req.Status, "ProcessExited")
+		s.shared.SSE.Broadcast(SSEEvent{
+			Type: "session_status",
+			Data: map[string]interface{}{
+				"session_id": id,
+				"status":     *req.Status,
+			},
+		})
+		log.Printf("session-patch: session %s status=%s", id, *req.Status)
+	}
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
