@@ -106,7 +106,7 @@ type ProviderInfo struct {
 }
 
 // SessionBuilder builds the shell command to start a new session.
-type SessionBuilder func(prompt, model, cwd string) string
+type SessionBuilder func(prompt, model, cwd, sessionID string) string
 
 // ModelsFetcher returns available models for the provider.
 type ModelsFetcher func() ([]ModelInfo, error)

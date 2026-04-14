@@ -491,13 +491,19 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	}
 	ctx.DB.UpsertSession(sess)
 
-	// Remove from pending panes and associate the tmux pane with this session.
+	// Check if pane was already mapped at launch time (via --session-id).
 	var paneID string
-	if ctx.RemovePendingPane != nil {
-		paneID = ctx.RemovePendingPane(input.CWD)
-	}
-	if paneID != "" {
-		ctx.DB.UpdateSessionTmuxPane(input.SessionID, paneID, 0)
+	existing, _ := ctx.DB.GetSession(input.SessionID)
+	if existing != nil && existing.TmuxPane != nil && *existing.TmuxPane != "" {
+		paneID = *existing.TmuxPane
+	} else {
+		// Fallback: try pending panes for non-helios launches.
+		if ctx.RemovePendingPane != nil {
+			paneID = ctx.RemovePendingPane(input.CWD)
+		}
+		if paneID != "" {
+			ctx.DB.UpdateSessionTmuxPane(input.SessionID, paneID, 0)
+		}
 	}
 
 	sseData := map[string]interface{}{

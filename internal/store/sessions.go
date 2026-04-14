@@ -53,8 +53,8 @@ func (s *Store) UpsertSession(sess *Session) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, tmux_pane, tmux_pid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -63,9 +63,12 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   model = COALESCE(excluded.model, sessions.model),
 		   status = excluded.status,
 		   last_event = excluded.last_event,
-		   last_event_at = excluded.last_event_at`,
+		   last_event_at = excluded.last_event_at,
+		   tmux_pane = COALESCE(sessions.tmux_pane, excluded.tmux_pane),
+		   tmux_pid = COALESCE(sessions.tmux_pid, excluded.tmux_pid)`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
 		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
+		sess.TmuxPane, sess.TmuxPID,
 	)
 	return err
 }

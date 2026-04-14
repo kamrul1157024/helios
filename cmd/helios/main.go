@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/tmux"
@@ -538,10 +539,19 @@ func handleWrap(args []string) {
 		os.Exit(1)
 	}
 
-	command := strings.Join(args[cmdStart:], " ")
 	cwd, _ := os.Getwd()
 
 	tc := tmux.NewClient()
+
+	// Generate a session ID for claude commands so we can map session→pane deterministically.
+	parts := args[cmdStart:]
+	sessionID := ""
+	if len(parts) > 0 && filepath.Base(parts[0]) == "claude" {
+		sessionID = uuid.New().String()
+		// Inject --session-id right after the claude binary name.
+		parts = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
+	}
+	command := strings.Join(parts, " ")
 
 	// If already inside tmux, register this pane with the daemon, then exec
 	if os.Getenv("TMUX") != "" {
@@ -550,12 +560,12 @@ func handleWrap(args []string) {
 			cfg, _ := daemon.LoadConfig()
 			internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 			body, _ := json.Marshal(map[string]string{
-				"pane_id": paneID,
-				"cwd":     cwd,
+				"pane_id":    paneID,
+				"cwd":        cwd,
+				"session_id": sessionID,
 			})
 			http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
 		}
-		parts := args[cmdStart:]
 		binary, err := exec.LookPath(parts[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
@@ -577,8 +587,9 @@ func handleWrap(args []string) {
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 	body, _ := json.Marshal(map[string]string{
-		"pane_id": paneID,
-		"cwd":     cwd,
+		"pane_id":    paneID,
+		"cwd":        cwd,
+		"session_id": sessionID,
 	})
 	http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
 

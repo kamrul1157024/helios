@@ -23,8 +23,11 @@ func Register() {
 			},
 		},
 		// SessionBuilder
-		func(prompt, model, cwd string) string {
+		func(prompt, model, cwd, sessionID string) string {
 			cmd := "claude"
+			if sessionID != "" {
+				cmd += fmt.Sprintf(" --session-id %s", sessionID)
+			}
 			if model != "" {
 				cmd += fmt.Sprintf(" --model %s", model)
 			}

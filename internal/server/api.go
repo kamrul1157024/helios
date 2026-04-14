@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
@@ -795,7 +796,8 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		req.CWD = cwd
 	}
 
-	cmd := builder(req.Prompt, req.Model, req.CWD)
+	sessionID := uuid.New().String()
+	cmd := builder(req.Prompt, req.Model, req.CWD, sessionID)
 	if req.DangerouslySkipPermissions {
 		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
 	}
@@ -806,24 +808,56 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Write session→pane mapping to DB immediately.
+	event := "Launch"
+	sess := &store.Session{
+		SessionID: sessionID,
+		Source:    "claude",
+		CWD:       req.CWD,
+		TmuxPane:  &paneID,
+		Status:    "starting",
+		LastEvent: &event,
+	}
+	s.shared.DB.UpsertSession(sess)
+
+	// Keep PendingPanes for trust prompt detection.
 	s.shared.PendingPanes.Add(paneID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"tmux_pane": paneID,
-		"cwd":       req.CWD,
+		"success":    true,
+		"session_id": sessionID,
+		"tmux_pane":  paneID,
+		"cwd":        req.CWD,
 	})
 }
 
 func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaneID string `json:"pane_id"`
-		CWD    string `json:"cwd"`
+		PaneID    string `json:"pane_id"`
+		CWD       string `json:"cwd"`
+		SessionID string `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PaneID == "" {
 		jsonError(w, "missing pane_id", http.StatusBadRequest)
 		return
 	}
+
+	// If session_id provided, write session→pane mapping to DB immediately.
+	if req.SessionID != "" {
+		paneID := req.PaneID
+		event := "Wrap"
+		sess := &store.Session{
+			SessionID: req.SessionID,
+			Source:    "claude",
+			CWD:       req.CWD,
+			TmuxPane:  &paneID,
+			Status:    "starting",
+			LastEvent: &event,
+		}
+		s.shared.DB.UpsertSession(sess)
+	}
+
+	// Keep PendingPanes for trust prompt detection in pane_watcher.
 	s.shared.PendingPanes.Add(req.PaneID, req.CWD)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
@@ -1271,7 +1305,8 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		req.CWD = home
 	}
 
-	cmd := builder(req.Prompt, req.Model, req.CWD)
+	sessionID := uuid.New().String()
+	cmd := builder(req.Prompt, req.Model, req.CWD, sessionID)
 	if req.DangerouslySkipPermissions {
 		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
 	}
@@ -1282,14 +1317,26 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Track pane in memory — the pane watcher will detect trust prompts
-	// and SessionStart hook will create the real session record.
+	// Write session→pane mapping to DB immediately.
+	event := "Launch"
+	sess := &store.Session{
+		SessionID: sessionID,
+		Source:    "claude",
+		CWD:       req.CWD,
+		TmuxPane:  &paneID,
+		Status:    "starting",
+		LastEvent: &event,
+	}
+	s.shared.DB.UpsertSession(sess)
+
+	// Keep PendingPanes for trust prompt detection.
 	s.shared.PendingPanes.Add(paneID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"tmux_pane": paneID,
-		"cwd":       req.CWD,
+		"success":    true,
+		"session_id": sessionID,
+		"tmux_pane":  paneID,
+		"cwd":        req.CWD,
 	})
 }
 

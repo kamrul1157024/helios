@@ -223,11 +223,11 @@ func (m StartModel) viewShellSetup() string {
 
 	b.WriteString(cross(fmt.Sprintf("Shell wrapper not installed (%s)", m.shellInfo.Name)))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  When you type 'claude' in your terminal, helios will"))
+	b.WriteString(subtitleStyle.Render("  Sending prompts from your phone will not work without the shell wrapper."))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  automatically wrap it in a managed tmux session."))
+	b.WriteString(subtitleStyle.Render("  When you type 'claude', helios wraps it in a managed tmux session"))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  This lets you send prompts and control sessions from your phone."))
+	b.WriteString(subtitleStyle.Render("  so it can send prompts and control sessions remotely."))
 	b.WriteString("\n\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("  Will add wrapper to: %s", m.shellInfo.RCPath)))
 	b.WriteString("\n")
@@ -386,6 +386,10 @@ func (m StartModel) viewMain() string {
 	}
 	if m.shellInstalled {
 		b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
+	} else if m.shellInfo.RCPath != "" {
+		b.WriteString(cross(fmt.Sprintf("Shell wrapper not installed (%s)", m.shellInfo.Name)))
+		b.WriteString(dimStyle.Render("  · Sending prompts from your phone requires the shell wrapper"))
+		b.WriteString("\n")
 	}
 	for _, e := range m.editors {
 		if e.Configured {
