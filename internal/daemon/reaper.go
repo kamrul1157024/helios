@@ -6,14 +6,11 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tmux"
 )
-
-const staleThreshold = 2 * time.Minute
 
 // reapStaleSessions marks sessions as stale when they appear dead,
 // and backfills last_user_message for sessions missing it.
@@ -43,73 +40,19 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 			}
 		}
 
-		switch sess.Status {
-		case "terminated":
-			// Clean up any lingering tmux pane left over from before this logic existed.
-			if sess.TmuxPane == nil || *sess.TmuxPane == "" {
-				continue
-			}
-			if hasPane(*sess.TmuxPane) {
-				tc.KillPane(*sess.TmuxPane)
-			}
-			db.ClearSessionTmuxPane(sess.SessionID)
-			log.Printf("reaper: cleared orphaned pane %s for terminated session %s",
-				*sess.TmuxPane, sess.SessionID)
-			continue
-
-		case "compacting":
-			// Compaction can take 5-6 minutes — only check pane liveness
-			if sess.TmuxPane == nil || *sess.TmuxPane == "" {
-				continue
-			}
-			if hasPane(*sess.TmuxPane) {
-				continue
-			}
-
-		case "active", "waiting_permission":
-			// Check pane content — if Claude is showing the idle prompt with no
-			// spinner, the generation finished but the stop hook didn't fire.
-			if sess.TmuxPane != nil && *sess.TmuxPane != "" && hasPane(*sess.TmuxPane) {
-				if content, err := tc.CapturePane(*sess.TmuxPane); err == nil {
-					if claudeIsIdle(content) {
-						db.UpdateSessionStatus(sess.SessionID, "idle", "PaneIdleDetected")
-						sse.Broadcast(server.SSEEvent{
-							Type: "session_status",
-							Data: map[string]interface{}{
-								"session_id": sess.SessionID,
-								"status":     "idle",
-							},
-						})
-						log.Printf("reaper: detected idle pane for session %s, updated to idle", sess.SessionID)
-						continue
-					}
-				}
-			}
-
-			// Time-based + pane check
-			if sess.LastEventAt == nil {
-				continue
-			}
-			lastEvent, err := time.Parse(time.RFC3339, *sess.LastEventAt)
-			if err != nil {
-				continue
-			}
-			if time.Since(lastEvent) < staleThreshold {
-				continue
-			}
-			if sess.TmuxPane != nil && *sess.TmuxPane != "" {
-				if hasPane(*sess.TmuxPane) {
-					continue
-				}
-			}
-
-		default:
+		if sess.Status == "terminated" {
 			continue
 		}
 
 		if sess.TmuxPane != nil && *sess.TmuxPane != "" {
+			if hasPane(*sess.TmuxPane) {
+				continue
+			}
 			tc.KillPane(*sess.TmuxPane)
+			db.ClearSessionTmuxPane(sess.SessionID)
+			log.Printf("reaper: cleared dead pane %s for session %s", *sess.TmuxPane, sess.SessionID)
 		}
+
 		db.UpdateSessionStatus(sess.SessionID, "terminated", "StaleReaper")
 		sse.Broadcast(server.SSEEvent{
 			Type: "session_status",
@@ -118,9 +61,7 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 				"status":     "terminated",
 			},
 		})
-
-		log.Printf("reaper: terminated stale session %s (status was %s)",
-			sess.SessionID, sess.Status)
+		log.Printf("reaper: terminated session %s (status was %s)", sess.SessionID, sess.Status)
 	}
 }
 
