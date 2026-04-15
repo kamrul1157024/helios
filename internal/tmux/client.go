@@ -193,6 +193,21 @@ func (c *Client) ResizePane(paneID string, width int) error {
 	return exec.Command(c.tmuxCmd(), "resize-pane", "-t", paneID, "-x", fmt.Sprintf("%d", width)).Run()
 }
 
+// SendResizeSignal sends SIGWINCH to the process in a pane to force terminal size refresh.
+func (c *Client) SendResizeSignal(paneID string) error {
+	// Get pane PID
+	out, err := exec.Command(c.tmuxCmd(), "display-message", "-t", paneID, "-p", "#{pane_pid}").Output()
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return err
+	}
+	// Send SIGWINCH (window change signal)
+	return exec.Command("kill", "-WINCH", fmt.Sprintf("%d", pid)).Run()
+}
+
 // SelectPane makes the given pane the active pane in its window.
 func (c *Client) SelectPane(paneID string) error {
 	return exec.Command(c.tmuxCmd(), "select-pane", "-t", paneID).Run()

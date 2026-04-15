@@ -26,12 +26,13 @@ type ReportEvent struct {
 
 // HookContext provides everything a hook handler needs without importing server.
 type HookContext struct {
-	DB               *store.Store
-	Mgr              *notifications.Manager
-	Tmux             *tmux.Client
-	Notify           func(eventType string, data interface{}) // SSE broadcast
-	RemovePendingPane func(cwd string) string                 // remove pane from pending map by CWD, returns pane ID
-	Report           func(event ReportEvent)                     // push event to Reporter for narration
+	DB                *store.Store
+	Mgr               *notifications.Manager
+	Tmux              *tmux.Client
+	PaneMap           *tmux.PaneMap
+	Notify            func(eventType string, data interface{}) // SSE broadcast
+	RemovePendingPane func(cwd string) string                  // remove pane from pending map by CWD, returns pane ID
+	Report            func(event ReportEvent)                  // push event to Reporter for narration
 }
 
 // HookHandler processes an incoming hook request and writes the response.

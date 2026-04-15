@@ -21,11 +21,10 @@ type Session struct {
 	LastUserMessage *string `json:"last_user_message,omitempty"`
 	Pinned          bool    `json:"pinned"`
 	Archived        bool    `json:"archived"`
-	TmuxPane             *string `json:"tmux_pane,omitempty"`
-	TmuxPID              *int    `json:"tmux_pid,omitempty"`
-	CreatedAt            string  `json:"created_at"`
-	EndedAt              *string `json:"ended_at,omitempty"`
-	SupportsPromptQueue  bool    `json:"supports_prompt_queue"`
+	TmuxPane            *string `json:"tmux_pane,omitempty"` // injected from PaneMap, not stored in DB
+	CreatedAt           string  `json:"created_at"`
+	EndedAt             *string `json:"ended_at,omitempty"`
+	SupportsPromptQueue bool    `json:"supports_prompt_queue"`
 }
 
 // Label returns the session's display label: title, or truncated last user message, or "".
@@ -48,7 +47,7 @@ func (s *Session) Label(maxLen int) string {
 }
 
 // ComputePromptQueue sets SupportsPromptQueue based on provider capabilities and tmux state.
-// providerSupportsQueue should come from provider.GetCapabilities(source).PromptQueue.
+// TmuxPane must be injected from PaneMap before calling this.
 func (s *Session) ComputePromptQueue(providerSupportsQueue bool) {
 	s.SupportsPromptQueue = providerSupportsQueue && s.TmuxPane != nil && *s.TmuxPane != ""
 }
@@ -72,8 +71,8 @@ func (s *Store) UpsertSession(sess *Session) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, tmux_pane, tmux_pid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -82,12 +81,9 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   model = COALESCE(excluded.model, sessions.model),
 		   status = excluded.status,
 		   last_event = excluded.last_event,
-		   last_event_at = excluded.last_event_at,
-		   tmux_pane = COALESCE(sessions.tmux_pane, excluded.tmux_pane),
-		   tmux_pid = COALESCE(sessions.tmux_pid, excluded.tmux_pid)`,
+		   last_event_at = excluded.last_event_at`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
 		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
-		sess.TmuxPane, sess.TmuxPID,
 	)
 	return err
 }
@@ -101,11 +97,11 @@ func (s *Store) InsertDiscoveredSession(sess *Session) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, last_user_message, tmux_pane, tmux_pid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, last_user_message)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
 		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, sess.LastEventAt,
-		sess.LastUserMessage, sess.TmuxPane, sess.TmuxPID,
+		sess.LastUserMessage,
 	)
 	return err
 }
@@ -117,7 +113,7 @@ func (s *Store) UpdateSessionStatus(sessionID, status, event string) error {
 	query := `UPDATE sessions SET status = ?, last_event = ?, last_event_at = ?`
 
 	if status == "terminated" {
-		query += `, ended_at = ?, tmux_pane = NULL, tmux_pid = NULL`
+		query += `, ended_at = ?`
 		args = append(args, now)
 	}
 
@@ -146,36 +142,17 @@ func (s *Store) UpdateSessionTranscriptPath(sessionID, path string) error {
 	return err
 }
 
-// UpdateSessionTmuxPane sets the tmux pane ID for a session.
-func (s *Store) UpdateSessionTmuxPane(sessionID, paneID string, pid int) error {
-	_, err := s.db.Exec(
-		`UPDATE sessions SET tmux_pane = ?, tmux_pid = ? WHERE session_id = ?`,
-		paneID, pid, sessionID,
-	)
-	return err
-}
-
-// ClearSessionTmuxPane nullifies the tmux pane and pid for a session.
-func (s *Store) ClearSessionTmuxPane(sessionID string) error {
-	_, err := s.db.Exec(
-		`UPDATE sessions SET tmux_pane = NULL, tmux_pid = NULL WHERE session_id = ?`,
-		sessionID,
-	)
-	return err
-}
-
 // GetSession retrieves a session by ID.
 func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 		        last_event, last_event_at, last_user_message, pinned, archived,
-		        tmux_pane, tmux_pid, created_at, ended_at
+		        created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
-		&sess.TmuxPane, &sess.TmuxPID,
 		&sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -230,7 +207,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_user_message, pinned, archived,
-	        tmux_pane, tmux_pid, created_at, ended_at
+	        created_at, ended_at
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -249,7 +226,6 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
-			&sess.TmuxPane, &sess.TmuxPID,
 			&sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}

@@ -95,9 +95,7 @@ func DiscoverClaudeSessions(db *store.Store, tmuxClient *tmux.Client) {
 			}
 
 			// Check if this session is currently running in tmux
-			if pane, ok := runningPanes[sess.CWD]; ok {
-				sess.TmuxPane = &pane.PaneID
-				sess.TmuxPID = &pane.ClaudePID
+			if _, ok := runningPanes[sess.CWD]; ok {
 				sess.Status = "idle" // conservative — hooks will correct this
 			}
 

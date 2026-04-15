@@ -12,56 +12,37 @@ import (
 	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
-// reapStaleSessions marks sessions as stale when they appear dead,
-// and backfills last_user_message for sessions missing it.
-func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcaster) {
+// reapStaleSessions sweeps dead panes from the PaneMap, marks sessions as
+// terminated, and backfills last_user_message from transcripts.
+func reapStaleSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
+	// Sweep dead panes — single live-panes fetch, O(map) sweep.
+	dead := tc.SweepDeadPanes(pm)
+	for _, sessionID := range dead {
+		db.UpdateSessionStatus(sessionID, "terminated", "StaleReaper")
+		sse.Broadcast(server.SSEEvent{
+			Type: "session_status",
+			Data: map[string]interface{}{
+				"session_id": sessionID,
+				"status":     "terminated",
+			},
+		})
+		log.Printf("reaper: terminated session %s (pane died)", sessionID)
+	}
+
+	// Backfill last_user_message from transcripts.
 	sessions, err := db.ListSessions()
 	if err != nil {
 		return
 	}
-
-	// Fetch all live pane IDs once — avoids one subprocess call per session.
-	livePanes := tc.LivePanes()
-	hasPane := func(id string) bool {
-		if livePanes == nil {
-			return false
-		}
-		_, ok := livePanes[id]
-		return ok
-	}
-
 	for _, sess := range sessions {
-		// Backfill last_user_message from transcript
-		if sess.TranscriptPath != nil && *sess.TranscriptPath != "" {
-			if msg := lastUserMessageFromTranscript(*sess.TranscriptPath); msg != "" {
-				if sess.LastUserMessage == nil || *sess.LastUserMessage != msg {
-					db.UpdateSessionLastUserMessage(sess.SessionID, msg)
-				}
-			}
-		}
-
-		if sess.Status == "terminated" {
+		if sess.TranscriptPath == nil || *sess.TranscriptPath == "" {
 			continue
 		}
-
-		if sess.TmuxPane != nil && *sess.TmuxPane != "" {
-			if hasPane(*sess.TmuxPane) {
-				continue
+		if msg := lastUserMessageFromTranscript(*sess.TranscriptPath); msg != "" {
+			if sess.LastUserMessage == nil || *sess.LastUserMessage != msg {
+				db.UpdateSessionLastUserMessage(sess.SessionID, msg)
 			}
-			tc.KillPane(*sess.TmuxPane)
-			db.ClearSessionTmuxPane(sess.SessionID)
-			log.Printf("reaper: cleared dead pane %s for session %s", *sess.TmuxPane, sess.SessionID)
 		}
-
-		db.UpdateSessionStatus(sess.SessionID, "terminated", "StaleReaper")
-		sse.Broadcast(server.SSEEvent{
-			Type: "session_status",
-			Data: map[string]interface{}{
-				"session_id": sess.SessionID,
-				"status":     "terminated",
-			},
-		})
-		log.Printf("reaper: terminated session %s (status was %s)", sess.SessionID, sess.Status)
 	}
 }
 

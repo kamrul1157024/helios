@@ -536,6 +536,8 @@ func (m *SessionsModel) openTab(sess sessionInfo) {
 			cols = 30
 		}
 		m.tmux.ResizePane(m.myPaneID, cols)
+		// Force BubbleTea to re-query terminal size after pane resize
+		m.tmux.SendResizeSignal(m.myPaneID)
 	}
 	m.tmux.SelectPane(m.myPaneID)
 }

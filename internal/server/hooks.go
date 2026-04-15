@@ -41,9 +41,8 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 }
 
 // enrichNotification adds tmux_pane to a notification SSE event by looking
-// up the session associated with the notification.
+// up the session in the PaneMap.
 func enrichNotification(shared *Shared, data interface{}) interface{} {
-	// Marshal→unmarshal to get a plain map we can augment.
 	b, err := json.Marshal(data)
 	if err != nil {
 		return data
@@ -56,20 +55,19 @@ func enrichNotification(shared *Shared, data interface{}) interface{} {
 	if sessionID == "" {
 		return m
 	}
-	sess, err := shared.DB.GetSession(sessionID)
-	if err != nil || sess == nil || sess.TmuxPane == nil {
-		return m
+	if paneID, ok := shared.PaneMap.Get(sessionID); ok {
+		m["tmux_pane"] = paneID
 	}
-	m["tmux_pane"] = *sess.TmuxPane
 	return m
 }
 
 // hookContext builds a provider.HookContext from the shared state.
 func (s *InternalServer) hookContext() *provider.HookContext {
 	return &provider.HookContext{
-		DB:   s.shared.DB,
-		Mgr:  s.shared.Mgr,
-		Tmux: s.shared.Tmux,
+		DB:      s.shared.DB,
+		Mgr:     s.shared.Mgr,
+		Tmux:    s.shared.Tmux,
+		PaneMap: s.shared.PaneMap,
 		Notify: func(eventType string, data interface{}) {
 			if eventType == "notification" {
 				data = enrichNotification(s.shared, data)

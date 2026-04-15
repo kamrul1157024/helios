@@ -180,15 +180,17 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
+	// Build pane map at startup so API has pane info immediately.
+	go shared.Tmux.RebuildPaneMap(shared.PaneMap)
+
 	// Periodic stale session reaper
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
-		tmuxClient := tmux.NewClient()
 		for {
 			select {
 			case <-ticker.C:
-				reapStaleSessions(db, tmuxClient, shared.SSE)
+				reapStaleSessions(db, shared.Tmux, shared.PaneMap, shared.SSE)
 			case <-ctx.Done():
 				return
 			}

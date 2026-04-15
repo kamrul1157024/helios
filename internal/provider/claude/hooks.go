@@ -498,18 +498,15 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	}
 	ctx.DB.UpsertSession(sess)
 
-	// Check if pane was already mapped at launch time (via --session-id).
+	// Resolve pane: check PaneMap first (set by helios wrap), fallback to PendingPanes.
 	var paneID string
-	existing, _ := ctx.DB.GetSession(input.SessionID)
-	if existing != nil && existing.TmuxPane != nil && *existing.TmuxPane != "" {
-		paneID = *existing.TmuxPane
-	} else {
-		// Fallback: try pending panes for non-helios launches.
-		if ctx.RemovePendingPane != nil {
-			paneID = ctx.RemovePendingPane(input.CWD)
-		}
-		if paneID != "" {
-			ctx.DB.UpdateSessionTmuxPane(input.SessionID, paneID, 0)
+	if ctx.PaneMap != nil {
+		paneID, _ = ctx.PaneMap.Get(input.SessionID)
+	}
+	if paneID == "" && ctx.RemovePendingPane != nil {
+		paneID = ctx.RemovePendingPane(input.CWD)
+		if paneID != "" && ctx.PaneMap != nil {
+			ctx.PaneMap.Set(input.SessionID, paneID)
 		}
 	}
 
@@ -546,12 +543,16 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		return
 	}
 
+	// SessionEnd fires on process exit AND on /clear command.
+	// Remove from PaneMap and mark terminated — reaper is the safety net for
+	// crashes. For /clear, SessionStart fires immediately after and repopulates
+	// PaneMap with the same pane.
+	if ctx.PaneMap != nil {
+		ctx.PaneMap.Delete(input.SessionID)
+	}
 	ctx.DB.UpdateSessionStatus(input.SessionID, "terminated", "SessionEnd")
-	killSessionWindow(ctx, input.SessionID)
-
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
-		"cwd":        input.CWD,
 		"status":     "terminated",
 	})
 
@@ -851,27 +852,32 @@ func updateSessionTranscript(ctx *provider.HookContext, input *hookInput) {
 
 // renameSessionWindow renames the tmux window for a session based on its status.
 func renameSessionWindow(ctx *provider.HookContext, sessionID, status, cwd string) {
-	if ctx.Tmux == nil {
+	if ctx.Tmux == nil || ctx.PaneMap == nil {
+		return
+	}
+	paneID, ok := ctx.PaneMap.Get(sessionID)
+	if !ok {
 		return
 	}
 	sess, _ := ctx.DB.GetSession(sessionID)
-	if sess == nil || sess.TmuxPane == nil || *sess.TmuxPane == "" {
-		return
+	label := ""
+	if sess != nil {
+		label = sess.Label(30)
 	}
-	name := tmux.WindowName(status, cwd, sess.Label(30))
-	ctx.Tmux.RenameWindow(*sess.TmuxPane, name)
+	name := tmux.WindowName(status, cwd, label)
+	ctx.Tmux.RenameWindow(paneID, name)
 }
 
 // killSessionWindow kills the tmux window for a session.
 func killSessionWindow(ctx *provider.HookContext, sessionID string) {
-	if ctx.Tmux == nil {
+	if ctx.Tmux == nil || ctx.PaneMap == nil {
 		return
 	}
-	sess, _ := ctx.DB.GetSession(sessionID)
-	if sess == nil || sess.TmuxPane == nil || *sess.TmuxPane == "" {
+	paneID, ok := ctx.PaneMap.Get(sessionID)
+	if !ok {
 		return
 	}
-	ctx.Tmux.KillPane(*sess.TmuxPane)
+	ctx.Tmux.KillPane(paneID)
 }
 
 func strPtr(s string) *string {

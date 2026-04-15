@@ -20,6 +20,7 @@ type Shared struct {
 	SSE          *SSEBroadcaster
 	Tmux         *tmux.Client
 	PendingPanes *PendingPaneMap
+	PaneMap      *tmux.PaneMap
 	Reporter     *reporter.Reporter
 }
 
@@ -37,6 +38,13 @@ type PublicServer struct {
 	shared     *Shared
 }
 
+// injectPane enriches a session with its current pane ID from the live PaneMap.
+func (sh *Shared) injectPane(sess *store.Session) {
+	if paneID, ok := sh.PaneMap.Get(sess.SessionID); ok {
+		sess.TmuxPane = &paneID
+	}
+}
+
 func NewShared(db *store.Store, mgr *notifications.Manager) *Shared {
 	return &Shared{
 		DB:           db,
@@ -44,6 +52,7 @@ func NewShared(db *store.Store, mgr *notifications.Manager) *Shared {
 		SSE:          NewSSEBroadcaster(),
 		Tmux:         tmux.NewClient(),
 		PendingPanes: NewPendingPaneMap(),
+		PaneMap:      tmux.NewPaneMap(),
 		Reporter:     reporter.New("claude", db),
 	}
 }

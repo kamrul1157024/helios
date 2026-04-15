@@ -575,6 +575,10 @@ func handleWrap(args []string) {
 		cfg, _ := daemon.LoadConfig()
 		internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 
+		if paneID != "" && sessionID != "" {
+			// Tag pane with session ID in tmux memory for PaneMap reconstruction.
+			tc.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
+		}
 		if paneID != "" {
 			body, _ := json.Marshal(map[string]string{
 				"pane_id":    paneID,
@@ -614,6 +618,11 @@ func handleWrap(args []string) {
 		fmt.Fprintf(os.Stderr, "Failed to create tmux session: %v\n", err)
 		fmt.Fprintln(os.Stderr, "Is tmux installed? brew install tmux")
 		os.Exit(1)
+	}
+
+	// Tag pane with session ID in tmux memory for PaneMap reconstruction.
+	if sessionID != "" {
+		tc.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
 	}
 
 	// Notify the daemon about this pane so it can track it

@@ -333,6 +333,7 @@ func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for i := range sessions {
+		s.shared.injectPane(&sessions[i])
 		enrichSession(&sessions[i])
 	}
 
@@ -365,6 +366,7 @@ func (s *PublicServer) handleGetSession(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
+	s.shared.injectPane(session)
 	enrichSession(session)
 
 	// Get pending permission count for this session
@@ -470,19 +472,19 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	log.Printf("session-send: session=%s status=%s tmux_pane=%v", id, session.Status, session.TmuxPane)
+	paneID, hasPane := s.shared.PaneMap.Get(id)
+	log.Printf("session-send: session=%s status=%s pane=%s", id, session.Status, paneID)
 
 	if session.Status == "active" || session.Status == "waiting_permission" {
-		// Provider supports prompt queue via tmux send-keys
 		caps := provider.GetCapabilities(session.Source)
-		if caps.PromptQueue && session.TmuxPane != nil && *session.TmuxPane != "" {
-			if err := s.shared.Tmux.SendKeys(*session.TmuxPane, req.Message); err != nil {
-				log.Printf("session-send: queue SendKeys failed for pane %s: %v", *session.TmuxPane, err)
+		if caps.PromptQueue && hasPane {
+			if err := s.shared.Tmux.SendKeys(paneID, req.Message); err != nil {
+				log.Printf("session-send: queue SendKeys failed for pane %s: %v", paneID, err)
 				jsonError(w, fmt.Sprintf("failed to queue: %v", err), http.StatusInternalServerError)
 				return
 			}
 			s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-			log.Printf("session-send: queued prompt to pane %s for session %s", *session.TmuxPane, id)
+			log.Printf("session-send: queued prompt to pane %s for session %s", paneID, id)
 			jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "queued": true})
 			return
 		}
@@ -500,33 +502,33 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Session is idle — send keys to existing tmux pane
-	if session.TmuxPane == nil || *session.TmuxPane == "" {
+	if !hasPane {
 		log.Printf("session-send: session %s is idle but has no tmux pane, resuming", id)
-		// No tmux pane — resume the session in a new pane with the prompt
 		cmd := fmt.Sprintf("claude --resume %s -p %q", session.SessionID, req.Message)
-		paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
+		newPaneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
 		if err != nil {
 			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
 			return
 		}
-		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
+		s.shared.PaneMap.Set(id, newPaneID)
+		s.shared.Tmux.SetPaneSessionID(newPaneID, id) //nolint:errcheck
 		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
 		s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
-			"success": true, "resumed": true, "tmux_pane": paneID,
+			"success": true, "resumed": true, "tmux_pane": newPaneID,
 		})
 		return
 	}
 
-	if err := s.shared.Tmux.SendKeys(*session.TmuxPane, req.Message); err != nil {
-		log.Printf("session-send: SendKeys failed for pane %s: %v", *session.TmuxPane, err)
+	if err := s.shared.Tmux.SendKeys(paneID, req.Message); err != nil {
+		log.Printf("session-send: SendKeys failed for pane %s: %v", paneID, err)
 		jsonError(w, fmt.Sprintf("failed to send: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
 	s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-	log.Printf("session-send: sent keys to pane %s for session %s", *session.TmuxPane, id)
+	log.Printf("session-send: sent keys to pane %s for session %s", paneID, id)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -546,14 +548,15 @@ func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if session.TmuxPane == nil || *session.TmuxPane == "" {
+	paneID, ok := sh.PaneMap.Get(id)
+	if !ok {
 		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
 			"success": false, "error": "no_tmux_pane",
 		})
 		return
 	}
 
-	if err := sh.Tmux.SendEscape(*session.TmuxPane); err != nil {
+	if err := sh.Tmux.SendEscape(paneID); err != nil {
 		jsonError(w, fmt.Sprintf("failed to stop: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -575,16 +578,18 @@ func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if session.TmuxPane == nil || *session.TmuxPane == "" {
+	paneID, ok := sh.PaneMap.Get(id)
+	if !ok {
 		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
 			"success": false, "error": "no_tmux_pane",
 		})
 		return
 	}
 
-	if err := sh.Tmux.KillPane(*session.TmuxPane); err != nil {
-		log.Printf("terminate: kill window %s: %v", *session.TmuxPane, err)
+	if err := sh.Tmux.KillPane(paneID); err != nil {
+		log.Printf("terminate: kill pane %s: %v", paneID, err)
 	}
+	sh.PaneMap.Delete(id)
 	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
 	sh.SSE.Broadcast(SSEEvent{
 		Type: "session_status",
@@ -620,7 +625,8 @@ func (sh *Shared) resumeSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	sh.DB.UpdateSessionTmuxPane(id, paneID, 0)
+	sh.PaneMap.Set(id, paneID)
+	sh.Tmux.SetPaneSessionID(paneID, id) //nolint:errcheck
 	sh.DB.UpdateSessionStatus(id, "idle", "Resume")
 
 	sh.SSE.Broadcast(SSEEvent{
@@ -773,6 +779,7 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 		return
 	}
 	for i := range sessions {
+		s.shared.injectPane(&sessions[i])
 		enrichSession(&sessions[i])
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -824,17 +831,18 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Write session→pane mapping to DB immediately.
+	// Register session in DB and PaneMap immediately.
 	event := "Launch"
 	sess := &store.Session{
 		SessionID: sessionID,
 		Source:    "claude",
 		CWD:       req.CWD,
-		TmuxPane:  &paneID,
 		Status:    "starting",
 		LastEvent: &event,
 	}
 	s.shared.DB.UpsertSession(sess)
+	s.shared.PaneMap.Set(sessionID, paneID)
+	s.shared.Tmux.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
 
 	// Keep PendingPanes for trust prompt detection.
 	s.shared.PendingPanes.Add(paneID, req.CWD)
@@ -858,19 +866,18 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If session_id provided, write session→pane mapping to DB immediately.
+	// If session_id provided, register session→pane mapping immediately.
 	if req.SessionID != "" {
-		paneID := req.PaneID
 		event := "Wrap"
 		sess := &store.Session{
 			SessionID: req.SessionID,
 			Source:    "claude",
 			CWD:       req.CWD,
-			TmuxPane:  &paneID,
 			Status:    "starting",
 			LastEvent: &event,
 		}
 		s.shared.DB.UpsertSession(sess)
+		s.shared.PaneMap.Set(req.SessionID, req.PaneID)
 	}
 
 	// Keep PendingPanes for trust prompt detection in pane_watcher.
@@ -1373,17 +1380,18 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Write session→pane mapping to DB immediately.
+	// Register session in DB and PaneMap immediately.
 	event := "Launch"
 	sess := &store.Session{
 		SessionID: sessionID,
 		Source:    "claude",
 		CWD:       req.CWD,
-		TmuxPane:  &paneID,
 		Status:    "starting",
 		LastEvent: &event,
 	}
 	s.shared.DB.UpsertSession(sess)
+	s.shared.PaneMap.Set(sessionID, paneID)
+	s.shared.Tmux.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
 
 	// Keep PendingPanes for trust prompt detection.
 	s.shared.PendingPanes.Add(paneID, req.CWD)

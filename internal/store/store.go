@@ -63,8 +63,6 @@ func (s *Store) migrate() error {
 			last_user_message TEXT,
 			pinned INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
-			tmux_pane TEXT,
-			tmux_pid INTEGER,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			ended_at TEXT
 		)`,
@@ -136,6 +134,8 @@ func (s *Store) migrate() error {
 		{"add_sessions_archived", `ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
 		{"add_sessions_title", `ALTER TABLE sessions ADD COLUMN title TEXT`},
 		{"create_settings_table", `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`},
+		{"drop_sessions_tmux_pane", `ALTER TABLE sessions DROP COLUMN tmux_pane`},
+		{"drop_sessions_tmux_pid", `ALTER TABLE sessions DROP COLUMN tmux_pid`},
 	}
 
 	for _, cm := range columnMigrations {
