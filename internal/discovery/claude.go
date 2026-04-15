@@ -195,7 +195,7 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 		Source:    "claude",
 		CWD:       cwd,
 		Project:   filepath.Base(cwd),
-		Status:    "ended", // default — assume ended unless tmux says otherwise
+		Status:    "terminated", // default — assume terminated unless tmux says otherwise
 		LastEvent: strPtr("Discovered"),
 	}
 
