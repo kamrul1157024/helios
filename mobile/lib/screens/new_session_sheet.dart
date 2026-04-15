@@ -12,7 +12,6 @@ class NewSessionSheet extends StatefulWidget {
 }
 
 class _NewSessionSheetState extends State<NewSessionSheet> {
-  final _promptController = TextEditingController();
   final _cwdController = TextEditingController();
 
   String? _selectedHostId;
@@ -91,8 +90,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   }
 
   Future<void> _createSession() async {
-    final prompt = _promptController.text.trim();
-    if (prompt.isEmpty || _selectedProvider == null) return;
+    if (_selectedProvider == null) return;
 
     final sse = _service;
     if (sse == null) return;
@@ -101,7 +99,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     final cwd = _cwdController.text.trim();
     final ok = await sse.createSession(
       provider: _selectedProvider!.id,
-      prompt: prompt,
       model: _selectedModel?.id,
       cwd: cwd.isNotEmpty ? cwd : null,
       dangerouslySkipPermissions: _skipPermissions,
@@ -124,7 +121,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
 
   @override
   void dispose() {
-    _promptController.dispose();
     _cwdController.dispose();
     super.dispose();
   }
@@ -182,24 +178,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           _buildModelRow(theme),
           const SizedBox(height: 16),
 
-          // Prompt field
-          TextField(
-            controller: _promptController,
-            maxLines: 4,
-            minLines: 2,
-            textInputAction: TextInputAction.newline,
-            decoration: InputDecoration(
-              labelText: 'Prompt',
-              hintText: 'What should Claude work on?',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              alignLabelWithHint: true,
-            ),
-            style: const TextStyle(fontSize: 14),
-          ),
-          const SizedBox(height: 16),
-
           // CWD section
           _buildCwdSection(theme),
           const SizedBox(height: 16),
@@ -229,9 +207,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             width: double.infinity,
             height: 48,
             child: FilledButton(
-              onPressed: _creating || _promptController.text.trim().isEmpty
-                  ? null
-                  : _createSession,
+              onPressed: _creating ? null : _createSession,
               child: _creating
                   ? const SizedBox(
                       width: 20,

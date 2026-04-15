@@ -195,6 +195,11 @@ type sessSSEMsg sessSSEUpdate
 
 type sessRefreshTick time.Time
 
+type sessCreated struct {
+	sess *sessionInfo
+	err  error
+}
+
 // ── Model ──
 
 const maxTabs = 2
@@ -311,6 +316,13 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return sessRefreshTick(t)
 			}),
 		)
+
+	case sessCreated:
+		if msg.err != nil || msg.sess == nil {
+			return m, nil
+		}
+		m.openTab(*msg.sess)
+		return m, fetchSessions(m.client)
 	}
 
 	if m.searching {
@@ -404,6 +416,17 @@ func (m *SessionsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.loading = true
 		return m, fetchSessions(m.client)
+
+	case "n":
+		cwd := ""
+		if m.cursor < len(m.filtered) {
+			cwd = m.sessions[m.filtered[m.cursor]].CWD
+		}
+		cl := m.client
+		return m, func() tea.Msg {
+			sess, err := cl.sessionCreate(cwd)
+			return sessCreated{sess: sess, err: err}
+		}
 
 	case "c":
 		m.scheme = nextScheme(m.scheme)

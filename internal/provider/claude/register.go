@@ -31,7 +31,9 @@ func Register() {
 			if model != "" {
 				cmd += fmt.Sprintf(" --model %s", model)
 			}
-			cmd += fmt.Sprintf(" %q", prompt)
+			if prompt != "" {
+				cmd += fmt.Sprintf(" %q", prompt)
+			}
 			return cmd
 		},
 		// ModelsFetcher

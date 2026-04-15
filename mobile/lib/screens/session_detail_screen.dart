@@ -1162,20 +1162,21 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   ),
                 ),
               const SizedBox(width: 8),
-              if (session.canStop)
+              if (session.canStop) ...[
                 IconButton.filled(
                   onPressed: _stop,
                   style: IconButton.styleFrom(backgroundColor: theme.colorScheme.errorContainer),
                   icon: Icon(Icons.stop, size: 20, color: theme.colorScheme.onErrorContainer),
                   tooltip: 'Stop generation',
-                )
-              else
-                IconButton.filled(
-                  onPressed: canSend && !_sending ? _sendPrompt : null,
-                  icon: _sending
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.send, size: 20),
                 ),
+                const SizedBox(width: 6),
+              ],
+              IconButton.filled(
+                onPressed: canSend && !_sending ? _sendPrompt : null,
+                icon: _sending
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send, size: 20),
+              ),
             ],
           ),
         ],

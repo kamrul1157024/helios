@@ -34,6 +34,19 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 		}
 
 		switch sess.Status {
+		case "terminated":
+			// Clean up any lingering tmux pane left over from before this logic existed.
+			if sess.TmuxPane == nil || *sess.TmuxPane == "" {
+				continue
+			}
+			if tc.HasPane(*sess.TmuxPane) {
+				tc.KillWindow(*sess.TmuxPane)
+			}
+			db.ClearSessionTmuxPane(sess.SessionID)
+			log.Printf("reaper: cleared orphaned pane %s for terminated session %s",
+				*sess.TmuxPane, sess.SessionID)
+			continue
+
 		case "compacting":
 			// Compaction can take 5-6 minutes — only check pane liveness
 			if sess.TmuxPane == nil || *sess.TmuxPane == "" {

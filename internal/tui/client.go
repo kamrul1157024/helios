@@ -209,6 +209,29 @@ func (c *client) sessionsList() (*sessionsListResponse, error) {
 	return &r, nil
 }
 
+func (c *client) sessionCreate(cwd string) (*sessionInfo, error) {
+	body, _ := json.Marshal(map[string]string{"cwd": cwd})
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/sessions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r struct {
+		SessionID string `json:"session_id"`
+		TmuxPane  string `json:"tmux_pane"`
+		CWD       string `json:"cwd"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	return &sessionInfo{
+		SessionID: r.SessionID,
+		CWD:       r.CWD,
+		TmuxPane:  &r.TmuxPane,
+		Status:    "starting",
+	}, nil
+}
+
 func (c *client) sessionStop(sessionID string) error {
 	resp, err := c.httpClient.Post(c.baseURL+"/internal/sessions/"+sessionID+"/stop", "application/json", bytes.NewReader([]byte("{}")))
 	if err != nil {

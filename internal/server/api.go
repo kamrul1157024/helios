@@ -788,8 +788,8 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		CWD                      string `json:"cwd"`
 		DangerouslySkipPermissions bool  `json:"dangerously_skip_permissions,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
-		jsonError(w, "missing prompt", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -1340,10 +1340,6 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if req.Prompt == "" {
-		jsonError(w, "missing prompt", http.StatusBadRequest)
 		return
 	}
 	if req.Provider == "" {

@@ -738,7 +738,6 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<bool> createSession({
     required String provider,
-    required String prompt,
     String? model,
     String? cwd,
     bool dangerouslySkipPermissions = false,
@@ -746,7 +745,6 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final body = <String, dynamic>{
         'provider': provider,
-        'prompt': prompt,
       };
       if (model != null && model.isNotEmpty) body['model'] = model;
       if (cwd != null && cwd.isNotEmpty) body['cwd'] = cwd;

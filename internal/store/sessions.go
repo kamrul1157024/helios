@@ -155,6 +155,15 @@ func (s *Store) UpdateSessionTmuxPane(sessionID, paneID string, pid int) error {
 	return err
 }
 
+// ClearSessionTmuxPane nullifies the tmux pane and pid for a session.
+func (s *Store) ClearSessionTmuxPane(sessionID string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET tmux_pane = NULL, tmux_pid = NULL WHERE session_id = ?`,
+		sessionID,
+	)
+	return err
+}
+
 // GetSession retrieves a session by ID.
 func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
