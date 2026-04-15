@@ -496,4 +496,4 @@ helios resume 1
 
 ## License
 
-MIT
+[Elastic License 2.0 (ELv2)](LICENSE)
