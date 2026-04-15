@@ -218,8 +218,8 @@ func (c *client) sessionStop(sessionID string) error {
 	return nil
 }
 
-func (c *client) sessionSuspend(sessionID string) error {
-	resp, err := c.httpClient.Post(c.baseURL+"/internal/sessions/"+sessionID+"/suspend", "application/json", bytes.NewReader([]byte("{}")))
+func (c *client) sessionTerminate(sessionID string) error {
+	resp, err := c.httpClient.Post(c.baseURL+"/internal/sessions/"+sessionID+"/terminate", "application/json", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return err
 	}

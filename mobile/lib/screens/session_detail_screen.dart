@@ -278,8 +278,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     await _sse?.stopSession(widget.session.sessionId);
   }
 
-  Future<void> _suspend() async {
-    await _sse?.suspendSession(widget.session.sessionId);
+  Future<void> _terminate() async {
+    await _sse?.terminateSession(widget.session.sessionId);
   }
 
   Future<void> _resume() async {
@@ -636,7 +636,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       ),
     );
 
-    if (!session.hasTmux && !session.isEnded) {
+    if (!session.hasTmux && !session.isTerminated) {
       actions.add(
         IconButton(
           icon: Icon(Icons.warning_amber, color: Colors.amber.shade700),
@@ -646,22 +646,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       );
     }
 
-    if (session.canStop) {
+    if (session.canTerminate) {
       actions.add(
         IconButton(
-          icon: const Icon(Icons.stop),
-          tooltip: 'Stop (Escape)',
-          onPressed: _stop,
-        ),
-      );
-    }
-
-    if (session.canSuspend) {
-      actions.add(
-        IconButton(
-          icon: const Icon(Icons.pause),
-          tooltip: 'Suspend (Ctrl+C)',
-          onPressed: _suspend,
+          icon: const Icon(Icons.close),
+          tooltip: 'Terminate session',
+          onPressed: _terminate,
         ),
       );
     }
@@ -968,6 +958,40 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     final theme = Theme.of(context);
     final hasCommands = (_sse?.commands ?? []).isNotEmpty;
 
+    if (session.isTerminated) {
+      return Container(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 8,
+          top: 12,
+          bottom: MediaQuery.of(context).padding.bottom + 12,
+        ),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border(
+            top: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.stop_circle_outlined, size: 18, color: theme.colorScheme.outline),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Session terminated — resume to continue',
+                style: TextStyle(fontSize: 13, color: theme.colorScheme.outline),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              onPressed: _resume,
+              child: const Text('Resume'),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: EdgeInsets.only(
         left: 12,
@@ -1138,12 +1162,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   ),
                 ),
               const SizedBox(width: 8),
-              IconButton.filled(
-                onPressed: canSend && !_sending ? _sendPrompt : null,
-                icon: _sending
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.send, size: 20),
-              ),
+              if (session.canStop)
+                IconButton.filled(
+                  onPressed: _stop,
+                  style: IconButton.styleFrom(backgroundColor: theme.colorScheme.errorContainer),
+                  icon: Icon(Icons.stop, size: 20, color: theme.colorScheme.onErrorContainer),
+                  tooltip: 'Stop generation',
+                )
+              else
+                IconButton.filled(
+                  onPressed: canSend && !_sending ? _sendPrompt : null,
+                  icon: _sending
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.send, size: 20),
+                ),
             ],
           ),
         ],
@@ -1165,11 +1197,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         return Colors.blue;
       case 'error':
         return theme.colorScheme.error;
-      case 'suspended':
-        return Colors.purple;
-      case 'stale':
-        return Colors.grey;
-      case 'ended':
+      case 'terminated':
         return theme.colorScheme.outline;
       default:
         return theme.colorScheme.outline;
@@ -1190,12 +1218,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         return 'Idle';
       case 'error':
         return 'Error';
-      case 'suspended':
-        return 'Suspended';
-      case 'stale':
-        return 'Stale';
-      case 'ended':
-        return 'Ended';
+      case 'terminated':
+        return 'Terminated';
       default:
         return status;
     }

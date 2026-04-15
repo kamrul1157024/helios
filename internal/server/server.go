@@ -72,7 +72,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("POST /internal/wrap", s.handleWrap)
 	mux.HandleFunc("PATCH /internal/sessions/{id}", s.handleInternalPatchSession)
 	mux.HandleFunc("POST /internal/sessions/{id}/stop", s.handleInternalSessionStop)
-	mux.HandleFunc("POST /internal/sessions/{id}/suspend", s.handleInternalSessionSuspend)
+	mux.HandleFunc("POST /internal/sessions/{id}/terminate", s.handleInternalSessionTerminate)
 	mux.HandleFunc("POST /internal/sessions/{id}/resume", s.handleInternalSessionResume)
 	mux.HandleFunc("GET /internal/settings", s.handleInternalGetSettings)
 	mux.HandleFunc("PUT /internal/settings", s.handleInternalUpdateSettings)
@@ -163,8 +163,8 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 			s.handleSessionSend(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/stop"):
 			s.handleSessionStop(w, r)
-		case r.Method == "POST" && strings.HasSuffix(path, "/suspend"):
-			s.handleSessionSuspend(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/terminate"):
+			s.handleSessionTerminate(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
 		case r.Method == "PATCH":

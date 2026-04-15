@@ -614,7 +614,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                                     style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
                                   ),
                                 ),
-                                if (!session.hasTmux && !session.isEnded) ...[
+                                if (!session.hasTmux && !session.isTerminated) ...[
                                   const SizedBox(width: 6),
                                   Tooltip(
                                     message: 'No tmux pane attached',
@@ -793,7 +793,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   }
                 },
               ),
-              if (session.canStop || session.canSuspend || session.canResume) ...[
+              if (session.canStop || session.canTerminate || session.canResume) ...[
                 const Divider(height: 1),
                 if (session.canStop)
                   ListTile(
@@ -804,13 +804,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
                       service?.stopSession(session.sessionId);
                     },
                   ),
-                if (session.canSuspend)
+                if (session.canTerminate)
                   ListTile(
-                    leading: const Icon(Icons.pause),
-                    title: const Text('Suspend'),
+                    leading: const Icon(Icons.close),
+                    title: const Text('Terminate'),
                     onTap: () {
                       Navigator.pop(ctx);
-                      service?.suspendSession(session.sessionId);
+                      service?.terminateSession(session.sessionId);
                     },
                   ),
                 if (session.canResume)
@@ -1074,11 +1074,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return Colors.blue;
       case 'error':
         return theme.colorScheme.error;
-      case 'suspended':
-        return Colors.purple;
-      case 'stale':
-        return Colors.grey;
-      case 'ended':
+      case 'terminated':
         return theme.colorScheme.outline;
       default:
         return theme.colorScheme.outline;
@@ -1099,12 +1095,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return Icons.pause_circle_filled;
       case 'error':
         return Icons.error;
-      case 'suspended':
-        return Icons.stop_circle;
-      case 'stale':
-        return Icons.help_outline;
-      case 'ended':
-        return Icons.check_circle;
+      case 'terminated':
+        return Icons.cancel_outlined;
       default:
         return Icons.circle;
     }
@@ -1124,12 +1116,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return 'Idle';
       case 'error':
         return 'Error';
-      case 'suspended':
-        return 'Suspended';
-      case 'stale':
-        return 'Stale';
-      case 'ended':
-        return 'Ended';
+      case 'terminated':
+        return 'Terminated';
       default:
         return status;
     }

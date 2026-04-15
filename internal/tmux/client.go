@@ -259,11 +259,6 @@ func (c *Client) SendEscape(paneID string) error {
 	return exec.Command(c.tmuxCmd(), "send-keys", "-t", paneID, "Escape").Run()
 }
 
-// Suspend sends Ctrl+C to a pane (kills the Claude process).
-func (c *Client) Suspend(paneID string) error {
-	return exec.Command(c.tmuxCmd(), "send-keys", "-t", paneID, "C-c").Run()
-}
-
 // CapturePane captures the visible content of a pane.
 func (c *Client) CapturePane(paneID string) (string, error) {
 	out, err := exec.Command(c.tmuxCmd(), "capture-pane", "-t", paneID, "-p").Output()

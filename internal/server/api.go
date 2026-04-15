@@ -492,21 +492,9 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if session.Status == "ended" || session.Status == "suspended" {
-		// Resume in a new tmux pane with the user's prompt
-		cmd := fmt.Sprintf("claude --resume %s -p %q", session.SessionID, req.Message)
-		paneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
-		if err != nil {
-			log.Printf("session-send: failed to resume session %s: %v", id, err)
-			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
-			return
-		}
-		s.shared.DB.UpdateSessionTmuxPane(id, paneID, 0)
-		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
-		s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-		log.Printf("session-send: resumed session %s in pane %s", id, paneID)
-		jsonResponse(w, http.StatusOK, map[string]interface{}{
-			"success": true, "resumed": true, "tmux_pane": paneID,
+	if session.Status == "terminated" {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_terminated",
 		})
 		return
 	}
@@ -573,16 +561,16 @@ func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (sh *Shared) suspendSession(w http.ResponseWriter, id string) {
+func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 	session, err := sh.DB.GetSession(id)
 	if err != nil || session == nil {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
 
-	if session.Status == "ended" {
+	if session.Status == "terminated" {
 		jsonResponse(w, http.StatusConflict, map[string]interface{}{
-			"success": false, "error": "session_ended",
+			"success": false, "error": "session_terminated",
 		})
 		return
 	}
@@ -594,22 +582,20 @@ func (sh *Shared) suspendSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if err := sh.Tmux.Suspend(*session.TmuxPane); err != nil {
-		jsonError(w, fmt.Sprintf("failed to suspend: %v", err), http.StatusInternalServerError)
-		return
+	if err := sh.Tmux.KillWindow(*session.TmuxPane); err != nil {
+		log.Printf("terminate: kill window %s: %v", *session.TmuxPane, err)
 	}
-
-	sh.DB.UpdateSessionStatus(id, "suspended", "Suspend")
+	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
 	sh.SSE.Broadcast(SSEEvent{
 		Type: "session_status",
 		Data: map[string]interface{}{
 			"session_id": id,
-			"status":     "suspended",
+			"status":     "terminated",
 		},
 	})
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true, "status": "suspended",
+		"success": true, "status": "terminated",
 	})
 }
 
@@ -657,8 +643,8 @@ func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request)
 	s.shared.stopSession(w, extractSessionID(r.URL.Path, "/stop"))
 }
 
-func (s *PublicServer) handleSessionSuspend(w http.ResponseWriter, r *http.Request) {
-	s.shared.suspendSession(w, extractSessionID(r.URL.Path, "/suspend"))
+func (s *PublicServer) handleSessionTerminate(w http.ResponseWriter, r *http.Request) {
+	s.shared.terminateSession(w, extractSessionID(r.URL.Path, "/terminate"))
 }
 
 func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Request) {
@@ -928,8 +914,8 @@ func (s *InternalServer) handleInternalSessionStop(w http.ResponseWriter, r *htt
 	s.shared.stopSession(w, r.PathValue("id"))
 }
 
-func (s *InternalServer) handleInternalSessionSuspend(w http.ResponseWriter, r *http.Request) {
-	s.shared.suspendSession(w, r.PathValue("id"))
+func (s *InternalServer) handleInternalSessionTerminate(w http.ResponseWriter, r *http.Request) {
+	s.shared.terminateSession(w, r.PathValue("id"))
 }
 
 func (s *InternalServer) handleInternalSessionResume(w http.ResponseWriter, r *http.Request) {

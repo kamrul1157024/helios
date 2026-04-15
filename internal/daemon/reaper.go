@@ -65,16 +65,19 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 			continue
 		}
 
-		db.UpdateSessionStatus(sess.SessionID, "stale", "StaleReaper")
+		if sess.TmuxPane != nil && *sess.TmuxPane != "" {
+			tc.KillWindow(*sess.TmuxPane)
+		}
+		db.UpdateSessionStatus(sess.SessionID, "terminated", "StaleReaper")
 		sse.Broadcast(server.SSEEvent{
 			Type: "session_status",
 			Data: map[string]interface{}{
 				"session_id": sess.SessionID,
-				"status":     "stale",
+				"status":     "terminated",
 			},
 		})
 
-		log.Printf("reaper: marked session %s as stale (status was %s)",
+		log.Printf("reaper: terminated stale session %s (status was %s)",
 			sess.SessionID, sess.Status)
 	}
 }

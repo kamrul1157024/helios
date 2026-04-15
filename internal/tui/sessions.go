@@ -117,8 +117,7 @@ var (
 	colorCompact   = lipgloss.Color("75")  // blue
 	colorError     = lipgloss.Color("196") // red
 	colorIdle      = lipgloss.Color("241") // grey
-	colorSuspended = lipgloss.Color("135") // purple
-	colorEnded     = lipgloss.Color("245") // muted grey
+	colorTerminated = lipgloss.Color("245") // muted grey
 )
 
 // ── Styles (scheme-independent) ──
@@ -150,19 +149,15 @@ func sessStatusIcon(status string) string {
 		return "↻"
 	case "error":
 		return "✕"
-	case "suspended":
-		return "⏸"
-	case "ended":
-		return "✓"
-	case "stale":
-		return "?"
+	case "terminated":
+		return "✕"
 	default:
 		return "○"
 	}
 }
 
 func sessCanResume(status string) bool {
-	return status == "ended" || status == "suspended" || status == "stale"
+	return status == "terminated"
 }
 
 func sessStatusColor(status string) lipgloss.Color {
@@ -175,12 +170,8 @@ func sessStatusColor(status string) lipgloss.Color {
 		return colorCompact
 	case "error":
 		return colorError
-	case "suspended":
-		return colorSuspended
-	case "ended":
-		return colorEnded
-	case "stale":
-		return colorEnded
+	case "terminated":
+		return colorTerminated
 	default:
 		return colorIdle
 	}

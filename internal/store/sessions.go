@@ -116,8 +116,8 @@ func (s *Store) UpdateSessionStatus(sessionID, status, event string) error {
 	args := []interface{}{status, event, now}
 	query := `UPDATE sessions SET status = ?, last_event = ?, last_event_at = ?`
 
-	if status == "ended" {
-		query += `, ended_at = ?`
+	if status == "terminated" {
+		query += `, ended_at = ?, tmux_pane = NULL, tmux_pid = NULL`
 		args = append(args, now)
 	}
 

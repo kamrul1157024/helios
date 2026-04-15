@@ -546,13 +546,13 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		return
 	}
 
-	ctx.DB.UpdateSessionStatus(input.SessionID, "ended", "SessionEnd")
+	ctx.DB.UpdateSessionStatus(input.SessionID, "terminated", "SessionEnd")
 	killSessionWindow(ctx, input.SessionID)
 
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,
 		"cwd":        input.CWD,
-		"status":     "ended",
+		"status":     "terminated",
 	})
 
 	if ctx.Report != nil {

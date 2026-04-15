@@ -514,15 +514,15 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> suspendSession(String sessionId) async {
+  Future<bool> terminateSession(String sessionId) async {
     try {
-      final resp = await _api.post('/api/sessions/$sessionId/suspend');
+      final resp = await _api.post('/api/sessions/$sessionId/terminate');
       if (resp.statusCode == 200) {
         await fetchSessions();
         return true;
       }
     } catch (e) {
-      debugPrint('[$hostId] Failed to suspend session: $e');
+      debugPrint('[$hostId] Failed to terminate session: $e');
     }
     return false;
   }

@@ -69,11 +69,9 @@ class Session {
   bool get isActive => status == 'active' || status == 'waiting_permission' || status == 'compacting' || status == 'starting';
   bool get isCompacting => status == 'compacting';
   bool get isIdle => status == 'idle';
-  bool get isEnded => status == 'ended';
-  bool get isSuspended => status == 'suspended';
-  bool get isStale => status == 'stale';
+  bool get isTerminated => status == 'terminated';
   bool get canSendPrompt {
-    if (status == 'idle' || status == 'ended' || status == 'suspended' || status == 'stale') return true;
+    if (status == 'idle') return true;
     if (supportsPromptQueue && isActive) return true;
     return false;
   }
@@ -82,8 +80,8 @@ class Session {
   String get displayTitle => title ?? lastUserMessage ?? shortCwd;
   bool get hasTmux => tmuxPane != null && tmuxPane!.isNotEmpty;
   bool get canStop => hasTmux && (status == 'active' || status == 'waiting_permission' || status == 'compacting');
-  bool get canSuspend => hasTmux && (isActive || isIdle);
-  bool get canResume => isEnded || isSuspended || isStale;
+  bool get canTerminate => hasTmux && (isActive || isIdle);
+  bool get canResume => isTerminated;
 
   Session copyWith({
     String? title,
