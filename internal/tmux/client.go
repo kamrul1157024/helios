@@ -114,6 +114,21 @@ func (c *Client) HasPane(paneID string) bool {
 	return false
 }
 
+// LivePanes returns the set of all currently existing pane IDs.
+func (c *Client) LivePanes() map[string]struct{} {
+	out, err := exec.Command(c.tmuxCmd(), "list-panes", "-a", "-F", "#{pane_id}").Output()
+	if err != nil {
+		return nil
+	}
+	set := make(map[string]struct{})
+	for _, line := range strings.Split(string(out), "\n") {
+		if id := strings.TrimSpace(line); id != "" {
+			set[id] = struct{}{}
+		}
+	}
+	return set
+}
+
 // CreateWindow creates a new tmux window in the helios session, then sends
 // the command via send-keys. This ensures the user's login shell runs first
 // (loading PATH, nvm, homebrew, etc.) before the command executes.

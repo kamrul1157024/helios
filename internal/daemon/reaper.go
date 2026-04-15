@@ -23,6 +23,16 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 		return
 	}
 
+	// Fetch all live pane IDs once — avoids one subprocess call per session.
+	livePanes := tc.LivePanes()
+	hasPane := func(id string) bool {
+		if livePanes == nil {
+			return false
+		}
+		_, ok := livePanes[id]
+		return ok
+	}
+
 	for _, sess := range sessions {
 		// Backfill last_user_message from transcript
 		if sess.TranscriptPath != nil && *sess.TranscriptPath != "" {
@@ -39,7 +49,7 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 			if sess.TmuxPane == nil || *sess.TmuxPane == "" {
 				continue
 			}
-			if tc.HasPane(*sess.TmuxPane) {
+			if hasPane(*sess.TmuxPane) {
 				tc.KillWindow(*sess.TmuxPane)
 			}
 			db.ClearSessionTmuxPane(sess.SessionID)
@@ -52,14 +62,14 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 			if sess.TmuxPane == nil || *sess.TmuxPane == "" {
 				continue
 			}
-			if tc.HasPane(*sess.TmuxPane) {
+			if hasPane(*sess.TmuxPane) {
 				continue
 			}
 
 		case "active", "waiting_permission":
 			// Check pane content — if Claude is showing the idle prompt with no
 			// spinner, the generation finished but the stop hook didn't fire.
-			if sess.TmuxPane != nil && *sess.TmuxPane != "" && tc.HasPane(*sess.TmuxPane) {
+			if sess.TmuxPane != nil && *sess.TmuxPane != "" && hasPane(*sess.TmuxPane) {
 				if content, err := tc.CapturePane(*sess.TmuxPane); err == nil {
 					if claudeIsIdle(content) {
 						db.UpdateSessionStatus(sess.SessionID, "idle", "PaneIdleDetected")
@@ -88,7 +98,7 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 				continue
 			}
 			if sess.TmuxPane != nil && *sess.TmuxPane != "" {
-				if tc.HasPane(*sess.TmuxPane) {
+				if hasPane(*sess.TmuxPane) {
 					continue
 				}
 			}
