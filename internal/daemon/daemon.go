@@ -182,7 +182,7 @@ func startDaemon(cfg *Config) error {
 
 	// Periodic stale session reaper
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		tmuxClient := tmux.NewClient()
 		for {

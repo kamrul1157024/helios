@@ -57,6 +57,25 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 			}
 
 		case "active", "waiting_permission":
+			// Check pane content — if Claude is showing the idle prompt with no
+			// spinner, the generation finished but the stop hook didn't fire.
+			if sess.TmuxPane != nil && *sess.TmuxPane != "" && tc.HasPane(*sess.TmuxPane) {
+				if content, err := tc.CapturePane(*sess.TmuxPane); err == nil {
+					if claudeIsIdle(content) {
+						db.UpdateSessionStatus(sess.SessionID, "idle", "PaneIdleDetected")
+						sse.Broadcast(server.SSEEvent{
+							Type: "session_status",
+							Data: map[string]interface{}{
+								"session_id": sess.SessionID,
+								"status":     "idle",
+							},
+						})
+						log.Printf("reaper: detected idle pane for session %s, updated to idle", sess.SessionID)
+						continue
+					}
+				}
+			}
+
 			// Time-based + pane check
 			if sess.LastEventAt == nil {
 				continue
@@ -93,6 +112,20 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 		log.Printf("reaper: terminated stale session %s (status was %s)",
 			sess.SessionID, sess.Status)
 	}
+}
+
+// claudeIsIdle returns true if the pane shows Claude's idle input prompt.
+// When generating, Claude shows a verb line ending with "…" above the prompt.
+// When idle, no such line exists — only the bare "❯" prompt remains.
+func claudeIsIdle(content string) bool {
+	if !strings.Contains(content, "❯") {
+		return false
+	}
+	// When generating, Claude shows a verb line containing "…" (U+2026).
+	if strings.Contains(content, "…") {
+		return false
+	}
+	return true
 }
 
 // lastUserMessageFromTranscript reads a transcript JSONL file backward
