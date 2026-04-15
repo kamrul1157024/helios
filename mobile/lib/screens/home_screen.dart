@@ -123,6 +123,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         body: data['detail']?.toString() ?? 'Input required',
         silent: silent,
       );
+    } else if (type == 'claude.trust') {
+      debugPrint('[HomeScreen] showing OS trust notification');
+      notifSvc.showNotification(
+        id: payload,
+        title: '${prefix}Workspace trust required',
+        body: data['detail']?.toString() ?? 'Claude is asking to trust the workspace.',
+        silent: silent,
+      );
     } else if (type == 'claude.done') {
       debugPrint('[HomeScreen] showing OS done notification');
       notifSvc.showNotification(

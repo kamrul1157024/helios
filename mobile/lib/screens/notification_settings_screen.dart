@@ -38,6 +38,12 @@ class _NotificationSettingsScreenState
       description: 'An MCP server requires you to authenticate via a URL.',
       blocking: true,
     ),
+    _NotifType(
+      type: 'claude.trust',
+      label: 'Workspace trust',
+      description: 'Claude is asking to trust the files in this workspace.',
+      blocking: true,
+    ),
   ];
 
   static const _informationalTypes = [

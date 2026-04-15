@@ -28,6 +28,7 @@ class NotificationService {
     'claude.question':         true,
     'claude.elicitation.form': true,
     'claude.elicitation.url':  true,
+    'claude.trust':            true,
     'claude.done':             true,
     'claude.error':            true,
   };
