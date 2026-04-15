@@ -556,6 +556,21 @@ func handleWrap(args []string) {
 	// If already inside tmux, register this pane with the daemon, run claude,
 	// and notify daemon when it exits (handles Ctrl+C/crash where hooks don't fire).
 	if os.Getenv("TMUX") != "" {
+		// Skip wrapping if already managed by helios (launched via API/TUI)
+		if os.Getenv("HELIOS_MANAGED") == "1" {
+			binary, err := exec.LookPath(parts[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
+				os.Exit(1)
+			}
+			// Exec directly without wrapping — preserves original args including --session-id
+			if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
+				fmt.Fprintf(os.Stderr, "exec failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
 		paneID := os.Getenv("TMUX_PANE")
 		cfg, _ := daemon.LoadConfig()
 		internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)

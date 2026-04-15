@@ -149,8 +149,9 @@ func (c *Client) CreateWindow(cwd, command string) (string, error) {
 
 	paneID := strings.TrimSpace(string(out))
 
-	// Type the command into the shell.
-	if err := c.SendKeys(paneID, command); err != nil {
+	// Set HELIOS_MANAGED env var so wrapper knows to skip wrapping
+	managedCmd := fmt.Sprintf("export HELIOS_MANAGED=1; %s", command)
+	if err := c.SendKeys(paneID, managedCmd); err != nil {
 		return "", fmt.Errorf("send command: %w", err)
 	}
 
