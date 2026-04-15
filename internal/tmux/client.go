@@ -162,9 +162,10 @@ func (c *Client) RenameWindow(paneID, name string) error {
 	return exec.Command(c.tmuxCmd(), "rename-window", "-t", paneID, name).Run()
 }
 
-// KillWindow kills the window containing the given pane.
-func (c *Client) KillWindow(paneID string) error {
-	return exec.Command(c.tmuxCmd(), "kill-window", "-t", paneID).Run()
+// KillPane kills the given pane. If it is the last pane in the window,
+// tmux automatically closes the window too.
+func (c *Client) KillPane(paneID string) error {
+	return exec.Command(c.tmuxCmd(), "kill-pane", "-t", paneID).Run()
 }
 
 // JoinPaneHorizontal moves srcPaneID into the window of targetPaneID

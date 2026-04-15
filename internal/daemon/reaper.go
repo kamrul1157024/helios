@@ -50,7 +50,7 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 				continue
 			}
 			if hasPane(*sess.TmuxPane) {
-				tc.KillWindow(*sess.TmuxPane)
+				tc.KillPane(*sess.TmuxPane)
 			}
 			db.ClearSessionTmuxPane(sess.SessionID)
 			log.Printf("reaper: cleared orphaned pane %s for terminated session %s",
@@ -108,7 +108,7 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, sse *server.SSEBroadcas
 		}
 
 		if sess.TmuxPane != nil && *sess.TmuxPane != "" {
-			tc.KillWindow(*sess.TmuxPane)
+			tc.KillPane(*sess.TmuxPane)
 		}
 		db.UpdateSessionStatus(sess.SessionID, "terminated", "StaleReaper")
 		sse.Broadcast(server.SSEEvent{

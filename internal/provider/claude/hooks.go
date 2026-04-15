@@ -871,7 +871,7 @@ func killSessionWindow(ctx *provider.HookContext, sessionID string) {
 	if sess == nil || sess.TmuxPane == nil || *sess.TmuxPane == "" {
 		return
 	}
-	ctx.Tmux.KillWindow(*sess.TmuxPane)
+	ctx.Tmux.KillPane(*sess.TmuxPane)
 }
 
 func strPtr(s string) *string {

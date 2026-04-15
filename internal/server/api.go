@@ -582,7 +582,7 @@ func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if err := sh.Tmux.KillWindow(*session.TmuxPane); err != nil {
+	if err := sh.Tmux.KillPane(*session.TmuxPane); err != nil {
 		log.Printf("terminate: kill window %s: %v", *session.TmuxPane, err)
 	}
 	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
