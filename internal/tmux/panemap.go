@@ -4,7 +4,15 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
+
+const paneGracePeriod = 30 * time.Second
+
+type paneEntry struct {
+	paneID    string
+	createdAt time.Time
+}
 
 const heliosSessionKey = "@helios_session_id"
 
@@ -13,27 +21,27 @@ const heliosSessionKey = "@helios_session_id"
 // SessionStart/SessionEnd hooks and the reaper sweep.
 type PaneMap struct {
 	mu   sync.RWMutex
-	data map[string]string // sessionID → paneID
+	data map[string]paneEntry // sessionID → paneEntry
 }
 
 // NewPaneMap creates an empty PaneMap.
 func NewPaneMap() *PaneMap {
-	return &PaneMap{data: make(map[string]string)}
+	return &PaneMap{data: make(map[string]paneEntry)}
 }
 
 // Set registers a sessionID → paneID mapping.
 func (m *PaneMap) Set(sessionID, paneID string) {
 	m.mu.Lock()
-	m.data[sessionID] = paneID
+	m.data[sessionID] = paneEntry{paneID: paneID, createdAt: time.Now()}
 	m.mu.Unlock()
 }
 
 // Get returns the pane ID for a session, and whether it was found.
 func (m *PaneMap) Get(sessionID string) (string, bool) {
 	m.mu.RLock()
-	paneID, ok := m.data[sessionID]
+	entry, ok := m.data[sessionID]
 	m.mu.RUnlock()
-	return paneID, ok
+	return entry.paneID, ok
 }
 
 // Delete removes a sessionID mapping.
@@ -48,7 +56,7 @@ func (m *PaneMap) Snapshot() map[string]string {
 	m.mu.RLock()
 	out := make(map[string]string, len(m.data))
 	for k, v := range m.data {
-		out[k] = v
+		out[k] = v.paneID
 	}
 	m.mu.RUnlock()
 	return out
@@ -77,7 +85,8 @@ func (c *Client) RebuildPaneMap(m *PaneMap) {
 		return
 	}
 
-	fresh := make(map[string]string)
+	now := time.Now()
+	fresh := make(map[string]paneEntry)
 	for _, paneID := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		paneID = strings.TrimSpace(paneID)
 		if paneID == "" {
@@ -87,7 +96,7 @@ func (c *Client) RebuildPaneMap(m *PaneMap) {
 		if err != nil || sessionID == "" {
 			continue
 		}
-		fresh[sessionID] = paneID
+		fresh[sessionID] = paneEntry{paneID: paneID, createdAt: now}
 	}
 
 	m.mu.Lock()
@@ -96,17 +105,22 @@ func (c *Client) RebuildPaneMap(m *PaneMap) {
 }
 
 // SweepDeadPanes removes entries from m where the pane no longer exists OR
-// the claude process inside it has exited. Returns the session IDs removed.
+// the claude process inside it has exited. Entries within the grace period
+// are skipped to allow claude time to start. Returns the session IDs removed.
 func (c *Client) SweepDeadPanes(m *PaneMap) []string {
 	livePanes := c.LivePanes()
+	now := time.Now()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var dead []string
-	for sessionID, paneID := range m.data {
-		_, paneAlive := livePanes[paneID]
-		if !paneAlive || !c.claudeRunningInPane(paneID) {
+	for sessionID, entry := range m.data {
+		if now.Sub(entry.createdAt) < paneGracePeriod {
+			continue
+		}
+		_, paneAlive := livePanes[entry.paneID]
+		if !paneAlive || !c.claudeRunningInPane(entry.paneID) {
 			dead = append(dead, sessionID)
 			delete(m.data, sessionID)
 		}

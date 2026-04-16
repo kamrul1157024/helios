@@ -544,12 +544,20 @@ func handleWrap(args []string) {
 	tc := tmux.NewClient()
 
 	// Generate a session ID for claude commands so we can map session→pane deterministically.
+	// If --resume or --continue is present, use the existing session ID from the args.
 	parts := args[cmdStart:]
 	sessionID := ""
 	if len(parts) > 0 && filepath.Base(parts[0]) == "claude" {
-		sessionID = uuid.New().String()
-		// Inject --session-id right after the claude binary name.
-		parts = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
+		for i, a := range parts {
+			if (a == "--resume" || a == "--continue") && i+1 < len(parts) {
+				sessionID = parts[i+1]
+				break
+			}
+		}
+		if sessionID == "" {
+			sessionID = uuid.New().String()
+			parts = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
+		}
 	}
 	command := strings.Join(parts, " ")
 
