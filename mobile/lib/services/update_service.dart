@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _repo = 'kamrul1157024/helios';
@@ -98,6 +99,14 @@ class UpdateService {
       }
     }).asFuture();
     await sink.close();
+
+    // On Android 8+, request permission to install unknown apps.
+    if (Platform.isAndroid) {
+      final status = await Permission.requestInstallPackages.status;
+      if (!status.isGranted) {
+        await Permission.requestInstallPackages.request();
+      }
+    }
 
     await OpenFile.open(file.path);
   }
