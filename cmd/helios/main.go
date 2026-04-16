@@ -524,6 +524,18 @@ func handleNew(args []string) {
 }
 
 func handleWrap(args []string) {
+	// Parse --managed flag before "--" separator
+	managed := false
+	filtered := args[:0]
+	for _, a := range args {
+		if a == "--managed" {
+			managed = true
+		} else {
+			filtered = append(filtered, a)
+		}
+	}
+	args = filtered
+
 	// Find "--" separator
 	cmdStart := -1
 	for i, a := range args {
@@ -534,7 +546,7 @@ func handleWrap(args []string) {
 	}
 
 	if cmdStart < 0 || cmdStart >= len(args) {
-		fmt.Fprintln(os.Stderr, "Usage: helios wrap -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "Usage: helios wrap [--managed] -- <command> [args...]")
 		fmt.Fprintln(os.Stderr, "Example: helios wrap -- claude")
 		os.Exit(1)
 	}
@@ -549,7 +561,7 @@ func handleWrap(args []string) {
 	sessionID := ""
 	if len(parts) > 0 && filepath.Base(parts[0]) == "claude" {
 		for i, a := range parts {
-			if (a == "--resume" || a == "--continue") && i+1 < len(parts) {
+			if (a == "--resume" || a == "--continue" || a == "--session-id") && i+1 < len(parts) {
 				sessionID = parts[i+1]
 				break
 			}
@@ -564,21 +576,6 @@ func handleWrap(args []string) {
 	// If already inside tmux, register this pane with the daemon, run claude,
 	// and notify daemon when it exits (handles Ctrl+C/crash where hooks don't fire).
 	if os.Getenv("TMUX") != "" {
-		// Skip wrapping if already managed by helios (launched via API/TUI)
-		if os.Getenv("HELIOS_MANAGED") == "1" {
-			binary, err := exec.LookPath(parts[0])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
-				os.Exit(1)
-			}
-			// Exec directly without wrapping — preserves original args including --session-id
-			if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
-				fmt.Fprintf(os.Stderr, "exec failed: %v\n", err)
-				os.Exit(1)
-			}
-			return
-		}
-
 		paneID := os.Getenv("TMUX_PANE")
 		cfg, _ := daemon.LoadConfig()
 		internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
@@ -600,6 +597,15 @@ func handleWrap(args []string) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
 			os.Exit(1)
+		}
+
+		if managed {
+			// Exec directly — helios API manages lifecycle, no session.end needed.
+			if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
+				fmt.Fprintf(os.Stderr, "exec failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 
 		cmd := exec.Command(binary, parts[1:]...)
