@@ -136,6 +136,12 @@ func (m StartModel) viewNotificationSettings() string {
 			b.WriteString(dimStyle.Render("  ─── Alert types ─────────────────────────────"))
 			b.WriteString("\n\n")
 		}
+		if i == 8 {
+			// Section divider before auto title
+			b.WriteString("\n")
+			b.WriteString(dimStyle.Render("  ─── Auto Title ──────────────────────────────"))
+			b.WriteString("\n\n")
+		}
 
 		label := item.label
 		enabled := values[item.key]

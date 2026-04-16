@@ -38,6 +38,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _sessionFilterJson;
   bool _settingsLoaded = false;
 
+  // Auto title settings
+  bool _autoTitleEnabled = false;
+  bool _autoTitleEmoji = true;
+
   @override
   void initState() {
     super.initState();
@@ -93,6 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _eventTypes = parsedEventTypes;
           _globalFilterJson = settings['reporter.filter.global'] as String?;
           _sessionFilterJson = settings['reporter.filter.session'] as String?;
+          _autoTitleEnabled = (settings['autotitle.enabled'] as String?) == 'true';
+          _autoTitleEmoji = (settings['autotitle.emoji'] as String?) != 'false';
           _settingsLoaded = true;
         });
       }
@@ -240,15 +246,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: const Icon(Icons.chevron_right, size: 20),
                 onTap: _showVoicePicker,
               ),
-              const _SectionHeader('AI Narrator'),
+              const _SectionHeader('Session Titles'),
               if (!_settingsLoaded)
                 const ListTile(
                   leading: SizedBox(
                     width: 20, height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  title: Text('Loading narrator settings...'),
+                  title: Text('Loading settings...'),
                 ),
+              if (_settingsLoaded) ...[
+                SwitchListTile(
+                  secondary: const Icon(Icons.title),
+                  title: const Text('Auto title'),
+                  subtitle: const Text('Generate session titles automatically'),
+                  value: _autoTitleEnabled,
+                  onChanged: (value) {
+                    setState(() => _autoTitleEnabled = value);
+                    _updateReporterSetting('autotitle.enabled', value ? 'true' : 'false');
+                  },
+                ),
+                if (_autoTitleEnabled)
+                  SwitchListTile(
+                    secondary: const Icon(Icons.emoji_emotions_outlined),
+                    title: const Text('Title emoji'),
+                    subtitle: const Text('Prefix titles with a category emoji'),
+                    value: _autoTitleEmoji,
+                    onChanged: (value) {
+                      setState(() => _autoTitleEmoji = value);
+                      _updateReporterSetting('autotitle.emoji', value ? 'true' : 'false');
+                    },
+                  ),
+              ],
+              const _SectionHeader('AI Narrator'),
               if (_settingsLoaded) ...[
                 ListTile(
                   leading: const Icon(Icons.person),

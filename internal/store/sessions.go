@@ -281,6 +281,29 @@ func (s *Store) UpdateSessionTitle(sessionID, title string) error {
 	return err
 }
 
+// IncrementAutoTitleAttempts atomically increments autotitle_attempts and returns the new value.
+func (s *Store) IncrementAutoTitleAttempts(sessionID string) (int, error) {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET autotitle_attempts = autotitle_attempts + 1 WHERE session_id = ?`,
+		sessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = s.db.QueryRow(`SELECT autotitle_attempts FROM sessions WHERE session_id = ?`, sessionID).Scan(&count)
+	return count, err
+}
+
+// ResetAutoTitleAttempts resets autotitle_attempts to 0 for a session.
+func (s *Store) ResetAutoTitleAttempts(sessionID string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET autotitle_attempts = 0 WHERE session_id = ?`,
+		sessionID,
+	)
+	return err
+}
+
 // UpdateSessionFlags updates the pinned and archived flags for a session.
 func (s *Store) UpdateSessionFlags(sessionID string, pinned, archived bool) error {
 	_, err := s.db.Exec(

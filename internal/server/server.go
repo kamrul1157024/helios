@@ -176,6 +176,8 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 			s.handleSessionTerminate(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/title/generate"):
+			s.handleGenerateSessionTitle(w, r)
 		case r.Method == "PATCH":
 			s.handlePatchSession(w, r)
 		case r.Method == "DELETE":

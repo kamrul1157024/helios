@@ -53,12 +53,19 @@ class _SessionsScreenState extends State<SessionsScreen> {
     }
   }
 
+  int _statusOrder(Session s) {
+    if (s.isActive) return 0;
+    if (s.isIdle) return 1;
+    if (s.pinned) return 2;
+    if (s.isTerminated) return 3;
+    if (s.archived) return 4;
+    return 3;
+  }
+
   List<Session> _sortSessions(List<Session> sessions) {
     sessions.sort((a, b) {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      if (a.isActive && !b.isActive) return -1;
-      if (!a.isActive && b.isActive) return 1;
+      final orderCmp = _statusOrder(a).compareTo(_statusOrder(b));
+      if (orderCmp != 0) return orderCmp;
       final aTime = a.lastEventAt ?? a.createdAt;
       final bTime = b.lastEventAt ?? b.createdAt;
       return bTime.compareTo(aTime);

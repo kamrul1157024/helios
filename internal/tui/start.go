@@ -36,6 +36,7 @@ const (
 	screenMain                         // main dashboard: status + devices + QRs
 	screenConfirmDevice                // "Allow this device? y/n"
 	screenNotificationSettings         // desktop notification alert settings
+	screenSettings                     // general settings (auto title, etc.)
 	screenError                        // error
 )
 
@@ -133,6 +134,15 @@ type notifSettingSaved struct {
 	err error
 }
 
+type generalSettingsLoaded struct {
+	values map[string]bool
+	err    error
+}
+
+type generalSettingSaved struct {
+	err error
+}
+
 // Model
 type StartModel struct {
 	screen     screen
@@ -156,6 +166,10 @@ type StartModel struct {
 	// Notification settings screen
 	notifSettingsCursor int
 	notifSettingsValues map[string]bool
+
+	// General settings screen
+	settingsCursor int
+	settingsValues map[string]bool
 
 	// Shell setup
 	shellInfo         daemon.ShellInfo
@@ -315,6 +329,16 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notifSettingSaved:
 		// Ignore save errors silently — settings are best-effort.
 		return m, nil
+
+	case generalSettingsLoaded:
+		if msg.err == nil && msg.values != nil {
+			m.settingsValues = msg.values
+		}
+		return m, nil
+
+	case generalSettingSaved:
+		// Ignore save errors silently — settings are best-effort.
+		return m, nil
 	}
 
 	// Handle text input updates
@@ -343,7 +367,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenTmuxRestart,
 			screenEditorSetup, screenError:
 			return m, tea.Quit
-		case screenNotificationSettings:
+		case screenNotificationSettings, screenSettings:
 			m.screen = screenMain
 			return m, nil
 		}
@@ -359,6 +383,11 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notifSettingsCursor--
 			}
 		}
+		if m.screen == screenSettings {
+			if m.settingsCursor > 0 {
+				m.settingsCursor--
+			}
+		}
 
 	case "down", "j":
 		if m.screen == screenTunnelSelect {
@@ -371,21 +400,35 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notifSettingsCursor++
 			}
 		}
+		if m.screen == screenSettings {
+			if m.settingsCursor < len(generalSettingsKeys)-1 {
+				m.settingsCursor++
+			}
+		}
 
 	case " ":
 		if m.screen == screenNotificationSettings {
 			return m.toggleNotifSetting()
+		}
+		if m.screen == screenSettings {
+			return m.toggleGeneralSetting()
 		}
 
 	case "enter":
 		if m.screen == screenNotificationSettings {
 			return m.toggleNotifSetting()
 		}
+		if m.screen == screenSettings {
+			return m.toggleGeneralSetting()
+		}
 		return m.handleEnter()
 
 	case "r":
 		if m.screen == screenNotificationSettings {
 			return m.resetNotifSettings()
+		}
+		if m.screen == screenSettings {
+			return m.resetGeneralSettings()
 		}
 
 	case "y":
@@ -423,6 +466,13 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "s":
+		if m.screen == screenMain {
+			m.screen = screenSettings
+			m.settingsCursor = 0
+			return m, loadGeneralSettings(m.client)
+		}
+
+	case "tab":
 		switch m.screen {
 		case screenHooksInstall, screenHooksUpdate:
 			return m.proceedAfterHooks()

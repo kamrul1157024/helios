@@ -14,6 +14,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
+	claudeprovider "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
@@ -753,6 +754,42 @@ func (s *PublicServer) handleDeleteSession(w http.ResponseWriter, r *http.Reques
 			"session_id": id,
 		},
 	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	id := strings.TrimSuffix(path, "/title/generate")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.shared.DB.ResetAutoTitleAttempts(id); err != nil {
+		jsonError(w, "failed to reset title attempts", http.StatusInternalServerError)
+		return
+	}
+
+	transcriptPath := ""
+	if session.TranscriptPath != nil {
+		transcriptPath = *session.TranscriptPath
+	}
+
+	notify := func(eventType string, data interface{}) {
+		s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
+	}
+	ctx := &provider.HookContext{
+		DB:     s.shared.DB,
+		Notify: notify,
+	}
+	claudeprovider.TriggerAutoTitle(ctx, id, session.CWD, transcriptPath, notify)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }

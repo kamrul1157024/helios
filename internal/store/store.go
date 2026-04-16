@@ -136,6 +136,7 @@ func (s *Store) migrate() error {
 		{"create_settings_table", `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`},
 		{"drop_sessions_tmux_pane", `ALTER TABLE sessions DROP COLUMN tmux_pane`},
 		{"drop_sessions_tmux_pid", `ALTER TABLE sessions DROP COLUMN tmux_pid`},
+		{"add_sessions_autotitle_attempts", `ALTER TABLE sessions ADD COLUMN autotitle_attempts INTEGER NOT NULL DEFAULT 0`},
 	}
 
 	for _, cm := range columnMigrations {

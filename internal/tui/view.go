@@ -74,6 +74,8 @@ func (m StartModel) View() string {
 		return m.viewConfirmDevice()
 	case screenNotificationSettings:
 		return m.viewNotificationSettings()
+	case screenSettings:
+		return m.viewGeneralSettings()
 	case screenError:
 		return m.viewError()
 	}
@@ -167,7 +169,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString("\n")
 		}
 
-		b.WriteString(helpStyle.Render("  enter continue  t change tunnel  N notifications  q quit"))
+		b.WriteString(helpStyle.Render("  enter continue  t change tunnel  N notifications  s settings  q quit"))
 	}
 
 	return b.String()
@@ -184,7 +186,7 @@ func (m StartModel) viewHooksInstall() string {
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  and forward them to your phone for approval."))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter install  s skip  q quit"))
+	b.WriteString(helpStyle.Render("  enter install  tab skip  q quit"))
 
 	return b.String()
 }
@@ -200,7 +202,7 @@ func (m StartModel) viewHooksUpdate() string {
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  Update to ensure all hooks work correctly."))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter update  s skip  q quit"))
+	b.WriteString(helpStyle.Render("  enter update  tab skip  q quit"))
 
 	return b.String()
 }
@@ -231,7 +233,7 @@ func (m StartModel) viewShellSetup() string {
 	b.WriteString("\n\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("  Will add wrapper to: %s", m.shellInfo.RCPath)))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter install  s skip  q quit"))
+	b.WriteString(helpStyle.Render("  enter install  tab skip  q quit"))
 
 	return b.String()
 }
@@ -294,7 +296,7 @@ func (m StartModel) viewEditorSetup() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter configure  s skip  q quit"))
+	b.WriteString(helpStyle.Render("  enter configure  tab skip  q quit"))
 
 	return b.String()
 }
@@ -507,7 +509,7 @@ func (m StartModel) viewMain() string {
 		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
 	}
 
-	b.WriteString(helpStyle.Render("  t change tunnel  N notifications  q quit"))
+	b.WriteString(helpStyle.Render("  t change tunnel  N notifications  s settings  q quit"))
 
 	return b.String()
 }
