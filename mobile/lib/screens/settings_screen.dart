@@ -5,6 +5,7 @@ import '../models/host_connection.dart';
 import '../providers/theme_provider.dart';
 import '../services/host_manager.dart';
 import '../services/notification_service.dart';
+import '../services/update_service.dart';
 import '../services/voice_service.dart';
 import 'event_filter_screen.dart';
 import 'host_detail_screen.dart';
@@ -42,6 +43,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoTitleEnabled = false;
   bool _autoTitleEmoji = true;
 
+  // Update check
+  String _currentVersion = '';
+  UpdateInfo? _updateInfo;
+  bool _updateChecking = false;
+  bool _updateDownloading = false;
+  double _updateProgress = 0;
+
   @override
   void initState() {
     super.initState();
@@ -53,6 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _pitch = VoiceService.instance.pitch;
     _selectedVoice = VoiceService.instance.selectedVoice;
     _loadReporterSettings();
+    _loadVersionAndCheckUpdate();
   }
 
   @override
@@ -106,6 +115,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _loadVersionAndCheckUpdate() async {
+    final version = await UpdateService.instance.currentVersion;
+    if (!mounted) return;
+    setState(() {
+      _currentVersion = version;
+      _updateChecking = true;
+    });
+    final info = await UpdateService.instance.checkForUpdate();
+    if (!mounted) return;
+    setState(() {
+      _updateInfo = info;
+      _updateChecking = false;
+    });
+  }
+
+  Future<void> _doInstall() async {
+    final info = _updateInfo;
+    if (info == null) return;
+    setState(() {
+      _updateDownloading = true;
+      _updateProgress = 0;
+    });
+    await UpdateService.instance.install(info, onProgress: (p) {
+      if (mounted) setState(() => _updateProgress = p);
+    });
+    if (mounted) setState(() => _updateDownloading = false);
+  }
+
   Future<void> _updateReporterSetting(String key, String value) async {
     final hm = context.read<HostManager>();
     for (final host in hm.hosts) {
@@ -124,6 +161,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           appBar: AppBar(title: const Text('Settings')),
           body: ListView(
             children: [
+              const _SectionHeader('App'),
+              _buildUpdateTile(),
               const _SectionHeader('Hosts'),
               ...hm.hosts.map((host) => _buildHostTile(host, hm)),
               ListTile(
@@ -607,6 +646,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('OK'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildUpdateTile() {
+    final hasUpdate = _updateInfo != null;
+    final checking = _updateChecking;
+    final downloading = _updateDownloading;
+
+    if (downloading) {
+      return ListTile(
+        leading: const Icon(Icons.system_update),
+        title: const Text('Downloading update...'),
+        subtitle: LinearProgressIndicator(value: _updateProgress > 0 ? _updateProgress : null),
+      );
+    }
+
+    if (checking) {
+      return const ListTile(
+        leading: Icon(Icons.system_update),
+        title: Text('Checking for updates...'),
+        subtitle: LinearProgressIndicator(),
+      );
+    }
+
+    if (hasUpdate) {
+      return ListTile(
+        leading: Icon(Icons.system_update, color: Theme.of(context).colorScheme.primary),
+        title: Text('Update available — v${_updateInfo!.latestVersion}'),
+        subtitle: Text(
+          'Current: v$_currentVersion  ·  Tap to ${_updateInfo!.canDirectInstall ? 'download & install' : 'open release page'}',
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        trailing: FilledButton.tonal(
+          onPressed: _doInstall,
+          child: const Text('Update'),
+        ),
+      );
+    }
+
+    return ListTile(
+      leading: const Icon(Icons.check_circle_outline),
+      title: Text('helios v$_currentVersion'),
+      subtitle: Text(
+        'Up to date',
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }
