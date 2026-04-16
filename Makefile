@@ -56,7 +56,7 @@ apk-rebuild:
 
 ## Build release APK
 apk-release:
-	cd mobile && flutter build apk --release
+	cd mobile && flutter build apk --release --build-name=$(VERSION) --build-number=$(shell git rev-list --count HEAD)
 	mkdir -p ~/.helios
 	cp $(APK_RELEASE) ~/.helios/helios.apk
 	@echo "APK: $(APK_RELEASE)"
