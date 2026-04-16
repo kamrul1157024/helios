@@ -31,7 +31,15 @@ jobs:
       - name: Install Flutter dependencies
         run: cd mobile && flutter pub get
 
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > mobile/android/app/helios-release.jks
+
       - name: Build APK and create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEYSTORE_PATH: helios-release.jks
         run: make release VERSION=${{ inputs.version }}
