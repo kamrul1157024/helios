@@ -13,6 +13,7 @@ class Session {
   final String? lastUserMessage;
   final bool pinned;
   final bool archived;
+  final bool managed;
   final String? tmuxPane;
   final int? tmuxPid;
   final bool supportsPromptQueue;
@@ -34,6 +35,7 @@ class Session {
     this.lastUserMessage,
     this.pinned = false,
     this.archived = false,
+    this.managed = false,
     this.tmuxPane,
     this.tmuxPid,
     this.supportsPromptQueue = false,
@@ -57,6 +59,7 @@ class Session {
       lastUserMessage: json['last_user_message'] as String?,
       pinned: json['pinned'] == true || json['pinned'] == 1,
       archived: json['archived'] == true || json['archived'] == 1,
+      managed: json['managed'] == true || json['managed'] == 1,
       tmuxPane: json['tmux_pane'] as String?,
       tmuxPid: json['tmux_pid'] as int?,
       supportsPromptQueue: json['supports_prompt_queue'] == true,
@@ -79,14 +82,16 @@ class Session {
 
   String get displayTitle => title ?? lastUserMessage ?? shortCwd;
   bool get hasTmux => tmuxPane != null && tmuxPane!.isNotEmpty;
-  bool get canStop => hasTmux && (status == 'active' || status == 'waiting_permission' || status == 'compacting');
-  bool get canTerminate => hasTmux && (isActive || isIdle);
+  bool get needsRecovery => !hasTmux && !isTerminated && !managed;
+  bool get canStop => isActive;
+  bool get canTerminate => isActive || isIdle;
   bool get canResume => isTerminated;
 
   Session copyWith({
     String? title,
     bool? pinned,
     bool? archived,
+    bool? managed,
   }) {
     return Session(
       hostId: hostId,
@@ -103,6 +108,7 @@ class Session {
       lastUserMessage: lastUserMessage,
       pinned: pinned ?? this.pinned,
       archived: archived ?? this.archived,
+      managed: managed ?? this.managed,
       tmuxPane: tmuxPane,
       tmuxPid: tmuxPid,
       supportsPromptQueue: supportsPromptQueue,

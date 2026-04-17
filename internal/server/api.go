@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -551,9 +552,8 @@ func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
 
 	paneID, ok := sh.PaneMap.Get(id)
 	if !ok {
-		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false, "error": "no_tmux_pane",
-		})
+		// No pane — session is already not running, nothing to stop.
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
 
@@ -579,18 +579,12 @@ func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	paneID, ok := sh.PaneMap.Get(id)
-	if !ok {
-		jsonResponse(w, http.StatusBadRequest, map[string]interface{}{
-			"success": false, "error": "no_tmux_pane",
-		})
-		return
+	if paneID, ok := sh.PaneMap.Get(id); ok {
+		if err := sh.Tmux.KillPane(paneID); err != nil {
+			log.Printf("terminate: kill pane %s: %v", paneID, err)
+		}
+		sh.PaneMap.Delete(id)
 	}
-
-	if err := sh.Tmux.KillPane(paneID); err != nil {
-		log.Printf("terminate: kill pane %s: %v", paneID, err)
-	}
-	sh.PaneMap.Delete(id)
 	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
 	sh.SSE.Broadcast(SSEEvent{
 		Type: "session_status",
@@ -676,6 +670,7 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 		Archived *bool   `json:"archived"`
 		Title    *string `json:"title"`
 		Status   *string `json:"status"`
+		Managed  *bool   `json:"managed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -699,6 +694,13 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	if req.Title != nil {
 		if err := s.shared.DB.UpdateSessionTitle(id, *req.Title); err != nil {
 			jsonError(w, "failed to update session title", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if req.Managed != nil {
+		if err := s.shared.DB.UpdateSessionManaged(id, *req.Managed); err != nil {
+			jsonError(w, "failed to update managed flag", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -794,6 +796,97 @@ func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+// handleUnboundPanes returns Claude panes that are running but not bound to any
+// session in the PaneMap. Used by the mobile "Attach to existing pane" picker.
+func (s *PublicServer) handleUnboundPanes(w http.ResponseWriter, r *http.Request) {
+	panes, err := s.shared.Tmux.ListClaudePanes()
+	if err != nil {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"panes": []interface{}{}})
+		return
+	}
+
+	type unboundPane struct {
+		PaneID          string  `json:"pane_id"`
+		CWD             string  `json:"cwd"`
+		Project         string  `json:"project"`
+		LastUserMessage *string `json:"last_user_message,omitempty"`
+	}
+
+	var result []unboundPane
+	for _, p := range panes {
+		// Skip panes already bound to a session.
+		bound := false
+		for _, mappedPane := range s.shared.PaneMap.Snapshot() {
+			if mappedPane == p.PaneID {
+				bound = true
+				break
+			}
+		}
+		if bound {
+			continue
+		}
+
+		entry := unboundPane{
+			PaneID:  p.PaneID,
+			CWD:     p.CWD,
+			Project: filepath.Base(p.CWD),
+		}
+
+		// Cross-reference DB by CWD for last user message.
+		sessions, err := s.shared.DB.SearchSessions("", "", "all", p.CWD)
+		if err == nil && len(sessions) > 0 {
+			entry.LastUserMessage = sessions[0].LastUserMessage
+		}
+
+		result = append(result, entry)
+	}
+
+	if result == nil {
+		result = []unboundPane{}
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"panes": result})
+}
+
+// handleSessionAttach binds an existing untracked tmux pane to a session.
+func (s *PublicServer) handleSessionAttach(w http.ResponseWriter, r *http.Request) {
+	id := extractSessionID(r.URL.Path, "/attach")
+
+	var req struct {
+		PaneID string `json:"pane_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PaneID == "" {
+		jsonError(w, "missing pane_id", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.shared.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if !s.shared.Tmux.HasPane(req.PaneID) {
+		jsonError(w, "pane not found", http.StatusBadRequest)
+		return
+	}
+
+	s.shared.PaneMap.Set(id, req.PaneID)
+	s.shared.Tmux.SetPaneSessionID(req.PaneID, id) //nolint:errcheck
+
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "session_status",
+		Data: map[string]interface{}{
+			"session_id": id,
+			"tmux_pane":  req.PaneID,
+		},
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"tmux_pane": req.PaneID,
+	})
+}
+
 func extractSessionID(path, suffix string) string {
 	path = strings.TrimPrefix(path, "/api/sessions/")
 	path = strings.TrimSuffix(path, suffix)
@@ -876,6 +969,7 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
+		Managed:   true,
 	}
 	s.shared.DB.UpsertSession(sess)
 	s.shared.PaneMap.Set(sessionID, paneID)
@@ -912,6 +1006,7 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 			CWD:       req.CWD,
 			Status:    "starting",
 			LastEvent: &event,
+			Managed:   true,
 		}
 		s.shared.DB.UpsertSession(sess)
 		s.shared.PaneMap.Set(req.SessionID, req.PaneID)
@@ -1425,6 +1520,7 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
+		Managed:   true,
 	}
 	s.shared.DB.UpsertSession(sess)
 	s.shared.PaneMap.Set(sessionID, paneID)

@@ -252,25 +252,202 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     ).then((_) => controller.dispose());
   }
 
-  void _showNoTmuxInfo() {
-    showDialog(
+  void _showRecoverySheet(DaemonAPIService sse, Session session) {
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => AlertDialog(
-        icon: Icon(Icons.warning_amber, color: Colors.amber.shade700),
-        title: const Text('No tmux pane'),
-        content: const Text(
-          'This session was started outside Helios, so there is no tmux pane attached.\n\n'
-          'Stop and pause controls are unavailable.\n\n'
-          'Sending a prompt will open a new tmux pane, but live bidirectional updates '
-          'won\'t be available until then.',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.link_off, color: Colors.amber.shade700),
+                    const SizedBox(width: 10),
+                    Text(
+                      'No tmux pane attached',
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'This session has no tmux pane. Choose a recovery option:',
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 16),
+                _recoveryOption(
+                  ctx: ctx,
+                  icon: Icons.shield_outlined,
+                  title: 'Hand off to Helios',
+                  subtitle: 'Helios will manage and auto-recover this session automatically',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    sse.patchSession(session.sessionId, managed: true);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _recoveryOption(
+                  ctx: ctx,
+                  icon: Icons.cable,
+                  title: 'Attach to existing pane',
+                  subtitle: 'Bind a running Claude pane to this session',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showPanePicker(sse, session);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _recoveryOption(
+                  ctx: ctx,
+                  icon: Icons.play_arrow_outlined,
+                  title: 'Continue in new tmux pane',
+                  subtitle: 'Resume this conversation in a fresh pane',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    sse.resumeSession(session.sessionId);
+                  },
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  Widget _recoveryOption({
+    required BuildContext ctx,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(ctx);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: theme.colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ),
       ),
+    );
+  }
+
+  void _showPanePicker(DaemonAPIService sse, Session session) async {
+    final panes = await sse.fetchUnboundPanes();
+
+    if (!mounted) return;
+    final theme = Theme.of(context);
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.cable),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Select a running Claude pane',
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              if (panes.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Center(
+                    child: Text(
+                      'No unbound Claude panes found.',
+                      style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                )
+              else
+                ...panes.map((p) {
+                  final project = p['project'] as String? ?? '';
+                  final cwd = p['cwd'] as String? ?? '';
+                  final lastMsg = p['last_user_message'] as String?;
+                  final paneId = p['pane_id'] as String;
+                  return ListTile(
+                    leading: const Icon(Icons.terminal),
+                    title: Text(project.isNotEmpty ? project : cwd, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(cwd, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                        if (lastMsg != null)
+                          Text(
+                            lastMsg,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                      ],
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      sse.attachSession(session.sessionId, paneId);
+                    },
+                  );
+                }),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -329,7 +506,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 ],
               ),
             ),
-            actions: _buildActions(session),
+            actions: _buildActions(session, sse),
           ),
           body: Column(
             children: [
@@ -533,7 +710,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     });
   }
 
-  List<Widget> _buildActions(Session session) {
+  List<Widget> _buildActions(Session session, DaemonAPIService? sse) {
     final actions = <Widget>[];
 
     // File browser
@@ -636,12 +813,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       ),
     );
 
-    if (!session.hasTmux && !session.isTerminated) {
+    if (session.needsRecovery && sse != null) {
       actions.add(
         IconButton(
-          icon: Icon(Icons.warning_amber, color: Colors.amber.shade700),
-          tooltip: 'No tmux pane',
-          onPressed: _showNoTmuxInfo,
+          icon: Icon(Icons.link_off, color: Colors.amber.shade700),
+          tooltip: 'No tmux pane — tap to recover',
+          onPressed: () => _showRecoverySheet(sse, session),
         ),
       );
     }

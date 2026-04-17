@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -11,6 +12,40 @@ import (
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/tmux"
 )
+
+// recoverManagedSessions finds managed sessions with no live pane and spawns a
+// new pane for each one via claude --resume.
+func recoverManagedSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
+	if !tc.Available() {
+		return
+	}
+	sessions, err := db.ListManagedOrphanedSessions()
+	if err != nil {
+		log.Printf("recover: failed to list managed sessions: %v", err)
+		return
+	}
+	for _, sess := range sessions {
+		if _, hasPane := pm.Get(sess.SessionID); hasPane {
+			continue
+		}
+		cmd := fmt.Sprintf("claude --resume %s", sess.SessionID)
+		paneID, err := tc.CreateWindow(sess.CWD, cmd)
+		if err != nil {
+			log.Printf("recover: failed to recover session %s: %v", sess.SessionID, err)
+			continue
+		}
+		pm.Set(sess.SessionID, paneID)
+		tc.SetPaneSessionID(paneID, sess.SessionID) //nolint:errcheck
+		sse.Broadcast(server.SSEEvent{
+			Type: "session_status",
+			Data: map[string]interface{}{
+				"session_id": sess.SessionID,
+				"tmux_pane":  paneID,
+			},
+		})
+		log.Printf("recover: recovered managed session %s → pane %s", sess.SessionID, paneID)
+	}
+}
 
 // reapStaleSessions sweeps dead panes from the PaneMap, marks sessions as
 // terminated, and backfills last_user_message from transcripts.
@@ -28,6 +63,9 @@ func reapStaleSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, sse *
 		})
 		log.Printf("reaper: terminated session %s (pane died)", sessionID)
 	}
+
+	// Recover managed sessions that lost their pane.
+	recoverManagedSessions(db, tc, pm, sse)
 
 	// Backfill last_user_message from transcripts.
 	sessions, err := db.ListSessions()

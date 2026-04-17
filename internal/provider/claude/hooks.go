@@ -489,17 +489,6 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		model = &input.Model
 	}
 
-	sess := &store.Session{
-		SessionID:      input.SessionID,
-		Source:         "claude",
-		CWD:            input.CWD,
-		TranscriptPath: transcriptPath,
-		Model:          model,
-		Status:         "idle",
-		LastEvent:      strPtr("SessionStart"),
-	}
-	ctx.DB.UpsertSession(sess)
-
 	// Resolve pane: check PaneMap first (set by helios wrap), fallback to PendingPanes.
 	var paneID string
 	if ctx.PaneMap != nil {
@@ -511,6 +500,18 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 			ctx.PaneMap.Set(input.SessionID, paneID)
 		}
 	}
+
+	sess := &store.Session{
+		SessionID:      input.SessionID,
+		Source:         "claude",
+		CWD:            input.CWD,
+		TranscriptPath: transcriptPath,
+		Model:          model,
+		Status:         "idle",
+		LastEvent:      strPtr("SessionStart"),
+		Managed:        paneID != "",
+	}
+	ctx.DB.UpsertSession(sess)
 
 	// Rename window now that session is registered and pane is known.
 	renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)

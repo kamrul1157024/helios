@@ -21,6 +21,7 @@ type Session struct {
 	LastUserMessage *string `json:"last_user_message,omitempty"`
 	Pinned          bool    `json:"pinned"`
 	Archived        bool    `json:"archived"`
+	Managed         bool    `json:"managed"`
 	TmuxPane            *string `json:"tmux_pane,omitempty"` // injected from PaneMap, not stored in DB
 	CreatedAt           string  `json:"created_at"`
 	EndedAt             *string `json:"ended_at,omitempty"`
@@ -71,8 +72,8 @@ func (s *Store) UpsertSession(sess *Session) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, managed)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -81,9 +82,10 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   model = COALESCE(excluded.model, sessions.model),
 		   status = excluded.status,
 		   last_event = excluded.last_event,
-		   last_event_at = excluded.last_event_at`,
+		   last_event_at = excluded.last_event_at,
+		   managed = excluded.managed`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
-		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
+		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now, sess.Managed,
 	)
 	return err
 }
@@ -147,12 +149,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, pinned, archived,
+		        last_event, last_event_at, last_user_message, pinned, archived, managed,
 		        created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
+		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed,
 		&sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -206,7 +208,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-	        last_event, last_event_at, last_user_message, pinned, archived,
+	        last_event, last_event_at, last_user_message, pinned, archived, managed,
 	        created_at, ended_at
 	 FROM sessions`
 	if len(where) > 0 {
@@ -225,7 +227,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed,
 			&sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}
@@ -311,6 +313,45 @@ func (s *Store) UpdateSessionFlags(sessionID string, pinned, archived bool) erro
 		pinned, archived, sessionID,
 	)
 	return err
+}
+
+// UpdateSessionManaged sets the managed flag for a session.
+func (s *Store) UpdateSessionManaged(sessionID string, managed bool) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET managed = ? WHERE session_id = ?`,
+		managed, sessionID,
+	)
+	return err
+}
+
+// ListManagedOrphanedSessions returns managed sessions that are not terminated.
+// These are candidates for auto-recovery when their pane is missing.
+func (s *Store) ListManagedOrphanedSessions() ([]Session, error) {
+	rows, err := s.db.Query(
+		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
+		        last_event, last_event_at, last_user_message, pinned, archived, managed,
+		        created_at, ended_at
+		 FROM sessions
+		 WHERE managed = 1 AND status NOT IN ('terminated')
+		 ORDER BY COALESCE(last_event_at, created_at) DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []Session
+	for rows.Next() {
+		var sess Session
+		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
+			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed,
+			&sess.CreatedAt, &sess.EndedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, sess)
+	}
+	return result, rows.Err()
 }
 
 // DeleteSession permanently removes a session and its subagents.

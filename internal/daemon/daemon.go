@@ -180,8 +180,12 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
-	// Build pane map at startup so API has pane info immediately.
-	go shared.Tmux.RebuildPaneMap(shared.PaneMap)
+	// Build pane map at startup so API has pane info immediately,
+	// then recover any managed sessions that lost their pane.
+	go func() {
+		shared.Tmux.RebuildPaneMap(shared.PaneMap)
+		recoverManagedSessions(db, shared.Tmux, shared.PaneMap, shared.SSE)
+	}()
 
 	// Periodic stale session reaper
 	go func() {

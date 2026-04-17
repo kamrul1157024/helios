@@ -161,6 +161,7 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 		}
 	})
 
+	protectedMux.HandleFunc("GET /api/sessions/unbound-panes", s.handleUnboundPanes)
 	protectedMux.HandleFunc("/api/sessions/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
@@ -176,6 +177,8 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 			s.handleSessionTerminate(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/attach"):
+			s.handleSessionAttach(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/title/generate"):
 			s.handleGenerateSessionTitle(w, r)
 		case r.Method == "PATCH":

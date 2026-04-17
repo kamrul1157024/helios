@@ -621,11 +621,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
                                     style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
                                   ),
                                 ),
-                                if (!session.hasTmux && !session.isTerminated) ...[
+                                if (session.needsRecovery) ...[
                                   const SizedBox(width: 6),
                                   Tooltip(
-                                    message: 'No tmux pane attached',
-                                    child: Icon(Icons.warning_amber, size: 14, color: Colors.amber.shade700),
+                                    message: 'No tmux pane — tap to recover',
+                                    child: Icon(Icons.link_off, size: 14, color: Colors.amber.shade700),
                                   ),
                                 ],
                                 if (session.pinned) ...[
@@ -798,6 +798,15 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   if (confirmed == true) {
                     service?.deleteSession(sessionId);
                   }
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: Icon(session.managed ? Icons.link_off : Icons.shield_outlined),
+                title: Text(session.managed ? 'Detach from Helios' : 'Hand off to Helios'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  service?.patchSession(sessionId, managed: !session.managed);
                 },
               ),
               if (session.canStop || session.canTerminate || session.canResume) ...[

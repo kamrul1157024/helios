@@ -540,7 +540,7 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived, String? title}) async {
+  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived, String? title, bool? managed}) async {
     // Optimistically update the local session list for instant UI feedback.
     // Use Future.microtask to defer the notification so any dialog/sheet that
     // triggered this call finishes its pop transition first — avoids the
@@ -553,6 +553,7 @@ class DaemonAPIService extends ChangeNotifier {
         pinned: pinned ?? original.pinned,
         archived: archived ?? original.archived,
         title: title,
+        managed: managed ?? original.managed,
       );
       Future.microtask(() => notifyListeners());
     }
@@ -562,6 +563,7 @@ class DaemonAPIService extends ChangeNotifier {
       if (pinned != null) body['pinned'] = pinned;
       if (archived != null) body['archived'] = archived;
       if (title != null) body['title'] = title;
+      if (managed != null) body['managed'] = managed;
       final resp = await _api.patch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
@@ -575,6 +577,35 @@ class DaemonAPIService extends ChangeNotifier {
     if (original != null && idx != -1 && idx < _sessions.length) {
       _sessions[idx] = original;
       notifyListeners();
+    }
+    return false;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchUnboundPanes() async {
+    try {
+      final resp = await _api.get('/api/sessions/unbound-panes');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        return List<Map<String, dynamic>>.from(data['panes'] as List);
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to fetch unbound panes: $e');
+    }
+    return [];
+  }
+
+  Future<bool> attachSession(String sessionId, String paneId) async {
+    try {
+      final resp = await _api.post(
+        '/api/sessions/$sessionId/attach',
+        body: {'pane_id': paneId},
+      );
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to attach session: $e');
     }
     return false;
   }
