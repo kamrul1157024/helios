@@ -102,10 +102,7 @@ func Register() {
 	provider.RegisterSmallModelCaller("claude", func(ctx context.Context, system, prompt string) (string, error) {
 		cmd := exec.CommandContext(ctx, claudeBin,
 			"-p",
-			"--bare",
 			"--model", "haiku",
-			"--tools", "",
-			"--no-session-persistence",
 			"--output-format", "json",
 			"--system-prompt", system,
 		)
@@ -117,10 +114,14 @@ func Register() {
 		}
 
 		var result struct {
-			Result string `json:"result"`
+			Result  string `json:"result"`
+			IsError bool   `json:"is_error"`
 		}
 		if err := json.Unmarshal(output, &result); err != nil {
 			return "", fmt.Errorf("parse response: %w", err)
+		}
+		if result.IsError {
+			return "", fmt.Errorf("claude cli error: %s", result.Result)
 		}
 
 		return result.Result, nil
