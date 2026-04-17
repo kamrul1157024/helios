@@ -16,7 +16,7 @@ import (
 // recoverManagedSessions handles managed sessions that are not terminated.
 // Starting sessions are terminated — if launch failed, the user can resume.
 // Non-starting sessions with no pane get a new pane spawned via claude --session-id.
-func recoverManagedSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
+func recoverManagedSessions(db *store.Store, tc tmux.TmuxClient, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
 	if !tc.Available() {
 		return
 	}
@@ -65,7 +65,7 @@ func recoverManagedSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, 
 
 // reapStaleSessions sweeps dead panes from the PaneMap, marks sessions as
 // terminated, and backfills last_user_message from transcripts.
-func reapStaleSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
+func reapStaleSessions(db *store.Store, tc tmux.TmuxClient, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
 	// Sweep dead panes — single live-panes fetch, O(map) sweep.
 	dead := tc.SweepDeadPanes(pm)
 	for _, sessionID := range dead {

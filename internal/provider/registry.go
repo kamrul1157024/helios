@@ -28,7 +28,7 @@ type ReportEvent struct {
 type HookContext struct {
 	DB                *store.Store
 	Mgr               *notifications.Manager
-	Tmux              *tmux.Client
+	Tmux              tmux.TmuxClient
 	PaneMap           *tmux.PaneMap
 	Notify            func(eventType string, data interface{}) // SSE broadcast
 	RemovePendingPane func(cwd string) string                  // remove pane from pending map by CWD, returns pane ID

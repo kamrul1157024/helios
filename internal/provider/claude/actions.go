@@ -11,10 +11,10 @@ import (
 )
 
 // tmuxClient is set by the daemon after shared state is initialized.
-var tmuxClient *tmux.Client
+var tmuxClient tmux.TmuxClient
 
 // SetTmux sets the tmux client for action handlers that need pane access.
-func SetTmux(c *tmux.Client) {
+func SetTmux(c tmux.TmuxClient) {
 	tmuxClient = c
 }
 
