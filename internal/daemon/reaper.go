@@ -15,7 +15,7 @@ import (
 
 // recoverManagedSessions handles managed sessions that are not terminated.
 // Starting sessions are terminated — if launch failed, the user can resume.
-// Non-starting sessions with no pane get a new pane spawned via claude --session-id.
+// Non-starting sessions with no pane get a new pane spawned via claude --resume.
 func recoverManagedSessions(db *store.Store, tc tmux.TmuxClient, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
 	if !tc.Available() {
 		return
@@ -43,8 +43,8 @@ func recoverManagedSessions(db *store.Store, tc tmux.TmuxClient, pm *tmux.PaneMa
 			continue
 		}
 
-		// Non-starting session with no pane — spawn a new one.
-		cmd := fmt.Sprintf("claude --session-id %s", sess.SessionID)
+		// Non-starting session with no pane — resume the existing conversation.
+		cmd := fmt.Sprintf("claude --resume %s", sess.SessionID)
 		newPane, err := tc.CreateWindow(sess.CWD, cmd)
 		if err != nil {
 			log.Printf("recover: failed to recover session %s: %v", sess.SessionID, err)
