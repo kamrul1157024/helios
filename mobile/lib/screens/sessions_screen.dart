@@ -621,6 +621,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
                                     style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
                                   ),
                                 ),
+                                if (session.managed) ...[
+                                  const SizedBox(width: 6),
+                                  Tooltip(
+                                    message: 'Managed by Helios',
+                                    child: Icon(Icons.shield_outlined, size: 14, color: theme.colorScheme.primary.withValues(alpha: 0.7)),
+                                  ),
+                                ],
                                 if (session.needsRecovery) ...[
                                   const SizedBox(width: 6),
                                   Tooltip(

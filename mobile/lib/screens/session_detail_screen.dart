@@ -813,6 +813,22 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       ),
     );
 
+    if (session.managed) {
+      actions.add(
+        Tooltip(
+          message: 'Managed by Helios',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(
+              Icons.shield_outlined,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      );
+    }
+
     if (session.needsRecovery && sse != null) {
       actions.add(
         IconButton(

@@ -613,7 +613,7 @@ func (sh *Shared) resumeSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	cmd := fmt.Sprintf("claude --resume %s", session.SessionID)
+	cmd := fmt.Sprintf("claude --session-id %s", session.SessionID)
 	paneID, err := sh.Tmux.CreateWindow(session.CWD, cmd)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)

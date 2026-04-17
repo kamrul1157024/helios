@@ -13,8 +13,9 @@ import (
 	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
-// recoverManagedSessions finds managed sessions with no live pane and spawns a
-// new pane for each one via claude --resume.
+// recoverManagedSessions handles managed sessions that are not terminated.
+// Starting sessions are terminated — if launch failed, the user can resume.
+// Non-starting sessions with no pane get a new pane spawned via claude --session-id.
 func recoverManagedSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
 	if !tc.Available() {
 		return
@@ -25,25 +26,40 @@ func recoverManagedSessions(db *store.Store, tc *tmux.Client, pm *tmux.PaneMap, 
 		return
 	}
 	for _, sess := range sessions {
+		if sess.Status == "starting" {
+			db.UpdateSessionStatus(sess.SessionID, "terminated", "StuckStarting")
+			sse.Broadcast(server.SSEEvent{
+				Type: "session_status",
+				Data: map[string]interface{}{
+					"session_id": sess.SessionID,
+					"status":     "terminated",
+				},
+			})
+			log.Printf("recover: terminated stuck-starting session %s", sess.SessionID)
+			continue
+		}
+
 		if _, hasPane := pm.Get(sess.SessionID); hasPane {
 			continue
 		}
-		cmd := fmt.Sprintf("claude --resume %s", sess.SessionID)
-		paneID, err := tc.CreateWindow(sess.CWD, cmd)
+
+		// Non-starting session with no pane — spawn a new one.
+		cmd := fmt.Sprintf("claude --session-id %s", sess.SessionID)
+		newPane, err := tc.CreateWindow(sess.CWD, cmd)
 		if err != nil {
 			log.Printf("recover: failed to recover session %s: %v", sess.SessionID, err)
 			continue
 		}
-		pm.Set(sess.SessionID, paneID)
-		tc.SetPaneSessionID(paneID, sess.SessionID) //nolint:errcheck
+		pm.Set(sess.SessionID, newPane)
+		tc.SetPaneSessionID(newPane, sess.SessionID) //nolint:errcheck
 		sse.Broadcast(server.SSEEvent{
 			Type: "session_status",
 			Data: map[string]interface{}{
 				"session_id": sess.SessionID,
-				"tmux_pane":  paneID,
+				"tmux_pane":  newPane,
 			},
 		})
-		log.Printf("recover: recovered managed session %s → pane %s", sess.SessionID, paneID)
+		log.Printf("recover: recovered managed session %s → pane %s", sess.SessionID, newPane)
 	}
 }
 
