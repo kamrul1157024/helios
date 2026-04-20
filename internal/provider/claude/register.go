@@ -101,6 +101,7 @@ func Register() {
 	claudeBin := findClaude()
 	provider.RegisterSmallModelCaller("claude", func(ctx context.Context, system, prompt string) (string, error) {
 		cmd := exec.CommandContext(ctx, claudeBin,
+			"--bare",
 			"-p",
 			"--model", "haiku",
 			"--output-format", "json",
