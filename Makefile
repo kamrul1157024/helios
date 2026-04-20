@@ -15,7 +15,7 @@ build:
 install: build
 	sudo cp helios /usr/local/bin/helios
 	sudo codesign -s - -f /usr/local/bin/helios
-	sudo xattr -dr com.apple.quarantine /usr/local/bin/helios
+	sudo xattr -d com.apple.quarantine /usr/local/bin/helios 2>/dev/null || true
 	@echo "helios installed to /usr/local/bin/helios"
 
 uninstall:
