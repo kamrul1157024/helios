@@ -1,0 +1,3 @@
+theme: jekyll-theme-midnight
+title: Helios
+description: AI coding agent orchestrator - daemon, TUI, and mobile app for managing Claude Code sessions via tmux

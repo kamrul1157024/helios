@@ -1,0 +1,61 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - binary: helios
+    main: ./cmd/helios
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    tags:
+      - sqlite_math_functions
+
+archives:
+  - format: tar.gz
+    name_template: "helios_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+nfpms:
+  - package_name: helios
+    vendor: kamrul1157024
+    homepage: "https://github.com/kamrul1157024/helios"
+    description: "AI coding agent orchestrator via tmux - daemon, TUI, and mobile app"
+    license: "MIT"
+    formats:
+      - deb
+      - rpm
+    dependencies:
+      - tmux
+    bindir: /usr/local/bin
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: kamrul1157024
+    name: helios
+  draft: false
+  prerelease: auto

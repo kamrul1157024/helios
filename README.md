@@ -81,8 +81,9 @@ Each connection is fully independent — separate pairing, separate credentials,
 
 ### Prerequisites
 
+**macOS:**
 ```bash
-brew install go tmux                # Go (build helios), tmux (session management)
+brew install tmux                   # tmux (session management)
 
 # Pick ONE tunnel provider — exposes helios to your phone over the internet:
 brew install cloudflared            # Cloudflare Tunnel (recommended, free, no account needed)
@@ -90,7 +91,39 @@ brew install cloudflared            # Cloudflare Tunnel (recommended, free, no a
 brew install ngrok                  # ngrok (free tier, requires signup at ngrok.com)
 ```
 
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install tmux           # tmux (session management)
+
+# Pick ONE tunnel provider:
+# Cloudflare Tunnel (recommended)
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+sudo dpkg -i cloudflared.deb
+# or ngrok (requires signup at ngrok.com)
+curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+sudo apt-get update && sudo apt-get install ngrok
+```
+
 ### Step 1 — Install the binary
+
+#### Ubuntu/Debian
+
+Download and install the latest `.deb` package from the [releases page](https://github.com/kamrul1157024/helios/releases):
+
+```bash
+# Download the latest release (replace VERSION with actual version, e.g., 0.1.0)
+curl -LO https://github.com/kamrul1157024/helios/releases/download/vVERSION/helios_VERSION_linux_amd64.deb
+
+# Install
+sudo dpkg -i helios_VERSION_linux_amd64.deb
+
+# Install dependencies if needed
+sudo apt-get install -f
+```
+
+#### From source
 
 ```bash
 $ make install
