@@ -36,10 +36,10 @@ func TestLocaltunnelStopBeforeStart(t *testing.T) {
 
 func TestLocaltunnelBuildArgs(t *testing.T) {
 	tests := []struct {
-		name      string
-		tunnel    *LocaltunnelTunnel
-		port      int
-		wantArgs  []string
+		name     string
+		tunnel   *LocaltunnelTunnel
+		port     int
+		wantArgs []string
 	}{
 		{
 			name:     "basic",
@@ -99,8 +99,8 @@ func TestLocaltunnelBuildNpxArgs(t *testing.T) {
 
 func TestLocaltunnelURLRegex(t *testing.T) {
 	tests := []struct {
-		input        string
-		wantMatch    string
+		input         string
+		wantMatch     string
 		wantSubdomain string
 	}{
 		{
@@ -124,13 +124,13 @@ func TestLocaltunnelURLRegex(t *testing.T) {
 			wantSubdomain: "my-tunnel",
 		},
 		{
-			input:        "no url here",
-			wantMatch:    "",
+			input:         "no url here",
+			wantMatch:     "",
 			wantSubdomain: "",
 		},
 		{
-			input:        "http://not-https.loca.lt",
-			wantMatch:    "",
+			input:         "http://not-https.loca.lt",
+			wantMatch:     "",
 			wantSubdomain: "",
 		},
 	}

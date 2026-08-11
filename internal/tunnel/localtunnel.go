@@ -12,11 +12,11 @@ import (
 
 // LocaltunnelTunnel uses the `lt` CLI (localtunnel) for simple tunneling.
 type LocaltunnelTunnel struct {
-	cmd                  *exec.Cmd
-	url                  string
-	subdomain            string
-	host                 string
-	onSubdomainAssigned  func(subdomain string)
+	cmd                 *exec.Cmd
+	url                 string
+	subdomain           string
+	host                string
+	onSubdomainAssigned func(subdomain string)
 }
 
 func (t *LocaltunnelTunnel) Provider() string { return "localtunnel" }

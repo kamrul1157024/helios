@@ -16,12 +16,12 @@ type Event struct {
 	Type      string `json:"type"`                 // "tool_pre", "tool_post", "tool_post_failure", "prompt_submit", "stop", "stop_failure", "permission", "question", "session_start", "session_end", "compact_pre", "compact_post", "subagent_start", "subagent_stop", "notification"
 	SessionID string `json:"session_id"`           //nolint
 	CWD       string `json:"cwd,omitempty"`        //nolint
-	ToolName  string `json:"tool_name,omitempty"`   //nolint
-	ToolInput string `json:"tool_input,omitempty"`  // summarized tool input (file path, command, etc.)
-	Message   string `json:"message,omitempty"`     // user message, question text, notification message
-	Status    string `json:"status,omitempty"`      // "idle", "error", etc.
-	AgentType string `json:"agent_type,omitempty"`  //nolint
-	Detail    string `json:"detail,omitempty"`      // additional context (last session detail, subagent description)
+	ToolName  string `json:"tool_name,omitempty"`  //nolint
+	ToolInput string `json:"tool_input,omitempty"` // summarized tool input (file path, command, etc.)
+	Message   string `json:"message,omitempty"`    // user message, question text, notification message
+	Status    string `json:"status,omitempty"`     // "idle", "error", etc.
+	AgentType string `json:"agent_type,omitempty"` //nolint
+	Detail    string `json:"detail,omitempty"`     // additional context (last session detail, subagent description)
 }
 
 // Narration is the SSE payload pushed to connected clients.

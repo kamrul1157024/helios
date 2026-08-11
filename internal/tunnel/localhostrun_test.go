@@ -34,10 +34,10 @@ func TestLocalhostRunStopBeforeStart(t *testing.T) {
 
 func TestLocalhostRunBuildRemoteSpec(t *testing.T) {
 	tests := []struct {
-		name         string
-		tunnel       *LocalhostRunTunnel
-		port         int
-		wantSpec     string
+		name     string
+		tunnel   *LocalhostRunTunnel
+		port     int
+		wantSpec string
 	}{
 		{
 			name:     "free tier",

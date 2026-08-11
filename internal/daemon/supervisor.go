@@ -197,4 +197,3 @@ func SupervisorStatus() (running bool, pid int) {
 
 	return true, pid
 }
-

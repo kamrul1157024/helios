@@ -98,9 +98,9 @@ func TestParseZrokShareToken(t *testing.T) {
 
 func TestZrokURLRegex(t *testing.T) {
 	tests := []struct {
-		input        string
-		wantHost     string
-		wantNoMatch  bool
+		input       string
+		wantHost    string
+		wantNoMatch bool
 	}{
 		{
 			input:    "https://abc123.share.zrok.io",
