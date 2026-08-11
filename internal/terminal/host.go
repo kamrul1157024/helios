@@ -89,12 +89,26 @@ type viewer struct {
 	name   string
 	cols   int
 	rows   int
+	conn   net.Conn
 	out    chan outMsg
 	closed chan struct{}
 	once   sync.Once
 }
 
 func (v *viewer) close() { v.once.Do(func() { close(v.closed) }) }
+
+// drop forces the connection shut so serveConn can unwind.
+//
+// close alone only stops the writer: the reader stays parked in ReadFrame until
+// the peer hangs up, so a viewer the host gave up on would linger in the viewer
+// set, keep voting on the PTY size and keep inflating the viewer count. Closing
+// the socket is also what tells the client to reconnect and resync.
+func (v *viewer) drop() {
+	v.close()
+	if v.conn != nil {
+		v.conn.Close()
+	}
+}
 
 // send enqueues a frame, reporting false if the viewer is too far behind. The
 // caller drops such viewers back to a snapshot resync.
@@ -254,7 +268,7 @@ func (h *Host) broadcast(chunk []byte) {
 	for _, v := range vs {
 		if !v.send(outMsg{typ: FrameOutput, payload: chunk}) {
 			// Too far behind: drop it, the connection loop resyncs.
-			v.close()
+			v.drop()
 		}
 	}
 }
@@ -471,6 +485,7 @@ func (h *Host) serveConn(conn net.Conn) {
 		name:   hello.Name,
 		cols:   hello.Cols,
 		rows:   hello.Rows,
+		conn:   conn,
 		out:    make(chan outMsg, viewerQueueDepth),
 		closed: make(chan struct{}),
 	}

@@ -355,3 +355,45 @@ func TestSetEnv_KeepsMalformedEntries(t *testing.T) {
 		t.Errorf("env = %q, want NOTAVAR kept", got)
 	}
 }
+
+// A viewer that stops reading must be dropped from the host entirely.
+//
+// Signalling its close channel only stops the writer; the reader stays parked
+// in ReadFrame until the peer hangs up, which for a wedged client is never. The
+// viewer would then keep voting on the PTY size and keep the viewer count up
+// for the life of the session.
+func TestHostDropsAStalledViewer(t *testing.T) {
+	h, sock := serveHost(t, HostConfig{
+		SessionID: "stall",
+		Command:   "yes",
+		Args:      []string{strings.Repeat("flood", 40)},
+	})
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := WriteJSONFrame(conn, FrameHello, Hello{
+		Role: RoleInteractive, Name: "stalled", Cols: 40, Rows: 10,
+	}); err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+	// Read the catch-up frames so the viewer is fully registered, then stop
+	// reading and let the child's output back up behind it.
+	for i := 0; i < 2; i++ {
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := ReadFrame(conn); err != nil {
+			t.Fatalf("handshake frame %d: %v", i, err)
+		}
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.Status().Viewers == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Errorf("stalled viewer still attached after 15s: %+v", h.Status())
+}
