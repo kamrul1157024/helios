@@ -21,7 +21,10 @@ type Shared struct {
 	Backend backend.Backend
 	// Pending tracks sessions whose terminal has started but whose agent has
 	// not reported in yet, which is the window the trust dialog appears in.
-	Pending  *PendingSessionMap
+	Pending *PendingSessionMap
+	// Signals lets a request wait for something an agent only reports later,
+	// through a hook.
+	Signals  *SessionSignals
 	Reporter *reporter.Reporter
 }
 
@@ -54,6 +57,7 @@ func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) 
 		SSE:      NewSSEBroadcaster(),
 		Backend:  be,
 		Pending:  NewPendingSessionMap(),
+		Signals:  NewSessionSignals(),
 		Reporter: reporter.New("claude", db),
 	}
 }

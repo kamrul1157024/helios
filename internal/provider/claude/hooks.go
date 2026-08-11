@@ -644,6 +644,12 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		})
 	}
 
+	// Last, so a caller woken by this has the status and the message already
+	// written rather than racing them.
+	if ctx.PromptSubmitted != nil {
+		ctx.PromptSubmitted(input.SessionID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)
 }

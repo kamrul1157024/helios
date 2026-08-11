@@ -453,6 +453,18 @@ func (s *PublicServer) handleListSubagents(w http.ResponseWriter, r *http.Reques
 
 // ==================== Session Control ====================
 
+// Variables rather than constants only so tests need not wait them out.
+var (
+	// agentBootTimeout is how long a woken session gets to report in before
+	// the send is given up on. Generous: a cold agent loads a transcript,
+	// an MCP server or two, and the user's settings before it says anything.
+	agentBootTimeout = 25 * time.Second
+	// promptAckTimeout is how long the agent gets to acknowledge a prompt it
+	// was handed. Short: the hook fires the moment the prompt is submitted,
+	// so silence past a few seconds means it was not.
+	promptAckTimeout = 8 * time.Second
+)
+
 func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 	id := extractSessionID(r.URL.Path, "/send")
 
@@ -513,6 +525,13 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 			jsonError(w, "session has no terminal and this backend cannot resume", http.StatusConflict)
 			return
 		}
+
+		// Subscribed before the wake, never after: the agent can report in
+		// while Wake is still returning, and a signal fired with nobody
+		// listening is gone.
+		ready := s.shared.Signals.Await(SignalAgentReady, id)
+		defer ready.Release()
+
 		woken, err := waker.Wake(id, session.CWD)
 		if err != nil {
 			log.Printf("session-send: wake %s: %v", id, err)
@@ -520,7 +539,21 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		resumed = woken
+
+		// The wake only waits for the host's socket, which exists seconds
+		// before the agent is reading its terminal. Typing into that gap is
+		// how a prompt disappears with no trace.
+		if resumed && !ready.Wait(agentBootTimeout) {
+			log.Printf("session-send: session %s did not report ready within %s", id, agentBootTimeout)
+			jsonError(w, "the session is still starting up", http.StatusGatewayTimeout)
+			return
+		}
 	}
+
+	// Likewise subscribed before typing. The agent's own hook is the only
+	// proof the prompt landed; anything else is this end guessing.
+	ack := s.shared.Signals.Await(SignalPromptSubmitted, id)
+	defer ack.Release()
 
 	if err := s.shared.Backend.SendText(id, req.Message); err != nil {
 		log.Printf("session-send: send failed for %s: %v", id, err)
@@ -528,9 +561,19 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
+	if !ack.Wait(promptAckTimeout) {
+		// No retype: the prompt may yet be sitting in a dialog or a composer,
+		// and a second copy would be a second turn. The session stays idle,
+		// which is what it looks like from here, and the caller can retry.
+		log.Printf("session-send: session %s never acknowledged the prompt", id)
+		jsonError(w, "the session did not accept the message", http.StatusGatewayTimeout)
+		return
+	}
+
+	// Status is the prompt-submit hook's to write, and it has by now. Writing
+	// it here as well is how a lost prompt used to look like a working one.
 	s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-	log.Printf("session-send: sent prompt to session %s (resumed=%v)", id, resumed)
+	log.Printf("session-send: session %s accepted the prompt (resumed=%v)", id, resumed)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "resumed": resumed})
 }
 
@@ -702,7 +745,6 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 		Archived *bool   `json:"archived"`
 		Title    *string `json:"title"`
 		Status   *string `json:"status"`
-		Managed  *bool   `json:"managed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -726,13 +768,6 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	if req.Title != nil {
 		if err := s.shared.DB.UpdateSessionTitle(id, *req.Title); err != nil {
 			jsonError(w, "failed to update session title", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if req.Managed != nil {
-		if err := s.shared.DB.UpdateSessionManaged(id, *req.Managed); err != nil {
-			jsonError(w, "failed to update managed flag", http.StatusInternalServerError)
 			return
 		}
 	}

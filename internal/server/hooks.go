@@ -75,6 +75,10 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		},
 		SessionStarted: func(sessionID string) {
 			s.shared.Pending.Remove(sessionID)
+			s.shared.Signals.Fire(SignalAgentReady, sessionID)
+		},
+		PromptSubmitted: func(sessionID string) {
+			s.shared.Signals.Fire(SignalPromptSubmitted, sessionID)
 		},
 		Report: func(event provider.ReportEvent) {
 			s.shared.Reporter.AddEvent(reporter.Event{

@@ -200,14 +200,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
     setState(() => _sending = true);
     final sse = _sse;
-    final ok = sse != null && await sse.sendSessionPrompt(widget.session.sessionId, text);
-    if (ok && mounted) {
+    final error = sse == null
+        ? 'Not connected'
+        : await sse.sendSessionPrompt(widget.session.sessionId, text);
+    if (error == null && mounted) {
       _promptController.clear();
       await Future.delayed(const Duration(milliseconds: 500));
       await _loadTranscript();
     } else if (mounted) {
+      // The prompt stays in the box: it never reached the session, so the
+      // user should not have to retype it.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to send prompt'), duration: Duration(seconds: 2)),
+        SnackBar(content: Text(error!), duration: const Duration(seconds: 3)),
       );
     }
     if (mounted) setState(() => _sending = false);
@@ -250,109 +254,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         );
       },
     ).then((_) => controller.dispose());
-  }
-
-  void _showRecoverySheet(DaemonAPIService sse, Session session) {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.link_off, color: Colors.amber.shade700),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Session is cold',
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'This session has no live terminal. Choose a recovery option:',
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
-                const SizedBox(height: 16),
-                _recoveryOption(
-                  ctx: ctx,
-                  icon: Icons.shield_outlined,
-                  title: 'Hand off to Helios',
-                  subtitle: 'Helios will manage and auto-recover this session automatically',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    sse.patchSession(session.sessionId, managed: true);
-                  },
-                ),
-                const SizedBox(height: 8),
-                _recoveryOption(
-                  ctx: ctx,
-                  icon: Icons.play_arrow_outlined,
-                  title: 'Resume the session',
-                  subtitle: 'Start a fresh terminal and continue this conversation',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    sse.resumeSession(session.sessionId);
-                  },
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _recoveryOption({
-    required BuildContext ctx,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(ctx);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          border: Border.all(color: theme.colorScheme.outlineVariant),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 22, color: theme.colorScheme.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right, size: 18, color: theme.colorScheme.onSurfaceVariant),
-          ],
-        ),
-      ),
-    );
   }
 
   Future<void> _stop() async {
@@ -733,12 +634,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       );
     }
 
-    if (session.needsRecovery && sse != null) {
+    if (session.needsRecovery) {
       actions.add(
         IconButton(
           icon: Icon(Icons.link_off, color: Colors.amber.shade700),
           tooltip: 'Cold — tap to resume',
-          onPressed: () => _showRecoverySheet(sse, session),
+          onPressed: _resume,
         ),
       );
     }
@@ -876,10 +777,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   Future<void> _sendCommand(String command) async {
     setState(() => _sending = true);
     final sse = _sse;
-    final ok = sse != null && await sse.sendSessionPrompt(widget.session.sessionId, command);
-    if (!ok && mounted) {
+    final error = sse == null
+        ? 'Not connected'
+        : await sse.sendSessionPrompt(widget.session.sessionId, command);
+    if (error != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to send command'), duration: Duration(seconds: 2)),
+        SnackBar(content: Text(error), duration: const Duration(seconds: 3)),
       );
     }
     if (mounted) setState(() => _sending = false);

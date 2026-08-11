@@ -31,9 +31,13 @@ type HookContext struct {
 	Terminal backend.Backend
 	Notify   func(eventType string, data interface{}) // SSE broadcast
 	// SessionStarted marks a session as having reported in, which stops the
-	// trust-dialog watcher for it.
+	// trust-dialog watcher for it and releases anything waiting for the agent
+	// to finish booting.
 	SessionStarted func(sessionID string)
-	Report         func(event ReportEvent) // push event to Reporter for narration
+	// PromptSubmitted marks a prompt as accepted by the agent. It is the only
+	// proof a prompt typed into a terminal actually landed.
+	PromptSubmitted func(sessionID string)
+	Report          func(event ReportEvent) // push event to Reporter for narration
 }
 
 // HookHandler processes an incoming hook request and writes the response.

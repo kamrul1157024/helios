@@ -436,18 +436,35 @@ class DaemonAPIService extends ChangeNotifier {
     return [];
   }
 
-  Future<bool> sendSessionPrompt(String sessionId, String message) async {
+  /// Sends a prompt and waits for the agent to accept it.
+  ///
+  /// Returns null when it did. Anything else is the reason it did not, worth
+  /// showing: the daemon only answers once the agent has confirmed, so a
+  /// failure here means the message is not in the session.
+  Future<String?> sendSessionPrompt(String sessionId, String message) async {
     try {
       final resp = await _api.post('/api/sessions/$sessionId/send', body: {'message': message});
       debugPrint('[$hostId] sendSessionPrompt: status=${resp.statusCode} body=${resp.body}');
       if (resp.statusCode == 200) {
         await fetchSessions();
-        return true;
+        return null;
       }
+      return _sendErrorMessage(resp.body);
     } catch (e) {
       debugPrint('[$hostId] Failed to send prompt: $e');
+      return 'Could not reach the daemon';
     }
-    return false;
+  }
+
+  String _sendErrorMessage(String body) {
+    try {
+      final data = jsonDecode(body);
+      final reason = (data['error'] as String?) ?? '';
+      if (reason == 'session_busy') return 'The session is busy';
+      if (reason == 'session_terminated') return 'The session has ended';
+      if (reason.isNotEmpty) return reason;
+    } catch (_) {}
+    return 'Failed to send prompt';
   }
 
   Future<bool> stopSession(String sessionId) async {
@@ -489,7 +506,7 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived, String? title, bool? managed}) async {
+  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived, String? title}) async {
     // Optimistically update the local session list for instant UI feedback.
     // Use Future.microtask to defer the notification so any dialog/sheet that
     // triggered this call finishes its pop transition first — avoids the
@@ -502,7 +519,6 @@ class DaemonAPIService extends ChangeNotifier {
         pinned: pinned ?? original.pinned,
         archived: archived ?? original.archived,
         title: title,
-        managed: managed ?? original.managed,
       );
       Future.microtask(() => notifyListeners());
     }
@@ -512,7 +528,6 @@ class DaemonAPIService extends ChangeNotifier {
       if (pinned != null) body['pinned'] = pinned;
       if (archived != null) body['archived'] = archived;
       if (title != null) body['title'] = title;
-      if (managed != null) body['managed'] = managed;
       final resp = await _api.patch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) {
         await fetchSessions();
