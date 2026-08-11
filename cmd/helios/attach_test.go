@@ -233,6 +233,44 @@ func TestWrapCommand_DanglingContinueMintsID(t *testing.T) {
 	}
 }
 
+// ==================== explicitPermissionMode ====================
+
+// Wrap adds no mode of its own, and the empty result is meaningful: it is what
+// tells the daemon to leave the column null so a wake omits the flag too.
+func TestExplicitPermissionMode_UnsetWhenUserDidNotAskForOne(t *testing.T) {
+	if got := explicitPermissionMode([]string{"claude", "--model", "opus"}); got != "" {
+		t.Errorf("mode = %q, want empty — wrap picks no mode", got)
+	}
+}
+
+func TestExplicitPermissionMode_ReadsBothFlagForms(t *testing.T) {
+	for _, parts := range [][]string{
+		{"claude", "--permission-mode", "plan"},
+		{"claude", "--permission-mode=plan"},
+	} {
+		if got := explicitPermissionMode(parts); got != "plan" {
+			t.Errorf("explicitPermissionMode(%v) = %q, want plan", parts, got)
+		}
+	}
+}
+
+// A dangling --permission-mode has no value to record; claude will reject the
+// launch itself, and inventing a mode here would outlive that failure.
+func TestExplicitPermissionMode_DanglingFlagRecordsNothing(t *testing.T) {
+	if got := explicitPermissionMode([]string{"claude", "--permission-mode"}); got != "" {
+		t.Errorf("mode = %q, want empty", got)
+	}
+}
+
+// The skip flag cannot be replayed on a resume, so it is stored as the mode
+// that keeps the user's "stop asking" across a wake.
+func TestExplicitPermissionMode_SkipRecordedAsBypass(t *testing.T) {
+	got := explicitPermissionMode([]string{"claude", "--dangerously-skip-permissions"})
+	if got != "bypassPermissions" {
+		t.Errorf("mode = %q, want bypassPermissions", got)
+	}
+}
+
 func TestWrapCommand_AbsolutePathToClaudeIsRecognised(t *testing.T) {
 	_, _, isClaude := wrapCommand([]string{"/opt/homebrew/bin/claude"})
 	if !isClaude {

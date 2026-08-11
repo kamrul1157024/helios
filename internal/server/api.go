@@ -994,6 +994,17 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 	})
 }
 
+// launchPermissionMode reports the mode a freshly built session is starting
+// under, or "" for a provider that has no permission modes. Claude is the only
+// one with them today, and only its session builder knows what an empty request
+// resolves to.
+func launchPermissionMode(providerID string, spec provider.SessionSpec) string {
+	if providerID != "claude" {
+		return ""
+	}
+	return claudeprovider.LaunchPermissionMode(spec)
+}
+
 func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider                   string `json:"provider"`
@@ -1028,14 +1039,15 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	}
 
 	sessionID := uuid.New().String()
-	argv := builder(provider.SessionSpec{
+	spec := provider.SessionSpec{
 		SessionID:       sessionID,
 		Prompt:          req.Prompt,
 		Model:           req.Model,
 		CWD:             req.CWD,
 		PermissionMode:  req.PermissionMode,
 		SkipPermissions: req.DangerouslySkipPermissions,
-	})
+	}
+	argv := builder(spec)
 
 	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
 	if err != nil {
@@ -1054,12 +1066,15 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		LastEvent: &event,
 		Managed:   true,
 	}
-	s.shared.DB.UpsertSession(sess)
-	// Record the requested mode now, not on the first hook: a session evicted
-	// before it reports in would otherwise wake in the provider default. An
-	// empty request mode is left null, which means exactly that default.
-	if req.PermissionMode != "" {
-		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, req.PermissionMode); err != nil {
+	if err := s.shared.DB.UpsertSession(sess); err != nil {
+		log.Printf("create-session: register session %s: %v", sessionID, err)
+	}
+	// Record the mode the agent launched under, now rather than on the first
+	// hook: a session evicted before it reports in would otherwise wake with an
+	// empty column, and an empty column means "whatever the CLI defaults to" —
+	// which is not what a Helios-launched session was started in.
+	if mode := launchPermissionMode(req.Provider, spec); mode != "" {
+		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
 			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
 		}
 	}
@@ -1079,9 +1094,10 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 // session record.
 func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Handle    string `json:"handle"`
-		CWD       string `json:"cwd"`
-		SessionID string `json:"session_id"`
+		Handle         string `json:"handle"`
+		CWD            string `json:"cwd"`
+		SessionID      string `json:"session_id"`
+		PermissionMode string `json:"permission_mode,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
 		jsonError(w, "missing session_id", http.StatusBadRequest)
@@ -1097,7 +1113,17 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 		LastEvent: &event,
 		Managed:   true,
 	}
-	s.shared.DB.UpsertSession(sess)
+	if err := s.shared.DB.UpsertSession(sess); err != nil {
+		log.Printf("wrap: register session %s: %v", req.SessionID, err)
+	}
+	// Only a mode the user typed on the wrapped command is recorded. Wrap adds
+	// none of its own, and a null column is what tells a later wake to leave the
+	// flag off and let the CLI apply the same default it started under.
+	if claudeprovider.ValidPermissionMode(req.PermissionMode) {
+		if err := s.shared.DB.UpdateSessionPermissionMode(req.SessionID, req.PermissionMode); err != nil {
+			log.Printf("wrap: record permission mode for %s: %v", req.SessionID, err)
+		}
+	}
 
 	if err := s.shared.Backend.Adopt(req.SessionID, req.Handle, req.CWD); err != nil {
 		log.Printf("wrap: adopt terminal for %s: %v", req.SessionID, err)
@@ -1599,14 +1625,15 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	sessionID := uuid.New().String()
-	argv := builder(provider.SessionSpec{
+	spec := provider.SessionSpec{
 		SessionID:       sessionID,
 		Prompt:          req.Prompt,
 		Model:           req.Model,
 		CWD:             req.CWD,
 		PermissionMode:  req.PermissionMode,
 		SkipPermissions: req.DangerouslySkipPermissions,
-	})
+	}
+	argv := builder(spec)
 
 	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
 	if err != nil {
@@ -1625,12 +1652,15 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		LastEvent: &event,
 		Managed:   true,
 	}
-	s.shared.DB.UpsertSession(sess)
-	// Record the requested mode now, not on the first hook: a session evicted
-	// before it reports in would otherwise wake in the provider default. An
-	// empty request mode is left null, which means exactly that default.
-	if req.PermissionMode != "" {
-		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, req.PermissionMode); err != nil {
+	if err := s.shared.DB.UpsertSession(sess); err != nil {
+		log.Printf("create-session: register session %s: %v", sessionID, err)
+	}
+	// Record the mode the agent launched under, now rather than on the first
+	// hook: a session evicted before it reports in would otherwise wake with an
+	// empty column, and an empty column means "whatever the CLI defaults to" —
+	// which is not what a Helios-launched session was started in.
+	if mode := launchPermissionMode(req.Provider, spec); mode != "" {
+		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
 			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
 		}
 	}

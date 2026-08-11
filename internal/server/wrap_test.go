@@ -13,6 +13,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -142,6 +143,58 @@ func TestWrap_RegistersManagedSessionBoundToTerminal(t *testing.T) {
 	}
 }
 
+// A wrapped command runs in whatever mode the CLI's own settings give it, and
+// Helios cannot read those. Recording nothing is what makes the next wake omit
+// the flag as well, instead of waking the session into the Helios default.
+func TestWrap_LeavesPermissionModeUnsetByDefault(t *testing.T) {
+	srv, shared, _ := newInternalTestServer(t)
+
+	postJSON(t, srv.URL+"/internal/wrap",
+		`{"session_id":"sess-1","handle":"/tmp/sess-1.sock","cwd":"/tmp/proj"}`)
+
+	sess, err := shared.DB.GetSession("sess-1")
+	if err != nil || sess == nil {
+		t.Fatalf("session not registered: %v", err)
+	}
+	if sess.PermissionMode != nil {
+		t.Errorf("permission mode = %q, want unset for a wrapped session", *sess.PermissionMode)
+	}
+}
+
+// A mode the user typed on the wrapped command is theirs, so it has to survive
+// the session going cold — the resume repeats the flag from this column.
+func TestWrap_RecordsModeTheUserAskedFor(t *testing.T) {
+	srv, shared, _ := newInternalTestServer(t)
+
+	postJSON(t, srv.URL+"/internal/wrap",
+		`{"session_id":"sess-1","handle":"/tmp/sess-1.sock","cwd":"/tmp/proj","permission_mode":"plan"}`)
+
+	sess, err := shared.DB.GetSession("sess-1")
+	if err != nil || sess == nil {
+		t.Fatalf("session not registered: %v", err)
+	}
+	if sess.PermissionMode == nil || *sess.PermissionMode != "plan" {
+		t.Errorf("permission mode = %v, want plan", sess.PermissionMode)
+	}
+}
+
+// claude rejects an unknown mode at startup, so storing one would leave the
+// session unable to wake. The column stays null, which resumes it as it ran.
+func TestWrap_IgnoresUnknownMode(t *testing.T) {
+	srv, shared, _ := newInternalTestServer(t)
+
+	postJSON(t, srv.URL+"/internal/wrap",
+		`{"session_id":"sess-1","handle":"/tmp/sess-1.sock","cwd":"/tmp/proj","permission_mode":"yolo"}`)
+
+	sess, _ := shared.DB.GetSession("sess-1")
+	if sess == nil {
+		t.Fatal("session not registered")
+	}
+	if sess.PermissionMode != nil {
+		t.Errorf("permission mode = %q, want unset", *sess.PermissionMode)
+	}
+}
+
 // The trust dialog only appears before the agent reports in, so the session
 // joins the pending set the watcher polls.
 func TestWrap_AddsSessionToTrustWatch(t *testing.T) {
@@ -189,6 +242,46 @@ func TestWrap_AdoptFailureStillRegistersSession(t *testing.T) {
 	}
 	if sess, _ := shared.DB.GetSession("sess-1"); sess == nil {
 		t.Fatal("session should have been registered anyway")
+	}
+}
+
+// ==================== POST /internal/sessions ====================
+
+// The mirror of the wrap case: a session Helios launched did get a mode, so it
+// has to be recorded even when the caller named none. Leaving the column null
+// would mean "the CLI's default" on the next wake, which is not what it ran in.
+func TestCreateSession_RecordsTheModeItLaunchedWith(t *testing.T) {
+	claude.Register()
+	srv, shared, _ := newInternalTestServer(t)
+
+	resp := postJSON(t, srv.URL+"/internal/sessions", `{"provider":"claude","cwd":"/tmp/proj"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	sessions, err := shared.DB.ListSessions()
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions = %v (%v), want 1", sessions, err)
+	}
+	got := sessions[0].PermissionMode
+	if got == nil || *got != claude.DefaultPermissionMode {
+		t.Errorf("permission mode = %v, want %s", got, claude.DefaultPermissionMode)
+	}
+}
+
+func TestCreateSession_RecordsTheRequestedMode(t *testing.T) {
+	claude.Register()
+	srv, shared, _ := newInternalTestServer(t)
+
+	postJSON(t, srv.URL+"/internal/sessions",
+		`{"provider":"claude","cwd":"/tmp/proj","permission_mode":"plan"}`)
+
+	sessions, err := shared.DB.ListSessions()
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions = %v (%v), want 1", sessions, err)
+	}
+	if got := sessions[0].PermissionMode; got == nil || *got != "plan" {
+		t.Errorf("permission mode = %v, want plan", got)
 	}
 }
 

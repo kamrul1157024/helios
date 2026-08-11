@@ -76,12 +76,45 @@ func ValidPermissionMode(mode string) bool {
 // The permission mode has to be repeated on every resume: it is a
 // per-invocation flag, not conversation state, so a woken session would
 // otherwise come back in the CLI's default and quietly drop whatever mode the
-// user had chosen. An empty or unrecognised mode means DefaultPermissionMode.
+// user had chosen. An unrecognised mode means DefaultPermissionMode.
+//
+// An empty mode is different from an unrecognised one: it means Helios never
+// chose a mode for this session, which is the case for one the user started
+// themselves — `helios wrap -- claude`, or a session discovered from a
+// transcript. Those launched in whatever default the CLI's own settings give
+// them, so the flag is omitted here and they wake the way they started.
+// Sending DefaultPermissionMode instead would silently escalate a session the
+// user never asked to be permissive.
 func ResumeArgs(sessionID, mode string) []string {
+	argv := []string{findClaude(), "--resume", sessionID}
+	if mode == "" {
+		return argv
+	}
 	if !ValidPermissionMode(mode) {
 		mode = DefaultPermissionMode
 	}
-	return []string{findClaude(), "--resume", sessionID, "--permission-mode", mode}
+	return append(argv, "--permission-mode", mode)
+}
+
+// LaunchPermissionMode reports the mode sessionArgs launches spec under, so a
+// caller can record what the session is actually running in rather than
+// inferring it later. Recording matters because an unrecorded mode means "the
+// CLI's own default" to ResumeArgs.
+//
+// SkipPermissions maps to bypassPermissions: --dangerously-skip-permissions is
+// a launch-only flag with no resume equivalent, and bypassPermissions is the
+// mode that keeps the user's "stop asking me" across a wake. It is not the same
+// flag — it runs the hook chain, which is what keeps the session visible to
+// Helios at all — but it is the closest resumable form of the same request.
+func LaunchPermissionMode(spec provider.SessionSpec) string {
+	switch {
+	case spec.SkipPermissions:
+		return "bypassPermissions"
+	case ValidPermissionMode(spec.PermissionMode):
+		return spec.PermissionMode
+	default:
+		return DefaultPermissionMode
+	}
 }
 
 // sessionArgs builds the argv for a Claude session. Shared with the resume
@@ -96,13 +129,10 @@ func sessionArgs(spec provider.SessionSpec) []string {
 	}
 	// --dangerously-skip-permissions is not a permission mode: it bypasses the
 	// hook chain the modes run through, so passing both is contradictory.
-	switch {
-	case spec.SkipPermissions:
+	if spec.SkipPermissions {
 		argv = append(argv, "--dangerously-skip-permissions")
-	case ValidPermissionMode(spec.PermissionMode):
-		argv = append(argv, "--permission-mode", spec.PermissionMode)
-	default:
-		argv = append(argv, "--permission-mode", DefaultPermissionMode)
+	} else {
+		argv = append(argv, "--permission-mode", LaunchPermissionMode(spec))
 	}
 	// Last, and positional: anything after it would be read as more prompt.
 	if spec.Prompt != "" {

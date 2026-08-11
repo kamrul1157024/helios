@@ -667,7 +667,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     // Permission mode. Shown always so the mode is visible at a glance;
     // tappable only when idle, because switching restarts the agent.
     if (session.source == 'claude') {
-      final mode = PermissionMode.of(session.permissionMode ?? 'auto');
+      final mode = PermissionMode.of(session.permissionMode ?? '');
       actions.add(
         IconButton(
           icon: Icon(
@@ -823,7 +823,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       );
       return;
     }
-    final current = session.permissionMode ?? 'auto';
+    // Empty matches none of the provider's modes, which is the point: a session
+    // Helios never set a mode on has nothing to show as selected.
+    final current = session.permissionMode ?? '';
 
     showModalBottomSheet(
       context: context,

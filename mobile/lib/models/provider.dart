@@ -44,6 +44,11 @@ class PermissionMode {
   const PermissionMode(this.id, this.label, this.description);
 
   static const _known = <String, PermissionMode>{
+    // A session Helios never chose a mode for — one started with
+    // `helios wrap` or found on disk. It runs in whatever the CLI's own
+    // settings say, which Helios cannot read, so it is named rather than
+    // guessed at.
+    '': PermissionMode('', 'Claude default', "Set by Claude's own settings"),
     'plan': PermissionMode(
       'plan',
       'Plan',

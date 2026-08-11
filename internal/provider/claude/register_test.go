@@ -103,15 +103,61 @@ func TestResumeArgsCarriesStoredMode(t *testing.T) {
 	}
 }
 
-// TestResumeArgsFallsBackForUnusableModes covers the rows that predate the
-// column and anything a stale client sends: claude rejects an unknown mode at
-// startup, so a bad stored value would leave the session unable to wake.
+// TestResumeArgsFallsBackForUnusableModes covers anything a stale client sends:
+// claude rejects an unknown mode at startup, so a bad stored value would leave
+// the session unable to wake.
 func TestResumeArgsFallsBackForUnusableModes(t *testing.T) {
-	for _, mode := range []string{"", "yolo", "default"} {
+	for _, mode := range []string{"yolo", "default"} {
 		argv := ResumeArgs("s1", mode)
 		if got, _ := flagValue(argv, "--permission-mode"); got != DefaultPermissionMode {
 			t.Errorf("ResumeArgs(%q) mode = %q, want %s", mode, got, DefaultPermissionMode)
 		}
+	}
+}
+
+// TestResumeArgsOmitsUnsetMode is the wrapped-session case: nothing recorded
+// means the user started the session themselves and Helios never picked a mode
+// for it. Sending DefaultPermissionMode on the wake would escalate a session
+// that launched under the CLI's own default.
+func TestResumeArgsOmitsUnsetMode(t *testing.T) {
+	argv := ResumeArgs("s1", "")
+
+	if slices.Contains(argv, "--permission-mode") {
+		t.Errorf("argv = %v, want no --permission-mode for an unset mode", argv)
+	}
+	if got, _ := flagValue(argv, "--resume"); got != "s1" {
+		t.Errorf("--resume = %q, want s1", got)
+	}
+}
+
+// TestLaunchPermissionModeMatchesArgv pins the recorded mode to the one the
+// agent is actually launched with: they are read back together on the next
+// wake, so a disagreement would resume the session in a mode it never ran in.
+func TestLaunchPermissionModeMatchesArgv(t *testing.T) {
+	for _, spec := range []provider.SessionSpec{
+		{},
+		{PermissionMode: "plan"},
+		{PermissionMode: "nonsense"},
+	} {
+		argv := sessionArgs(spec)
+		want, _ := flagValue(argv, "--permission-mode")
+		if got := LaunchPermissionMode(spec); got != want {
+			t.Errorf("LaunchPermissionMode(%+v) = %q, argv has %q", spec, got, want)
+		}
+	}
+}
+
+// Skipping permissions has no resume equivalent, so it is recorded as the mode
+// that carries the same intent — otherwise the wake would drop it entirely and
+// start asking a user who explicitly opted out.
+func TestLaunchPermissionModeRecordsSkipAsBypass(t *testing.T) {
+	spec := provider.SessionSpec{SkipPermissions: true}
+
+	if got := LaunchPermissionMode(spec); got != "bypassPermissions" {
+		t.Errorf("LaunchPermissionMode(skip) = %q, want bypassPermissions", got)
+	}
+	if argv := sessionArgs(spec); slices.Contains(argv, "--permission-mode") {
+		t.Errorf("argv = %v, want --dangerously-skip-permissions alone", argv)
 	}
 }
 

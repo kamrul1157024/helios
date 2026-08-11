@@ -604,7 +604,7 @@ func handleWrap(args []string) {
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
 	if isClaude {
-		registerWrappedSession(internalURL, socket, cwd, sessionID)
+		registerWrappedSession(internalURL, socket, cwd, sessionID, explicitPermissionMode(parts))
 	}
 
 	res, err := terminal.Attach(context.Background(), terminal.AttachConfig{
@@ -673,14 +673,40 @@ func wrapCommand(parts []string) (sessionID string, cmd []string, isClaude bool)
 	return sessionID, cmd, true
 }
 
+// explicitPermissionMode returns the permission mode the user asked a wrapped
+// command to run under, or "" if they left it to the CLI.
+//
+// Wrap does not add a mode of its own — the point of it is that the command
+// behaves as if it had been typed directly — so what the user typed is the only
+// thing worth recording. Recording it is what stops a wake from replacing it
+// with the Helios default, since the mode is a per-invocation flag the resume
+// has to repeat.
+//
+// --dangerously-skip-permissions has no resume equivalent and is recorded as
+// the mode that comes closest, matching claude.LaunchPermissionMode.
+func explicitPermissionMode(parts []string) string {
+	for i, a := range parts {
+		switch {
+		case a == "--dangerously-skip-permissions":
+			return "bypassPermissions"
+		case a == "--permission-mode" && i+1 < len(parts):
+			return parts[i+1]
+		case strings.HasPrefix(a, "--permission-mode="):
+			return strings.TrimPrefix(a, "--permission-mode=")
+		}
+	}
+	return ""
+}
+
 // registerWrappedSession binds a hand-started terminal to a session record.
 // The daemon being down is not fatal: the command still runs, it is simply not
 // tracked until the daemon comes back and recovers the host from its sidecar.
-func registerWrappedSession(internalURL, socket, cwd, sessionID string) {
+func registerWrappedSession(internalURL, socket, cwd, sessionID, permissionMode string) {
 	body, err := json.Marshal(map[string]string{
-		"handle":     socket,
-		"cwd":        cwd,
-		"session_id": sessionID,
+		"handle":          socket,
+		"cwd":             cwd,
+		"session_id":      sessionID,
+		"permission_mode": permissionMode,
 	})
 	if err != nil {
 		return
