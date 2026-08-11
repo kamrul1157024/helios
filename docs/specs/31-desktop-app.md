@@ -483,7 +483,7 @@ an endpoint that already exists:
 | — (new) | terminal | `GET /api/sessions/{id}/terminal` |
 | `new_session_sheet` | ⌘N sheet | `POST /api/sessions`, `GET /api/providers`, `/api/commands` |
 | `git_status_screen` | Git panel | `GET /api/git/status`, `/api/git/diff`, `/api/git/worktrees` |
-| `file_browser_screen` | Files panel | `GET /api/files`, `/api/file` |
+| `file_browser_screen` | Files panel (workspace) | `GET /api/files`, `/api/file`, `/api/files/search`, `/api/files/grep`, `PUT /api/file` |
 | `dashboard_screen` | Notifs panel + tray | `GET /api/notifications`, `POST /api/notifications/batch`, `POST /api/notifications/{id}/action` |
 | `notification_settings_screen` | Settings › Notifications | `GET`/`POST /api/settings` |
 | `event_filter_screen` | Settings › Events | `GET`/`POST /api/settings` |
@@ -495,6 +495,35 @@ an endpoint that already exists:
 No new daemon endpoints are needed for parity. That is the whole reason parity
 is affordable: the work is TypeScript client code and views against an API
 that is already finished and already exercised by a shipping client.
+
+### Workspace panel
+
+Parity was the floor, not the ceiling. Mobile's file browser is a list you tap
+down into; on a desktop the same panel is where you read what the agent just
+wrote, so it is an editor: a lazy tree, editor tabs, quick open and find in
+files, all rooted at the session's working directory.
+
+The tree, quick open and find all speak to the session's *own* daemon — the
+machine Helios runs on is one more host — so browsing a remote session is the
+same code path as browsing a local one, with no Electron-side filesystem API
+and no second permission model.
+
+Three endpoints were added for it, the only new daemon surface in this app:
+
+| Endpoint | For | Notes |
+|---|---|---|
+| `GET /api/files/search?path=&q=&limit=` | quick open (⌘P) | candidates from `git ls-files --cached --others --exclude-standard`, falling back to a bounded walk that skips `node_modules`, `.git`, build output and friends; greedy fuzzy subsequence scoring that rewards runs, word boundaries and file-name hits |
+| `GET /api/files/grep?path=&q=&regex=&case=&limit=` | find in files (⌘⇧F) | `rg --json` streamed and parsed line by line, with a pure-Go walk-and-scan fallback so the feature works on a host without ripgrep; binaries are skipped on a NUL in the first 8 KiB |
+| `PUT /api/file` | saving | body `{path, content, base_mod_time}`; a `base_mod_time` that no longer matches the file on disk is a `409 stale_write` rather than a silent overwrite |
+
+That last one is the whole reason saving is safe to offer. The agent is editing
+the same files, so "changed under you" is the normal case, not the edge case:
+the save is refused, the header says so, and `⟳` reloads from disk.
+
+All three go through the same `resolveSafePath` as the existing file endpoints
+and sit on `protectedMux` behind bearer auth. Both searches are bounded — 10 s,
+100k candidates, a result cap — and report `truncated` rather than pretending
+the list is complete.
 
 ### Lifetime
 
@@ -530,6 +559,8 @@ shared one.
 | cmd | `notifs.list` / `notifs.action` / `notifs.batch` | notification centre and approvals |
 | cmd | `git.status` / `git.diff` / `git.worktrees` | `{host_id, cwd, …}` |
 | cmd | `files.list` / `files.read` | `{host_id, path}` |
+| cmd | `files.search` / `files.grep` | `{host_id, path, q, …}` — quick open and find in files |
+| cmd | `files.write` | `{host_id, path, content, base_mod_time}` → `409` if it moved under you |
 | cmd | `settings.get` / `settings.set` | settings, notification channels, event filters |
 | cmd | `meta.commands` / `meta.providers` | for the new-session sheet |
 | evt | `term://{tab_id}/output` | `Uint8Array` chunk |
@@ -623,6 +654,12 @@ Not needed after checking:
 Explicitly *not* touched: the frame protocol, the WS relay, the auth scheme, or
 any REST endpoint. Parity with mobile adds **zero** new endpoints. That is the
 payoff from task 8 and from the mobile app having gone first.
+
+Three endpoints were added later, and not for parity: `GET /api/files/search`,
+`GET /api/files/grep` and `PUT /api/file`, all in `internal/server/filesearch.go`,
+for the workspace panel described above. They earn their place independently —
+any client wanting to find a file or save an edit needs them — and mobile is
+free to pick them up.
 
 ## Phasing
 

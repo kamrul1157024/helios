@@ -3,8 +3,10 @@ import type {
   DeviceInfo,
   FileContent,
   FileEntry,
+  FileSearchResult,
   GitDiff,
   GitStatus,
+  GrepResult,
   HostRecord,
   HostStatus,
   ModelInfo,
@@ -16,6 +18,7 @@ import type {
   TabStatus,
   TranscriptPage,
   Worktree,
+  WriteResult,
 } from '../shared/models.ts'
 
 /**
@@ -170,6 +173,19 @@ export class HostApi {
   }
   readFile(path: string): Promise<FileContent> {
     return this.call('readFile', path)
+  }
+  searchFiles(path: string, q: string, limit?: number): Promise<FileSearchResult> {
+    return this.call('searchFiles', path, q, limit)
+  }
+  grepFiles(
+    path: string,
+    q: string,
+    opts: { regex?: boolean; caseSensitive?: boolean; limit?: number } = {},
+  ): Promise<GrepResult> {
+    return this.call('grepFiles', path, q, opts)
+  }
+  writeFile(path: string, content: string, baseModTime?: string): Promise<WriteResult> {
+    return this.call('writeFile', path, content, baseModTime)
   }
   providers(): Promise<ProviderInfo[]> {
     return this.call('providers')

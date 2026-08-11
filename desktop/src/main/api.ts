@@ -4,8 +4,10 @@ import type {
   DeviceInfo,
   FileContent,
   FileEntry,
+  FileSearchResult,
   GitDiff,
   GitStatus,
+  GrepResult,
   ModelInfo,
   Notification,
   ProviderInfo,
@@ -13,6 +15,7 @@ import type {
   Subagent,
   TranscriptPage,
   Worktree,
+  WriteResult,
 } from '../shared/models.ts'
 
 /** Refresh a little before expiry so a request never races the clock. */
@@ -237,6 +240,35 @@ export class ApiClient {
 
   readFile(path: string): Promise<FileContent> {
     return this.request('GET', `/api/file${queryString({ path })}`)
+  }
+
+  searchFiles(path: string, q: string, limit?: number): Promise<FileSearchResult> {
+    const query = queryString({ path, q, limit: limit ? String(limit) : undefined })
+    return this.request('GET', `/api/files/search${query}`)
+  }
+
+  grepFiles(
+    path: string,
+    q: string,
+    opts: { regex?: boolean; caseSensitive?: boolean; limit?: number } = {},
+  ): Promise<GrepResult> {
+    const query = queryString({
+      path,
+      q,
+      regex: opts.regex ? 'true' : undefined,
+      case: opts.caseSensitive ? 'true' : undefined,
+      limit: opts.limit ? String(opts.limit) : undefined,
+    })
+    return this.request('GET', `/api/files/grep${query}`)
+  }
+
+  /**
+   * Saves a file. base_mod_time is what the editor last read; the daemon
+   * refuses the write when the file has changed since, which is the common case
+   * of the agent editing the same file mid-session.
+   */
+  writeFile(path: string, content: string, baseModTime?: string): Promise<WriteResult> {
+    return this.request('PUT', '/api/file', { path, content, base_mod_time: baseModTime })
   }
 
   // ─── Meta ──────────────────────────────────────────────────────────────

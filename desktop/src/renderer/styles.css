@@ -1364,8 +1364,7 @@ small {
 
 /* ─── Git and files ─────────────────────────────────────────────────────── */
 
-.git,
-.files {
+.git {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1373,8 +1372,7 @@ small {
   min-width: 0;
 }
 
-.git-head,
-.files-head {
+.git-head {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1402,15 +1400,13 @@ small {
   background: color-mix(in srgb, var(--s-active) 14%, transparent);
 }
 
-.git-body,
-.files-body {
+.git-body {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-.git-files,
-.file-list {
+.git-files {
   /* A fixed 300px leaves the preview a sliver on a narrow window. */
   width: clamp(180px, 38%, 300px);
   flex: none;
@@ -1429,8 +1425,7 @@ small {
   padding: 10px 8px 4px;
 }
 
-.git-file,
-.file-row {
+.git-file {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1443,13 +1438,11 @@ small {
   font-size: 12.5px;
 }
 
-.git-file:hover,
-.file-row:hover {
+.git-file:hover {
   background: color-mix(in srgb, var(--on-surface) 8%, transparent);
 }
 
-.git-file.selected,
-.file-row.selected {
+.git-file.selected {
   background: var(--primary-container);
   color: var(--on-primary-container);
 }
@@ -1497,22 +1490,7 @@ small {
   text-align: left;
 }
 
-/* A listing shows bare names, so there are no leading directories to drop. */
-.file-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-
-.file-size {
-  color: var(--on-surface-variant);
-  font-size: 11px;
-}
-
-.git-diff,
-.file-preview {
+.git-diff {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -1520,7 +1498,7 @@ small {
 }
 
 .git-diff header,
-.file-preview header {
+.ws-file-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1546,7 +1524,7 @@ small {
 }
 
 .git-diff pre,
-.file-preview pre {
+.ws-plain {
   flex: 1;
   margin: 0;
   overflow: auto;
@@ -1573,10 +1551,349 @@ small {
   color: var(--on-surface-variant);
 }
 
-.path {
+/* ─── Workspace: tree, tabs, editor ─────────────────────────────────────── */
+
+.workspace {
   flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ws-side {
+  width: clamp(200px, 32%, 320px);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: color-mix(in srgb, var(--on-surface) 3%, transparent);
+}
+
+.ws-side-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 6px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.ws-view {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.ws-view.on {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.ws-side-head .icon-btn {
+  margin-left: auto;
+}
+
+.tree {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 6px 12px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--on-surface);
+}
+
+.tree-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.tree-row.selected {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.tree-twist {
+  width: 10px;
+  flex: none;
+  font-size: 9px;
+  color: var(--on-surface-variant);
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-name.dir {
+  font-weight: 500;
+}
+
+.tree-busy {
+  color: var(--on-surface-variant);
+}
+
+.find {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.find-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+}
+
+.find-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.find-toggle {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--on-surface-variant);
+}
+
+.find-toggle.on {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.find-results {
+  flex: 1;
+  overflow: auto;
+  padding: 0 6px 12px;
+}
+
+.find-group {
+  margin-bottom: 8px;
+}
+
+.find-file {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
+}
+
+.find-count {
+  color: var(--outline);
+}
+
+.find-hit {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.find-hit:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.find-line {
+  flex: none;
+  min-width: 28px;
+  text-align: right;
+  color: var(--outline);
+}
+
+.find-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+}
+
+.ws-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ws-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.ws-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ws-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
   font-size: 12px;
+  color: var(--on-surface-variant);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.ws-tab:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.ws-tab.active {
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.ws-tab-close {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+/* The path takes the width it needs and no more: sharing the row equally with
+   the spacer would clip the file name it exists to show. */
+.ws-file-head .split-path {
+  flex: 0 1 auto;
+}
+
+.ws-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ws-blank {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
+/* CodeMirror fills what is left of the pane and scrolls inside it. */
+.cm-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cm-host .cm-editor {
+  height: 100%;
+  font-size: 12.5px;
+}
+
+.cm-host .cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  line-height: 1.55;
+}
+
+.cm-host .cm-focused {
+  outline: none;
+}
+
+/* ─── Quick open ────────────────────────────────────────────────────────── */
+
+.quick-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  padding-top: 72px;
+  background: color-mix(in srgb, #000 40%, transparent);
+}
+
+.quick {
+  width: min(620px, 80vw);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-container);
+  border-radius: var(--r-md);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+  overflow: hidden;
+}
+
+.quick-input {
+  border-radius: 0;
+  background: var(--surface-high);
+  font-size: 13px;
+}
+
+.quick-list {
+  overflow: auto;
+  padding: 6px;
+}
+
+.quick-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  font-weight: 400;
+}
+
+.quick-row.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.quick-name {
+  font-size: 13px;
+}
+
+.quick-dir {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-row.active .quick-dir {
+  color: color-mix(in srgb, var(--on-primary-container) 80%, transparent);
 }
 
 /* ─── Terminals ─────────────────────────────────────────────────────────── */

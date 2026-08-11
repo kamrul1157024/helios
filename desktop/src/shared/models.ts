@@ -206,6 +206,41 @@ export interface FileContent {
   content: string
 }
 
+/** internal/server/filesearch.go — one quick-open candidate. */
+export interface FileMatch {
+  path: string
+  rel: string
+  score: number
+}
+
+export interface FileSearchResult {
+  root: string
+  matches: FileMatch[]
+  scanned: number
+  truncated: boolean
+}
+
+/** internal/server/filesearch.go — one find-in-files hit. */
+export interface GrepMatch {
+  path: string
+  rel: string
+  line: number
+  column: number
+  text: string
+}
+
+export interface GrepResult {
+  root: string
+  matches: GrepMatch[]
+  truncated: boolean
+}
+
+export interface WriteResult {
+  path: string
+  size: number
+  mod_time: string
+}
+
 /** internal/provider/registry.go:107 */
 export interface ProviderInfo {
   id: string
