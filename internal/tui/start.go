@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/tailscale"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -38,20 +39,41 @@ const (
 	screenError                              // error
 )
 
-// Tunnel provider options
+// Tunnel provider options.
+//
+// Tailscale appears twice because its two exposure modes are genuinely
+// different products from the user's point of view: Serve is private to the
+// tailnet and needs the VPN switched on at the other end, Funnel is public and
+// does not. Presenting them as one entry plus a hidden setting would hide the
+// only question that actually matters here.
+//
+// Serve leads the list and carries the recommendation. This screen is the
+// first-run question: it is shown when no provider is configured, so putting
+// Serve first with its caveat spelled out is the prompt, not a silent default.
 var tunnelProviders = []struct {
-	id    string
-	label string
+	id     string
+	mode   string // tailscale exposure mode; empty for every other provider
+	label  string
+	detail string
 }{
-	{"cloudflare", "Cloudflare Tunnel (recommended)"},
-	{"zrok", "zrok (open-source, stable URLs)"},
-	{"ngrok", "ngrok"},
-	{"localtunnel", "localtunnel (zero signup)"},
-	{"localhostrun", "localhost.run (no install — uses SSH)"},
-	{"localxpose", "localxpose (regional, reserved domains)"},
-	{"tailscale", "Tailscale"},
-	{"local", "Local Network (no HTTPS)"},
-	{"custom", "Custom URL"},
+	{
+		id: "tailscale", mode: "serve",
+		label:  "Tailscale Serve (recommended)",
+		detail: "Private to your tailnet. Needs the Tailscale VPN switched ON on your phone.",
+	},
+	{
+		id: "tailscale", mode: "funnel",
+		label:  "Tailscale Funnel",
+		detail: "Public, but with a stable hostname. No Tailscale needed on the phone.",
+	},
+	{id: "cloudflare", label: "Cloudflare Tunnel", detail: "Public. URL changes on every restart."},
+	{id: "zrok", label: "zrok (open-source, stable URLs)"},
+	{id: "ngrok", label: "ngrok"},
+	{id: "localtunnel", label: "localtunnel (zero signup)"},
+	{id: "localhostrun", label: "localhost.run (no install — uses SSH)"},
+	{id: "localxpose", label: "localxpose (regional, reserved domains)"},
+	{id: "local", label: "Local Network (no HTTPS)"},
+	{id: "custom", label: "Custom URL"},
 }
 
 // Messages
@@ -73,6 +95,14 @@ type statusCheckDone struct {
 type tunnelStarted struct {
 	url string
 	err error
+}
+
+// tailscaleDetected carries the result of a readiness probe. Detection failures
+// are not reported separately: a failed probe is indistinguishable from "not
+// ready" as far as the picker is concerned, and State.Problem already says
+// which prerequisite is missing.
+type tailscaleDetected struct {
+	state tailscale.State
 }
 
 type deviceCreated struct {
@@ -137,6 +167,7 @@ type StartModel struct {
 	tunnelOK      bool
 	tunnelURL     string
 	tunnelProv    string
+	tunnelMode    string // tailscale exposure mode of the running tunnel; empty otherwise
 	deviceCount   int
 	devices       []deviceInfo
 	notifyBin     string // path to terminal-notifier/notify-send, empty if not found
@@ -157,9 +188,18 @@ type StartModel struct {
 	// Tunnel selection
 	tunnelCursor int
 
-	// Binary missing info
-	missingBinary string
-	installHint   string
+	// Tailscale readiness, refreshed each time the picker is opened. Detection
+	// shells out, so the picker renders immediately and fills the status column
+	// when the result arrives.
+	tsState   tailscale.State
+	tsChecked bool
+
+	// Provider-unavailable info. For most providers this is a missing binary;
+	// for Tailscale it is whichever prerequisite is unmet, which is why the
+	// message is carried rather than derived from the binary name.
+	missingBinary   string
+	installHint     string
+	providerProblem string
 
 	// Pairing QR state
 	pairingToken   string
@@ -227,6 +267,11 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tunnelStarted:
 		return m.handleTunnelStarted(msg)
+
+	case tailscaleDetected:
+		m.tsState = msg.state
+		m.tsChecked = true
+		return m, nil
 
 	case deviceCreated:
 		return m.handleDeviceCreated(msg)
@@ -398,8 +443,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "t":
 		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
-			m.screen = screenTunnelSelect
-			return m, nil
+			return m.enterTunnelSelect()
 		}
 
 	case "N":
@@ -466,20 +510,21 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.textInput.Focus()
 			return m, textinput.Blink
 		}
-		// Check if binary exists (skip for local and localhostrun which use built-in tools)
-		if provider.id != "local" && provider.id != "localhostrun" {
-			binary := providerBinary(provider.id)
-			if binary != "" {
-				if _, err := exec.LookPath(binary); err != nil {
-					m.missingBinary = binary
-					m.installHint = providerInstallHint(provider.id)
-					m.screen = screenBinaryMissing
-					return m, nil
-				}
-			}
+		if provider.id == "tailscale" && !m.tsChecked {
+			// The probe is still in flight; the picker shows "checking…" next
+			// to the entry, so ignoring the keypress is the honest response.
+			return m, nil
+		}
+		if problem := m.providerUnavailable(provider.id, provider.mode); problem != "" {
+			m.missingBinary = providerBinary(provider.id)
+			m.installHint = providerInstallHint(provider.id)
+			m.providerProblem = problem
+			m.screen = screenBinaryMissing
+			return m, nil
 		}
 		m.screen = screenTunnelStarting
-		return m, tea.Batch(m.spinner.Tick, startTunnel(m.client, provider.id, "", m.publicPort))
+		return m, tea.Batch(m.spinner.Tick,
+			startTunnel(m.client, provider.id, "", m.publicPort, provider.mode))
 
 	case screenCustomURL:
 		url := m.textInput.Value()
@@ -487,17 +532,22 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screen = screenTunnelStarting
-		return m, tea.Batch(m.spinner.Tick, startTunnel(m.client, "custom", url, m.publicPort))
+		return m, tea.Batch(m.spinner.Tick, startTunnel(m.client, "custom", url, m.publicPort, ""))
 
 	case screenBinaryMissing:
-		// Retry — check if binary was installed
+		// Retry — the user has had a chance to install or fix the prerequisite.
+		// Tailscale's remedies are not detectable synchronously, so the retry
+		// re-probes and returns to the picker rather than blocking here.
 		provider := tunnelProviders[m.tunnelCursor]
-		binary := providerBinary(provider.id)
-		if _, err := exec.LookPath(binary); err != nil {
+		if provider.id == "tailscale" {
+			return m.enterTunnelSelect()
+		}
+		if problem := m.providerUnavailable(provider.id, provider.mode); problem != "" {
 			return m, nil // Still missing
 		}
 		m.screen = screenTunnelStarting
-		return m, tea.Batch(m.spinner.Tick, startTunnel(m.client, provider.id, "", m.publicPort))
+		return m, tea.Batch(m.spinner.Tick,
+			startTunnel(m.client, provider.id, "", m.publicPort, provider.mode))
 
 	case screenError:
 		return m, tea.Quit
@@ -517,11 +567,21 @@ func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 
 func (m StartModel) proceedAfterShell() (tea.Model, tea.Cmd) {
 	if !m.tunnelOK {
-		m.screen = screenTunnelSelect
-		return m, nil
+		return m.enterTunnelSelect()
 	}
 	m.screen = screenMain
 	return m, tea.Batch(m.spinner.Tick, createDevice(m.client))
+}
+
+// enterTunnelSelect opens the provider picker and re-probes Tailscale. The
+// probe is re-run on every entry rather than cached for the process lifetime,
+// because the common remedies — logging in, starting the app — happen while
+// this screen is on screen.
+func (m StartModel) enterTunnelSelect() (tea.Model, tea.Cmd) {
+	m.screen = screenTunnelSelect
+	m.tsChecked = false
+	m.tsState = tailscale.State{}
+	return m, detectTailscale()
 }
 
 func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) {
@@ -561,6 +621,7 @@ func (m StartModel) handleTunnelStarted(msg tunnelStarted) (tea.Model, tea.Cmd) 
 	m.tunnelOK = true
 	m.tunnelURL = msg.url
 	m.tunnelProv = tunnelProviders[m.tunnelCursor].id
+	m.tunnelMode = tunnelProviders[m.tunnelCursor].mode
 
 	// Generate download QR
 	qr, err := qrcode.New(m.tunnelURL, qrcode.Medium)
@@ -741,13 +802,26 @@ func installHooksCmd() tea.Cmd {
 	}
 }
 
-func startTunnel(c *client, provider, customURL string, localPort int) tea.Cmd {
+func startTunnel(c *client, provider, customURL string, localPort int, tailscaleMode string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := c.tunnelStart(provider, customURL, localPort)
+		resp, err := c.tunnelStart(provider, customURL, localPort, tailscaleMode)
 		if err != nil {
 			return tunnelStarted{err: err}
 		}
 		return tunnelStarted{url: resp.PublicURL}
+	}
+}
+
+// detectTailscale probes Tailscale readiness off the UI thread. It shells out
+// to the CLI, which can block on a slow or unresponsive tailscaled, so the
+// picker never waits on it.
+func detectTailscale() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		state, _ := tailscale.Detect(ctx)
+		return tailscaleDetected{state: state}
 	}
 }
 
@@ -832,6 +906,36 @@ func installHooksQuietly() {
 	}
 	cmd := exec.Command(exe, "hooks", "install")
 	cmd.Run()
+}
+
+// providerUnavailable reports why a provider cannot be started right now, or ""
+// when it can. Most providers need nothing but a binary on $PATH; Tailscale
+// needs a running, logged-in daemon as well, and Funnel needs certificates on
+// top of that — so the answer depends on the mode, not just the provider id.
+//
+// A Tailscale answer is only meaningful once tsChecked is set; callers must not
+// treat "" from an unprobed state as readiness.
+func (m StartModel) providerUnavailable(provider, mode string) string {
+	if provider == "tailscale" {
+		if mode == string(tailscale.ModeFunnel) {
+			return m.tsState.FunnelProblem()
+		}
+		return m.tsState.Problem()
+	}
+
+	// local and localhostrun use tools that are always present.
+	if provider == "local" || provider == "localhostrun" {
+		return ""
+	}
+
+	binary := providerBinary(provider)
+	if binary == "" {
+		return ""
+	}
+	if _, err := exec.LookPath(binary); err != nil {
+		return fmt.Sprintf("%s not found on your PATH", binary)
+	}
+	return ""
 }
 
 func providerBinary(provider string) string {

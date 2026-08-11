@@ -33,6 +33,39 @@ func Start(cfg *Config) (err error) {
 	return startDaemon(cfg)
 }
 
+// TunnelProviderConfig projects the daemon configuration onto the tunnel
+// package's view of it. The CLI needs the same projection to rebuild a running
+// tunnel from its state file, which is why it is not inlined into startDaemon.
+func TunnelProviderConfig(cfg *Config) tunnel.ProviderConfig {
+	return tunnel.ProviderConfig{
+		Zrok: tunnel.ZrokProviderConfig{
+			ShareMode:  cfg.Tunnel.Zrok.ShareMode,
+			ShareToken: cfg.Tunnel.Zrok.ShareToken,
+		},
+		Localtunnel: tunnel.LocaltunnelProviderConfig{
+			Subdomain: cfg.Tunnel.Localtunnel.Subdomain,
+			Host:      cfg.Tunnel.Localtunnel.Host,
+		},
+		LocalhostRun: tunnel.LocalhostRunProviderConfig{
+			SSHUser:           cfg.Tunnel.LocalhostRun.SSHUser,
+			CustomDomain:      cfg.Tunnel.LocalhostRun.CustomDomain,
+			KeepaliveInterval: cfg.Tunnel.LocalhostRun.KeepaliveInterval,
+			UseAutossh:        cfg.Tunnel.LocalhostRun.UseAutossh,
+		},
+		Localxpose: tunnel.LocalxposeProviderConfig{
+			Subdomain:      cfg.Tunnel.Localxpose.Subdomain,
+			ReservedDomain: cfg.Tunnel.Localxpose.ReservedDomain,
+			Region:         cfg.Tunnel.Localxpose.Region,
+			BasicAuth:      cfg.Tunnel.Localxpose.BasicAuth,
+			AccessToken:    cfg.Tunnel.Localxpose.AccessToken,
+		},
+		Tailscale: tunnel.TailscaleProviderConfig{
+			Mode: cfg.Tunnel.Tailscale.Mode,
+			Port: cfg.Tunnel.Tailscale.Port,
+		},
+	}
+}
+
 func startDaemon(cfg *Config) error {
 	if err := os.MkdirAll(HeliosDir(), 0755); err != nil {
 		return fmt.Errorf("create helios dir: %w", err)
@@ -90,29 +123,7 @@ func startDaemon(cfg *Config) error {
 
 	// Create tunnel manager
 	tunnelMgr := tunnel.NewManager(HeliosDir())
-	tunnelMgr.SetProviderConfig(tunnel.ProviderConfig{
-		Zrok: tunnel.ZrokProviderConfig{
-			ShareMode:  cfg.Tunnel.Zrok.ShareMode,
-			ShareToken: cfg.Tunnel.Zrok.ShareToken,
-		},
-		Localtunnel: tunnel.LocaltunnelProviderConfig{
-			Subdomain: cfg.Tunnel.Localtunnel.Subdomain,
-			Host:      cfg.Tunnel.Localtunnel.Host,
-		},
-		LocalhostRun: tunnel.LocalhostRunProviderConfig{
-			SSHUser:           cfg.Tunnel.LocalhostRun.SSHUser,
-			CustomDomain:      cfg.Tunnel.LocalhostRun.CustomDomain,
-			KeepaliveInterval: cfg.Tunnel.LocalhostRun.KeepaliveInterval,
-			UseAutossh:        cfg.Tunnel.LocalhostRun.UseAutossh,
-		},
-		Localxpose: tunnel.LocalxposeProviderConfig{
-			Subdomain:      cfg.Tunnel.Localxpose.Subdomain,
-			ReservedDomain: cfg.Tunnel.Localxpose.ReservedDomain,
-			Region:         cfg.Tunnel.Localxpose.Region,
-			BasicAuth:      cfg.Tunnel.Localxpose.BasicAuth,
-			AccessToken:    cfg.Tunnel.Localxpose.AccessToken,
-		},
-	})
+	tunnelMgr.SetProviderConfig(TunnelProviderConfig(cfg))
 
 	// Persist zrok reserved share tokens to config.yaml
 	tunnelMgr.OnZrokTokenCreated = func(token string) {
@@ -129,15 +140,22 @@ func startDaemon(cfg *Config) error {
 	server.TunnelManager = tunnelMgr
 
 	// Persist tunnel config changes to config.yaml
-	server.OnTunnelConfigChanged = func(provider, customURL string) {
+	server.OnTunnelConfigChanged = func(provider, customURL, tailscaleMode string) {
 		cfg.Tunnel.Provider = provider
 		cfg.Tunnel.CustomURL = customURL
+		if provider == "tailscale" && tailscaleMode != "" {
+			// The port is mode-specific, so a stale one must not survive a
+			// switch between serve and funnel.
+			cfg.Tunnel.Tailscale.Mode = tailscaleMode
+			cfg.Tunnel.Tailscale.Port = 0
+		}
 		SaveConfig(cfg)
 	}
 
 	// Create both servers
+	publicBind := ResolvePublicBind(cfg)
 	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
-	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared)
+	publicSrv := server.NewPublicServer(publicBind, cfg.Server.PublicPort, shared)
 
 	// Watch newly launched sessions for the workspace-trust dialog
 	server.StartTrustWatcher(shared)
@@ -151,10 +169,10 @@ func startDaemon(cfg *Config) error {
 
 	log.Printf("helios daemon starting")
 	log.Printf("  internal: 127.0.0.1:%d (hooks + admin)", cfg.Server.InternalPort)
-	log.Printf("  public:   0.0.0.0:%d (frontend + API)", cfg.Server.PublicPort)
+	log.Printf("  public:   %s:%d (frontend + API)", publicBind, cfg.Server.PublicPort)
 	fmt.Printf("helios daemon starting\n")
 	fmt.Printf("  internal: 127.0.0.1:%d (hooks + admin)\n", cfg.Server.InternalPort)
-	fmt.Printf("  public:   0.0.0.0:%d (frontend + API)\n", cfg.Server.PublicPort)
+	fmt.Printf("  public:   %s:%d (frontend + API)\n", publicBind, cfg.Server.PublicPort)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

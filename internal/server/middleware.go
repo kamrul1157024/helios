@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -67,12 +68,39 @@ func (l *ipRateLimiter) cleanup() {
 	}
 }
 
+// clientIP identifies the peer for rate-limiting purposes.
+//
+// Every tunnel provider proxies from loopback, so RemoteAddr alone is
+// 127.0.0.1 for all remote callers and collapses a per-IP limit into a single
+// global bucket. X-Forwarded-For carries the real client, but it is
+// attacker-controlled, so it is honoured only when the immediate peer is
+// loopback — i.e. a local reverse proxy. A direct remote client cannot then
+// spoof its own bucket.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+
+	peer := net.ParseIP(host)
+	if peer == nil || !peer.IsLoopback() {
+		return host
+	}
+
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded == "" {
+		return host
+	}
+	first := strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	if ip := net.ParseIP(first); ip != nil {
+		return ip.String()
+	}
+	return host
+}
+
 func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		if idx := strings.LastIndex(ip, ":"); idx != -1 {
-			ip = ip[:idx]
-		}
+		ip := clientIP(r)
 		if !l.allow(ip) {
 			w.Header().Set("Retry-After", "60")
 			jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)

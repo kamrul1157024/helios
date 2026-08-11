@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 type ServerConfig struct {
 	Bind         string `yaml:"bind"`
-	Port         int    `yaml:"port"`           // Deprecated: use InternalPort
+	Port         int    `yaml:"port"` // Deprecated: use InternalPort
 	InternalPort int    `yaml:"internal_port"`
 	PublicPort   int    `yaml:"public_port"`
 }
@@ -21,12 +22,24 @@ type AuthConfig struct {
 }
 
 type TunnelConfig struct {
-	Provider     string             `yaml:"provider"`      // cloudflare | ngrok | tailscale | local | custom | zrok | localtunnel | localhostrun | localxpose
-	CustomURL    string             `yaml:"custom_url"`    // only used when provider=custom
-	Zrok         ZrokConfig         `yaml:"zrok"`          // zrok-specific settings
-	Localtunnel  LocaltunnelConfig  `yaml:"localtunnel"`   // localtunnel-specific settings
-	LocalhostRun LocalhostRunConfig `yaml:"localhostrun"`  // localhost.run-specific settings
-	Localxpose   LocalxposeConfig   `yaml:"localxpose"`    // localxpose-specific settings
+	Provider     string             `yaml:"provider"`     // cloudflare | ngrok | tailscale | local | custom | zrok | localtunnel | localhostrun | localxpose
+	CustomURL    string             `yaml:"custom_url"`   // only used when provider=custom
+	Zrok         ZrokConfig         `yaml:"zrok"`         // zrok-specific settings
+	Localtunnel  LocaltunnelConfig  `yaml:"localtunnel"`  // localtunnel-specific settings
+	LocalhostRun LocalhostRunConfig `yaml:"localhostrun"` // localhost.run-specific settings
+	Localxpose   LocalxposeConfig   `yaml:"localxpose"`   // localxpose-specific settings
+	Tailscale    TailscaleConfig    `yaml:"tailscale"`    // tailscale-specific settings
+}
+
+// TailscaleConfig selects how Tailscale exposes the public server.
+//
+// Serve keeps traffic inside the tailnet, where WireGuard already provides
+// end-to-end encryption, so it runs plain HTTP and needs no certificate.
+// Funnel exposes the server publicly and must terminate TLS, which requires
+// HTTPS certificates enabled for the tailnet.
+type TailscaleConfig struct {
+	Mode string `yaml:"mode"` // serve | funnel (default: serve)
+	Port int    `yaml:"port"` // serve: any port (default 7655); funnel: 443 | 8443 | 10000 (default 443)
 }
 
 type ZrokConfig struct {
@@ -48,10 +61,10 @@ type LocalhostRunConfig struct {
 
 type LocalxposeConfig struct {
 	Subdomain      string `yaml:"subdomain"`       // ephemeral subdomain
-	ReservedDomain string `yaml:"reserved_domain"`  // reserved domain (e.g., "my-helios.loclx.io")
-	Region         string `yaml:"region"`           // us | eu | ap
-	BasicAuth      string `yaml:"basic_auth"`       // user:pass for built-in auth
-	AccessToken    string `yaml:"access_token"`     // access token (overrides loclx account login)
+	ReservedDomain string `yaml:"reserved_domain"` // reserved domain (e.g., "my-helios.loclx.io")
+	Region         string `yaml:"region"`          // us | eu | ap
+	BasicAuth      string `yaml:"basic_auth"`      // user:pass for built-in auth
+	AccessToken    string `yaml:"access_token"`    // access token (overrides loclx account login)
 }
 
 type DBConfig struct {
@@ -63,6 +76,23 @@ type Config struct {
 	Auth   AuthConfig   `yaml:"auth"`
 	Tunnel TunnelConfig `yaml:"tunnel"`
 	DB     DBConfig     `yaml:"db"`
+}
+
+// ResolvePublicBind determines the interface the public server listens on.
+//
+// Every tunnel provider except "local" proxies from loopback, so exposing the
+// public port on all interfaces hands out LAN access nobody asked for. The
+// "local" provider is the exception: it hands out a LAN URL, so it needs one.
+// An explicit bind in config or on the command line always wins; "localhost"
+// is treated as the unset default, since that is what DefaultConfig writes.
+func ResolvePublicBind(cfg *Config) string {
+	if bind := strings.TrimSpace(cfg.Server.Bind); bind != "" && bind != "localhost" {
+		return bind
+	}
+	if cfg.Tunnel.Provider == "local" {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
 }
 
 func HeliosDir() string {

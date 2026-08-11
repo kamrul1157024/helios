@@ -3,6 +3,8 @@ package tunnel
 import (
 	"regexp"
 	"testing"
+
+	"github.com/kamrul1157024/helios/internal/tailscale"
 )
 
 // TestProviderNames verifies each provider returns the correct name.
@@ -13,7 +15,7 @@ func TestProviderNames(t *testing.T) {
 	}{
 		{&CloudflareTunnel{}, "cloudflare"},
 		{&NgrokTunnel{}, "ngrok"},
-		{&TailscaleTunnel{}, "tailscale"},
+		{tailscale.New(tailscale.ModeServe, 0), "tailscale"},
 		{&LocalTunnel{}, "local"},
 		{&CustomTunnel{customURL: "https://example.com"}, "custom"},
 		{&ZrokTunnel{}, "zrok"},
@@ -34,7 +36,7 @@ func TestProviderPIDZeroBeforeStart(t *testing.T) {
 	providers := []Tunnel{
 		&CloudflareTunnel{},
 		&NgrokTunnel{},
-		&TailscaleTunnel{},
+		tailscale.New(tailscale.ModeServe, 0),
 		&LocalTunnel{},
 		&CustomTunnel{customURL: "https://example.com"},
 		&ZrokTunnel{},
@@ -58,7 +60,7 @@ func TestProviderURLEmptyBeforeStart(t *testing.T) {
 	}{
 		{"cloudflare", &CloudflareTunnel{}},
 		{"ngrok", &NgrokTunnel{}},
-		{"tailscale", &TailscaleTunnel{}},
+		{"tailscale", tailscale.New(tailscale.ModeServe, 0)},
 		{"local", &LocalTunnel{}},
 		{"zrok", &ZrokTunnel{}},
 		{"localtunnel", &LocaltunnelTunnel{}},
@@ -181,40 +183,6 @@ func TestNgrokURLRegex(t *testing.T) {
 		match := re.FindString(tt.input)
 		if match != tt.expected {
 			t.Errorf("input %q: got %q, want %q", tt.input, match, tt.expected)
-		}
-	}
-}
-
-// TestTailscaleDNSNameRegex tests the regex used to parse tailscale DNS names.
-func TestTailscaleDNSNameRegex(t *testing.T) {
-	re := regexp.MustCompile(`"DNSName"\s*:\s*"([^"]+)"`)
-
-	tests := []struct {
-		input    string
-		wantName string
-	}{
-		{
-			input:    `{"DNSName":"my-machine.tailnet-abc.ts.net.","Online":true}`,
-			wantName: "my-machine.tailnet-abc.ts.net.",
-		},
-		{
-			input:    `{"DNSName": "server.example.ts.net.", "OS": "linux"}`,
-			wantName: "server.example.ts.net.",
-		},
-		{
-			input:    `no dns name here`,
-			wantName: "",
-		},
-	}
-
-	for _, tt := range tests {
-		match := re.FindSubmatch([]byte(tt.input))
-		got := ""
-		if match != nil {
-			got = string(match[1])
-		}
-		if got != tt.wantName {
-			t.Errorf("input %q: got %q, want %q", tt.input, got, tt.wantName)
 		}
 	}
 }

@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +38,8 @@ type InternalServer struct {
 }
 
 // PublicServer handles the frontend, push API, and notification actions.
-// Binds to 0.0.0.0, exposed via tunnel. Bearer JWT auth.
+// The bind address comes from config: loopback by default, since tunnel
+// providers proxy from localhost. Exposed via tunnel. Bearer JWT auth.
 type PublicServer struct {
 	httpServer *http.Server
 	shared     *Shared
@@ -101,8 +104,9 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	return s
 }
 
-// NewPublicServer creates the tunnel-exposed server for API.
-func NewPublicServer(port int, shared *Shared) *PublicServer {
+// NewPublicServer creates the tunnel-exposed server for API. bind is the
+// interface to listen on; an empty value means loopback only.
+func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	s := &PublicServer{shared: shared}
 
 	globalLimiter := newIPRateLimiter(1000, time.Minute)
@@ -217,8 +221,11 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 	// Wire protected routes through Bearer auth middleware
 	mux.Handle("/api/", bearerAuth(protectedMux))
 
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%d", port),
+		Addr:    net.JoinHostPort(bind, strconv.Itoa(port)),
 		Handler: globalLimiter.middleware(mux),
 	}
 

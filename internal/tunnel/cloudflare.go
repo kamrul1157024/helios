@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -160,68 +161,10 @@ func getNgrokURL() (string, error) {
 	return "", fmt.Errorf("no tunnel URL found")
 }
 
-// TailscaleTunnel uses tailscale funnel.
-type TailscaleTunnel struct {
-	cmd *exec.Cmd
-	url string
-}
-
-func (t *TailscaleTunnel) Provider() string { return "tailscale" }
-func (t *TailscaleTunnel) URL() string      { return t.url }
-
-func (t *TailscaleTunnel) PID() int {
-	if t.cmd != nil && t.cmd.Process != nil {
-		return t.cmd.Process.Pid
-	}
-	return 0
-}
-
-func (t *TailscaleTunnel) Start(localPort int) error {
-	binary, err := exec.LookPath("tailscale")
-	if err != nil {
-		return fmt.Errorf("tailscale not found: install from https://tailscale.com/download")
-	}
-
-	// Get the tailscale DNS name
-	out, err := exec.Command(binary, "status", "--json").Output()
-	if err != nil {
-		return fmt.Errorf("tailscale status: %w", err)
-	}
-
-	// Extract DNS name from JSON output
-	re := regexp.MustCompile(`"DNSName"\s*:\s*"([^"]+)"`)
-	match := re.FindSubmatch(out)
-	if match == nil {
-		return fmt.Errorf("could not determine tailscale DNS name")
-	}
-	dnsName := strings.TrimSuffix(string(match[1]), ".")
-	t.url = fmt.Sprintf("https://%s:%d", dnsName, localPort)
-
-	// Start tailscale funnel
-	t.cmd = exec.Command(binary, "funnel", fmt.Sprintf("%d", localPort))
-	t.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	if err := t.cmd.Start(); err != nil {
-		return fmt.Errorf("start tailscale funnel: %w", err)
-	}
-
-	go t.cmd.Wait()
-
-	// Give it a moment to start
-	time.Sleep(2 * time.Second)
-	return nil
-}
-
-func (t *TailscaleTunnel) Stop() error {
-	if t.cmd != nil && t.cmd.Process != nil {
-		return killProcess(t.cmd.Process.Pid)
-	}
-	return nil
-}
-
 // LocalTunnel discovers LAN IP — no tunnel process needed.
 type LocalTunnel struct {
-	url string
+	port int
+	url  string
 }
 
 func (t *LocalTunnel) Provider() string { return "local" }
@@ -233,11 +176,27 @@ func (t *LocalTunnel) Start(localPort int) error {
 	if err != nil {
 		return err
 	}
+	t.port = localPort
 	t.url = fmt.Sprintf("http://%s:%d", ip, localPort)
 	return nil
 }
 
 func (t *LocalTunnel) Stop() error { return nil }
+
+// Reconcile re-derives the LAN address. There is no process to outlive the
+// daemon, but the machine's IP may have changed while it was down, so the
+// answer is recomputed rather than trusted from the state file.
+func (t *LocalTunnel) Reconcile(_ context.Context) (string, bool, error) {
+	if t.port == 0 {
+		return "", false, nil
+	}
+	ip, err := getLANIP()
+	if err != nil {
+		return "", false, fmt.Errorf("discover LAN IP: %w", err)
+	}
+	t.url = fmt.Sprintf("http://%s:%d", ip, t.port)
+	return t.url, true, nil
+}
 
 // CustomTunnel uses a user-provided URL — no process to manage.
 type CustomTunnel struct {
@@ -256,6 +215,15 @@ func (t *CustomTunnel) Start(_ int) error {
 }
 
 func (t *CustomTunnel) Stop() error { return nil }
+
+// Reconcile reports a configured custom URL as permanently active: it names an
+// endpoint helios does not operate, so there is nothing to probe.
+func (t *CustomTunnel) Reconcile(_ context.Context) (string, bool, error) {
+	if t.customURL == "" {
+		return "", false, nil
+	}
+	return t.customURL, true, nil
+}
 
 // killProcess sends SIGTERM, waits briefly, then SIGKILL if needed.
 func killProcess(pid int) error {

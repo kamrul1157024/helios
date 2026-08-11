@@ -60,9 +60,10 @@ func (c *client) tunnelStatus() (*tunnelStatusResponse, error) {
 }
 
 type tunnelStartRequest struct {
-	Provider  string `json:"provider"`
-	CustomURL string `json:"custom_url,omitempty"`
-	LocalPort int    `json:"local_port,omitempty"`
+	Provider      string `json:"provider"`
+	CustomURL     string `json:"custom_url,omitempty"`
+	LocalPort     int    `json:"local_port,omitempty"`
+	TailscaleMode string `json:"tailscale_mode,omitempty"`
 }
 
 type tunnelStartResponse struct {
@@ -70,11 +71,12 @@ type tunnelStartResponse struct {
 	Message   string `json:"message"`
 }
 
-func (c *client) tunnelStart(provider, customURL string, localPort int) (*tunnelStartResponse, error) {
+func (c *client) tunnelStart(provider, customURL string, localPort int, tailscaleMode string) (*tunnelStartResponse, error) {
 	body, _ := json.Marshal(tunnelStartRequest{
-		Provider:  provider,
-		CustomURL: customURL,
-		LocalPort: localPort,
+		Provider:      provider,
+		CustomURL:     customURL,
+		LocalPort:     localPort,
+		TailscaleMode: tailscaleMode,
 	})
 	resp, err := c.longHTTPClient.Post(c.baseURL+"/internal/tunnel/start", "application/json", bytes.NewReader(body))
 	if err != nil {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/kamrul1157024/helios/internal/tailscale"
 )
 
 var (
@@ -221,14 +223,35 @@ func (m StartModel) viewTunnelSelect() string {
 	b.WriteString(subtitleStyle.Render("  How will your phone connect?"))
 	b.WriteString("\n\n")
 
+	// The label column is padded to a common width so the status column lines
+	// up, which is what makes "ready" versus "needs setup" scannable at all.
+	labelWidth := 0
+	for _, p := range tunnelProviders {
+		// Display width, not byte length: several labels contain em-dashes.
+		if w := lipgloss.Width(p.label); w > labelWidth {
+			labelWidth = w
+		}
+	}
+
 	for i, p := range tunnelProviders {
 		cursor := "  "
 		style := dimStyle
-		if i == m.tunnelCursor {
+		selected := i == m.tunnelCursor
+		if selected {
 			cursor = "> "
 			style = selectedStyle
 		}
-		b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(p.label)))
+		// Pad before styling: lipgloss wraps the text in escape sequences, and
+		// a width-aware format verb would count those towards the width.
+		label := style.Render(p.label + strings.Repeat(" ", labelWidth-lipgloss.Width(p.label)))
+		b.WriteString(fmt.Sprintf("  %s%s  %s\n", cursor, label, m.providerStatus(p.id, p.mode)))
+
+		// Details are only shown for the highlighted row: printing every
+		// caveat at once turns the list into a wall of text.
+		if selected && p.detail != "" {
+			b.WriteString(subtitleStyle.Render("      " + p.detail))
+			b.WriteString("\n")
+		}
 	}
 
 	if m.tunnelOK {
@@ -240,16 +263,41 @@ func (m StartModel) viewTunnelSelect() string {
 	return b.String()
 }
 
+// providerStatus renders the inline availability column. Tailscale reports the
+// specific unmet prerequisite; everything else reports only whether its binary
+// is present, because that is the only thing checkable without side effects.
+func (m StartModel) providerStatus(provider, mode string) string {
+	if provider == "tailscale" && !m.tsChecked {
+		return dimStyle.Render("checking…")
+	}
+	if problem := m.providerUnavailable(provider, mode); problem != "" {
+		return warnStyle.Render("needs setup")
+	}
+	return checkStyle.Render("ready")
+}
+
 func (m StartModel) viewBinaryMissing() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("helios — Tunnel Setup"))
 	b.WriteString("\n\n")
-	b.WriteString(cross(fmt.Sprintf("%s not found", m.missingBinary)))
+
+	problem := m.providerProblem
+	if problem == "" {
+		problem = fmt.Sprintf("%s not found", m.missingBinary)
+	}
+	b.WriteString(cross(problem))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  Install it:"))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("    %s\n", urlStyle.Render(m.installHint)))
+
+	// Tailscale's remedy is carried in the problem text itself — the fix is
+	// logging in or flipping an admin-console setting, not installing a
+	// package — so an install hint would be misleading unless it is genuinely
+	// missing.
+	if m.installHint != "" && (tunnelProviders[m.tunnelCursor].id != "tailscale" || !m.tsState.Installed) {
+		b.WriteString(subtitleStyle.Render("  Install it:"))
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("    %s\n", urlStyle.Render(m.installHint)))
+	}
 	b.WriteString(helpStyle.Render("  enter retry  q quit"))
 
 	return b.String()
@@ -261,7 +309,11 @@ func (m StartModel) viewTunnelStarting() string {
 	b.WriteString(titleStyle.Render("helios — Tunnel Setup"))
 	b.WriteString("\n\n")
 	provider := tunnelProviders[m.tunnelCursor]
-	b.WriteString(fmt.Sprintf("  Starting %s tunnel... %s\n", provider.id, m.spinner.View()))
+	name := provider.id
+	if provider.mode != "" {
+		name = provider.id + " " + provider.mode
+	}
+	b.WriteString(fmt.Sprintf("  Starting %s tunnel... %s\n", name, m.spinner.View()))
 
 	return b.String()
 }
@@ -278,6 +330,33 @@ func (m StartModel) viewCustomURL() string {
 	b.WriteString(helpStyle.Render("  enter confirm  ctrl+c cancel"))
 
 	return b.String()
+}
+
+// tunnelExposure states who can reach the running tunnel. Who can connect is
+// the one thing the URL does not say, and it differs between the two Tailscale
+// modes, so it is spelled out rather than left to be inferred from the scheme.
+//
+// The mode is recovered from the URL when it is not known directly: a tunnel
+// adopted from a previous daemon run is reported by the API as "tailscale"
+// with no mode, but Serve always publishes http:// and Funnel always https://.
+func (m StartModel) tunnelExposure() string {
+	switch m.tunnelProv {
+	case "tailscale":
+		mode := m.tunnelMode
+		if mode == "" {
+			mode = string(tailscale.ModeFunnel)
+			if strings.HasPrefix(m.tunnelURL, "http://") {
+				mode = string(tailscale.ModeServe)
+			}
+		}
+		if mode == string(tailscale.ModeServe) {
+			return "Reachable only from your tailnet — switch Tailscale ON on your phone"
+		}
+		return "Reachable from the public internet"
+	case "local":
+		return "Reachable only from your local network"
+	}
+	return ""
 }
 
 func (m StartModel) viewMain() string {
@@ -301,7 +380,15 @@ func (m StartModel) viewMain() string {
 		b.WriteString("\n")
 	}
 	if m.tunnelOK {
-		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
+		name := m.tunnelProv
+		if m.tunnelMode != "" {
+			name = m.tunnelProv + " " + m.tunnelMode
+		}
+		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, name)))
+		if exposure := m.tunnelExposure(); exposure != "" {
+			b.WriteString(dimStyle.Render("  · " + exposure))
+			b.WriteString("\n")
+		}
 	}
 	if m.notifyBin != "" {
 		b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))

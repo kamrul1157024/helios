@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/tailscale"
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tui"
 	"github.com/kamrul1157024/helios/internal/tunnel"
@@ -380,6 +381,80 @@ func stopNotifier() {
 	os.Remove(pidPath)
 }
 
+// tunnelProviderConfig loads provider settings for a command that runs without
+// the daemon. A missing or unreadable config is not fatal here: the defaults
+// still describe every provider well enough to check and stop a tunnel.
+func tunnelProviderConfig() tunnel.ProviderConfig {
+	cfg, err := daemon.LoadConfig()
+	if err != nil || cfg == nil {
+		cfg = daemon.DefaultConfig()
+	}
+	return daemon.TunnelProviderConfig(cfg)
+}
+
+// liveTunnel resolves the persisted tunnel state and confirms the tunnel is
+// still up, printing the reason and cleaning up when it is not. The returned
+// URL is the live one, which can differ from the persisted one.
+func liveTunnel() (tunnel.TunnelState, string, bool) {
+	state, err := tunnel.LoadState(daemon.HeliosDir())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if state == nil {
+		fmt.Println("No tunnel running.")
+		return tunnel.TunnelState{}, "", false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	url, active := tunnel.StateLiveness(ctx, *state, tunnelProviderConfig())
+	if !active {
+		fmt.Println("No tunnel running (stale state, cleaning up).")
+		tunnel.RemoveState(daemon.HeliosDir())
+		return tunnel.TunnelState{}, "", false
+	}
+	return *state, url, true
+}
+
+// tunnelDescription names the provider, adding the PID only for providers that
+// own one. Printing "PID 0" for the rest reads as a bug.
+func tunnelDescription(state tunnel.TunnelState, url string) string {
+	name := state.Provider
+	if state.Provider == "tailscale" {
+		name += " " + tailscaleMode(url)
+	}
+	if state.PID > 0 {
+		return fmt.Sprintf("%s, PID %d", name, state.PID)
+	}
+	return name
+}
+
+// tailscaleMode recovers the exposure mode from the published URL. Serve
+// publishes plain HTTP inside the tailnet; Funnel always terminates TLS.
+func tailscaleMode(url string) string {
+	if strings.HasPrefix(url, "http://") {
+		return string(tailscale.ModeServe)
+	}
+	return string(tailscale.ModeFunnel)
+}
+
+// tunnelExposure states who can reach the tunnel — the one thing the URL does
+// not say, and the thing that differs between the two Tailscale modes.
+func tunnelExposure(provider, url string) string {
+	switch provider {
+	case "tailscale":
+		if tailscaleMode(url) == string(tailscale.ModeServe) {
+			return "Reachable only from your tailnet (Tailscale must be on at the other end)"
+		}
+		return "Reachable from the public internet"
+	case "local":
+		return "Reachable only from your local network"
+	}
+	return ""
+}
+
 func handleTunnel(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: helios tunnel <stop|status>")
@@ -388,40 +463,23 @@ func handleTunnel(args []string) {
 
 	switch args[0] {
 	case "status":
-		state, err := tunnel.LoadState(daemon.HeliosDir())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if state == nil {
-			fmt.Println("No tunnel running.")
-			return
-		}
-		if !tunnel.IsProcessAlive(state.PID) {
-			fmt.Println("No tunnel running (stale state, cleaning up).")
-			tunnel.RemoveState(daemon.HeliosDir())
+		state, url, ok := liveTunnel()
+		if !ok {
 			return
 		}
 		uptime := time.Since(state.StartedAt).Truncate(time.Second)
-		fmt.Printf("Tunnel active: %s (%s, PID %d, up %s)\n", state.URL, state.Provider, state.PID, uptime)
+		fmt.Printf("Tunnel active: %s (%s, up %s)\n", url, tunnelDescription(state, url), uptime)
+		if exposure := tunnelExposure(state.Provider, url); exposure != "" {
+			fmt.Printf("  %s\n", exposure)
+		}
 
 	case "stop":
-		state, err := tunnel.LoadState(daemon.HeliosDir())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if state == nil {
-			fmt.Println("No tunnel running.")
-			return
-		}
-		if !tunnel.IsProcessAlive(state.PID) {
-			fmt.Println("No tunnel running (stale state, cleaning up).")
-			tunnel.RemoveState(daemon.HeliosDir())
+		state, url, ok := liveTunnel()
+		if !ok {
 			return
 		}
 
-		fmt.Printf("Tunnel is running: %s (%s, PID %d)\n\n", state.URL, state.Provider, state.PID)
+		fmt.Printf("Tunnel is running: %s (%s)\n\n", url, tunnelDescription(state, url))
 		fmt.Println("WARNING: Killing the tunnel will disconnect all mobile devices.")
 		fmt.Println("         They will need to rescan and reconnect.")
 		fmt.Print("\nKill tunnel? [y/N]: ")
@@ -435,8 +493,7 @@ func handleTunnel(args []string) {
 			return
 		}
 
-		// Kill the tunnel process
-		if err := tunnel.KillTunnel(daemon.HeliosDir()); err != nil {
+		if err := tunnel.KillTunnel(daemon.HeliosDir(), tunnelProviderConfig()); err != nil {
 			fmt.Fprintf(os.Stderr, "Error stopping tunnel: %v\n", err)
 			os.Exit(1)
 		}
@@ -940,7 +997,7 @@ func handleCleanup(args []string) {
 
 	case "all":
 		// Stop tunnel, supervisor, and daemon
-		tunnel.KillTunnel(heliosDir)
+		tunnel.KillTunnel(heliosDir, tunnelProviderConfig())
 		daemon.StopSupervisor()
 
 		if err := os.RemoveAll(heliosDir); err != nil {
@@ -989,11 +1046,14 @@ func handleHooks(args []string) {
 
 func handleSetup(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios setup shell")
+		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|tailscale>")
 		os.Exit(1)
 	}
 
 	switch args[0] {
+	case "tailscale":
+		checkTailscaleSetup()
+
 	// "all" is kept as an alias: setup once configured editors too, and there
 	// is nothing left to configure now that sessions bring their own terminal.
 	case "shell", "all":
@@ -1011,7 +1071,46 @@ func handleSetup(args []string) {
 		fmt.Println("Restart your shell or run: source", info.RCPath)
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup shell\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|tailscale>\n", args[0])
+		os.Exit(1)
+	}
+}
+
+// checkTailscaleSetup reports Tailscale readiness for both exposure modes. It
+// only reports: enabling HTTPS certificates publishes this machine's name to
+// public Certificate Transparency logs, so that stays the user's decision.
+func checkTailscaleSetup() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	state, err := tailscale.Detect(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking Tailscale: %v\n", err)
+		os.Exit(1)
+	}
+
+	if state.DNSName != "" {
+		fmt.Printf("Machine: %s\n\n", state.DNSName)
+	}
+
+	if problem := state.Problem(); problem != "" {
+		fmt.Printf("Tailscale Serve:  not ready\n  %s\n", problem)
+	} else {
+		fmt.Printf("Tailscale Serve:  ready\n  http://%s:%d\n",
+			state.DNSName, tailscale.DefaultServePort)
+	}
+
+	if problem := state.FunnelProblem(); problem != "" {
+		fmt.Printf("Tailscale Funnel: not ready\n  %s\n", problem)
+	} else {
+		fmt.Printf("Tailscale Funnel: ready\n  https://%s\n", state.DNSName)
+	}
+
+	if state.ServeInUse {
+		fmt.Println("\nNote: this machine already publishes a serve configuration.")
+	}
+
+	if state.Problem() != "" {
 		os.Exit(1)
 	}
 }
@@ -1045,6 +1144,7 @@ Commands:
   tunnel stop           Stop the tunnel (prompts for confirmation)
 
   setup shell           Install shell wrapper (claude → helios wrap)
+  setup tailscale       Check Tailscale readiness for Serve and Funnel
 
   auth init             Generate pairing QR (non-interactive)
   auth devices          List trusted devices

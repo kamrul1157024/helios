@@ -1078,12 +1078,13 @@ func (s *InternalServer) handleInternalHealth(w http.ResponseWriter, r *http.Req
 var TunnelManager interface {
 	Status() map[string]interface{}
 	Start(provider string, customURL string, localPort int) (string, error)
+	SetTailscaleMode(mode string)
 	Stop() error
 }
 
 // OnTunnelConfigChanged is called when tunnel config should be persisted.
 // Set by daemon to save tunnel provider to config.yaml.
-var OnTunnelConfigChanged func(provider, customURL string)
+var OnTunnelConfigChanged func(provider, customURL, tailscaleMode string)
 
 func (s *InternalServer) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	if TunnelManager == nil {
@@ -1103,13 +1104,18 @@ func (s *InternalServer) handleTunnelStart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var req struct {
-		Provider  string `json:"provider"`
-		CustomURL string `json:"custom_url,omitempty"`
-		LocalPort int    `json:"local_port,omitempty"`
+		Provider      string `json:"provider"`
+		CustomURL     string `json:"custom_url,omitempty"`
+		LocalPort     int    `json:"local_port,omitempty"`
+		TailscaleMode string `json:"tailscale_mode,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	if req.Provider == "tailscale" && req.TailscaleMode != "" {
+		TunnelManager.SetTailscaleMode(req.TailscaleMode)
 	}
 
 	url, err := TunnelManager.Start(req.Provider, req.CustomURL, req.LocalPort)
@@ -1120,7 +1126,7 @@ func (s *InternalServer) handleTunnelStart(w http.ResponseWriter, r *http.Reques
 
 	// Persist tunnel config so it auto-starts on next daemon restart
 	if OnTunnelConfigChanged != nil {
-		OnTunnelConfigChanged(req.Provider, req.CustomURL)
+		OnTunnelConfigChanged(req.Provider, req.CustomURL, req.TailscaleMode)
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
