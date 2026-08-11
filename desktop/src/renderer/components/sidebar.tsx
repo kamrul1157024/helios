@@ -1,0 +1,218 @@
+import { useMemo, useState } from 'react'
+
+import { store, useStore } from '../store.ts'
+import {
+  BUSY_STATUSES,
+  sessionLabel,
+  shortCwd,
+  statusLabel,
+  timeAgo,
+  type HostRecord,
+  type Session,
+} from '../../shared/models.ts'
+
+interface Row {
+  host: HostRecord
+  session: Session
+  pending: number
+}
+
+export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void; onAddHost: () => void }): JSX.Element {
+  const hosts = useStore((s) => s.hosts)
+  const hostStatus = useStore((s) => s.hostStatus)
+  const sessions = useStore((s) => s.sessions)
+  const notifications = useStore((s) => s.notifications)
+  const selection = useStore((s) => s.selection)
+  const query = useStore((s) => s.query)
+  const showArchived = useStore((s) => s.showArchived)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+
+  const grouped = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return hosts.map((host) => {
+      const pendingByCwd = new Map<string, number>()
+      for (const notif of notifications[host.id] ?? []) {
+        pendingByCwd.set(notif.source_session, (pendingByCwd.get(notif.source_session) ?? 0) + 1)
+      }
+
+      const rows: Row[] = (sessions[host.id] ?? [])
+        .filter((session) => showArchived || !session.archived)
+        .filter((session) => {
+          if (!needle) return true
+          return `${session.title ?? ''} ${session.project} ${session.cwd} ${session.last_user_message ?? ''}`
+            .toLowerCase()
+            .includes(needle)
+        })
+        .map((session) => ({ host, session, pending: pendingByCwd.get(session.session_id) ?? 0 }))
+        .sort(compareRows)
+
+      return { host, rows }
+    })
+  }, [hosts, sessions, notifications, query, showArchived])
+
+  return (
+    <aside className="sidebar">
+      <header className="sidebar-head">
+        <div className="search-field">
+          <span className="search-icon" aria-hidden="true">
+            ⌕
+          </span>
+          <input
+            className="search"
+            placeholder="Search sessions"
+            value={query}
+            onChange={(event) => store.setQuery(event.target.value)}
+          />
+        </div>
+        <button className="fab" title="New session (⌘N)" onClick={onNewSession}>
+          +
+        </button>
+      </header>
+
+      <div className="sidebar-list">
+        {grouped.map(({ host, rows }) => {
+          const status = hostStatus[host.id]?.state ?? 'connecting'
+          const isCollapsed = collapsed[host.id] ?? false
+          return (
+            <section key={host.id} className="host-group">
+              <button
+                className="host-head"
+                onClick={() => setCollapsed((c) => ({ ...c, [host.id]: !isCollapsed }))}
+              >
+                <span className={`dot ${status}`} title={hostStatus[host.id]?.error ?? status} />
+                <span className="host-name">{host.name}</span>
+                <span className="host-count">{rows.length}</span>
+                <span className="chevron">{isCollapsed ? '▸' : '▾'}</span>
+              </button>
+
+              {!isCollapsed &&
+                rows.map(({ session, pending }) => (
+                  <SessionRow
+                    key={session.session_id}
+                    hostId={host.id}
+                    session={session}
+                    pending={pending}
+                    selected={
+                      selection?.hostId === host.id && selection.sessionId === session.session_id
+                    }
+                  />
+                ))}
+
+              {!isCollapsed && rows.length === 0 && <p className="empty-note">No sessions</p>}
+            </section>
+          )
+        })}
+
+        {hosts.length === 0 && (
+          <div className="empty">
+            <p>No daemon connected.</p>
+            <p className="muted">
+              Start one with <code>helios daemon</code>, or pair a remote machine.
+            </p>
+            <button onClick={onAddHost}>Add host</button>
+          </div>
+        )}
+      </div>
+
+      <footer className="sidebar-foot">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => store.setShowArchived(event.target.checked)}
+          />
+          Show archived
+        </label>
+        <button className="link" onClick={onAddHost}>
+          Add host
+        </button>
+      </footer>
+    </aside>
+  )
+}
+
+function SessionRow({
+  hostId,
+  session,
+  pending,
+  selected,
+}: {
+  hostId: string
+  session: Session
+  pending: number
+  selected: boolean
+}): JSX.Element {
+  const live = Boolean(session.terminal)
+  const busy = BUSY_STATUSES.has(session.status)
+  return (
+    <article
+      className={`session-card ${session.status} ${selected ? 'selected' : ''}`}
+      onClick={() => store.select(hostId, session.session_id)}
+      onDoubleClick={() => void store.openTerminal(hostId, session, !live)}
+    >
+      <div className="card-inner">
+        <div className="card-top">
+          <span className={`chip ${session.status}`}>
+            <span className={busy ? 'dot pulse' : 'dot'} />
+            {statusLabel(session.status)}
+          </span>
+          {session.pinned && (
+            <span className="pin" title="Pinned">
+              ★
+            </span>
+          )}
+          {pending > 0 && <span className="badge">{pending}</span>}
+          <span className="grow" />
+          <span className="time">{timeAgo(session.last_event_at ?? session.created_at)}</span>
+        </div>
+
+        <div className="card-title">{sessionLabel(session)}</div>
+        <div className="card-cwd" title={session.cwd}>
+          {shortCwd(session.cwd)}
+        </div>
+
+        <div className="card-bottom">
+          <span className="card-meta">
+            {session.model ?? session.source}
+            {session.permission_mode ? ` · ${shortMode(session.permission_mode)}` : ''}
+          </span>
+          <button
+            className="row-btn"
+            title={live ? 'Open terminal' : 'Wake and open terminal'}
+            onClick={(event) => {
+              event.stopPropagation()
+              void store.openTerminal(hostId, session, !live)
+            }}
+          >
+            {live ? 'Terminal' : 'Wake'}
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+/** Pending approvals first, then live sessions, then most recent activity. */
+function compareRows(a: Row, b: Row): number {
+  if (a.pending !== b.pending) return b.pending - a.pending
+  if (a.session.pinned !== b.session.pinned) return a.session.pinned ? -1 : 1
+  const aLive = Boolean(a.session.terminal)
+  const bLive = Boolean(b.session.terminal)
+  if (aLive !== bLive) return aLive ? -1 : 1
+  return (b.session.last_event_at ?? b.session.created_at).localeCompare(
+    a.session.last_event_at ?? a.session.created_at,
+  )
+}
+
+function shortMode(mode: string): string {
+  switch (mode) {
+    case 'acceptEdits':
+      return 'accept edits'
+    case 'bypassPermissions':
+      return 'bypass'
+    case 'plan':
+      return 'plan'
+    default:
+      return mode
+  }
+}

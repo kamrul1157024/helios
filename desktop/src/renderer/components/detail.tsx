@@ -1,0 +1,235 @@
+import { useState } from 'react'
+
+import { api, statusOf } from '../bridge.ts'
+import { store, useStore, type RightPanel } from '../store.ts'
+import { ApprovalsPanel } from './approvals.tsx'
+import { ChatPanel } from './chat.tsx'
+import { FilesPanel } from './files.tsx'
+import { GitPanel } from './git.tsx'
+import { BUSY_STATUSES, sessionLabel, statusLabel, type Session } from '../../shared/models.ts'
+
+const PANELS: RightPanel[] = ['chat', 'approvals', 'git', 'files']
+
+export function Detail(): JSX.Element {
+  const selection = useStore((s) => s.selection)
+  const sessions = useStore((s) => s.sessions)
+  const notifications = useStore((s) => s.notifications)
+  const panel = useStore((s) => s.panel)
+
+  if (!selection) {
+    return (
+      <div className="detail empty">
+        <p>Select a session.</p>
+      </div>
+    )
+  }
+
+  const session = sessions[selection.hostId]?.find((s) => s.session_id === selection.sessionId)
+  if (!session) {
+    return (
+      <div className="detail empty">
+        <p>That session is no longer listed.</p>
+      </div>
+    )
+  }
+
+  const pending = (notifications[selection.hostId] ?? []).filter(
+    (n) => n.source_session === session.session_id,
+  ).length
+
+  return (
+    <div className="detail">
+      <SessionHeader hostId={selection.hostId} session={session} />
+
+      <nav className="panel-tabs">
+        {PANELS.map((name) => (
+          <button
+            key={name}
+            className={panel === name ? 'active' : ''}
+            onClick={() => store.setPanel(name)}
+          >
+            {name}
+            {name === 'approvals' && pending > 0 && <span className="badge">{pending}</span>}
+          </button>
+        ))}
+      </nav>
+
+      <div className="panel-body">
+        {panel === 'chat' && <ChatPanel hostId={selection.hostId} session={session} />}
+        {panel === 'approvals' && (
+          <ApprovalsPanel hostId={selection.hostId} sessionId={session.session_id} />
+        )}
+        {panel === 'git' && (
+          <GitPanel hostId={selection.hostId} cwd={session.cwd} revision={session.last_event_at} />
+        )}
+        {panel === 'files' && <FilesPanel hostId={selection.hostId} cwd={session.cwd} />}
+      </div>
+    </div>
+  )
+}
+
+function SessionHeader({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
+  const [renaming, setRenaming] = useState(false)
+  const [title, setTitle] = useState(session.title ?? '')
+  const live = Boolean(session.terminal)
+  const busy = BUSY_STATUSES.has(session.status)
+
+  const run = async (fn: () => Promise<unknown>): Promise<void> => {
+    try {
+      await fn()
+      await store.refreshSessions(hostId)
+    } catch (err) {
+      store.fail(err)
+    }
+  }
+
+  return (
+    <header className="detail-head">
+      <div className="detail-title">
+        {renaming ? (
+          <input
+            autoFocus
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            onBlur={() => {
+              setRenaming(false)
+              if (title !== (session.title ?? '')) {
+                void run(() => api(hostId).patchSession(session.session_id, { title }))
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur()
+              if (event.key === 'Escape') {
+                setTitle(session.title ?? '')
+                setRenaming(false)
+              }
+            }}
+          />
+        ) : (
+          <h1 onDoubleClick={() => setRenaming(true)}>{sessionLabel(session)}</h1>
+        )}
+        <span className="detail-cwd" title={session.cwd}>
+          {session.cwd}
+        </span>
+      </div>
+
+      <div className="detail-actions">
+        <span className={`chip ${session.status}`}>
+          <span className={busy ? 'dot pulse' : 'dot'} />
+          {statusLabel(session.status)}
+        </span>
+
+        <PermissionMode hostId={hostId} session={session} />
+
+        <button className="filled" onClick={() => void store.openTerminal(hostId, session, !live)}>
+          {live ? 'Terminal' : 'Wake'}
+        </button>
+
+        {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
+
+        <details className="menu">
+          <summary>⋯</summary>
+          <div className="menu-body">
+            <button onClick={() => void run(() => api(hostId).generateTitle(session.session_id))}>
+              Regenerate title
+            </button>
+            <button
+              onClick={() =>
+                void run(() => api(hostId).patchSession(session.session_id, { pinned: !session.pinned }))
+              }
+            >
+              {session.pinned ? 'Unpin' : 'Pin'}
+            </button>
+            <button
+              onClick={() =>
+                void run(() =>
+                  api(hostId).patchSession(session.session_id, { archived: !session.archived }),
+                )
+              }
+            >
+              {session.archived ? 'Unarchive' : 'Archive'}
+            </button>
+            {!live && (
+              <button onClick={() => void run(() => api(hostId).resume(session.session_id))}>Resume</button>
+            )}
+            <button onClick={() => void run(() => api(hostId).terminate(session.session_id))}>
+              Terminate
+            </button>
+            <button
+              className="danger"
+              onClick={() => {
+                // Deleting drops the daemon's record; the agent's own transcript
+                // on disk is untouched, which is worth saying before the click.
+                if (confirm('Remove this session from Helios? The transcript file stays on disk.')) {
+                  store.closeTab(`${hostId}:${session.session_id}`)
+                  void run(() => api(hostId).deleteSession(session.session_id))
+                }
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </details>
+      </div>
+    </header>
+  )
+}
+
+/**
+ * Switching mode restarts the agent, because the CLI takes it as a launch flag.
+ * The daemon refuses while a session is mid-turn; the control is disabled to
+ * match, but the server check is the one that counts.
+ */
+function PermissionMode({ hostId, session }: { hostId: string; session: Session }): JSX.Element | null {
+  const [modes, setModes] = useState<string[] | null>(null)
+  const [pending, setPending] = useState(false)
+
+  if (session.source !== 'claude') return null
+
+  const load = async (): Promise<void> => {
+    if (modes) return
+    try {
+      const providers = await api(hostId).providers()
+      setModes(providers.find((p) => p.id === session.source)?.permission_modes ?? [])
+    } catch {
+      setModes([])
+    }
+  }
+
+  const switchable = session.status === 'idle'
+
+  const change = async (mode: string): Promise<void> => {
+    if (!mode || mode === session.permission_mode) return
+    setPending(true)
+    try {
+      await api(hostId).setPermissionMode(session.session_id, mode)
+      store.notify(`Permission mode set to ${mode}`)
+      await store.refreshSessions(hostId)
+    } catch (err) {
+      if (statusOf(err) === 409) store.notify('Session is busy — try again when it is idle', 'error')
+      else store.fail(err)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <select
+      className="mode-select"
+      value={session.permission_mode ?? ''}
+      disabled={!switchable || pending}
+      title={switchable ? 'Restarts the agent' : 'Only while the session is idle'}
+      onFocus={() => void load()}
+      onChange={(event) => void change(event.target.value)}
+    >
+      {/* The modes list loads on focus, so the current value needs an option of
+          its own until it arrives. */}
+      {!session.permission_mode && <option value="">default</option>}
+      {(modes ?? [session.permission_mode].filter((m): m is string => Boolean(m))).map((mode) => (
+        <option key={mode} value={mode}>
+          {mode}
+        </option>
+      ))}
+    </select>
+  )
+}

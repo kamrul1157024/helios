@@ -1,0 +1,51 @@
+appId: com.helios.desktop
+productName: Helios
+copyright: Copyright © Helios
+
+directories:
+  output: release
+  buildResources: assets
+
+# The three esbuild bundles plus whatever the main process still resolves at
+# runtime. Everything else — React, xterm — is already inside those bundles, so
+# shipping node_modules for it would double the payload.
+files:
+  - dist/**
+  - package.json
+  - node_modules/ws/**
+
+asar: true
+
+# Lets the OS hand `helios://pair?...` links to the app; the main process
+# registers the same scheme at runtime for the unpackaged dev build.
+protocols:
+  - name: Helios
+    schemes:
+      - helios
+
+mac:
+  category: public.app-category.developer-tools
+  icon: assets/icon.png
+  # Host arch only; a universal or cross-arch build is `--arm64 --x64` and pulls
+  # down a second Electron for the privilege.
+  target:
+    - dmg
+  # Ad-hoc signing, matching the Go binary: enough for Gatekeeper to run it
+  # locally without a paid Developer ID.
+  identity: null
+  hardenedRuntime: false
+
+dmg:
+  artifactName: helios-desktop-${version}-${arch}.dmg
+
+win:
+  target: nsis
+  artifactName: helios-desktop-${version}-${arch}.${ext}
+
+linux:
+  category: Development
+  icon: assets/icon.png
+  target:
+    - AppImage
+    - deb
+  artifactName: helios-desktop-${version}-${arch}.${ext}
