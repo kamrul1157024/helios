@@ -47,20 +47,6 @@ func reapStaleSessions(db *store.Store, be backend.Backend, sse *server.SSEBroad
 	}
 }
 
-// claudeIsIdle returns true if the pane shows Claude's idle input prompt.
-// When generating, Claude shows a verb line ending with "…" above the prompt.
-// When idle, no such line exists — only the bare "❯" prompt remains.
-func claudeIsIdle(content string) bool {
-	if !strings.Contains(content, "❯") {
-		return false
-	}
-	// When generating, Claude shows a verb line containing "…" (U+2026).
-	if strings.Contains(content, "…") {
-		return false
-	}
-	return true
-}
-
 // lastUserMessageFromTranscript reads a transcript JSONL file backward
 // in chunks to find the last user message text. Tool-result entries can
 // push the last real user prompt far from the end of the file, so we
