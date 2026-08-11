@@ -276,7 +276,7 @@ func (s *Screen) renderRow(sb *strings.Builder, cur *uv.Style, cols, y int, scro
 			end--
 		}
 	}
-	for x := 0; x < end; x++ {
+	for x := 0; x < end; {
 		var c *uv.Cell
 		if scrollback {
 			c = s.em.ScrollbackCellAt(x, y)
@@ -289,6 +289,7 @@ func (s *Screen) renderRow(sb *strings.Builder, cur *uv.Style, cols, y int, scro
 				*cur = uv.Style{}
 			}
 			sb.WriteByte(' ')
+			x++
 			continue
 		}
 		if !c.Style.Equal(cur) {
@@ -299,6 +300,15 @@ func (s *Screen) renderRow(sb *strings.Builder, cur *uv.Style, cols, y int, scro
 			sb.WriteByte(' ')
 		} else {
 			sb.WriteString(c.Content)
+		}
+		// A wide grapheme already owns the cells that follow it. Emitting
+		// anything for those continuation cells would make the row wider than
+		// the terminal, so replaying the snapshot would wrap it and shift every
+		// row below. CJK and emoji both land here.
+		if c.Width > 1 {
+			x += c.Width
+		} else {
+			x++
 		}
 	}
 }

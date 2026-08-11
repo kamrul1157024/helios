@@ -221,3 +221,83 @@ func TestScreenSnapshotScrollbackIsBounded(t *testing.T) {
 		t.Error("RenderSnapshot(0) should carry no scrollback")
 	}
 }
+
+// TestScreenSnapshotDoesNotOverflowWidth guards the resync path against
+// double-width characters. A wide grapheme occupies two cells, and emitting a
+// space for the continuation cell makes the rendered row wider than the
+// terminal, so replaying the snapshot wraps every affected row and shifts
+// everything below it. CJK and emoji both hit this.
+func TestScreenSnapshotDoesNotOverflowWidth(t *testing.T) {
+	const cols, rows = 20, 5
+	s := NewScreen(cols, rows)
+	defer s.Close()
+	s.StartDrain(&syncBuf{})
+
+	s.Write([]byte("中文 ok\r\n"))
+	time.Sleep(100 * time.Millisecond)
+
+	for _, tc := range []struct {
+		name string
+		got  string
+	}{
+		{"RenderANSI", s.RenderANSI()},
+		{"RenderSnapshot", s.RenderSnapshot(0)},
+	} {
+		row := firstRenderedRow(tc.got)
+		if w := displayWidth(row); w > cols {
+			t.Errorf("%s: first row is %d columns wide, want <= %d; a %d-column terminal will wrap it\nrow = %q",
+				tc.name, w, cols, cols, row)
+		}
+	}
+}
+
+// firstRenderedRow strips ANSI escapes and returns the first line of output.
+func firstRenderedRow(s string) string {
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) && (s[j] == ';' || s[j] == '?' || (s[j] >= '0' && s[j] <= '9')) {
+					j++
+				}
+				if j < len(s) {
+					j++
+				}
+			}
+			i = j
+			continue
+		}
+		if s[i] == '\r' || s[i] == '\n' {
+			break
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
+}
+
+// displayWidth is the column count a terminal would give the string.
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		switch {
+		case r >= 0x1100 && (r <= 0x115F ||
+			r == 0x2329 || r == 0x232A ||
+			(r >= 0x2E80 && r <= 0xA4CF && r != 0x303F) ||
+			(r >= 0xAC00 && r <= 0xD7A3) ||
+			(r >= 0xF900 && r <= 0xFAFF) ||
+			(r >= 0xFE30 && r <= 0xFE6F) ||
+			(r >= 0xFF00 && r <= 0xFF60) ||
+			(r >= 0xFFE0 && r <= 0xFFE6) ||
+			(r >= 0x1F300 && r <= 0x1F64F) ||
+			(r >= 0x1F900 && r <= 0x1F9FF) ||
+			(r >= 0x20000 && r <= 0x3FFFD)):
+			w += 2
+		default:
+			w++
+		}
+	}
+	return w
+}
