@@ -2,11 +2,18 @@ package transcript
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
+
+// maxLineBytes bounds one transcript entry. A single tool result can hold an
+// entire file, so the cap is generous; what matters is that it is a cap.
+const maxLineBytes = 16 << 20
 
 // MessageRole identifies the type of transcript entry.
 type MessageRole string
@@ -72,28 +79,30 @@ func ParseClaudeTranscript(path string, limit, offset int) (*TranscriptResult, e
 	}
 	defer f.Close()
 
-	// Parse all relevant entries
+	return parseClaude(f, maxLineBytes, limit, offset)
+}
+
+// parseClaude parses the .jsonl stream, skipping any entry longer than max.
+func parseClaude(src io.Reader, max, limit, offset int) (*TranscriptResult, error) {
 	var allMessages []Message
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB line buffer
+	r := bufio.NewReaderSize(src, 64*1024)
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	for {
+		line, oversized, err := readLine(r, max)
+		// An entry longer than the cap is a tool result carrying a whole file,
+		// and its tail is gone: parsing the head would only yield broken JSON.
+		if len(line) > 0 && !oversized {
+			var entry claudeEntry
+			if json.Unmarshal(line, &entry) == nil {
+				allMessages = append(allMessages, parseClaudeEntry(&entry)...)
+			}
 		}
-
-		var entry claudeEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("read transcript: %w", err)
 		}
-
-		msgs := parseClaudeEntry(&entry)
-		allMessages = append(allMessages, msgs...)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read transcript: %w", err)
 	}
 
 	total := len(allMessages)
@@ -120,6 +129,38 @@ func ParseClaudeTranscript(path string, limit, offset int) (*TranscriptResult, e
 		Offset:   offset,
 		HasMore:  start > 0,
 	}, nil
+}
+
+// readLine returns the next line without its terminator, reporting whether it
+// was longer than max bytes — in which case the excess is read and dropped.
+// bufio.Scanner cannot do this: one over-long line ends the scan, and a single
+// huge tool result would cost the caller the whole transcript.
+func readLine(r *bufio.Reader, max int) (line []byte, oversized bool, err error) {
+	total := 0
+	for {
+		chunk, readErr := r.ReadSlice('\n')
+		more := errors.Is(readErr, bufio.ErrBufferFull)
+		if !more {
+			chunk = trimEOL(chunk)
+		}
+		total += len(chunk)
+		if room := max - len(line); room > 0 {
+			if room > len(chunk) {
+				room = len(chunk)
+			}
+			line = append(line, chunk[:room]...)
+		}
+		if more {
+			continue
+		}
+		return line, total > max, readErr
+	}
+}
+
+// trimEOL drops a trailing newline and the carriage return before it.
+func trimEOL(line []byte) []byte {
+	line = bytes.TrimSuffix(line, []byte("\n"))
+	return bytes.TrimSuffix(line, []byte("\r"))
 }
 
 // parseClaudeEntry converts a Claude .jsonl entry into generic Messages.

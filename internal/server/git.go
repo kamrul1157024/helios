@@ -235,7 +235,8 @@ func parseNameStatus(root string, extraArgs ...string) []gitChange {
 	if err != nil {
 		return []gitChange{}
 	}
-	var changes []gitChange
+	// Not nil: a nil slice marshals to JSON null, and clients expect a list.
+	changes := []gitChange{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
 			continue
