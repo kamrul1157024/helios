@@ -124,8 +124,8 @@ func (h *Host) Name() string { return "host" }
 // is the main reason it exists.
 func (h *Host) Available() bool { return true }
 
-func (h *Host) Start(sessionID, cwd, command string) (string, error) {
-	sock, err := h.reg.Start(sessionID, cwd, command)
+func (h *Host) Start(sessionID, cwd string, argv []string) (string, error) {
+	sock, err := h.reg.Start(sessionID, cwd, argv)
 	if err != nil {
 		return "", err
 	}

@@ -45,7 +45,7 @@ func (f *fakeBackend) live(sessionID string) { f.handles[sessionID] = "sock-" + 
 func (f *fakeBackend) Name() string    { return "fake" }
 func (f *fakeBackend) Available() bool { return true }
 
-func (f *fakeBackend) Start(sessionID, cwd, command string) (string, error) {
+func (f *fakeBackend) Start(sessionID, cwd string, argv []string) (string, error) {
 	f.live(sessionID)
 	return f.handles[sessionID], nil
 }

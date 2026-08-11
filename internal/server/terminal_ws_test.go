@@ -86,10 +86,13 @@ func newTerminalServer(t *testing.T) (*httptest.Server, *backend.Host, string) {
 		t.Fatalf("helios dir: %v", err)
 	}
 
-	reg := terminal.NewRegistry(heliosDir, func(sessionID, cwd, command string) error {
+	reg := terminal.NewRegistry(heliosDir, func(sessionID, cwd string, argv []string) error {
 		args := []string{"ptyhost", sessionID, "--cwd", cwd}
-		if command != "" {
-			args = append(args, "--login-cmd", command)
+		if len(argv) > 0 {
+			args = append(args, "--cmd", argv[0])
+			for _, a := range argv[1:] {
+				args = append(args, "--arg", a)
+			}
 		}
 		cmd := exec.Command(bin, args...)
 		// Isolation is by HOME: the spawned host resolves its own helios dir
@@ -220,7 +223,7 @@ func hello(t *testing.T, stream io.Writer, role terminal.Role) {
 func TestTerminalWSStreamsOutput(t *testing.T) {
 	srv, h, dir := newTerminalServer(t)
 
-	if _, err := h.Start("ws-out", dir, "echo relay-marker-one"); err != nil {
+	if _, err := h.Start("ws-out", dir, []string{"sh", "-c", "echo relay-marker-one; sleep 5"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
@@ -236,7 +239,7 @@ func TestTerminalWSSendsInput(t *testing.T) {
 
 	// `cat` stands in for an agent: always present, and it echoes, so a
 	// delivered line is visibly distinguishable from one that never arrived.
-	if _, err := h.Start("ws-in", dir, "cat"); err != nil {
+	if _, err := h.Start("ws-in", dir, []string{"cat"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
@@ -255,7 +258,7 @@ func TestTerminalWSSendsInput(t *testing.T) {
 func TestTerminalWSLateViewerGetsSnapshot(t *testing.T) {
 	srv, h, dir := newTerminalServer(t)
 
-	if _, err := h.Start("ws-late", dir, "echo printed-before-connect"); err != nil {
+	if _, err := h.Start("ws-late", dir, []string{"sh", "-c", "echo printed-before-connect; sleep 5"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	// Wait for the output to exist before connecting, so the only way to see
@@ -341,7 +344,7 @@ func sizeAfterResize(t *testing.T, srv *httptest.Server, sessionID string, role 
 func TestTerminalWSObserverCannotResize(t *testing.T) {
 	srv, h, dir := newTerminalServer(t)
 
-	if _, err := h.Start("ws-observer", dir, "cat"); err != nil {
+	if _, err := h.Start("ws-observer", dir, []string{"cat"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	// An observer must never shrink the PTY out from under an interactive
@@ -355,7 +358,7 @@ func TestTerminalWSObserverCannotResize(t *testing.T) {
 func TestTerminalWSInteractiveResizes(t *testing.T) {
 	srv, h, dir := newTerminalServer(t)
 
-	if _, err := h.Start("ws-interactive", dir, "cat"); err != nil {
+	if _, err := h.Start("ws-interactive", dir, []string{"cat"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	// The counterpart to the observer case: without this, that test would pass

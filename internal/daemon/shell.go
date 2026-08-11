@@ -47,8 +47,8 @@ func ShellWrapperSnippet(syntax string) string {
 	switch syntax {
 	// The wrapper delegates unconditionally, including inside a helios terminal:
 	// a session started from in there is a session of its own and needs to be
-	// registered like any other. `helios wrap` recognises the one case that must
-	// not be wrapped again — the host's own session — and runs it in place.
+	// registered like any other. It cannot recurse — a host executes its agent
+	// directly, so the rc file this lives in is never read again inside one.
 	case "posix":
 		return fmt.Sprintf(`%s
 claude() {

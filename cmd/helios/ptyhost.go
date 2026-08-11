@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,16 +34,10 @@ func handlePtyHost(args []string) {
 	cwd, _ := os.Getwd()
 	cols, rows := terminal.DefaultCols, terminal.DefaultRows
 	command := ""
-	loginCmd := ""
 	var cmdArgs []string
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
-		case "--login-cmd":
-			if i+1 < len(args) {
-				i++
-				loginCmd = args[i]
-			}
 		case "--cwd":
 			if i+1 < len(args) {
 				i++
@@ -77,14 +73,6 @@ func handlePtyHost(args []string) {
 	switch {
 	case command != "":
 		// Explicit binary; args come from --arg.
-	case loginCmd != "":
-		//nolint:staticcheck // shell resolution lives with the spawner
-		// Run the user's login shell and type the command into it. This keeps
-		// tmux's useful property that the shell's profile loads first (PATH,
-		// nvm, homebrew) and that the user still has a shell after the agent
-		// exits, without tmux's send-keys quoting hazards.
-		command = terminal.UserShell()
-		cmdArgs = []string{"-l", "-i"}
 	default:
 		resolved, err := exec.LookPath("claude")
 		if err != nil {
@@ -129,6 +117,7 @@ func handlePtyHost(args []string) {
 		Dir:       cwd,
 		Cols:      cols,
 		Rows:      rows,
+		Env:       agentEnv(),
 	})
 	if err != nil {
 		ln.Close()
@@ -146,15 +135,6 @@ func handlePtyHost(args []string) {
 		StartedAt: time.Now(),
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "ptyhost: write sidecar: %v\n", err)
-	}
-
-	// Typed after the sidecar exists, so a crash between spawn and type leaves
-	// no half-registered session. Bytes written before the shell reads them
-	// stay in the PTY buffer, so there is no race with shell startup.
-	if loginCmd != "" {
-		if err := host.Write([]byte(loginCmd+"\r"), "ptyhost"); err != nil {
-			fmt.Fprintf(os.Stderr, "ptyhost: type login command: %v\n", err)
-		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -185,4 +165,29 @@ func handlePtyHost(args []string) {
 	host.Close()
 	ln.Close()
 	terminal.RemoveHostFiles(heliosDir, sessionID)
+}
+
+// agentVars are the variables Claude Code exports into a session it is running.
+var agentVars = []string{
+	"CLAUDECODE",
+	"CLAUDE_CODE_SESSION_ID",
+	"CLAUDE_CODE_CHILD_SESSION",
+}
+
+// agentEnv returns this process's environment without the marks of the agent
+// that may have spawned it.
+//
+// Starting a session from a terminal that is itself an agent session is
+// ordinary, and the child inherits those variables through the wrap. The agent
+// then takes itself for a continuation of its parent: its hooks report the
+// wrong session and the new one never gets a title.
+func agentEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if key, _, ok := strings.Cut(kv, "="); !ok || !slices.Contains(agentVars, key) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

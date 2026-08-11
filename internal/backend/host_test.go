@@ -77,10 +77,13 @@ func newHostBackend(t *testing.T) (*Host, string) {
 		t.Fatalf("helios dir: %v", err)
 	}
 
-	reg := terminal.NewRegistry(heliosDir, func(sessionID, cwd, command string) error {
+	reg := terminal.NewRegistry(heliosDir, func(sessionID, cwd string, argv []string) error {
 		args := []string{"ptyhost", sessionID, "--cwd", cwd}
-		if command != "" {
-			args = append(args, "--login-cmd", command)
+		if len(argv) > 0 {
+			args = append(args, "--cmd", argv[0])
+			for _, a := range argv[1:] {
+				args = append(args, "--arg", a)
+			}
 		}
 		cmd := exec.Command(bin, args...)
 		cmd.Env = append(os.Environ(), "HOME="+dir)
@@ -117,7 +120,7 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool) bool {
 func TestHostBackendStartCaptureKill(t *testing.T) {
 	h, dir := newHostBackend(t)
 
-	handle, err := h.Start("sess-start", dir, "echo backend-marker-one")
+	handle, err := h.Start("sess-start", dir, []string{"sh", "-c", "echo backend-marker-one; sleep 5"})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -155,7 +158,7 @@ func TestHostBackendSendText(t *testing.T) {
 
 	// `cat` stands in for an agent: it is always present, and it echoes, so a
 	// submitted line is visibly distinguishable from a typed-but-unsent one.
-	if _, err := h.Start("sess-send2", dir, "cat"); err != nil {
+	if _, err := h.Start("sess-send2", dir, []string{"cat"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if err := h.SendText("sess-send2", "typed-into-cat"); err != nil {
@@ -175,7 +178,7 @@ func TestHostBackendSendText(t *testing.T) {
 func TestHostBackendSendKeyInterrupts(t *testing.T) {
 	h, dir := newHostBackend(t)
 
-	if _, err := h.Start("sess-key", dir, "cat"); err != nil {
+	if _, err := h.Start("sess-key", dir, []string{"cat"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if !waitFor(t, 10*time.Second, func() bool { return h.Alive("sess-key") }) {
@@ -184,13 +187,10 @@ func TestHostBackendSendKeyInterrupts(t *testing.T) {
 	if err := h.SendKey("sess-key", KeyCtrlC); err != nil {
 		t.Fatalf("send key: %v", err)
 	}
-	// Ctrl-C kills cat and drops back to the shell prompt; the shell keeps the
-	// host alive, so assert on the screen rather than on liveness.
-	ok := waitFor(t, 10*time.Second, func() bool {
-		text, err := h.Capture("sess-key")
-		return err == nil && strings.Contains(text, "^C")
-	})
-	if !ok {
+	// cat would sit on stdin forever, so its death is proof the key arrived as
+	// a signal and not as bytes on the input stream. Nothing survives it: the
+	// host runs the command directly, with no shell to fall back to.
+	if !waitFor(t, 10*time.Second, func() bool { return !h.Alive("sess-key") }) {
 		text, _ := h.Capture("sess-key")
 		t.Fatalf("interrupt was not delivered; screen was:\n%s", text)
 	}
@@ -225,11 +225,11 @@ func TestHostBackendSweepReportsDeadSessions(t *testing.T) {
 	h, dir := newHostBackend(t)
 
 	// The sleep keeps the host up long enough for Start to observe its socket;
-	// without it the shell can exit before the registry finishes connecting.
-	if _, err := h.Start("sess-sweep", dir, "sleep 1; exit 0"); err != nil {
+	// without it the command can exit before the registry finishes connecting.
+	if _, err := h.Start("sess-sweep", dir, []string{"sh", "-c", "sleep 1; exit 0"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	// The login shell exits with the command, taking the host with it.
+	// The host exits with its command.
 	if !waitFor(t, 10*time.Second, func() bool { return !h.Alive("sess-sweep") }) {
 		t.Fatal("host never exited")
 	}
@@ -259,7 +259,7 @@ func TestHostBackendUpdateCallbackFires(t *testing.T) {
 		mu.Unlock()
 	})
 
-	if _, err := h.Start("sess-cb", dir, "echo callback-marker"); err != nil {
+	if _, err := h.Start("sess-cb", dir, []string{"sh", "-c", "echo callback-marker; sleep 5"}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	ok := waitFor(t, 10*time.Second, func() bool {

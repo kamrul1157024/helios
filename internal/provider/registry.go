@@ -107,8 +107,10 @@ type ProviderInfo struct {
 	Capabilities ProviderCapabilities `json:"capabilities"`
 }
 
-// SessionBuilder builds the shell command to start a new session.
-type SessionBuilder func(prompt, model, cwd, sessionID string) string
+// SessionBuilder builds the command to start a new session. It returns argv,
+// not a command line: terminals execute it directly, so a prompt full of
+// quotes and backticks reaches the agent as typed.
+type SessionBuilder func(prompt, model, cwd, sessionID string) []string
 
 // ModelsFetcher returns available models for the provider.
 type ModelsFetcher func() ([]ModelInfo, error)

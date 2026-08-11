@@ -319,7 +319,7 @@ func TestE2ERegistryWakeIsIdempotent(t *testing.T) {
 
 	var spawns int
 	var mu sync.Mutex
-	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd, command string) error {
+	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string) error {
 		mu.Lock()
 		spawns++
 		mu.Unlock()
@@ -358,7 +358,7 @@ func TestE2ERegistryWakeIsIdempotent(t *testing.T) {
 func TestE2EEvictionRespectsMaxWarm(t *testing.T) {
 	e := newE2E(t)
 
-	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd, command string) error {
+	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string) error {
 		cmd := exec.Command(e.binary, "ptyhost", sessionID, "--cwd", cwd, "--cmd", "sh")
 		cmd.Env = append(os.Environ(), "HOME="+e.dir)
 		cmd.SysProcAttr = detachSysProcAttr()
@@ -653,4 +653,32 @@ func (v *viewerScreen) waitUntil(t *testing.T, d time.Duration, cond func(text s
 	}
 	t.Logf("rendered screen was:\n%s", v.screen.Text())
 	return false
+}
+
+// TestE2EArgvReachesTheChildWhole is the claim behind running the agent
+// directly: there is no shell between the host and the command, so an
+// argument keeps its spaces and metacharacters instead of being re-parsed.
+// A prompt sent from the phone is exactly this — arbitrary user text.
+func TestE2EArgvReachesTheChildWhole(t *testing.T) {
+	e := newE2E(t)
+	const sid = "e2e-argv"
+	const raw = "fix `git log` and say \"hi\", it's $HOME"
+	// printf renders its argument literally; a shell in the chain would have
+	// expanded or split it before printf ever saw it.
+	e.spawnHost(t, sid, "sh", "-c", `printf '[%s]\n' "$1"; sleep 5`, "sh", raw)
+
+	sock := e.socket(sid)
+	if !WaitForSocket(sock, 20*time.Second) {
+		t.Fatal("ptyhost socket never appeared")
+	}
+
+	c, err := Dial(sock, Hello{Role: RoleObserver, Cols: 200, Rows: 24, Name: "e2e"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	if !waitForFrameContaining(t, c, "["+raw+"]", 10*time.Second) {
+		t.Errorf("child never received %q intact", raw)
+	}
 }

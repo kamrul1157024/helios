@@ -41,11 +41,13 @@ type Backend interface {
 	// Available reports whether the backend can currently start sessions.
 	Available() bool
 
-	// Start launches command in a new terminal for sessionID and records the
-	// mapping. The returned handle is a pane ID or a socket path depending on
-	// the implementation; callers should treat it as opaque and only use it
-	// for display or for Adopt.
-	Start(sessionID, cwd, command string) (handle string, err error)
+	// Start launches argv in a new terminal for sessionID and records the
+	// mapping. The command is executed directly, not through a shell, so argv
+	// needs no quoting and the caller's environment is what it runs under.
+	// The returned handle is a pane ID or a socket path depending on the
+	// implementation; callers should treat it as opaque and only use it for
+	// display or for Adopt.
+	Start(sessionID, cwd string, argv []string) (handle string, err error)
 
 	// Adopt records a terminal that was created outside this backend, which
 	// is how `helios wrap` binds a session the user started by hand.

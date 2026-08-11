@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -318,4 +319,39 @@ func TestHostPingPong(t *testing.T) {
 		}
 	}
 	t.Error("no pong received")
+}
+
+// Starting a session from inside another session's terminal is ordinary, so
+// the parent's ID arrives in the environment. Appending a second entry would
+// not be enough: getenv answers with the first match, and the child would
+// report itself as the parent.
+func TestHostSessionEnvOverridesAnInheritedOne(t *testing.T) {
+	h, _ := serveHost(t, HostConfig{
+		SessionID: "child",
+		Command:   "sh",
+		Args:      []string{"-c", "echo id=[$HELIOS_SESSION_ID]; sleep 5"},
+		Env:       append(os.Environ(), SessionEnv+"=parent"),
+	})
+
+	waitForScreen(t, h, "id=[child]", 5*time.Second)
+}
+
+func TestSetEnv_ReplacesInPlaceOfAppending(t *testing.T) {
+	got := setEnv([]string{"A=1", "B=2", "A=3"}, "A=9", "C=4")
+
+	for _, kv := range got {
+		if kv == "A=1" || kv == "A=3" {
+			t.Errorf("env kept a stale entry %q: %q", kv, got)
+		}
+	}
+	if !slices.Contains(got, "A=9") || !slices.Contains(got, "B=2") || !slices.Contains(got, "C=4") {
+		t.Errorf("env = %q, want A=9, B=2 and C=4", got)
+	}
+}
+
+// An entry with no "=" is not a variable and is passed through untouched.
+func TestSetEnv_KeepsMalformedEntries(t *testing.T) {
+	if got := setEnv([]string{"NOTAVAR"}, "A=1"); !slices.Contains(got, "NOTAVAR") {
+		t.Errorf("env = %q, want NOTAVAR kept", got)
+	}
 }

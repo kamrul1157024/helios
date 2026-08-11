@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -631,7 +632,7 @@ func (sh *Shared) resumeSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	handle, err := sh.startTerminal(session.SessionID, session.CWD, "")
+	handle, err := sh.startTerminal(session.SessionID, session.CWD, nil)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
 		return
@@ -652,10 +653,10 @@ func (sh *Shared) resumeSession(w http.ResponseWriter, id string) {
 	})
 }
 
-// startTerminal brings a session's terminal up. An empty command resumes the
-// session's agent; a non-empty one launches it.
-func (sh *Shared) startTerminal(sessionID, cwd, command string) (string, error) {
-	if command == "" {
+// startTerminal brings a session's terminal up. Empty argv resumes the
+// session's agent; otherwise argv launches it.
+func (sh *Shared) startTerminal(sessionID, cwd string, argv []string) (string, error) {
+	if len(argv) == 0 {
 		waker, ok := sh.Backend.(backend.Waker)
 		if !ok {
 			return "", fmt.Errorf("backend %s cannot resume sessions", sh.Backend.Name())
@@ -666,7 +667,7 @@ func (sh *Shared) startTerminal(sessionID, cwd, command string) (string, error) 
 		handle, _ := sh.Backend.Handle(sessionID)
 		return handle, nil
 	}
-	return sh.Backend.Start(sessionID, cwd, command)
+	return sh.Backend.Start(sessionID, cwd, argv)
 }
 
 // ── Public server session control handlers (delegate to Shared) ──
@@ -890,12 +891,12 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	}
 
 	sessionID := uuid.New().String()
-	cmd := builder(req.Prompt, req.Model, req.CWD, sessionID)
+	argv := builder(req.Prompt, req.Model, req.CWD, sessionID)
 	if req.DangerouslySkipPermissions {
-		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
+		argv = slices.Insert(argv, 1, "--dangerously-skip-permissions")
 	}
 
-	handle, err := s.shared.Backend.Start(sessionID, req.CWD, cmd)
+	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
 		return
@@ -1442,12 +1443,12 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	sessionID := uuid.New().String()
-	cmd := builder(req.Prompt, req.Model, req.CWD, sessionID)
+	argv := builder(req.Prompt, req.Model, req.CWD, sessionID)
 	if req.DangerouslySkipPermissions {
-		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
+		argv = slices.Insert(argv, 1, "--dangerously-skip-permissions")
 	}
 
-	handle, err := s.shared.Backend.Start(sessionID, req.CWD, cmd)
+	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
 		return

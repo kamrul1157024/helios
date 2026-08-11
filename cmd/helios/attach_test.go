@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -254,47 +255,11 @@ func TestWrapCommand_NonClaudeLeavesArgsAlone(t *testing.T) {
 	}
 }
 
-// ==================== runsHostOwnSession ====================
+// ==================== resolveBinary ====================
 
-// A host types its command into a login shell whose rc file turns `claude`
-// back into `helios wrap`. Wrapping again would attach the session to its own
-// terminal and loop, so this one case runs in place.
-func TestRunsHostOwnSession_HostsOwnCommandRunsInPlace(t *testing.T) {
-	t.Setenv("HELIOS_SESSION_ID", "sess-1")
-
-	if !runsHostOwnSession("sess-1") {
-		t.Error("the host's own session should run in place")
-	}
-}
-
-// Anything else started from inside a helios terminal is a session of its own:
-// running it in place would leave it with no record and no terminal the daemon
-// can reach, while the phone happily starts a second copy of it elsewhere.
-func TestRunsHostOwnSession_OtherSessionsAreWrapped(t *testing.T) {
-	t.Setenv("HELIOS_SESSION_ID", "sess-1")
-
-	if runsHostOwnSession("sess-2") {
-		t.Error("resuming another session should go through the normal wrap")
-	}
-	if runsHostOwnSession("") {
-		t.Error("a session with no ID should go through the normal wrap")
-	}
-}
-
-func TestRunsHostOwnSession_OutsideAHostNothingRunsInPlace(t *testing.T) {
-	t.Setenv("HELIOS_SESSION_ID", "")
-
-	if runsHostOwnSession("sess-1") {
-		t.Error("outside a host every command is wrapped")
-	}
-}
-
-// ==================== shellCommand ====================
-
-// The host types this line into a login shell that has the user's rc file
-// loaded — and that file is where the `claude` wrapper function lives. An
-// absolute path is what stops the wrapper from swallowing the call.
-func TestShellCommand_ResolvesBinaryToAbsolutePath(t *testing.T) {
+// The host is spawned detached and executes the command itself, so it cannot
+// be relied on to have the PATH the user typed the command under.
+func TestResolveBinary_ResolvesToAbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "claude")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -302,42 +267,31 @@ func TestShellCommand_ResolvesBinaryToAbsolutePath(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 
-	got := shellCommand([]string{"claude", "--session-id", "abc"})
-	if got != bin+" --session-id abc" {
-		t.Errorf("cmd = %q, want the resolved path", got)
+	got := resolveBinary([]string{"claude", "--session-id", "abc"})
+	want := []string{bin, "--session-id", "abc"}
+	if !slices.Equal(got, want) {
+		t.Errorf("argv = %q, want %q", got, want)
 	}
 }
 
-// Resolution can fail — the login shell may have a PATH this process does not
-// — and the bare name is then the best guess.
-func TestShellCommand_UnresolvableBinaryKeepsBareName(t *testing.T) {
+// Resolution can fail, and the bare name is then the best guess.
+func TestResolveBinary_UnresolvableBinaryKeepsBareName(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	if got := shellCommand([]string{"claude", "-p"}); got != "claude -p" {
-		t.Errorf("cmd = %q, want claude -p", got)
+	got := resolveBinary([]string{"claude", "-p"})
+	if want := []string{"claude", "-p"}; !slices.Equal(got, want) {
+		t.Errorf("argv = %q, want %q", got, want)
 	}
 }
 
-// Arguments are typed through a shell, so anything it would reinterpret has to
-// survive as one word.
-func TestShellCommand_QuotesArgumentsTheShellWouldEat(t *testing.T) {
+// Nothing reinterprets the command, so arguments a shell would have mangled
+// pass through as single words.
+func TestResolveBinary_LeavesArgumentsAlone(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	cases := []struct {
-		arg  string
-		want string
-	}{
-		{"two words", `'two words'`},
-		{"$HOME", `'$HOME'`},
-		{"`id`", "'`id`'"},
-		{`say "hi"`, `'say "hi"'`},
-		{"it's", `'it'\''s'`},
-		{"--model=opus", "--model=opus"},
-	}
-	for _, tc := range cases {
-		got := shellCommand([]string{"claude", tc.arg})
-		if want := "claude " + tc.want; got != want {
-			t.Errorf("shellCommand(%q) = %q, want %q", tc.arg, got, want)
-		}
+	args := []string{"two words", "$HOME", "`id`", `say "hi"`, "it's"}
+	got := resolveBinary(append([]string{"claude"}, args...))
+	if want := append([]string{"claude"}, args...); !slices.Equal(got, want) {
+		t.Errorf("argv = %q, want %q", got, want)
 	}
 }

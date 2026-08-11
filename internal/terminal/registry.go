@@ -21,11 +21,10 @@ const (
 	DefaultMaxWarmR = 0 // 0 means "derive from system memory"
 )
 
-// SpawnFunc launches a detached ptyhost for a session. An empty command means
-// "resume this session's agent", which is the warm-pool path; a non-empty
-// command is typed into a fresh login shell, which is how a new session
-// starts.
-type SpawnFunc func(sessionID, cwd, command string) error
+// SpawnFunc launches a detached ptyhost for a session. Empty argv means
+// "resume this session's agent", which is the warm-pool path; otherwise argv
+// is the command the host executes, which is how a new session starts.
+type SpawnFunc func(sessionID, cwd string, argv []string) error
 
 // Registry maps session IDs to live terminal hosts and owns the warm pool.
 // It holds no PTYs itself: each host is a separate process, so a daemon
@@ -116,20 +115,20 @@ func (r *Registry) Socket(sessionID string) (string, bool) {
 // its socket path. It is idempotent, which is what lets the mobile app call
 // it on every session-detail open.
 func (r *Registry) Wake(sessionID, cwd string) (string, error) {
-	return r.start(sessionID, cwd, "")
+	return r.start(sessionID, cwd, nil)
 }
 
-// Start launches a host that runs command in a login shell. Unlike Wake it
-// never adopts an existing host: starting a session that is already running
-// would give the user two agents in one terminal.
-func (r *Registry) Start(sessionID, cwd, command string) (string, error) {
+// Start launches a host that runs argv. Unlike Wake it never adopts an
+// existing host: starting a session that is already running would give the
+// user two agents in one terminal.
+func (r *Registry) Start(sessionID, cwd string, argv []string) (string, error) {
 	if r.IsWarm(sessionID) {
 		return "", fmt.Errorf("terminal: session %s already has a live host", sessionID)
 	}
-	return r.start(sessionID, cwd, command)
+	return r.start(sessionID, cwd, argv)
 }
 
-func (r *Registry) start(sessionID, cwd, command string) (string, error) {
+func (r *Registry) start(sessionID, cwd string, argv []string) (string, error) {
 	sock := SocketPath(r.heliosDir, sessionID)
 
 	r.mu.Lock()
@@ -138,7 +137,7 @@ func (r *Registry) start(sessionID, cwd, command string) (string, error) {
 
 	// Adopting a live host only makes sense when resuming. With an explicit
 	// command the caller wants a fresh terminal.
-	if command == "" {
+	if len(argv) == 0 {
 		if known && Probe(e.socket) {
 			r.touch(sessionID)
 			return e.socket, nil
@@ -157,7 +156,7 @@ func (r *Registry) start(sessionID, cwd, command string) (string, error) {
 	// Make room before adding, so the ceiling is respected at all times.
 	r.evictForRoom()
 
-	if err := r.spawn(sessionID, cwd, command); err != nil {
+	if err := r.spawn(sessionID, cwd, argv); err != nil {
 		return "", fmt.Errorf("spawn terminal host for %s: %w", sessionID, err)
 	}
 	if !WaitForSocket(sock, 15*time.Second) {

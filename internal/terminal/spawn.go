@@ -8,14 +8,6 @@ import (
 	"syscall"
 )
 
-// UserShell returns the user's login shell, defaulting to /bin/sh.
-func UserShell() string {
-	if s := os.Getenv("SHELL"); s != "" {
-		return s
-	}
-	return "/bin/sh"
-}
-
 // SpawnHost starts a detached `helios ptyhost` for a session.
 //
 // It mirrors the daemon's own self-daemonize pattern — Setsid, Start, Release
@@ -24,9 +16,10 @@ func UserShell() string {
 // must not SIGHUP live agent sessions, which is a failure mode tmux avoided
 // only by being a separate server.
 //
-// An empty command resumes the session's agent; a non-empty one is typed into
-// a fresh login shell.
-func SpawnHost(heliosDir, sessionID, cwd, command string) error {
+// Empty argv resumes the session's agent; otherwise argv is executed as given.
+// The host runs it directly rather than through a shell, so the caller's
+// environment is what the agent gets and nothing re-reads the user's rc file.
+func SpawnHost(heliosDir, sessionID, cwd string, argv []string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve helios binary: %w", err)
@@ -47,15 +40,7 @@ func SpawnHost(heliosDir, sessionID, cwd, command string) error {
 		}
 	}()
 
-	args := []string{"ptyhost", sessionID}
-	if cwd != "" {
-		args = append(args, "--cwd", cwd)
-	}
-	if command != "" {
-		args = append(args, "--login-cmd", command)
-	}
-
-	cmd := exec.Command(exe, args...)
+	cmd := exec.Command(exe, hostArgs(sessionID, cwd, argv)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	if logFile != nil {
@@ -69,4 +54,20 @@ func SpawnHost(heliosDir, sessionID, cwd, command string) error {
 		return fmt.Errorf("start ptyhost: %w", err)
 	}
 	return cmd.Process.Release()
+}
+
+// hostArgs renders the ptyhost command line for a session. Each element of
+// argv gets its own flag, so no part of the command is ever parsed as text.
+func hostArgs(sessionID, cwd string, argv []string) []string {
+	args := []string{"ptyhost", sessionID}
+	if cwd != "" {
+		args = append(args, "--cwd", cwd)
+	}
+	if len(argv) > 0 {
+		args = append(args, "--cmd", argv[0])
+		for _, a := range argv[1:] {
+			args = append(args, "--arg", a)
+		}
+	}
+	return args
 }

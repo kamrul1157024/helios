@@ -130,7 +130,7 @@ func (sh *Shared) terminalEndpoint(sessionID string, wake bool) (string, error) 
 	if err != nil || session == nil {
 		return "", fmt.Errorf("session not found")
 	}
-	if _, err := sh.startTerminal(sessionID, session.CWD, ""); err != nil {
+	if _, err := sh.startTerminal(sessionID, session.CWD, nil); err != nil {
 		return "", fmt.Errorf("wake session: %w", err)
 	}
 	socket, ok := viewer.Endpoint(sessionID)

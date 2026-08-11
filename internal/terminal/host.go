@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -110,6 +111,35 @@ func (v *viewer) send(m outMsg) bool {
 
 var viewerIDs atomic.Uint64
 
+// setEnv returns env with each KEY=VALUE applied, replacing any existing entry
+// for that key.
+//
+// Appending a duplicate would not do: execve passes the list verbatim and
+// getenv answers with the first match, so a stale inherited value would win
+// over the one set here.
+func setEnv(env []string, kvs ...string) []string {
+	out := make([]string, 0, len(env)+len(kvs))
+	for _, kv := range env {
+		if !anyHasKeyOf(kvs, kv) {
+			out = append(out, kv)
+		}
+	}
+	return append(out, kvs...)
+}
+
+func anyHasKeyOf(kvs []string, kv string) bool {
+	key, _, ok := strings.Cut(kv, "=")
+	if !ok {
+		return false
+	}
+	for _, candidate := range kvs {
+		if ck, _, ok := strings.Cut(candidate, "="); ok && ck == key {
+			return true
+		}
+	}
+	return false
+}
+
 // NewHost starts the child on a PTY and begins pumping its output. The caller
 // must call Close.
 func NewHost(cfg HostConfig) (*Host, error) {
@@ -129,13 +159,13 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	if cmd.Env == nil {
 		cmd.Env = os.Environ()
 	}
-	cmd.Env = append(cmd.Env,
+	cmd.Env = setEnv(cmd.Env,
 		"TERM=xterm-256color",
 		fmt.Sprintf("COLUMNS=%d", cfg.Cols),
 		fmt.Sprintf("LINES=%d", cfg.Rows),
-		// Anything running in here is already hosted. The shell wrapper users
-		// install turns every `claude` into `helios wrap`, and this is how a
-		// nested call knows not to start a second host around itself.
+		// Tells anything in here which session it belongs to. Starting a
+		// session from inside another session's terminal is ordinary, so this
+		// is routinely inherited from the parent and has to be overwritten.
 		fmt.Sprintf("%s=%s", SessionEnv, cfg.SessionID),
 	)
 

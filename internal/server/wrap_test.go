@@ -51,7 +51,7 @@ func (b *stubBackend) Alive(id string) bool {
 	return ok
 }
 func (b *stubBackend) Forget(id string) { delete(b.handles, id) }
-func (b *stubBackend) Start(sessionID, cwd, command string) (string, error) {
+func (b *stubBackend) Start(sessionID, cwd string, argv []string) (string, error) {
 	b.handles[sessionID] = "sock-" + sessionID
 	return b.handles[sessionID], nil
 }

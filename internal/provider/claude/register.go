@@ -46,18 +46,18 @@ func Register() {
 			},
 		},
 		// SessionBuilder
-		func(prompt, model, cwd, sessionID string) string {
-			cmd := "claude"
+		func(prompt, model, cwd, sessionID string) []string {
+			argv := []string{"claude"}
 			if sessionID != "" {
-				cmd += fmt.Sprintf(" --session-id %s", sessionID)
+				argv = append(argv, "--session-id", sessionID)
 			}
 			if model != "" {
-				cmd += fmt.Sprintf(" --model %s", model)
+				argv = append(argv, "--model", model)
 			}
 			if prompt != "" {
-				cmd += fmt.Sprintf(" %q", prompt)
+				argv = append(argv, prompt)
 			}
-			return cmd
+			return argv
 		},
 		// ModelsFetcher
 		func() ([]provider.ModelInfo, error) {

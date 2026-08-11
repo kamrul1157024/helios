@@ -531,23 +531,10 @@ func handleWrap(args []string) {
 	cwd, _ := os.Getwd()
 	sessionID, parts, isClaude := wrapCommand(args[cmdStart:])
 
-	// This is the host's own session, so its terminal already exists and is
-	// already registered: run the command here rather than wrapping it.
-	//
-	// A host types its command into a login shell, and the shell wrapper users
-	// install turns every `claude` back into `helios wrap` — without this the
-	// wrap re-enters the session it is running inside and attaches to its own
-	// terminal, which loops until the terminal is unusable. Any *other* session
-	// started from in here is a session of its own and takes the normal path,
-	// or it would run untracked with no terminal the daemon can reach.
-	if runsHostOwnSession(sessionID) {
-		runInPlace(parts)
-	}
-
 	heliosDir := daemon.HeliosDir()
 	socket := terminal.SocketPath(heliosDir, sessionID)
 	if !terminal.Probe(socket) {
-		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, shellCommand(parts)); err != nil {
+		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, resolveBinary(parts)); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to start terminal host: %v\n", err)
 			os.Exit(1)
 		}
@@ -590,46 +577,19 @@ func handleWrap(args []string) {
 	os.Exit(res.ExitCode)
 }
 
-// runsHostOwnSession reports whether a wrap is for the session of the terminal
-// host it is running inside.
-func runsHostOwnSession(sessionID string) bool {
-	host := os.Getenv(terminal.SessionEnv)
-	return host != "" && host == sessionID
-}
-
-// runInPlace replaces this process with the command, bypassing the shell
-// wrapper by resolving the binary itself. It does not return.
-func runInPlace(parts []string) {
-	bin, err := exec.LookPath(parts[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "helios: %s not found: %v\n", parts[0], err)
-		os.Exit(127)
-	}
-	if err := syscall.Exec(bin, parts, os.Environ()); err != nil {
-		fmt.Fprintf(os.Stderr, "helios: exec %s: %v\n", bin, err)
-		os.Exit(1)
-	}
-}
-
-// shellCommand renders the command line a host types into its login shell.
+// resolveBinary returns the command with its binary resolved against this
+// process's PATH.
 //
-// The binary is resolved to a path because that shell loads the user's rc
-// file, which is where the `claude` wrapper function lives: a bare name would
-// run the wrapper instead of the agent. Resolution can fail — the login shell
-// may have a PATH this process does not — and the bare name is then the best
-// guess, with the in-place guard above as the backstop.
-func shellCommand(parts []string) string {
+// The host executes the command directly, and it is spawned detached, so it
+// cannot be relied on to have inherited the PATH the user typed the command
+// under. Resolution can fail, and the bare name is then the best guess.
+func resolveBinary(parts []string) []string {
 	out := make([]string, len(parts))
 	copy(out, parts)
 	if bin, err := exec.LookPath(out[0]); err == nil {
 		out[0] = bin
 	}
-	for i, p := range out {
-		if strings.ContainsAny(p, " \t'\"\\$`") {
-			out[i] = "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
-		}
-	}
-	return strings.Join(out, " ")
+	return out
 }
 
 // wrapCommand decides the session ID a wrapped command runs under and returns

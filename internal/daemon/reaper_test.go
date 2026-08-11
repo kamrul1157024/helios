@@ -52,7 +52,7 @@ func (f *fakeBackend) Alive(id string) bool {
 	return f.live[id]
 }
 
-func (f *fakeBackend) Start(sessionID, cwd, command string) (string, error) {
+func (f *fakeBackend) Start(sessionID, cwd string, argv []string) (string, error) {
 	f.handles[sessionID] = "sock-" + sessionID
 	f.live[sessionID] = true
 	return f.handles[sessionID], nil

@@ -68,8 +68,8 @@ func startDaemon(cfg *Config) error {
 	// Terminal hosts are separate processes, so any that survived the last
 	// daemon are still serving; adopt them before anything else looks at
 	// session state.
-	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd, command string) error {
-		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, command)
+	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string) error {
+		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv)
 	})
 	if alive, cleaned, err := registry.Recover(); err != nil {
 		log.Printf("terminal: recover: %v", err)
