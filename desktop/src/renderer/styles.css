@@ -825,6 +825,23 @@ small {
   display: flex;
 }
 
+.panel-error {
+  flex: 1;
+  min-width: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--error);
+}
+
+.panel-error .muted {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-word;
+}
+
 /* ─── Chat ──────────────────────────────────────────────────────────────── */
 
 .chat {
@@ -832,11 +849,15 @@ small {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Without this the panel is sized by the widest code block instead of by the
+     window, and everything past the right edge is simply lost. */
+  min-width: 0;
 }
 
 .chat-scroll {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
 }
 
@@ -1218,6 +1239,7 @@ small {
 
 .approvals {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 16px;
 }
@@ -1348,6 +1370,7 @@ small {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .git-head,
@@ -1388,7 +1411,8 @@ small {
 
 .git-files,
 .file-list {
-  width: 300px;
+  /* A fixed 300px leaves the preview a sliver on a narrow window. */
+  width: clamp(180px, 38%, 300px);
   flex: none;
   overflow-y: auto;
   padding: 8px;
@@ -1450,14 +1474,35 @@ small {
   color: var(--error);
 }
 
-/* Truncate the leading directories, not the filename. */
-.git-path,
+/* Spend the leading directories, keep the filename (see PathLabel). */
+.split-path {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.split-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-name {
+  flex: none;
+  white-space: nowrap;
+}
+
+.git-path {
+  text-align: left;
+}
+
+/* A listing shows bare names, so there are no leading directories to drop. */
 .file-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
   text-align: left;
 }
 
@@ -1487,13 +1532,17 @@ small {
 }
 
 .preview-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Rendered markdown gets the reading width and padding a document wants,
+   rather than the edge-to-edge layout of a code listing. */
+.preview-md {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+  max-width: 780px;
 }
 
 .git-diff pre,

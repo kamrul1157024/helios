@@ -134,6 +134,11 @@ export function languageForPath(path: string): string | null {
   return dot === -1 ? null : normalizeLanguage(base.slice(dot + 1))
 }
 
+/** Whether a file is prose to be rendered rather than source to be read. */
+export function isMarkdownPath(path: string): boolean {
+  return /\.(md|markdown|mdown|mkd)$/i.test(path)
+}
+
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../bridge.ts'
 import { store } from '../store.ts'
+import { PathLabel } from './path-label.tsx'
 import type { GitChange, GitDiff, GitStatus } from '../../shared/models.ts'
 
 export function GitPanel({ hostId, cwd, revision }: { hostId: string; cwd: string; revision?: string }): JSX.Element {
@@ -50,10 +51,11 @@ export function GitPanel({ hostId, cwd, revision }: { hostId: string; cwd: strin
   if (error) return <p className="empty-note">{error}</p>
   if (!status) return <p className="empty-note">Loading…</p>
 
+  // An older daemon sends JSON null for an empty list rather than [].
   const groups: [string, GitChange[]][] = [
-    ['Staged', status.staged],
-    ['Changed', status.unstaged],
-    ['Untracked', status.untracked],
+    ['Staged', status.staged ?? []],
+    ['Changed', status.unstaged ?? []],
+    ['Untracked', status.untracked ?? []],
   ]
 
   return (
@@ -78,7 +80,7 @@ export function GitPanel({ hostId, cwd, revision }: { hostId: string; cwd: strin
                     onClick={() => setSelected(file.path)}
                   >
                     <span className={`git-status s${file.status.trim() || 'x'}`}>{file.status.trim() || '?'}</span>
-                    <span className="git-path">{file.path}</span>
+                    <PathLabel path={file.path} className="git-path" />
                   </button>
                 ))}
               </div>

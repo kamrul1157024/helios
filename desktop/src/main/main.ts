@@ -9,6 +9,8 @@ import { registerIpc } from './ipc.ts'
 /** dist/main → dist. The main bundle is CommonJS, so __dirname is the real thing. */
 const distDir = path.join(__dirname, '..')
 const rendererDir = path.join(distDir, 'renderer')
+/** The flame the mobile app uses, for the dock, taskbar and window frame. */
+const appIcon = path.join(distDir, 'assets', 'icon.png')
 
 let window: BrowserWindow | null = null
 let hosts: HostRegistry | null = null
@@ -54,6 +56,11 @@ async function start(): Promise<void> {
 
   registerIpc({ hosts, terminals, notifier, window: () => window })
   hosts.load()
+  // Packaged macOS builds take the icon from the bundle; an unpackaged run
+  // would otherwise sit in the dock as a generic Electron diamond.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    void app.dock?.setIcon(appIcon)
+  }
   notifier.installTray(path.join(distDir, 'assets'))
   Menu.setApplicationMenu(buildMenu())
 
@@ -87,6 +94,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 560,
     show: false,
+    icon: appIcon,
     backgroundColor: '#101014',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
-import { highlightCode, languageForPath } from '../markdown.ts'
+import { highlightCode, isMarkdownPath, languageForPath, renderMarkdown } from '../markdown.ts'
 import { store, useStore } from '../store.ts'
+import { PathLabel } from './path-label.tsx'
 import type { FileEntry } from '../../shared/models.ts'
 
 export function FilesPanel({ hostId, cwd }: { hostId: string; cwd: string }): JSX.Element {
@@ -35,8 +36,15 @@ export function FilesPanel({ hostId, cwd }: { hostId: string; cwd: string }): JS
       const file = await api(hostId).readFile(filePath)
       setPreview({ path: filePath, content: file.content })
     } catch (err) {
-      // The daemon refuses anything over 10 MB rather than stream it, and a
-      // preview pane is not the place to argue with that.
+      // A path in the transcript is as likely to be a directory as a file. The
+      // daemon says which with a 400, and listing it is what was meant.
+      if (statusOf(err) === 400) {
+        setPreview(null)
+        setPath(filePath)
+        return
+      }
+      // It refuses anything over 10 MB rather than stream it, and a preview
+      // pane is not the place to argue with that.
       if (statusOf(err) === 413) store.notify('File is too large to preview', 'error')
       else if (statusOf(err) === 404) store.notify(`Not found: ${filePath}`, 'error')
       else store.fail(err)
@@ -112,18 +120,33 @@ function Preview({
   content: string
   onClose: () => void
 }): JSX.Element {
+  // A markdown file is prose, so it is read rather than inspected — the mobile
+  // browser renders it too. Source stays one click away.
+  const markdown = isMarkdownPath(path)
+  const [asSource, setAsSource] = useState(false)
+  useEffect(() => setAsSource(false), [path])
+  const rendered = markdown && !asSource
+
   // Highlighting a very large file costs more than it is worth, and the daemon
   // will happily hand over a 5 MB log.
-  const html = useMemo(
-    () => (content.length > 400_000 ? null : highlightCode(content, languageForPath(path))),
-    [path, content],
-  )
+  const html = useMemo(() => {
+    if (content.length > 400_000) return null
+    return rendered ? renderMarkdown(content) : highlightCode(content, languageForPath(path))
+  }, [path, content, rendered])
+
   return (
     <div className="file-preview">
       <header>
-        <span className="preview-path" title={path}>
-          {path}
-        </span>
+        <PathLabel path={path} className="preview-path" />
+        {markdown && (
+          <button
+            className="icon-btn tiny"
+            title={asSource ? 'Show rendered markdown' : 'Show source'}
+            onClick={() => setAsSource(!asSource)}
+          >
+            {asSource ? '¶' : '{}'}
+          </button>
+        )}
         <button className="icon-btn tiny" title="Copy contents" onClick={() => void navigator.clipboard.writeText(content)}>
           ⧉
         </button>
@@ -133,6 +156,8 @@ function Preview({
       </header>
       {html === null ? (
         <pre>{content}</pre>
+      ) : rendered ? (
+        <div className="md preview-md" dangerouslySetInnerHTML={{ __html: html }} />
       ) : (
         <pre className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
       )}

@@ -4,6 +4,7 @@ import { api, statusOf } from '../bridge.ts'
 import { store, useStore, type RightPanel } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
+import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
 import { BUSY_STATUSES, sessionLabel, statusLabel, type Session } from '../../shared/models.ts'
@@ -55,14 +56,16 @@ export function Detail(): JSX.Element {
       </nav>
 
       <div className="panel-body">
-        {panel === 'chat' && <ChatPanel hostId={selection.hostId} session={session} />}
-        {panel === 'approvals' && (
-          <ApprovalsPanel hostId={selection.hostId} sessionId={session.session_id} />
-        )}
-        {panel === 'git' && (
-          <GitPanel hostId={selection.hostId} cwd={session.cwd} revision={session.last_event_at} />
-        )}
-        {panel === 'files' && <FilesPanel hostId={selection.hostId} cwd={session.cwd} />}
+        <PanelBoundary resetKey={`${selection.hostId}:${session.session_id}:${panel}`}>
+          {panel === 'chat' && <ChatPanel hostId={selection.hostId} session={session} />}
+          {panel === 'approvals' && (
+            <ApprovalsPanel hostId={selection.hostId} sessionId={session.session_id} />
+          )}
+          {panel === 'git' && (
+            <GitPanel hostId={selection.hostId} cwd={session.cwd} revision={session.last_event_at} />
+          )}
+          {panel === 'files' && <FilesPanel hostId={selection.hostId} cwd={session.cwd} />}
+        </PanelBoundary>
       </div>
     </div>
   )
