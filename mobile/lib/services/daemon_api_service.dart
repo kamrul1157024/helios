@@ -48,15 +48,6 @@ class DaemonAPIService extends ChangeNotifier {
   List<SlashCommand> _commands = [];
   List<SlashCommand> get commands => _commands;
 
-  TmuxStatus? _tmuxStatus;
-  TmuxStatus? get tmuxStatus => _tmuxStatus;
-
-  bool _pluginBannerDismissed = false;
-  bool get pluginBannerDismissed => _pluginBannerDismissed;
-
-  bool _tmuxMissingBannerDismissed = false;
-  bool get tmuxMissingBannerDismissed => _tmuxMissingBannerDismissed;
-
   List<ProviderInfo> _providers = [];
   List<ProviderInfo> get providers => _providers;
   bool _providersLoaded = false;
@@ -91,7 +82,6 @@ class DaemonAPIService extends ChangeNotifier {
     if (_running) return;
     _running = true;
     _isActiveHost = true;
-    await _loadBannerState();
     await _loadSessionCache();
     _connect(); // fire-and-forget — SSE runs in background
   }
@@ -101,7 +91,6 @@ class DaemonAPIService extends ChangeNotifier {
     if (_running) return;
     _running = true;
     _isActiveHost = false;
-    await _loadBannerState();
     _connect(); // fire-and-forget — SSE runs in background
   }
 
@@ -111,7 +100,6 @@ class DaemonAPIService extends ChangeNotifier {
     await _loadSessionCache();
     fetchSessions();
     fetchNotifications();
-    fetchHealth();
     fetchProviders();
     fetchCommands();
     if (!_connected) _startPolling();
@@ -149,28 +137,6 @@ class DaemonAPIService extends ChangeNotifier {
     _notificationDebounce?.cancel();
     _notificationDebounce = null;
     notifyListeners();
-  }
-
-  // ==================== Banner State ====================
-
-  Future<void> _loadBannerState() async {
-    final prefs = await SharedPreferences.getInstance();
-    _pluginBannerDismissed = prefs.getBool('tmux_plugin_banner_dismissed_$hostId') ?? false;
-    _tmuxMissingBannerDismissed = prefs.getBool('tmux_missing_banner_dismissed_$hostId') ?? false;
-  }
-
-  Future<void> dismissPluginBanner() async {
-    _pluginBannerDismissed = true;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('tmux_plugin_banner_dismissed_$hostId', true);
-  }
-
-  Future<void> dismissTmuxMissingBanner() async {
-    _tmuxMissingBannerDismissed = true;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('tmux_missing_banner_dismissed_$hostId', true);
   }
 
   // ==================== Session Cache ====================
@@ -323,23 +289,6 @@ class DaemonAPIService extends ChangeNotifier {
     _consecutiveFailures = 0;
     notifyListeners();
     _connect();
-  }
-
-  // ==================== Health ====================
-
-  Future<void> fetchHealth() async {
-    try {
-      final resp = await _api.get('/api/health');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        if (data['tmux'] != null) {
-          _tmuxStatus = TmuxStatus.fromJson(data['tmux']);
-          notifyListeners();
-        }
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch health: $e');
-    }
   }
 
   // ==================== Notifications API ====================
@@ -577,35 +526,6 @@ class DaemonAPIService extends ChangeNotifier {
     if (original != null && idx != -1 && idx < _sessions.length) {
       _sessions[idx] = original;
       notifyListeners();
-    }
-    return false;
-  }
-
-  Future<List<Map<String, dynamic>>> fetchUnboundPanes() async {
-    try {
-      final resp = await _api.get('/api/sessions/unbound-panes');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        return List<Map<String, dynamic>>.from(data['panes'] as List);
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch unbound panes: $e');
-    }
-    return [];
-  }
-
-  Future<bool> attachSession(String sessionId, String paneId) async {
-    try {
-      final resp = await _api.post(
-        '/api/sessions/$sessionId/attach',
-        body: {'pane_id': paneId},
-      );
-      if (resp.statusCode == 200) {
-        await fetchSessions();
-        return true;
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to attach session: $e');
     }
     return false;
   }
@@ -1088,31 +1008,4 @@ class Worktree {
   }
 }
 
-class TmuxStatus {
-  final bool installed;
-  final String version;
-  final bool serverRunning;
-  final bool resurrectPlugin;
-  final bool continuumPlugin;
-  final bool sessionMgmtReady;
 
-  TmuxStatus({
-    required this.installed,
-    required this.version,
-    required this.serverRunning,
-    required this.resurrectPlugin,
-    required this.continuumPlugin,
-    required this.sessionMgmtReady,
-  });
-
-  factory TmuxStatus.fromJson(Map<String, dynamic> json) {
-    return TmuxStatus(
-      installed: json['installed'] as bool? ?? false,
-      version: json['version'] as String? ?? '',
-      serverRunning: json['server_running'] as bool? ?? false,
-      resurrectPlugin: json['resurrect_plugin'] as bool? ?? false,
-      continuumPlugin: json['continuum_plugin'] as bool? ?? false,
-      sessionMgmtReady: json['session_mgmt_ready'] as bool? ?? false,
-    );
-  }
-}

@@ -1,5 +1,10 @@
 # tmux-resurrect & continuum Integration
 
+> **Superseded by [29 — Terminal Host: Replacing tmux](29-terminal-host-replacing-tmux.md).**
+> Sessions no longer live in a tmux server, so there is nothing for resurrect
+> or continuum to save. A session survives its terminal on its own, and a cold
+> session is brought back with `claude --resume`. Kept for history.
+
 ## The Problem
 
 If the terminal is killed (crash, reboot, accidental close), all tmux sessions are destroyed. The Claude Code processes inside them die. Without intervention:

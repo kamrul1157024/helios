@@ -4,7 +4,7 @@
 
 You run 5 Claude sessions across 3 projects. One needs permission to run a test. Another finished refactoring and is waiting for your next instruction. A third hit a rate limit 20 minutes ago. You don't know any of this because you're in a different terminal tab.
 
-Helios fixes this. It's a daemon that sits between you and your AI coding tools. It manages their sessions via tmux, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are. It also narrates what your agents are doing in real time via voice reporting, so you can stay informed hands-free without watching the screen.
+Helios fixes this. It's a daemon that sits between you and your AI coding tools. It runs each session in a terminal of its own, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are. It also narrates what your agents are doing in real time via voice reporting, so you can stay informed hands-free without watching the screen.
 
 **The killer feature:** Full session management and notifications from your phone — see all sessions across multiple machines, approve or deny permissions, send follow-up messages, create new tasks, and get push notifications the moment any session needs attention. No terminal required.
 
@@ -12,7 +12,7 @@ Helios fixes this. It's a daemon that sits between you and your AI coding tools.
 graph LR
     Phone["📱 Helios App<br/>sessions · approve<br/>deny · send msgs"]
     Tunnel["🌐 Tunnel<br/>(Cloudflare)"]
-    Daemon["🖥️ helios daemon<br/>├── sessions<br/>├── hooks<br/>├── notifications<br/>└── tmux<br/>    ├── claude #1<br/>    └── claude #2"]
+    Daemon["🖥️ helios daemon<br/>├── sessions<br/>├── hooks<br/>├── notifications<br/>└── terminals<br/>    ├── claude #1<br/>    └── claude #2"]
 
     Phone <-->|HTTPS| Tunnel
     Tunnel <-->|HTTPS| Daemon
@@ -82,7 +82,7 @@ Each connection is fully independent — separate pairing, separate credentials,
 ### Prerequisites
 
 ```bash
-brew install go tmux                # Go (build helios), tmux (session management)
+brew install go                     # Go (to build helios)
 
 # Pick ONE tunnel provider — exposes helios to your phone over the internet:
 brew install cloudflared            # Cloudflare Tunnel (recommended, free, no account needed)
@@ -119,7 +119,6 @@ The TUI checks your environment and walks you through setup:
 │                                              │
 │    ✓ Daemon running                          │
 │    ✓ Claude hooks installed                  │
-│    ✓ tmux installed (3.5a)                   │
 │    ✗ No tunnel configured                    │
 │    · No devices registered                   │
 │                                              │
@@ -161,7 +160,6 @@ Once the tunnel connects, the dashboard shows two QR codes:
 │                                                          │
 │    ✓ Daemon running                                      │
 │    ✓ Claude hooks installed                              │
-│    ✓ tmux (3.5a)                                         │
 │    ✓ Tunnel: https://abc-xyz.trycloudflare.com           │
 │                                                          │
 │    · No devices connected yet.                           │
@@ -303,7 +301,7 @@ The app registers and waits. The terminal asks you to confirm:
 │  │                   │  │          │                                              │
 │  └───────────────────┘  │          │    ✓ Daemon running                          │
 │                         │          │    ✓ Claude hooks installed                  │
-└─────────────────────────┘          │    ✓ tmux (3.5a)                             │
+└─────────────────────────┘          │    ✓ Shell wrapper (zsh)                     │
                                      │    ✓ Tunnel: https://abc-xyz.trycloud...     │
         Phone                        │                                              │
                                      │    * Android — Helios App  push:on  just now │
@@ -323,9 +321,9 @@ $ helios new "fix the auth bug in login.go"
 
 ```
 ┌──────────────────────────────────────────────┐
-│  Session started in tmux pane %1             │
+│  Session a3f1c2e8 started                    │
 │    cwd: /Users/you/workspace/myapp           │
-│    Attach with: tmux attach -t helios        │
+│    Attach with: helios attach a3f1c2e8       │
 └──────────────────────────────────────────────┘
 ```
 
@@ -348,7 +346,7 @@ Open the app to see all your sessions, drill into live session details, manage n
 
 Helios is a **platform**, not a tool. It orchestrates AI coding agents on your local machine without requiring a remote environment. Everything runs on your hardware. Everything except the AI itself is free.
 
-- **Daemon** — a background process that manages tmux sessions, handles AI hooks, serves an HTTP API with SSE for real-time events, and routes notifications to channels
+- **Daemon** — a background process that manages terminal-hosted sessions, handles AI hooks, serves an HTTP API with SSE for real-time events, and routes notifications to channels
 - **Clients** — TUI, browser, CLI, Telegram, Slack — all stateless, all interchangeable, all talking to the same daemon over HTTP. Use one, use all, use none
 - **Providers** — Claude Code is the first-class provider with native hook integration. But any AI tool that runs in a terminal (Aider, Codex, Gemini CLI) can be a provider plugin
 - **Channels** — notification delivery plugins. ntfy for instant mobile push. Telegram for approve/deny from chat. Slack for team visibility. Or build your own
@@ -383,7 +381,7 @@ graph TB
         Reaper["Session\nReaper"]
         Tunnel["Tunnel Manager\n(cloudflare/ngrok/..)"]
 
-        subgraph tmux["tmux server"]
+        subgraph hosts["terminal hosts (helios ptyhost)"]
             S1["claude #1"]
             S2["claude #2"]
             S3["aider #3"]
@@ -438,7 +436,7 @@ graph TB
 | [07-ui-improvements-roadmap.md](docs/specs/07-ui-improvements-roadmap.md) | UI feature roadmap (v0.1, v0.2) |
 | [08-design-decisions.md](docs/specs/08-design-decisions.md) | Technology choices, open questions |
 | [09-prerequisites-and-health-checks.md](docs/specs/09-prerequisites-and-health-checks.md) | Startup checks, `helios doctor` |
-| [10-tmux-resurrect-integration.md](docs/specs/10-tmux-resurrect-integration.md) | Survive terminal kill, auto-restore sessions |
+| [10-tmux-resurrect-integration.md](docs/specs/10-tmux-resurrect-integration.md) | Superseded by spec 29 — sessions now survive on their own |
 | [11-notification-page.md](docs/specs/11-notification-page.md) | Full-screen notification page, batch approve/deny |
 | [12-auto-approve.md](docs/specs/12-auto-approve.md) | Per-session auto-approve modes and custom rules |
 | [13-notification-channels-and-plugins.md](docs/specs/13-notification-channels-and-plugins.md) | Channel plugin system, mobile push |
@@ -479,7 +477,7 @@ helios resume 1
 
 - **Daemon**: Go
 - **Mobile/Desktop**: Flutter
-- **Session backend**: tmux
+- **Session backend**: Helios terminal hosts (`helios ptyhost`)
 - **Real-time**: SSE
 - **Auth**: Asymmetric JWT (Ed25519), QR code device pairing
 - **AI integration**: Claude Code hooks (native), pane scraping (others)
@@ -490,7 +488,6 @@ helios resume 1
 ## Requirements
 
 - Go 1.22+
-- tmux 3.0+
 - At least one AI CLI tool (claude, aider, codex, etc.)
 - Flutter 3.32+ (only if building the mobile/desktop app from source)
 

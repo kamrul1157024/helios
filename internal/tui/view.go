@@ -56,10 +56,6 @@ func (m StartModel) View() string {
 		return m.viewHooksUpdate()
 	case screenShellSetup:
 		return m.viewShellSetup()
-	case screenTmuxRestart:
-		return m.viewTmuxRestart()
-	case screenEditorSetup:
-		return m.viewEditorSetup()
 	case screenTunnelSelect:
 		return m.viewTunnelSelect()
 	case screenBinaryMissing:
@@ -105,31 +101,10 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Claude hooks not installed"))
 		}
 
-		if m.tmux.Installed {
-			b.WriteString(check(fmt.Sprintf("tmux installed (%s)", m.tmux.Version)))
-		} else {
-			b.WriteString(cross("tmux not installed — session management unavailable"))
-		}
-
 		if m.shellInstalled {
 			b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
 		} else if m.shellInfo.RCPath != "" {
 			b.WriteString(cross(fmt.Sprintf("Shell wrapper not installed (%s)", m.shellInfo.Name)))
-		}
-
-		editorCount := len(m.editors)
-		if editorCount > 0 {
-			configured := 0
-			for _, e := range m.editors {
-				if e.Configured {
-					configured++
-				}
-			}
-			if configured == editorCount {
-				b.WriteString(check(fmt.Sprintf("%d editor(s) configured", configured)))
-			} else {
-				b.WriteString(cross(fmt.Sprintf("%d of %d editor(s) configured", configured, editorCount)))
-			}
 		}
 
 		if m.tunnelOK {
@@ -227,76 +202,13 @@ func (m StartModel) viewShellSetup() string {
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  Sending prompts from your phone will not work without the shell wrapper."))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  When you type 'claude', helios wraps it in a managed tmux session"))
+	b.WriteString(subtitleStyle.Render("  When you type 'claude', helios runs it in a terminal of its own"))
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  so it can send prompts and control sessions remotely."))
 	b.WriteString("\n\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("  Will add wrapper to: %s", m.shellInfo.RCPath)))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  enter install  tab skip  q quit"))
-
-	return b.String()
-}
-
-func (m StartModel) viewTmuxRestart() string {
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("helios — tmux Restart Required"))
-	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("!"), "Shell wrapper was installed/updated."))
-	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  Existing tmux sessions use the old shell environment."))
-	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  A tmux server restart is needed for the wrapper to take effect."))
-	b.WriteString("\n\n")
-	b.WriteString(warnStyle.Render("  Warning: this will kill all running tmux sessions."))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  Any Claude sessions in tmux will be terminated."))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  The tmux server will start fresh on next use."))
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  y restart tmux  n skip  q quit"))
-
-	return b.String()
-}
-
-func (m StartModel) viewEditorSetup() string {
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("helios — Editor Terminal Setup"))
-	b.WriteString("\n\n")
-
-	if m.editorManual != "" {
-		// Some editors failed — show results + manual instructions
-		for _, r := range m.editorResults {
-			if r.Success {
-				b.WriteString(check(fmt.Sprintf("%s — configured", r.Editor.Name)))
-			} else {
-				b.WriteString(cross(fmt.Sprintf("%s — failed", r.Editor.Name)))
-			}
-		}
-		b.WriteString("\n")
-		b.WriteString(m.editorManual)
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("  enter continue  q quit"))
-		return b.String()
-	}
-
-	b.WriteString(subtitleStyle.Render("  Configure editor terminals to use tmux?"))
-	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  This ensures Claude sessions in your editor are managed by helios."))
-	b.WriteString("\n\n")
-
-	for _, e := range m.editors {
-		if e.Configured {
-			b.WriteString(check(fmt.Sprintf("%s — already configured", e.Name)))
-		} else {
-			b.WriteString(cross(fmt.Sprintf("%s — needs configuration", e.Name)))
-		}
-	}
-
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter configure  tab skip  q quit"))
 
 	return b.String()
 }
@@ -381,22 +293,12 @@ func (m StartModel) viewMain() string {
 	} else if m.hooksOK {
 		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
 	}
-	if m.tmux.Installed {
-		b.WriteString(check(fmt.Sprintf("tmux (%s)", m.tmux.Version)))
-	} else {
-		b.WriteString(cross("tmux not installed — session management disabled"))
-	}
 	if m.shellInstalled {
 		b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
 	} else if m.shellInfo.RCPath != "" {
 		b.WriteString(cross(fmt.Sprintf("Shell wrapper not installed (%s)", m.shellInfo.Name)))
 		b.WriteString(dimStyle.Render("  · Sending prompts from your phone requires the shell wrapper"))
 		b.WriteString("\n")
-	}
-	for _, e := range m.editors {
-		if e.Configured {
-			b.WriteString(check(fmt.Sprintf("%s terminal", e.Name)))
-		}
 	}
 	if m.tunnelOK {
 		b.WriteString(check(fmt.Sprintf("Tunnel: %s (%s)", m.tunnelURL, m.tunnelProv)))
@@ -433,35 +335,6 @@ func (m StartModel) viewMain() string {
 	}
 	if activeDevices == 0 {
 		b.WriteString(dimStyle.Render("  No devices connected yet."))
-		b.WriteString("\n")
-	}
-
-	// tmux plugin recommendations
-	if m.tmux.Installed && (!m.tmux.ResurrectPlugin || !m.tmux.ContinuumPlugin) {
-		b.WriteString("\n")
-		b.WriteString(warnStyle.Render("  Recommended tmux plugins for crash recovery:"))
-		b.WriteString("\n")
-		if !m.tmux.ResurrectPlugin {
-			b.WriteString(dimStyle.Render("    tmux-resurrect  — saves/restores tmux sessions"))
-			b.WriteString("\n")
-		}
-		if !m.tmux.ContinuumPlugin {
-			b.WriteString(dimStyle.Render("    tmux-continuum  — auto-saves every 5 minutes"))
-			b.WriteString("\n")
-		}
-		b.WriteString(dimStyle.Render("    Install: git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("    See: helios docs for setup instructions"))
-		b.WriteString("\n")
-	}
-
-	if !m.tmux.Installed {
-		b.WriteString("\n")
-		b.WriteString(errorStyle.Render("  tmux is required for session management."))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("    Install: brew install tmux"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("    Session features (send, stop, resume) will not work without tmux."))
 		b.WriteString("\n")
 	}
 

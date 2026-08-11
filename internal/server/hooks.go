@@ -40,8 +40,8 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	handler(ctx, w, r, json.RawMessage(body))
 }
 
-// enrichNotification adds tmux_pane to a notification SSE event by looking
-// up the session in the PaneMap.
+// enrichNotification adds the session's terminal handle to a notification SSE
+// event, so a client can tell whether the session is live.
 func enrichNotification(shared *Shared, data interface{}) interface{} {
 	b, err := json.Marshal(data)
 	if err != nil {
@@ -55,8 +55,8 @@ func enrichNotification(shared *Shared, data interface{}) interface{} {
 	if sessionID == "" {
 		return m
 	}
-	if paneID, ok := shared.PaneMap.Get(sessionID); ok {
-		m["tmux_pane"] = paneID
+	if handle, ok := shared.Backend.Handle(sessionID); ok {
+		m["terminal"] = handle
 	}
 	return m
 }
@@ -64,18 +64,17 @@ func enrichNotification(shared *Shared, data interface{}) interface{} {
 // hookContext builds a provider.HookContext from the shared state.
 func (s *InternalServer) hookContext() *provider.HookContext {
 	return &provider.HookContext{
-		DB:      s.shared.DB,
-		Mgr:     s.shared.Mgr,
-		Tmux:    s.shared.Tmux,
-		PaneMap: s.shared.PaneMap,
+		DB:       s.shared.DB,
+		Mgr:      s.shared.Mgr,
+		Terminal: s.shared.Backend,
 		Notify: func(eventType string, data interface{}) {
 			if eventType == "notification" {
 				data = enrichNotification(s.shared, data)
 			}
 			s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
 		},
-		RemovePendingPane: func(cwd string) string {
-			return s.shared.PendingPanes.RemoveByCWD(cwd)
+		SessionStarted: func(sessionID string) {
+			s.shared.Pending.Remove(sessionID)
 		},
 		Report: func(event provider.ReportEvent) {
 			s.shared.Reporter.AddEvent(reporter.Event{
@@ -92,4 +91,3 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		},
 	}
 }
-

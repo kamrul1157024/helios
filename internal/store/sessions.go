@@ -22,7 +22,9 @@ type Session struct {
 	Pinned          bool    `json:"pinned"`
 	Archived        bool    `json:"archived"`
 	Managed         bool    `json:"managed"`
-	TmuxPane            *string `json:"tmux_pane,omitempty"` // injected from PaneMap, not stored in DB
+	// Terminal is the handle of the session's live terminal host, injected by
+	// the daemon rather than stored: a cold session simply has none.
+	Terminal            *string `json:"terminal,omitempty"`
 	CreatedAt           string  `json:"created_at"`
 	EndedAt             *string `json:"ended_at,omitempty"`
 	SupportsPromptQueue bool    `json:"supports_prompt_queue"`
@@ -47,10 +49,11 @@ func (s *Session) Label(maxLen int) string {
 	return ""
 }
 
-// ComputePromptQueue sets SupportsPromptQueue based on provider capabilities and tmux state.
-// TmuxPane must be injected from PaneMap before calling this.
+// ComputePromptQueue sets SupportsPromptQueue based on provider capabilities
+// and whether the session has a live terminal to queue into. Terminal must be
+// injected before calling this.
 func (s *Session) ComputePromptQueue(providerSupportsQueue bool) {
-	s.SupportsPromptQueue = providerSupportsQueue && s.TmuxPane != nil && *s.TmuxPane != ""
+	s.SupportsPromptQueue = providerSupportsQueue && s.Terminal != nil && *s.Terminal != ""
 }
 
 type Subagent struct {
@@ -322,36 +325,6 @@ func (s *Store) UpdateSessionManaged(sessionID string, managed bool) error {
 		managed, sessionID,
 	)
 	return err
-}
-
-// ListManagedOrphanedSessions returns managed sessions that are not terminated.
-// These are candidates for auto-recovery when their pane is missing.
-func (s *Store) ListManagedOrphanedSessions() ([]Session, error) {
-	rows, err := s.db.Query(
-		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, pinned, archived, managed,
-		        created_at, ended_at
-		 FROM sessions
-		 WHERE managed = 1 AND status NOT IN ('terminated')
-		 ORDER BY COALESCE(last_event_at, created_at) DESC`,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []Session
-	for rows.Next() {
-		var sess Session
-		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
-			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed,
-			&sess.CreatedAt, &sess.EndedAt); err != nil {
-			return nil, err
-		}
-		result = append(result, sess)
-	}
-	return result, rows.Err()
 }
 
 // DeleteSession permanently removes a session and its subagents.

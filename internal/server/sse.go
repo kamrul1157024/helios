@@ -14,8 +14,8 @@ type SSEEvent struct {
 }
 
 type sseClient struct {
-	ch     chan SSEEvent
-	done   chan struct{}
+	ch   chan SSEEvent
+	done chan struct{}
 }
 
 type SSEBroadcaster struct {

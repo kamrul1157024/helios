@@ -3,85 +3,32 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"strings"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
-// recoverManagedSessions handles managed sessions that are not terminated.
-// Starting sessions are terminated — if launch failed, the user can resume.
-// Non-starting sessions with no pane get a new pane spawned via claude --resume.
-func recoverManagedSessions(db *store.Store, tc tmux.TmuxClient, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
-	if !tc.Available() {
-		return
-	}
-	sessions, err := db.ListManagedOrphanedSessions()
-	if err != nil {
-		log.Printf("recover: failed to list managed sessions: %v", err)
-		return
-	}
-	for _, sess := range sessions {
-		if sess.Status == "starting" {
-			db.UpdateSessionStatus(sess.SessionID, "terminated", "StuckStarting")
-			sse.Broadcast(server.SSEEvent{
-				Type: "session_status",
-				Data: map[string]interface{}{
-					"session_id": sess.SessionID,
-					"status":     "terminated",
-				},
-			})
-			log.Printf("recover: terminated stuck-starting session %s", sess.SessionID)
-			continue
-		}
-
-		if _, hasPane := pm.Get(sess.SessionID); hasPane {
-			continue
-		}
-
-		// Non-starting session with no pane — resume the existing conversation.
-		cmd := fmt.Sprintf("claude --resume %s", sess.SessionID)
-		newPane, err := tc.CreateWindow(sess.CWD, cmd)
-		if err != nil {
-			log.Printf("recover: failed to recover session %s: %v", sess.SessionID, err)
-			continue
-		}
-		pm.Set(sess.SessionID, newPane)
-		tc.SetPaneSessionID(newPane, sess.SessionID) //nolint:errcheck
+// reapStaleSessions drops terminals that have died and backfills
+// last_user_message from transcripts.
+//
+// Losing a terminal does not end a session. Under the warm pool cold is a
+// normal state: the conversation still exists and `claude --resume` brings it
+// back, so the session keeps its status and the clients just see it go cold.
+// Only claude itself, through the SessionEnd hook, terminates a session.
+func reapStaleSessions(db *store.Store, be backend.Backend, sse *server.SSEBroadcaster) {
+	for _, sessionID := range be.Sweep() {
 		sse.Broadcast(server.SSEEvent{
-			Type: "session_status",
-			Data: map[string]interface{}{
-				"session_id": sess.SessionID,
-				"tmux_pane":  newPane,
-			},
-		})
-		log.Printf("recover: recovered managed session %s → pane %s", sess.SessionID, newPane)
-	}
-}
-
-// reapStaleSessions sweeps dead panes from the PaneMap, marks sessions as
-// terminated, and backfills last_user_message from transcripts.
-func reapStaleSessions(db *store.Store, tc tmux.TmuxClient, pm *tmux.PaneMap, sse *server.SSEBroadcaster) {
-	// Sweep dead panes — single live-panes fetch, O(map) sweep.
-	dead := tc.SweepDeadPanes(pm)
-	for _, sessionID := range dead {
-		db.UpdateSessionStatus(sessionID, "terminated", "StaleReaper")
-		sse.Broadcast(server.SSEEvent{
-			Type: "session_status",
+			Type: "session_updated",
 			Data: map[string]interface{}{
 				"session_id": sessionID,
-				"status":     "terminated",
 			},
 		})
-		log.Printf("reaper: terminated session %s (pane died)", sessionID)
+		log.Printf("reaper: session %s went cold (terminal died)", sessionID)
 	}
-
-	// Recover managed sessions that lost their pane.
-	recoverManagedSessions(db, tc, pm, sse)
 
 	// Backfill last_user_message from transcripts.
 	sessions, err := db.ListSessions()

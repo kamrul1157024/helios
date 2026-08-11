@@ -1,13 +1,12 @@
 package daemon
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 // ==================== Test infrastructure ====================
@@ -24,49 +23,79 @@ func setupTestStore(t *testing.T) *store.Store {
 
 func strPtr(s string) *string { return &s }
 
-// fakeTmux satisfies tmux.TmuxClient.
-// livePanes controls which pane IDs SweepDeadPanes considers alive.
-// createPane / createErr control CreateWindow responses.
-type fakeTmux struct {
-	available   bool
-	livePanes   map[string]struct{}
-	createPane  string
-	createErr   error
-	setIDCalled []string // paneIDs passed to SetPaneSessionID
+// fakeBackend satisfies backend.Backend. live holds sessionID → handle for
+// terminals that are still running; anything mapped but not live is swept.
+type fakeBackend struct {
+	handles map[string]string
+	live    map[string]bool
 }
 
-func (f *fakeTmux) Available() bool { return f.available }
-func (f *fakeTmux) RenameWindow(paneID, name string) error { return nil }
-func (f *fakeTmux) KillPane(paneID string) error           { return nil }
-func (f *fakeTmux) SendKeysRaw(paneID, keys string) error  { return nil }
-
-func (f *fakeTmux) CreateWindow(cwd, command string) (string, error) {
-	return f.createPane, f.createErr
+func newFakeBackend(liveSessions ...string) *fakeBackend {
+	f := &fakeBackend{handles: map[string]string{}, live: map[string]bool{}}
+	for _, id := range liveSessions {
+		f.handles[id] = "sock-" + id
+		f.live[id] = true
+	}
+	return f
 }
 
-func (f *fakeTmux) SetPaneSessionID(paneID, sessionID string) error {
-	f.setIDCalled = append(f.setIDCalled, paneID)
+// track registers a session whose terminal has already died.
+func (f *fakeBackend) trackDead(sessionID string) {
+	f.handles[sessionID] = "sock-" + sessionID
+	f.live[sessionID] = false
+}
+
+func (f *fakeBackend) Name() string     { return "fake" }
+func (f *fakeBackend) Available() bool  { return true }
+func (f *fakeBackend) Forget(id string) { delete(f.handles, id); delete(f.live, id) }
+func (f *fakeBackend) Alive(id string) bool {
+	return f.live[id]
+}
+
+func (f *fakeBackend) Start(sessionID, cwd, command string) (string, error) {
+	f.handles[sessionID] = "sock-" + sessionID
+	f.live[sessionID] = true
+	return f.handles[sessionID], nil
+}
+
+func (f *fakeBackend) Adopt(sessionID, handle, cwd string) error {
+	f.handles[sessionID] = handle
+	f.live[sessionID] = true
 	return nil
 }
 
-func (f *fakeTmux) SweepDeadPanes(m *tmux.PaneMap) []string {
-	snap := m.Snapshot()
-	var dead []string
-	for sessionID, paneID := range snap {
-		if _, alive := f.livePanes[paneID]; !alive {
-			dead = append(dead, sessionID)
-			m.Delete(sessionID)
-		}
-	}
-	return dead
+func (f *fakeBackend) Handle(sessionID string) (string, bool) {
+	h, ok := f.handles[sessionID]
+	return h, ok
 }
 
-func newFakeTmux(available bool, livePanes ...string) *fakeTmux {
-	set := make(map[string]struct{}, len(livePanes))
-	for _, p := range livePanes {
-		set[p] = struct{}{}
+func (f *fakeBackend) Snapshot() map[string]string {
+	out := map[string]string{}
+	for k, v := range f.handles {
+		out[k] = v
 	}
-	return &fakeTmux{available: available, livePanes: set}
+	return out
+}
+
+func (f *fakeBackend) SendText(sessionID, text string) error         { return nil }
+func (f *fakeBackend) SendKey(sessionID string, k backend.Key) error { return nil }
+func (f *fakeBackend) Interrupt(sessionID string) error              { return nil }
+func (f *fakeBackend) Kill(sessionID string) error                   { f.Forget(sessionID); return nil }
+func (f *fakeBackend) Capture(sessionID string) (string, error)      { return "", nil }
+func (f *fakeBackend) Rename(sessionID, name string) error           { return nil }
+func (f *fakeBackend) Status() backend.Status                        { return backend.Status{Name: "fake", Available: true} }
+
+func (f *fakeBackend) Sweep() []string {
+	var dead []string
+	for id := range f.handles {
+		if !f.live[id] {
+			dead = append(dead, id)
+		}
+	}
+	for _, id := range dead {
+		f.Forget(id)
+	}
+	return dead
 }
 
 func seedSession(t *testing.T, db *store.Store, sessionID, cwd, status string, managed bool) {
@@ -95,201 +124,59 @@ func assertStatus(t *testing.T, db *store.Store, sessionID, want string) {
 	}
 }
 
-// ==================== recoverManagedSessions ====================
+// ==================== reapStaleSessions ====================
 
-func TestRecoverManagedSessions_NoOp_WhenTmuxUnavailable(t *testing.T) {
+// A dead terminal drops out of the backend, but the session survives it: cold
+// is a resumable state, not the end of the conversation.
+func TestReapStaleSessions_DeadTerminalGoesColdNotTerminated(t *testing.T) {
 	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
 	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(false)
+	be := newFakeBackend()
+	be.trackDead("sess-dead")
 
-	seedSession(t, db, "sess-1", "/tmp/proj", "active", true)
+	seedSession(t, db, "sess-dead", "/tmp/proj", "active", false)
 
-	recoverManagedSessions(db, tc, pm, sse)
+	reapStaleSessions(db, be, sse)
 
-	if _, ok := pm.Get("sess-1"); ok {
-		t.Error("pane was set despite tmux being unavailable")
+	assertStatus(t, db, "sess-dead", "active")
+	if _, ok := be.Handle("sess-dead"); ok {
+		t.Error("dead session should have been dropped by the backend")
 	}
 }
 
-func TestRecoverManagedSessions_SkipsAlreadyBound(t *testing.T) {
+// Nothing reaps a managed session that never left "starting": if its launch
+// stalled, the user resumes it by hand.
+func TestReapStaleSessions_LeavesStuckStartingAlone(t *testing.T) {
 	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
 	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true)
-	tc.createPane = "%new"
-
-	seedSession(t, db, "sess-bound", "/tmp/proj", "active", true)
-	pm.Set("sess-bound", "%existing")
-
-	recoverManagedSessions(db, tc, pm, sse)
-
-	// Must keep the original pane — not replaced.
-	paneID, ok := pm.Get("sess-bound")
-	if !ok || paneID != "%existing" {
-		t.Errorf("pane = %q %v, want %%existing true", paneID, ok)
-	}
-	if tc.createPane == "%new" && len(tc.setIDCalled) > 0 {
-		t.Error("CreateWindow should not have been called for already-bound session")
-	}
-}
-
-func TestRecoverManagedSessions_SkipsUnmanaged(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true)
-	tc.createPane = "%new"
-
-	seedSession(t, db, "sess-unmanaged", "/tmp/proj", "idle", false)
-
-	recoverManagedSessions(db, tc, pm, sse)
-
-	if _, ok := pm.Get("sess-unmanaged"); ok {
-		t.Error("unmanaged session should not be recovered")
-	}
-}
-
-func TestRecoverManagedSessions_SkipsTerminated(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true)
-	tc.createPane = "%new"
-
-	seedSession(t, db, "sess-term", "/tmp/proj", "terminated", true)
-
-	recoverManagedSessions(db, tc, pm, sse)
-
-	if _, ok := pm.Get("sess-term"); ok {
-		t.Error("terminated session should not be recovered")
-	}
-}
-
-func TestRecoverManagedSessions_TerminatesStuckStarting(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true)
+	be := newFakeBackend("sess-stuck")
 
 	seedSession(t, db, "sess-stuck", "/tmp/proj", "starting", true)
 
-	recoverManagedSessions(db, tc, pm, sse)
+	reapStaleSessions(db, be, sse)
 
-	assertStatus(t, db, "sess-stuck", "terminated")
-	if _, ok := pm.Get("sess-stuck"); ok {
-		t.Error("stuck-starting session should not get a new pane")
-	}
+	assertStatus(t, db, "sess-stuck", "starting")
 }
 
-func TestRecoverManagedSessions_SpawnsNewPane_ForOrphanedSession(t *testing.T) {
+func TestReapStaleSessions_KeepsLiveTerminal(t *testing.T) {
 	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
 	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true)
-	tc.createPane = "%77"
-
-	seedSession(t, db, "sess-orphan", "/tmp/proj", "idle", true)
-
-	recoverManagedSessions(db, tc, pm, sse)
-
-	paneID, ok := pm.Get("sess-orphan")
-	if !ok || paneID != "%77" {
-		t.Errorf("PaneMap entry = %q %v, want %%77 true", paneID, ok)
-	}
-	if len(tc.setIDCalled) == 0 {
-		t.Error("SetPaneSessionID was not called after CreateWindow")
-	}
-}
-
-func TestRecoverManagedSessions_CreateWindowFailure_DoesNotSetPane(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true)
-	tc.createErr = fmt.Errorf("tmux error")
-
-	seedSession(t, db, "sess-fail", "/tmp/proj", "idle", true)
-
-	recoverManagedSessions(db, tc, pm, sse)
-
-	if _, ok := pm.Get("sess-fail"); ok {
-		t.Error("session should not be in PaneMap when CreateWindow fails")
-	}
-}
-
-// ==================== reapStaleSessions (sweep + recover) ====================
-
-func TestReapStaleSessions_TerminatesDeadPane(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-
-	// Pane %3 is NOT in the live set — it's dead.
-	tc := newFakeTmux(true /* live panes: none */)
-
-	seedSession(t, db, "sess-dead", "/tmp/proj", "active", false)
-	pm.Set("sess-dead", "%3")
-
-	reapStaleSessions(db, tc, pm, sse)
-
-	assertStatus(t, db, "sess-dead", "terminated")
-	if _, ok := pm.Get("sess-dead"); ok {
-		t.Error("dead session should have been removed from PaneMap")
-	}
-}
-
-func TestReapStaleSessions_KeepsLivePane(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-
-	// Pane %5 is alive.
-	tc := newFakeTmux(true, "%5")
+	be := newFakeBackend("sess-live")
 
 	seedSession(t, db, "sess-live", "/tmp/proj", "active", false)
-	pm.Set("sess-live", "%5")
 
-	reapStaleSessions(db, tc, pm, sse)
+	reapStaleSessions(db, be, sse)
 
 	assertStatus(t, db, "sess-live", "active")
-	if _, ok := pm.Get("sess-live"); !ok {
-		t.Error("live session should remain in PaneMap")
-	}
-}
-
-func TestReapStaleSessions_RecoversManagedAfterSweep(t *testing.T) {
-	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
-	sse := server.NewSSEBroadcaster()
-
-	// No live panes — %3 will be swept.
-	tc := newFakeTmux(true)
-	tc.createPane = "%88"
-
-	// Managed session whose pane just died.
-	seedSession(t, db, "sess-managed", "/tmp/proj", "idle", true)
-	pm.Set("sess-managed", "%3")
-
-	reapStaleSessions(db, tc, pm, sse)
-
-	// Sweep marks it terminated then recover re-spawns it.
-	// Because it was managed, recoverManagedSessions runs after sweep.
-	// But the sweep already set it to terminated — so it won't be in
-	// ListManagedOrphanedSessions. That is correct behaviour: the session
-	// is terminated and the managed recovery path kicks in next reap cycle.
-	// Verify the DB status reflects what actually happened:
-	sess, _ := db.GetSession("sess-managed")
-	if sess.Status != "terminated" {
-		t.Errorf("status = %q after reap+recover cycle, want terminated (session ended before recovery)", sess.Status)
+	if _, ok := be.Handle("sess-live"); !ok {
+		t.Error("live session should still be known to the backend")
 	}
 }
 
 func TestReapStaleSessions_TranscriptBackfill(t *testing.T) {
 	db := setupTestStore(t)
-	pm := tmux.NewPaneMap()
 	sse := server.NewSSEBroadcaster()
-	tc := newFakeTmux(true, "%1") // %1 is alive
+	be := newFakeBackend("sess-bt")
 
 	// Create a temp JSONL transcript with a user message.
 	dir := t.TempDir()
@@ -311,9 +198,8 @@ func TestReapStaleSessions_TranscriptBackfill(t *testing.T) {
 	if err := db.UpsertSession(sess); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	pm.Set("sess-bt", "%1")
 
-	reapStaleSessions(db, tc, pm, sse)
+	reapStaleSessions(db, be, sse)
 
 	got, _ := db.GetSession("sess-bt")
 	if got.LastUserMessage == nil || *got.LastUserMessage != "fix the login bug" {

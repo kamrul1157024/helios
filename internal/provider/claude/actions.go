@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
-// tmuxClient is set by the daemon after shared state is initialized.
-var tmuxClient tmux.TmuxClient
+// terminalBackend is set by the daemon after shared state is initialized.
+var terminalBackend backend.Backend
 
-// SetTmux sets the tmux client for action handlers that need pane access.
-func SetTmux(c tmux.TmuxClient) {
-	tmuxClient = c
+// SetBackend gives action handlers access to session terminals.
+func SetBackend(b backend.Backend) {
+	terminalBackend = b
 }
 
 func handlePermissionAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
@@ -101,35 +101,34 @@ func handleTrustAction(notif *store.Notification, body json.RawMessage) (notific
 		return notifications.Decision{}, fmt.Errorf("invalid body: %w", err)
 	}
 
-	// Extract pane_id from the notification payload
 	var payload struct {
-		PaneID string `json:"pane_id"`
+		SessionID string `json:"session_id"`
 	}
 	if notif.Payload != nil {
-		json.Unmarshal([]byte(*notif.Payload), &payload)
+		if err := json.Unmarshal([]byte(*notif.Payload), &payload); err != nil {
+			return notifications.Decision{}, fmt.Errorf("invalid payload: %w", err)
+		}
 	}
 
-	if payload.PaneID == "" {
-		return notifications.Decision{}, fmt.Errorf("missing pane_id in notification payload")
+	if payload.SessionID == "" {
+		return notifications.Decision{}, fmt.Errorf("missing session_id in notification payload")
 	}
-
-	if tmuxClient == nil {
-		return notifications.Decision{}, fmt.Errorf("tmux client not available")
+	if terminalBackend == nil {
+		return notifications.Decision{}, fmt.Errorf("terminal backend not available")
 	}
 
 	if req.Action == "trust" {
-		// Send "Yes, proceed" by pressing Enter (the trust dialog has Yes selected by default)
-		if err := tmuxClient.SendKeysRaw(payload.PaneID, "Enter"); err != nil {
-			log.Printf("trust-action: failed to send Enter to pane %s: %v", payload.PaneID, err)
-			return notifications.Decision{}, fmt.Errorf("failed to send keys: %w", err)
+		// The trust dialog opens with "Yes, proceed" selected, so Enter accepts.
+		if err := terminalBackend.SendKey(payload.SessionID, backend.KeyEnter); err != nil {
+			return notifications.Decision{}, fmt.Errorf("send Enter to session %s: %w", payload.SessionID, err)
 		}
-		log.Printf("trust-action: sent Enter to pane %s (trust approved)", payload.PaneID)
+		log.Printf("trust-action: approved trust for session %s", payload.SessionID)
 		return notifications.Decision{Status: "approved"}, nil
 	}
 
-	// Deny — send Ctrl+C to abort Claude
-	if err := tmuxClient.SendKeysRaw(payload.PaneID, "C-c"); err != nil {
-		log.Printf("trust-action: failed to send C-c to pane %s: %v", payload.PaneID, err)
+	// Deny — interrupt the agent rather than answering the dialog.
+	if err := terminalBackend.SendKey(payload.SessionID, backend.KeyCtrlC); err != nil {
+		log.Printf("trust-action: failed to interrupt session %s: %v", payload.SessionID, err)
 	}
 	return notifications.Decision{Status: "denied"}, nil
 }

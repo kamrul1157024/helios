@@ -48,13 +48,25 @@ func ShellWrapperSnippet(syntax string) string {
 	case "posix":
 		return fmt.Sprintf(`%s
 claude() {
-  helios wrap -- claude "$@"
+  # Inside a helios terminal the session is already hosted; wrapping again
+  # would start a host around this one.
+  if [ -n "$HELIOS_SESSION_ID" ]; then
+    command claude "$@"
+  else
+    helios wrap -- claude "$@"
+  fi
 }
 %s`, shellMarkerStart, shellMarkerEnd)
 	case "fish":
 		return fmt.Sprintf(`%s
 function claude
-  helios wrap -- claude $argv
+  # Inside a helios terminal the session is already hosted; wrapping again
+  # would start a host around this one.
+  if set -q HELIOS_SESSION_ID
+    command claude $argv
+  else
+    helios wrap -- claude $argv
+  end
 end
 %s`, shellMarkerStart, shellMarkerEnd)
 	default:
@@ -159,9 +171,8 @@ func ManualShellInstructions(info ShellInfo, err error) string {
 	b.WriteString(fmt.Sprintf("  Could not auto-configure %s: %v\n\n", info.Name, err))
 
 	if info.Syntax == "unknown" {
-		b.WriteString("  Add a wrapper function for your shell that:\n")
-		b.WriteString("    1. If inside tmux ($TMUX is set), run: command claude <args>\n")
-		b.WriteString("    2. Otherwise, run: helios wrap -- claude <args>\n")
+		b.WriteString("  Add a wrapper function for your shell that runs:\n")
+		b.WriteString("    helios wrap -- claude <args>\n")
 		return b.String()
 	}
 

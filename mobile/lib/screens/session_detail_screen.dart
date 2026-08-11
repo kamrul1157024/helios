@@ -269,14 +269,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                     Icon(Icons.link_off, color: Colors.amber.shade700),
                     const SizedBox(width: 10),
                     Text(
-                      'No tmux pane attached',
+                      'Session is cold',
                       style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'This session has no tmux pane. Choose a recovery option:',
+                  'This session has no live terminal. Choose a recovery option:',
                   style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 16),
@@ -293,20 +293,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 const SizedBox(height: 8),
                 _recoveryOption(
                   ctx: ctx,
-                  icon: Icons.cable,
-                  title: 'Attach to existing pane',
-                  subtitle: 'Bind a running Claude pane to this session',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showPanePicker(sse, session);
-                  },
-                ),
-                const SizedBox(height: 8),
-                _recoveryOption(
-                  ctx: ctx,
                   icon: Icons.play_arrow_outlined,
-                  title: 'Continue in new tmux pane',
-                  subtitle: 'Resume this conversation in a fresh pane',
+                  title: 'Resume the session',
+                  subtitle: 'Start a fresh terminal and continue this conversation',
                   onTap: () {
                     Navigator.pop(ctx);
                     sse.resumeSession(session.sessionId);
@@ -363,91 +352,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           ],
         ),
       ),
-    );
-  }
-
-  void _showPanePicker(DaemonAPIService sse, Session session) async {
-    final panes = await sse.fetchUnboundPanes();
-
-    if (!mounted) return;
-    final theme = Theme.of(context);
-
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cable),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Select a running Claude pane',
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              if (panes.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Center(
-                    child: Text(
-                      'No unbound Claude panes found.',
-                      style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-                    ),
-                  ),
-                )
-              else
-                ...panes.map((p) {
-                  final project = p['project'] as String? ?? '';
-                  final cwd = p['cwd'] as String? ?? '';
-                  final lastMsg = p['last_user_message'] as String?;
-                  final paneId = p['pane_id'] as String;
-                  return ListTile(
-                    leading: const Icon(Icons.terminal),
-                    title: Text(project.isNotEmpty ? project : cwd, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(cwd, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
-                        if (lastMsg != null)
-                          Text(
-                            lastMsg,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
-                          ),
-                      ],
-                    ),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      sse.attachSession(session.sessionId, paneId);
-                    },
-                  );
-                }),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -833,7 +737,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       actions.add(
         IconButton(
           icon: Icon(Icons.link_off, color: Colors.amber.shade700),
-          tooltip: 'No tmux pane — tap to recover',
+          tooltip: 'Cold — tap to resume',
           onPressed: () => _showRecoverySheet(sse, session),
         ),
       );

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 // ==================== Test infrastructure ====================
@@ -27,22 +27,81 @@ func openMemoryStore(t *testing.T) *store.Store {
 	return s
 }
 
-// fakeTmux satisfies tmux.TmuxClient. Tracks calls for assertions.
-type fakeTmux struct {
-	renames    []string // paneID+name concatenated
-	kills      []string
-	sentRaw    []string
-	createPane string
-	createErr  error
+// fakeBackend satisfies backend.Backend and records the calls hooks make.
+type fakeBackend struct {
+	handles map[string]string
+	renames []string // "sessionID:name"
+	kills   []string
+	keys    []string // "sessionID:key"
 }
 
-func (f *fakeTmux) Available() bool                                         { return true }
-func (f *fakeTmux) RenameWindow(paneID, name string) error                  { f.renames = append(f.renames, paneID+":"+name); return nil }
-func (f *fakeTmux) KillPane(paneID string) error                            { f.kills = append(f.kills, paneID); return nil }
-func (f *fakeTmux) CreateWindow(cwd, command string) (string, error)        { return f.createPane, f.createErr }
-func (f *fakeTmux) SetPaneSessionID(paneID, sessionID string) error         { return nil }
-func (f *fakeTmux) SweepDeadPanes(m *tmux.PaneMap) []string                 { return nil }
-func (f *fakeTmux) SendKeysRaw(paneID, keys string) error                   { f.sentRaw = append(f.sentRaw, paneID+":"+keys); return nil }
+func newFakeBackend() *fakeBackend {
+	return &fakeBackend{handles: map[string]string{}}
+}
+
+// live registers a session as having a terminal.
+func (f *fakeBackend) live(sessionID string) { f.handles[sessionID] = "sock-" + sessionID }
+
+func (f *fakeBackend) Name() string    { return "fake" }
+func (f *fakeBackend) Available() bool { return true }
+
+func (f *fakeBackend) Start(sessionID, cwd, command string) (string, error) {
+	f.live(sessionID)
+	return f.handles[sessionID], nil
+}
+
+func (f *fakeBackend) Adopt(sessionID, handle, cwd string) error {
+	f.handles[sessionID] = handle
+	return nil
+}
+
+func (f *fakeBackend) Handle(sessionID string) (string, bool) {
+	h, ok := f.handles[sessionID]
+	return h, ok
+}
+
+func (f *fakeBackend) Alive(sessionID string) bool {
+	_, ok := f.handles[sessionID]
+	return ok
+}
+
+func (f *fakeBackend) Forget(sessionID string) { delete(f.handles, sessionID) }
+
+func (f *fakeBackend) Snapshot() map[string]string {
+	out := map[string]string{}
+	for k, v := range f.handles {
+		out[k] = v
+	}
+	return out
+}
+
+func (f *fakeBackend) SendText(sessionID, text string) error { return nil }
+
+func (f *fakeBackend) SendKey(sessionID string, k backend.Key) error {
+	f.keys = append(f.keys, sessionID+":"+string(k))
+	return nil
+}
+
+func (f *fakeBackend) Interrupt(sessionID string) error { return nil }
+
+func (f *fakeBackend) Kill(sessionID string) error {
+	f.kills = append(f.kills, sessionID)
+	f.Forget(sessionID)
+	return nil
+}
+
+func (f *fakeBackend) Capture(sessionID string) (string, error) { return "", nil }
+
+func (f *fakeBackend) Rename(sessionID, name string) error {
+	f.renames = append(f.renames, sessionID+":"+name)
+	return nil
+}
+
+func (f *fakeBackend) Sweep() []string { return nil }
+
+func (f *fakeBackend) Status() backend.Status {
+	return backend.Status{Name: "fake", Available: true}
+}
 
 // setupCtx builds a HookContext wired to an in-memory store.
 // SSE events are collected into sseEvents.
@@ -50,21 +109,24 @@ func setupCtx(t *testing.T) (*provider.HookContext, *store.Store, *[]string) {
 	t.Helper()
 	db := openMemoryStore(t)
 	mgr := notifications.NewManager(db)
-	pm := tmux.NewPaneMap()
 	var sseEvents []string
 
 	ctx := &provider.HookContext{
-		DB:      db,
-		Mgr:     mgr,
-		PaneMap: pm,
-		Tmux:    nil, // safe — renameSessionWindow/killSessionWindow guard nil
+		DB:       db,
+		Mgr:      mgr,
+		Terminal: newFakeBackend(),
 		Notify: func(eventType string, _ interface{}) {
 			sseEvents = append(sseEvents, eventType)
 		},
-		Report:            func(provider.ReportEvent) {},
-		RemovePendingPane: func(string) string { return "" },
+		Report:         func(provider.ReportEvent) {},
+		SessionStarted: func(string) {},
 	}
 	return ctx, db, &sseEvents
+}
+
+// terminalOf returns the fake backend behind a context.
+func terminalOf(ctx *provider.HookContext) *fakeBackend {
+	return ctx.Terminal.(*fakeBackend)
 }
 
 // seedSession inserts a session into the store with the given status.
@@ -90,6 +152,37 @@ func callHook(handler func(*provider.HookContext, http.ResponseWriter, *http.Req
 	w := httptest.NewRecorder()
 	handler(ctx, w, req, json.RawMessage(raw))
 	return w
+}
+
+// captureNotifIDs installs a Notify interceptor that publishes notification IDs
+// on a channel. The hook handlers under test block until their notification is
+// resolved, so they run on their own goroutine and the ID has to cross
+// goroutines through a channel rather than a shared variable.
+func captureNotifIDs(ctx *provider.HookContext) <-chan string {
+	ids := make(chan string, 4)
+	ctx.Notify = func(eventType string, data interface{}) {
+		if eventType == "notification" {
+			if n, ok := data.(*store.Notification); ok {
+				select {
+				case ids <- n.ID:
+				default:
+				}
+			}
+		}
+	}
+	return ids
+}
+
+// awaitNotifID blocks until the next notification ID is captured.
+func awaitNotifID(t *testing.T, ids <-chan string) string {
+	t.Helper()
+	select {
+	case id := <-ids:
+		return id
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for notification")
+		return ""
+	}
 }
 
 // assertStatus reads the DB session and checks the status field.
@@ -136,9 +229,9 @@ func TestSessionStart_ManagedFalse_WhenNoPaneKnown(t *testing.T) {
 	}
 }
 
-func TestSessionStart_ManagedTrue_WhenPaneInPaneMap(t *testing.T) {
+func TestSessionStart_ManagedTrue_WhenTerminalExists(t *testing.T) {
 	ctx, db, sseEvents := setupCtx(t)
-	ctx.PaneMap.Set("sess-managed", "%5")
+	terminalOf(ctx).live("sess-managed")
 
 	callHook(handleSessionStart, ctx, hookInput{
 		SessionID: "sess-managed",
@@ -147,7 +240,7 @@ func TestSessionStart_ManagedTrue_WhenPaneInPaneMap(t *testing.T) {
 
 	sess, _ := db.GetSession("sess-managed")
 	if !sess.Managed {
-		t.Error("managed = false, want true when pane is in PaneMap")
+		t.Error("managed = false, want true when the session has a terminal")
 	}
 
 	found := false
@@ -161,14 +254,11 @@ func TestSessionStart_ManagedTrue_WhenPaneInPaneMap(t *testing.T) {
 	}
 }
 
-func TestSessionStart_ManagedTrue_WhenPaneFromPendingPanes(t *testing.T) {
+func TestSessionStart_StopsTrustWatch(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
-	ctx.RemovePendingPane = func(cwd string) string {
-		if cwd == "/tmp/proj" {
-			return "%9"
-		}
-		return ""
-	}
+	var stopped []string
+	ctx.SessionStarted = func(sessionID string) { stopped = append(stopped, sessionID) }
+	terminalOf(ctx).live("sess-pending")
 
 	callHook(handleSessionStart, ctx, hookInput{
 		SessionID: "sess-pending",
@@ -177,11 +267,10 @@ func TestSessionStart_ManagedTrue_WhenPaneFromPendingPanes(t *testing.T) {
 
 	sess, _ := db.GetSession("sess-pending")
 	if !sess.Managed {
-		t.Error("managed = false, want true when pane comes from PendingPanes")
+		t.Error("managed = false, want true when the session has a terminal")
 	}
-	paneID, ok := ctx.PaneMap.Get("sess-pending")
-	if !ok || paneID != "%9" {
-		t.Errorf("PaneMap entry = %q %v, want %%9 true", paneID, ok)
+	if len(stopped) != 1 || stopped[0] != "sess-pending" {
+		t.Errorf("SessionStarted calls = %v, want [sess-pending]", stopped)
 	}
 }
 
@@ -470,18 +559,18 @@ func TestSessionEnd_SetsEndedAt(t *testing.T) {
 	}
 }
 
-func TestSessionEnd_RemovesFromPaneMap(t *testing.T) {
+func TestSessionEnd_ForgetsTerminal(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	ctx.PaneMap.Set("sess-1", "%7")
+	terminalOf(ctx).live("sess-1")
 
 	callHook(handleSessionEnd, ctx, hookInput{
 		SessionID: "sess-1",
 		CWD:       "/tmp/proj",
 	})
 
-	if _, ok := ctx.PaneMap.Get("sess-1"); ok {
-		t.Error("PaneMap still has entry after SessionEnd")
+	if _, ok := ctx.Terminal.Handle("sess-1"); ok {
+		t.Error("backend still maps the session after SessionEnd")
 	}
 }
 
@@ -595,15 +684,7 @@ func TestPermission_TransitionsToWaitingPermission(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	// Capture the notif ID by intercepting Notify.
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	done := make(chan struct{})
 	go func() {
@@ -627,9 +708,7 @@ func TestPermission_TransitionsToWaitingPermission(t *testing.T) {
 	assertStatus(t, db, "sess-1", "waiting_permission")
 
 	// Unblock the handler.
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "approved"}, "mobile")
 	<-done
 }
@@ -638,14 +717,7 @@ func TestPermission_Approve_ResumesActive_AndReturnsAllow(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	resultCh := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
@@ -656,9 +728,7 @@ func TestPermission_Approve_ResumesActive_AndReturnsAllow(t *testing.T) {
 		})
 	}()
 
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "approved"}, "mobile")
 
 	w := <-resultCh
@@ -677,14 +747,7 @@ func TestPermission_Deny_ResumesActive_AndReturnsDeny(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	resultCh := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
@@ -695,9 +758,7 @@ func TestPermission_Deny_ResumesActive_AndReturnsDeny(t *testing.T) {
 		})
 	}()
 
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "denied"}, "mobile")
 
 	w := <-resultCh
@@ -716,14 +777,7 @@ func TestPermission_ClientDisconnect_CancelsNotification(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	// Request with a cancellable context.
 	raw, _ := json.Marshal(hookInput{SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash"})
@@ -737,9 +791,7 @@ func TestPermission_ClientDisconnect_CancelsNotification(t *testing.T) {
 	}()
 
 	// Wait until the notification is registered, then cancel the request context.
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	cancel()
 	<-done
 
@@ -763,14 +815,7 @@ func TestQuestion_TransitionsToWaitingPermission(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	toolInput, _ := json.Marshal(map[string]string{"question": "Are you sure?"})
 	done := make(chan struct{})
@@ -793,9 +838,7 @@ func TestQuestion_TransitionsToWaitingPermission(t *testing.T) {
 	}
 	assertStatus(t, db, "sess-1", "waiting_permission")
 
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "answered"}, "mobile")
 	<-done
 }
@@ -804,14 +847,7 @@ func TestQuestion_Answer_ReturnsAllow(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	toolInput, _ := json.Marshal(map[string]string{"question": "Proceed?"})
 	resultCh := make(chan *httptest.ResponseRecorder, 1)
@@ -823,9 +859,7 @@ func TestQuestion_Answer_ReturnsAllow(t *testing.T) {
 		})
 	}()
 
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	answerPayload, _ := json.Marshal(map[string]string{"answer": "yes"})
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "answered", Response: answerPayload}, "mobile")
 
@@ -842,14 +876,7 @@ func TestQuestion_Skip_ReturnsDeny(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	toolInput, _ := json.Marshal(map[string]string{"question": "Proceed?"})
 	resultCh := make(chan *httptest.ResponseRecorder, 1)
@@ -861,9 +888,7 @@ func TestQuestion_Skip_ReturnsDeny(t *testing.T) {
 		})
 	}()
 
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "denied"}, "mobile")
 
 	w := <-resultCh
@@ -875,13 +900,12 @@ func TestQuestion_Skip_ReturnsDeny(t *testing.T) {
 	}
 }
 
-// ==================== Window rename (with fake tmux) ====================
+// ==================== Terminal relabelling ====================
 
-func TestStop_RenamesWindowToIdle(t *testing.T) {
+func TestStop_RenamesTerminalToIdle(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
-	ft := &fakeTmux{}
-	ctx.Tmux = ft
-	ctx.PaneMap.Set("sess-1", "%3")
+	ft := terminalOf(ctx)
+	ft.live("sess-1")
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
 	callHook(handleStop, ctx, hookInput{
@@ -890,15 +914,14 @@ func TestStop_RenamesWindowToIdle(t *testing.T) {
 	})
 
 	if len(ft.renames) == 0 {
-		t.Error("expected RenameWindow call on Stop")
+		t.Error("expected Rename call on Stop")
 	}
 }
 
-func TestPromptSubmit_RenamesWindowToActive(t *testing.T) {
+func TestPromptSubmit_RenamesTerminalToActive(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
-	ft := &fakeTmux{}
-	ctx.Tmux = ft
-	ctx.PaneMap.Set("sess-1", "%3")
+	ft := terminalOf(ctx)
+	ft.live("sess-1")
 	seedSession(t, db, "sess-1", "/tmp/proj", "idle")
 
 	callHook(handlePromptSubmit, ctx, hookInput{
@@ -908,7 +931,7 @@ func TestPromptSubmit_RenamesWindowToActive(t *testing.T) {
 	})
 
 	if len(ft.renames) == 0 {
-		t.Error("expected RenameWindow call on PromptSubmit")
+		t.Error("expected Rename call on PromptSubmit")
 	}
 }
 
@@ -969,14 +992,7 @@ func TestLifecycle_WithPermission(t *testing.T) {
 	callHook(handlePromptSubmit, ctx, hookInput{SessionID: "sess-L3", CWD: "/tmp/proj", Message: "deploy to prod"})
 	assertStatus(t, db, "sess-L3", "active")
 
-	var capturedNotifID string
-	ctx.Notify = func(eventType string, data interface{}) {
-		if eventType == "notification" {
-			if n, ok := data.(*store.Notification); ok {
-				capturedNotifID = n.ID
-			}
-		}
-	}
+	notifIDs := captureNotifIDs(ctx)
 
 	done := make(chan struct{})
 	go func() {
@@ -984,9 +1000,7 @@ func TestLifecycle_WithPermission(t *testing.T) {
 		callHook(handlePermission, ctx, hookInput{SessionID: "sess-L3", CWD: "/tmp/proj", ToolName: "Bash"})
 	}()
 
-	for capturedNotifID == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	capturedNotifID := awaitNotifID(t, notifIDs)
 	assertStatus(t, db, "sess-L3", "waiting_permission")
 
 	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "approved"}, "mobile")
@@ -1002,8 +1016,7 @@ func TestLifecycle_WithPermission(t *testing.T) {
 
 func TestLifecycle_ManagedSession_WithStopFailure(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
-	ctx.PaneMap.Set("sess-L4", "%5")
-	ctx.RemovePendingPane = func(string) string { return "" }
+	terminalOf(ctx).live("sess-L4")
 
 	callHook(handleSessionStart, ctx, hookInput{SessionID: "sess-L4", CWD: "/tmp/proj"})
 	sess, _ := db.GetSession("sess-L4")

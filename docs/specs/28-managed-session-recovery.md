@@ -1,5 +1,12 @@
 # Spec 28: Managed Session Recovery
 
+> **Superseded by [29 — Terminal Host: Replacing tmux](29-terminal-host-replacing-tmux.md).**
+> The recovery described here existed to resynchronise the database with tmux,
+> an external process whose state helios could only infer. Helios now owns the
+> terminal, so there is nothing to reconcile: a session whose host died is
+> simply cold, and the user resumes it. `recoverManagedSessions` and the
+> stuck-starting reaper are gone. Kept for history.
+
 ## Problem
 
 When the tmux server is killed and helios restarts, the in-memory PaneMap is lost.

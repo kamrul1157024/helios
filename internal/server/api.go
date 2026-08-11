@@ -7,12 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	claudeprovider "github.com/kamrul1157024/helios/internal/provider/claude"
@@ -194,7 +194,7 @@ func (s *PublicServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":      "ok",
 		"sse_clients": s.shared.SSE.ClientCount(),
 		"pending":     s.shared.Mgr.PendingCount(),
-		"tmux":        s.shared.Tmux.CheckStatus(),
+		"terminal":    s.shared.Backend.Status(),
 	})
 }
 
@@ -269,7 +269,6 @@ func (s *PublicServer) handlePair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 // handleDeviceMe returns the current device's info.
 func (s *PublicServer) handleDeviceMe(w http.ResponseWriter, r *http.Request) {
 	kid, ok := r.Context().Value(deviceKIDKey).(string)
@@ -335,7 +334,7 @@ func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for i := range sessions {
-		s.shared.injectPane(&sessions[i])
+		s.shared.injectTerminal(&sessions[i])
 		enrichSession(&sessions[i])
 	}
 
@@ -368,7 +367,7 @@ func (s *PublicServer) handleGetSession(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
-	s.shared.injectPane(session)
+	s.shared.injectTerminal(session)
 	enrichSession(session)
 
 	// Get pending permission count for this session
@@ -474,19 +473,19 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	paneID, hasPane := s.shared.PaneMap.Get(id)
-	log.Printf("session-send: session=%s status=%s pane=%s", id, session.Status, paneID)
+	live := s.shared.Backend.Alive(id)
+	log.Printf("session-send: session=%s status=%s live=%v", id, session.Status, live)
 
 	if session.Status == "active" || session.Status == "waiting_permission" {
 		caps := provider.GetCapabilities(session.Source)
-		if caps.PromptQueue && hasPane {
-			if err := s.shared.Tmux.SendKeys(paneID, req.Message); err != nil {
-				log.Printf("session-send: queue SendKeys failed for pane %s: %v", paneID, err)
+		if caps.PromptQueue && live {
+			if err := s.shared.Backend.SendText(id, req.Message); err != nil {
+				log.Printf("session-send: queue failed for %s: %v", id, err)
 				jsonError(w, fmt.Sprintf("failed to queue: %v", err), http.StatusInternalServerError)
 				return
 			}
 			s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-			log.Printf("session-send: queued prompt to pane %s for session %s", paneID, id)
+			log.Printf("session-send: queued prompt for session %s", id)
 			jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "queued": true})
 			return
 		}
@@ -503,35 +502,35 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Session is idle — send keys to existing tmux pane
-	if !hasPane {
-		log.Printf("session-send: session %s is idle but has no tmux pane, resuming", id)
-		cmd := fmt.Sprintf("claude --resume %s -p %q", session.SessionID, req.Message)
-		newPaneID, err := s.shared.Tmux.CreateWindow(session.CWD, cmd)
+	// Idle with no terminal: wake the agent and type into it. Deliberately not
+	// `claude --resume -p`, which costs a fresh process per message and leaves
+	// nothing for the user to attach to afterwards.
+	resumed := false
+	if !live {
+		waker, ok := s.shared.Backend.(backend.Waker)
+		if !ok {
+			jsonError(w, "session has no terminal and this backend cannot resume", http.StatusConflict)
+			return
+		}
+		woken, err := waker.Wake(id, session.CWD)
 		if err != nil {
+			log.Printf("session-send: wake %s: %v", id, err)
 			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
 			return
 		}
-		s.shared.PaneMap.Set(id, newPaneID)
-		s.shared.Tmux.SetPaneSessionID(newPaneID, id) //nolint:errcheck
-		s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
-		s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-		jsonResponse(w, http.StatusOK, map[string]interface{}{
-			"success": true, "resumed": true, "tmux_pane": newPaneID,
-		})
-		return
+		resumed = woken
 	}
 
-	if err := s.shared.Tmux.SendKeys(paneID, req.Message); err != nil {
-		log.Printf("session-send: SendKeys failed for pane %s: %v", paneID, err)
+	if err := s.shared.Backend.SendText(id, req.Message); err != nil {
+		log.Printf("session-send: send failed for %s: %v", id, err)
 		jsonError(w, fmt.Sprintf("failed to send: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	s.shared.DB.UpdateSessionStatus(id, "active", "RemotePrompt")
 	s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-	log.Printf("session-send: sent keys to pane %s for session %s", paneID, id)
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+	log.Printf("session-send: sent prompt to session %s (resumed=%v)", id, resumed)
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "resumed": resumed})
 }
 
 // ── Shared session control (used by both InternalServer and PublicServer) ──
@@ -550,19 +549,41 @@ func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	paneID, ok := sh.PaneMap.Get(id)
-	if !ok {
-		// No pane — session is already not running, nothing to stop.
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+	if !sh.Backend.Alive(id) {
+		// No terminal — the session is already not running, so the active status
+		// it still carries is stale. Settle it rather than reporting success and
+		// leaving every client showing a busy session.
+		sh.settleInterrupted(id)
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "status": "idle"})
 		return
 	}
 
-	if err := sh.Tmux.SendEscape(paneID); err != nil {
+	if err := sh.Backend.Interrupt(id); err != nil {
 		jsonError(w, fmt.Sprintf("failed to stop: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+	sh.settleInterrupted(id)
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "status": "idle"})
+}
+
+// settleInterrupted moves a stopped session back to idle and tells every client.
+//
+// An interrupted turn produces no Stop hook — the agent just returns to its
+// prompt — so nothing else would ever clear the active status, and the session
+// would sit there looking busy for the rest of its life.
+func (sh *Shared) settleInterrupted(id string) {
+	if err := sh.DB.UpdateSessionStatus(id, "idle", "Interrupt"); err != nil {
+		log.Printf("stop: update status for %s: %v", id, err)
+		return
+	}
+	sh.SSE.Broadcast(SSEEvent{
+		Type: "session_status",
+		Data: map[string]interface{}{
+			"session_id": id,
+			"status":     "idle",
+		},
+	})
 }
 
 func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
@@ -579,11 +600,8 @@ func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if paneID, ok := sh.PaneMap.Get(id); ok {
-		if err := sh.Tmux.KillPane(paneID); err != nil {
-			log.Printf("terminate: kill pane %s: %v", paneID, err)
-		}
-		sh.PaneMap.Delete(id)
+	if err := sh.Backend.Kill(id); err != nil {
+		log.Printf("terminate: kill terminal for %s: %v", id, err)
 	}
 	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
 	sh.SSE.Broadcast(SSEEvent{
@@ -613,29 +631,42 @@ func (sh *Shared) resumeSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	cmd := fmt.Sprintf("claude --session-id %s", session.SessionID)
-	paneID, err := sh.Tmux.CreateWindow(session.CWD, cmd)
+	handle, err := sh.startTerminal(session.SessionID, session.CWD, "")
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	sh.PaneMap.Set(id, paneID)
-	sh.Tmux.SetPaneSessionID(paneID, id) //nolint:errcheck
 	sh.DB.UpdateSessionStatus(id, "idle", "Resume")
-
 	sh.SSE.Broadcast(SSEEvent{
 		Type: "session_status",
 		Data: map[string]interface{}{
 			"session_id": session.SessionID,
 			"status":     "idle",
-			"tmux_pane":  paneID,
+			"terminal":   handle,
 		},
 	})
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true, "status": "idle", "tmux_pane": paneID,
+		"success": true, "status": "idle", "terminal": handle,
 	})
+}
+
+// startTerminal brings a session's terminal up. An empty command resumes the
+// session's agent; a non-empty one launches it.
+func (sh *Shared) startTerminal(sessionID, cwd, command string) (string, error) {
+	if command == "" {
+		waker, ok := sh.Backend.(backend.Waker)
+		if !ok {
+			return "", fmt.Errorf("backend %s cannot resume sessions", sh.Backend.Name())
+		}
+		if _, err := waker.Wake(sessionID, cwd); err != nil {
+			return "", err
+		}
+		handle, _ := sh.Backend.Handle(sessionID)
+		return handle, nil
+	}
+	return sh.Backend.Start(sessionID, cwd, command)
 }
 
 // ── Public server session control handlers (delegate to Shared) ──
@@ -796,97 +827,6 @@ func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-// handleUnboundPanes returns Claude panes that are running but not bound to any
-// session in the PaneMap. Used by the mobile "Attach to existing pane" picker.
-func (s *PublicServer) handleUnboundPanes(w http.ResponseWriter, r *http.Request) {
-	panes, err := s.shared.Tmux.ListClaudePanes()
-	if err != nil {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"panes": []interface{}{}})
-		return
-	}
-
-	type unboundPane struct {
-		PaneID          string  `json:"pane_id"`
-		CWD             string  `json:"cwd"`
-		Project         string  `json:"project"`
-		LastUserMessage *string `json:"last_user_message,omitempty"`
-	}
-
-	var result []unboundPane
-	for _, p := range panes {
-		// Skip panes already bound to a session.
-		bound := false
-		for _, mappedPane := range s.shared.PaneMap.Snapshot() {
-			if mappedPane == p.PaneID {
-				bound = true
-				break
-			}
-		}
-		if bound {
-			continue
-		}
-
-		entry := unboundPane{
-			PaneID:  p.PaneID,
-			CWD:     p.CWD,
-			Project: filepath.Base(p.CWD),
-		}
-
-		// Cross-reference DB by CWD for last user message.
-		sessions, err := s.shared.DB.SearchSessions("", "", "all", p.CWD)
-		if err == nil && len(sessions) > 0 {
-			entry.LastUserMessage = sessions[0].LastUserMessage
-		}
-
-		result = append(result, entry)
-	}
-
-	if result == nil {
-		result = []unboundPane{}
-	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"panes": result})
-}
-
-// handleSessionAttach binds an existing untracked tmux pane to a session.
-func (s *PublicServer) handleSessionAttach(w http.ResponseWriter, r *http.Request) {
-	id := extractSessionID(r.URL.Path, "/attach")
-
-	var req struct {
-		PaneID string `json:"pane_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PaneID == "" {
-		jsonError(w, "missing pane_id", http.StatusBadRequest)
-		return
-	}
-
-	session, err := s.shared.DB.GetSession(id)
-	if err != nil || session == nil {
-		jsonError(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	if !s.shared.Tmux.HasPane(req.PaneID) {
-		jsonError(w, "pane not found", http.StatusBadRequest)
-		return
-	}
-
-	s.shared.PaneMap.Set(id, req.PaneID)
-	s.shared.Tmux.SetPaneSessionID(req.PaneID, id) //nolint:errcheck
-
-	s.shared.SSE.Broadcast(SSEEvent{
-		Type: "session_status",
-		Data: map[string]interface{}{
-			"session_id": id,
-			"tmux_pane":  req.PaneID,
-		},
-	})
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"tmux_pane": req.PaneID,
-	})
-}
-
 func extractSessionID(path, suffix string) string {
 	path = strings.TrimPrefix(path, "/api/sessions/")
 	path = strings.TrimSuffix(path, suffix)
@@ -909,7 +849,7 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 		return
 	}
 	for i := range sessions {
-		s.shared.injectPane(&sessions[i])
+		s.shared.injectTerminal(&sessions[i])
 		enrichSession(&sessions[i])
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -919,11 +859,11 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 
 func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider                  string `json:"provider"`
-		Prompt                    string `json:"prompt"`
-		Model                    string `json:"model,omitempty"`
-		CWD                      string `json:"cwd"`
-		DangerouslySkipPermissions bool  `json:"dangerously_skip_permissions,omitempty"`
+		Provider                   string `json:"provider"`
+		Prompt                     string `json:"prompt"`
+		Model                      string `json:"model,omitempty"`
+		CWD                        string `json:"cwd"`
+		DangerouslySkipPermissions bool   `json:"dangerously_skip_permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -955,13 +895,14 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
 	}
 
-	paneID, err := s.shared.Tmux.CreateWindow(req.CWD, cmd)
+	handle, err := s.shared.Backend.Start(sessionID, req.CWD, cmd)
 	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to create tmux window: %v", err), http.StatusInternalServerError)
+		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Register session in DB and PaneMap immediately.
+	// Register the session immediately so the API can report it before the
+	// agent's first hook arrives.
 	event := "Launch"
 	sess := &store.Session{
 		SessionID: sessionID,
@@ -972,48 +913,48 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		Managed:   true,
 	}
 	s.shared.DB.UpsertSession(sess)
-	s.shared.PaneMap.Set(sessionID, paneID)
-	s.shared.Tmux.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
 
-	// Keep PendingPanes for trust prompt detection.
-	s.shared.PendingPanes.Add(paneID, req.CWD)
+	// Watch for the workspace-trust dialog until the agent reports in.
+	s.shared.Pending.Add(sessionID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success":    true,
 		"session_id": sessionID,
-		"tmux_pane":  paneID,
+		"terminal":   handle,
 		"cwd":        req.CWD,
 	})
 }
 
+// handleWrap binds a terminal the user started by hand — `helios wrap` — to a
+// session record.
 func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaneID    string `json:"pane_id"`
+		Handle    string `json:"handle"`
 		CWD       string `json:"cwd"`
 		SessionID string `json:"session_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PaneID == "" {
-		jsonError(w, "missing pane_id", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
+		jsonError(w, "missing session_id", http.StatusBadRequest)
 		return
 	}
 
-	// If session_id provided, register session→pane mapping immediately.
-	if req.SessionID != "" {
-		event := "Wrap"
-		sess := &store.Session{
-			SessionID: req.SessionID,
-			Source:    "claude",
-			CWD:       req.CWD,
-			Status:    "starting",
-			LastEvent: &event,
-			Managed:   true,
-		}
-		s.shared.DB.UpsertSession(sess)
-		s.shared.PaneMap.Set(req.SessionID, req.PaneID)
+	event := "Wrap"
+	sess := &store.Session{
+		SessionID: req.SessionID,
+		Source:    "claude",
+		CWD:       req.CWD,
+		Status:    "starting",
+		LastEvent: &event,
+		Managed:   true,
+	}
+	s.shared.DB.UpsertSession(sess)
+
+	if err := s.shared.Backend.Adopt(req.SessionID, req.Handle, req.CWD); err != nil {
+		log.Printf("wrap: adopt terminal for %s: %v", req.SessionID, err)
 	}
 
-	// Keep PendingPanes for trust prompt detection in pane_watcher.
-	s.shared.PendingPanes.Add(req.PaneID, req.CWD)
+	// Watch for the workspace-trust dialog until the agent reports in.
+	s.shared.Pending.Add(req.SessionID, req.CWD)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -1093,7 +1034,7 @@ func (s *InternalServer) handleInternalHealth(w http.ResponseWriter, r *http.Req
 		"internal_port": extractPort(s.httpServer.Addr),
 		"sse_clients":   s.shared.SSE.ClientCount(),
 		"pending":       s.shared.Mgr.PendingCount(),
-		"tmux":          s.shared.Tmux.CheckStatus(),
+		"terminal":      s.shared.Backend.Status(),
 	})
 }
 
@@ -1471,11 +1412,11 @@ func (s *PublicServer) handleRefreshModels(w http.ResponseWriter, r *http.Reques
 
 func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider                  string `json:"provider"`
-		Prompt                    string `json:"prompt"`
-		Model                    string `json:"model,omitempty"`
-		CWD                      string `json:"cwd,omitempty"`
-		DangerouslySkipPermissions bool  `json:"dangerously_skip_permissions,omitempty"`
+		Provider                   string `json:"provider"`
+		Prompt                     string `json:"prompt"`
+		Model                      string `json:"model,omitempty"`
+		CWD                        string `json:"cwd,omitempty"`
+		DangerouslySkipPermissions bool   `json:"dangerously_skip_permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -1506,13 +1447,14 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		cmd = strings.Replace(cmd, "claude", "claude --dangerously-skip-permissions", 1)
 	}
 
-	paneID, err := s.shared.Tmux.CreateWindow(req.CWD, cmd)
+	handle, err := s.shared.Backend.Start(sessionID, req.CWD, cmd)
 	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to create tmux window: %v", err), http.StatusInternalServerError)
+		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Register session in DB and PaneMap immediately.
+	// Register the session immediately so the API can report it before the
+	// agent's first hook arrives.
 	event := "Launch"
 	sess := &store.Session{
 		SessionID: sessionID,
@@ -1523,16 +1465,14 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		Managed:   true,
 	}
 	s.shared.DB.UpsertSession(sess)
-	s.shared.PaneMap.Set(sessionID, paneID)
-	s.shared.Tmux.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
 
-	// Keep PendingPanes for trust prompt detection.
-	s.shared.PendingPanes.Add(paneID, req.CWD)
+	// Watch for the workspace-trust dialog until the agent reports in.
+	s.shared.Pending.Add(sessionID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success":    true,
 		"session_id": sessionID,
-		"tmux_pane":  paneID,
+		"terminal":   handle,
 		"cwd":        req.CWD,
 	})
 }
@@ -1565,4 +1505,3 @@ func extractPort(addr string) string {
 	}
 	return addr
 }
-

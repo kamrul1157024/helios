@@ -17,7 +17,6 @@ var notifSettingsKeys = []struct {
 }{
 	{"desktop.notify.enabled", "Desktop notifications"},
 	{"desktop.notify.sound", "Sound"},
-	{"desktop.notify.suppress_focused", "Suppress when pane is focused"},
 	{"desktop.notify.alert.permission", "Permission requests"},
 	{"desktop.notify.alert.question", "Questions"},
 	{"desktop.notify.alert.elicitation", "Elicitation"},
@@ -26,14 +25,13 @@ var notifSettingsKeys = []struct {
 }
 
 var notifSettingDefaults = map[string]bool{
-	"desktop.notify.enabled":             true,
-	"desktop.notify.sound":               true,
-	"desktop.notify.suppress_focused":    false,
-	"desktop.notify.alert.permission":    true,
-	"desktop.notify.alert.question":      true,
-	"desktop.notify.alert.elicitation":   true,
-	"desktop.notify.alert.done":          true,
-	"desktop.notify.alert.error":         true,
+	"desktop.notify.enabled":           true,
+	"desktop.notify.sound":             true,
+	"desktop.notify.alert.permission":  true,
+	"desktop.notify.alert.question":    true,
+	"desktop.notify.alert.elicitation": true,
+	"desktop.notify.alert.done":        true,
+	"desktop.notify.alert.error":       true,
 }
 
 var toggleOnStyle = lipgloss.NewStyle().

@@ -24,20 +24,11 @@ func newClient(internalPort int) *client {
 	}
 }
 
-type tmuxHealthStatus struct {
-	Installed       bool   `json:"installed"`
-	Version         string `json:"version"`
-	ServerRunning   bool   `json:"server_running"`
-	ResurrectPlugin bool   `json:"resurrect_plugin"`
-	ContinuumPlugin bool   `json:"continuum_plugin"`
-}
-
 type healthResponse struct {
-	Status       string           `json:"status"`
-	InternalPort string           `json:"internal_port"`
-	Pending      int              `json:"pending"`
-	SSEClients   int              `json:"sse_clients"`
-	Tmux         *tmuxHealthStatus `json:"tmux,omitempty"`
+	Status       string `json:"status"`
+	InternalPort string `json:"internal_port"`
+	Pending      int    `json:"pending"`
+	SSEClients   int    `json:"sse_clients"`
 }
 
 func (c *client) health() (*healthResponse, error) {
@@ -177,7 +168,7 @@ type sessionInfo struct {
 	Title           *string `json:"title,omitempty"`
 	Status          string  `json:"status"`
 	Model           *string `json:"model,omitempty"`
-	TmuxPane        *string `json:"tmux_pane,omitempty"`
+	Terminal        *string `json:"terminal,omitempty"`
 	LastEvent       *string `json:"last_event,omitempty"`
 	LastEventAt     *string `json:"last_event_at,omitempty"`
 	LastUserMessage *string `json:"last_user_message,omitempty"`
@@ -218,7 +209,7 @@ func (c *client) sessionCreate(cwd string) (*sessionInfo, error) {
 	defer resp.Body.Close()
 	var r struct {
 		SessionID string `json:"session_id"`
-		TmuxPane  string `json:"tmux_pane"`
+		Terminal  string `json:"terminal"`
 		CWD       string `json:"cwd"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
@@ -227,7 +218,7 @@ func (c *client) sessionCreate(cwd string) (*sessionInfo, error) {
 	return &sessionInfo{
 		SessionID: r.SessionID,
 		CWD:       r.CWD,
-		TmuxPane:  &r.TmuxPane,
+		Terminal:  &r.Terminal,
 		Status:    "starting",
 	}, nil
 }

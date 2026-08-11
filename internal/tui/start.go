@@ -23,21 +23,19 @@ import (
 type screen int
 
 const (
-	screenLoading        screen = iota // checking daemon, starting if needed
-	screenHooksInstall                 // prompt to install Claude hooks
-	screenHooksUpdate                  // prompt to update outdated hooks
-	screenShellSetup                   // prompt to install shell wrapper
-	screenTmuxRestart                  // prompt to restart tmux server
-	screenEditorSetup                  // prompt to configure editor terminals
-	screenTunnelSelect                 // first time only: pick tunnel provider
-	screenBinaryMissing                // tunnel binary not found
-	screenTunnelStarting               // starting tunnel...
-	screenCustomURL                    // custom URL input
-	screenMain                         // main dashboard: status + devices + QRs
-	screenConfirmDevice                // "Allow this device? y/n"
-	screenNotificationSettings         // desktop notification alert settings
-	screenSettings                     // general settings (auto title, etc.)
-	screenError                        // error
+	screenLoading              screen = iota // checking daemon, starting if needed
+	screenHooksInstall                       // prompt to install Claude hooks
+	screenHooksUpdate                        // prompt to update outdated hooks
+	screenShellSetup                         // prompt to install shell wrapper
+	screenTunnelSelect                       // first time only: pick tunnel provider
+	screenBinaryMissing                      // tunnel binary not found
+	screenTunnelStarting                     // starting tunnel...
+	screenCustomURL                          // custom URL input
+	screenMain                               // main dashboard: status + devices + QRs
+	screenConfirmDevice                      // "Allow this device? y/n"
+	screenNotificationSettings               // desktop notification alert settings
+	screenSettings                           // general settings (auto title, etc.)
+	screenError                              // error
 )
 
 // Tunnel provider options
@@ -57,27 +55,17 @@ var tunnelProviders = []struct {
 }
 
 // Messages
-type tmuxStatus struct {
-	Installed       bool
-	Version         string
-	ServerRunning   bool
-	ResurrectPlugin bool
-	ContinuumPlugin bool
-}
-
 type statusCheckDone struct {
 	daemonOK       bool
 	hooksOK        bool
 	hooksOutdated  bool
 	shellInfo      daemon.ShellInfo
 	shellInstalled bool
-	editors        []daemon.EditorInfo
 	tunnelOK       bool
 	tunnelURL      string
 	tunnelProv     string
 	deviceCount    int
 	devices        []deviceInfo
-	tmux           tmuxStatus
 	notifyBin      string // path to terminal-notifier/notify-send, empty if not found
 	err            error
 }
@@ -111,15 +99,6 @@ type shellSetupDone struct {
 	installed bool
 	err       error
 	manual    string // manual instructions if failed
-}
-
-type tmuxRestartDone struct {
-	err error
-}
-
-type editorSetupDone struct {
-	results []daemon.EditorSetupResult
-	manual  string // manual instructions for failed editors
 }
 
 type tickMsg time.Time
@@ -160,7 +139,6 @@ type StartModel struct {
 	tunnelProv    string
 	deviceCount   int
 	devices       []deviceInfo
-	tmux          tmuxStatus
 	notifyBin     string // path to terminal-notifier/notify-send, empty if not found
 
 	// Notification settings screen
@@ -172,15 +150,9 @@ type StartModel struct {
 	settingsValues map[string]bool
 
 	// Shell setup
-	shellInfo         daemon.ShellInfo
-	shellInstalled    bool
-	shellManual       string // non-empty if auto-install failed
-	tmuxRestartNeeded bool   // true if shell wrapper was just installed/updated
-
-	// Editor setup
-	editors       []daemon.EditorInfo
-	editorResults []daemon.EditorSetupResult
-	editorManual  string // non-empty if any editor failed
+	shellInfo      daemon.ShellInfo
+	shellInstalled bool
+	shellManual    string // non-empty if auto-install failed
 
 	// Tunnel selection
 	tunnelCursor int
@@ -277,28 +249,8 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.shellManual = msg.manual
 		} else {
 			m.shellInstalled = true
-			// If tmux server is running, we need a restart for the new wrapper to take effect
-			if m.tmux.ServerRunning {
-				m.tmuxRestartNeeded = true
-			}
 		}
 		return m.proceedAfterShell()
-
-	case tmuxRestartDone:
-		if msg.err != nil {
-			m.errMsg = fmt.Sprintf("Failed to restart tmux: %v", msg.err)
-			m.screen = screenError
-			return m, nil
-		}
-		m.tmuxRestartNeeded = false
-		return m.proceedAfterTmuxRestart()
-
-	case editorSetupDone:
-		m.editorResults = msg.results
-		if msg.manual != "" {
-			m.editorManual = msg.manual
-		}
-		return m.proceedAfterEditor()
 
 	case deviceActionDone:
 		return m.handleDeviceAction(msg)
@@ -364,8 +316,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
-		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenTmuxRestart,
-			screenEditorSetup, screenError:
+		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenError:
 			return m, tea.Quit
 		case screenNotificationSettings, screenSettings:
 			m.screen = screenMain
@@ -437,19 +388,12 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingDevice = nil
 			return m, activateDevice(m.client, kid)
 		}
-		if m.screen == screenTmuxRestart {
-			return m, restartTmuxCmd()
-		}
 
 	case "n":
 		if m.screen == screenConfirmDevice && m.pendingDevice != nil {
 			kid := m.pendingDevice.KID
 			m.pendingDevice = nil
 			return m, rejectDevice(m.client, kid)
-		}
-		if m.screen == screenTmuxRestart {
-			m.tmuxRestartNeeded = false
-			return m.proceedAfterTmuxRestart()
 		}
 
 	case "t":
@@ -478,11 +422,6 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.proceedAfterHooks()
 		case screenShellSetup:
 			return m.proceedAfterShell()
-		case screenTmuxRestart:
-			m.tmuxRestartNeeded = false
-			return m.proceedAfterTmuxRestart()
-		case screenEditorSetup:
-			return m.proceedAfterEditor()
 		}
 	}
 
@@ -519,13 +458,6 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			return m.proceedAfterShell()
 		}
 		return m, installShellWrapperCmd(m.shellInfo)
-
-	case screenEditorSetup:
-		if m.editorManual != "" {
-			// Manual instructions shown — just continue
-			return m.proceedAfterEditor()
-		}
-		return m, configureEditorsCmd(m.editors)
 
 	case screenTunnelSelect:
 		provider := tunnelProviders[m.tunnelCursor]
@@ -584,31 +516,6 @@ func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 }
 
 func (m StartModel) proceedAfterShell() (tea.Model, tea.Cmd) {
-	// Tmux restart needed after shell wrapper install/update
-	if m.tmuxRestartNeeded {
-		m.screen = screenTmuxRestart
-		return m, nil
-	}
-	return m.proceedAfterTmuxRestart()
-}
-
-func (m StartModel) proceedAfterTmuxRestart() (tea.Model, tea.Cmd) {
-	// Editor setup (skip if no editors found or all already configured)
-	unconfigured := false
-	for _, e := range m.editors {
-		if !e.Configured {
-			unconfigured = true
-			break
-		}
-	}
-	if unconfigured {
-		m.screen = screenEditorSetup
-		return m, nil
-	}
-	return m.proceedAfterEditor()
-}
-
-func (m StartModel) proceedAfterEditor() (tea.Model, tea.Cmd) {
 	if !m.tunnelOK {
 		m.screen = screenTunnelSelect
 		return m, nil
@@ -623,13 +530,11 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.hooksOutdated = msg.hooksOutdated
 	m.shellInfo = msg.shellInfo
 	m.shellInstalled = msg.shellInstalled
-	m.editors = msg.editors
 	m.tunnelOK = msg.tunnelOK
 	m.tunnelURL = msg.tunnelURL
 	m.tunnelProv = msg.tunnelProv
 	m.deviceCount = msg.deviceCount
 	m.devices = msg.devices
-	m.tmux = msg.tmux
 	m.notifyBin = msg.notifyBin
 
 	if msg.err != nil {
@@ -797,9 +702,6 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 		result.shellInfo = daemon.DetectShell()
 		result.shellInstalled = daemon.ShellWrapperInstalled(result.shellInfo)
 
-		// Check editors
-		result.editors = daemon.DetectEditors()
-
 		// Check tunnel
 		ts, err := c.tunnelStatus()
 		if err == nil && ts.Active {
@@ -816,17 +718,6 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 				if d.Status == "active" {
 					result.deviceCount++
 				}
-			}
-		}
-
-		// Check tmux status
-		if h != nil && h.Tmux != nil {
-			result.tmux = tmuxStatus{
-				Installed:       h.Tmux.Installed,
-				Version:         h.Tmux.Version,
-				ServerRunning:   h.Tmux.ServerRunning,
-				ResurrectPlugin: h.Tmux.ResurrectPlugin,
-				ContinuumPlugin: h.Tmux.ContinuumPlugin,
 			}
 		}
 
@@ -923,56 +814,6 @@ func installShellWrapperCmd(info daemon.ShellInfo) tea.Cmd {
 		}
 		return shellSetupDone{installed: true}
 	}
-}
-
-func configureEditorsCmd(editors []daemon.EditorInfo) tea.Cmd {
-	return func() tea.Msg {
-		// Find tmux path
-		tmuxPath := findTmuxPath()
-
-		results := make([]daemon.EditorSetupResult, len(editors))
-		var manualParts []string
-
-		for i, editor := range editors {
-			results[i] = daemon.EditorSetupResult{Editor: editor}
-			if editor.Configured {
-				results[i].Success = true
-				continue
-			}
-			err := daemon.ConfigureEditor(editor, tmuxPath)
-			results[i].Success = err == nil
-			results[i].Error = err
-			if err != nil {
-				manualParts = append(manualParts, daemon.ManualEditorInstructions(editor, tmuxPath, err))
-			}
-		}
-
-		return editorSetupDone{
-			results: results,
-			manual:  strings.Join(manualParts, "\n"),
-		}
-	}
-}
-
-func restartTmuxCmd() tea.Cmd {
-	return func() tea.Msg {
-		tmuxPath := findTmuxPath()
-		err := exec.Command(tmuxPath, "kill-server").Run()
-		return tmuxRestartDone{err: err}
-	}
-}
-
-func findTmuxPath() string {
-	if p, err := exec.LookPath("tmux"); err == nil {
-		return p
-	}
-	// Common locations
-	for _, p := range []string{"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return "tmux"
 }
 
 func hooksInstalled() bool {

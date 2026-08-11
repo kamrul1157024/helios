@@ -293,4 +293,3 @@ func parseStatLine(stat string) string {
 	}
 	return fmt.Sprintf("+%d -%d", ins, del)
 }
-

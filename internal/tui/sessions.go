@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/kamrul1157024/helios/internal/tmux"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -112,11 +112,11 @@ func nextScheme(current string) string {
 
 // Status accent colors (left border)
 var (
-	colorActive    = lipgloss.Color("70")  // green
-	colorWaiting   = lipgloss.Color("214") // amber
-	colorCompact   = lipgloss.Color("75")  // blue
-	colorError     = lipgloss.Color("196") // red
-	colorIdle      = lipgloss.Color("241") // grey
+	colorActive     = lipgloss.Color("70")  // green
+	colorWaiting    = lipgloss.Color("214") // amber
+	colorCompact    = lipgloss.Color("75")  // blue
+	colorError      = lipgloss.Color("196") // red
+	colorIdle       = lipgloss.Color("241") // grey
 	colorTerminated = lipgloss.Color("245") // muted grey
 )
 
@@ -202,11 +202,8 @@ type sessCreated struct {
 
 // ── Model ──
 
-const maxTabs = 2
-
 type SessionsModel struct {
 	client  *client
-	tmux    *tmux.Client
 	spinner spinner.Model
 	search  textinput.Model
 
@@ -217,10 +214,6 @@ type SessionsModel struct {
 	loading  bool
 
 	searching bool
-
-	openTabs [maxTabs]string
-	tabCount int
-	myPaneID string
 
 	scheme string // "dark" or "surface"
 
@@ -257,13 +250,11 @@ func NewSessionsModel(internalPort int) SessionsModel {
 	}
 
 	return SessionsModel{
-		client:   c,
-		tmux:     tmux.NewClient(),
-		spinner:  s,
-		search:   ti,
-		loading:  true,
-		myPaneID: os.Getenv("TMUX_PANE"),
-		scheme:   scheme,
+		client:  c,
+		spinner: s,
+		search:  ti,
+		loading: true,
+		scheme:  scheme,
 	}
 }
 
@@ -321,7 +312,17 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil || msg.sess == nil {
 			return m, nil
 		}
-		m.openTab(*msg.sess)
+		// Drop straight into the session just created, which is what the user
+		// asked for by creating it.
+		return m, attachTo(msg.sess.SessionID)
+
+	case attachFinished:
+		m.errMsg = ""
+		if msg.err != nil {
+			m.errMsg = "attach: " + msg.err.Error()
+		}
+		// The session's state has almost certainly moved on while the user was
+		// inside it.
 		return m, fetchSessions(m.client)
 	}
 
@@ -380,21 +381,13 @@ func (m *SessionsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "ctrl+c", "q":
-		m.closeAllTabs()
+	case "ctrl+c", "q", "esc":
 		return m, tea.Quit
 
 	case "/":
 		m.searching = true
 		m.search.Focus()
 		return m, textinput.Blink
-
-	case "esc":
-		if m.tabCount > 0 {
-			m.closeAllTabs()
-			return m, nil
-		}
-		return m, tea.Quit
 
 	case "up", "k":
 		if m.cursor > 0 {
@@ -410,7 +403,7 @@ func (m *SessionsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter", "t":
 		if m.cursor < len(m.filtered) {
-			m.openTab(m.sessions[m.filtered[m.cursor]])
+			return m, attachTo(m.sessions[m.filtered[m.cursor]].SessionID)
 		}
 
 	case "r":
@@ -461,10 +454,9 @@ func (m *SessionsModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			idx := m.offset + row/cardHeight
 			if idx >= 0 && idx < len(m.filtered) {
 				if m.cursor == idx {
-					m.openTab(m.sessions[m.filtered[m.cursor]])
-				} else {
-					m.cursor = idx
+					return m, attachTo(m.sessions[m.filtered[m.cursor]].SessionID)
 				}
+				m.cursor = idx
 			}
 		}
 	}
@@ -495,101 +487,25 @@ func (m *SessionsModel) refilter() {
 	m.clampCursor()
 }
 
-// ── Tab management ──
+// ── Attaching ──
 
-// listPanePercent is the percentage of the window width to give the list pane.
-const listPanePercent = 40
+// attachFinished reports the outcome of an attach that has already given the
+// terminal back.
+type attachFinished struct{ err error }
 
-func (m *SessionsModel) openTab(sess sessionInfo) {
-	if sess.TmuxPane == nil || *sess.TmuxPane == "" {
-		return
+// attach hands the whole terminal to the session and takes it back when the
+// user detaches. This replaces splitting a tmux pane: the session lives in a
+// terminal host of its own, so there is nothing to join — the list simply
+// steps aside for as long as the user is driving the agent.
+func attachTo(sessionID string) tea.Cmd {
+	exe, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return attachFinished{err: err} }
 	}
-	paneID := *sess.TmuxPane
-
-	// Already open — just focus it.
-	for i := 0; i < m.tabCount; i++ {
-		if m.openTabs[i] == paneID {
-			m.tmux.SelectPane(paneID)
-			return
-		}
-	}
-
-	// Break all existing tabs first — enter always replaces.
-	for m.tabCount > 0 {
-		m.tabCount--
-		m.tmux.BreakPane(m.openTabs[m.tabCount])
-		m.openTabs[m.tabCount] = ""
-	}
-
-	// Get full window width before join (it won't change).
-	winWidth := m.tmux.WindowWidth(m.myPaneID)
-
-	if err := m.tmux.JoinPaneHorizontal(paneID, m.myPaneID, 70); err != nil {
-		return
-	}
-	m.openTabs[0] = paneID
-	m.tabCount = 1
-
-	if winWidth > 0 {
-		cols := winWidth * listPanePercent / 100
-		if cols < 30 {
-			cols = 30
-		}
-		m.tmux.ResizePane(m.myPaneID, cols)
-		// Force BubbleTea to re-query terminal size after pane resize
-		m.tmux.SendResizeSignal(m.myPaneID)
-	}
-	m.tmux.SelectPane(m.myPaneID)
-}
-
-func (m *SessionsModel) closeNewestTab() {
-	if m.tabCount == 0 {
-		return
-	}
-	m.tabCount--
-	m.tmux.BreakPane(m.openTabs[m.tabCount])
-	m.openTabs[m.tabCount] = ""
-
-	if m.tabCount == 1 {
-		if winWidth := m.tmux.WindowWidth(m.myPaneID); winWidth > 0 {
-			cols := winWidth * listPanePercent / 100
-			if cols < 30 {
-				cols = 30
-			}
-			m.tmux.ResizePane(m.myPaneID, cols)
-		}
-	}
-}
-
-func (m *SessionsModel) closeAllTabs() {
-	for m.tabCount > 0 {
-		m.tabCount--
-		m.tmux.BreakPane(m.openTabs[m.tabCount])
-		m.openTabs[m.tabCount] = ""
-	}
-}
-
-func (m *SessionsModel) isTabOpen(paneID string) bool {
-	for i := 0; i < m.tabCount; i++ {
-		if m.openTabs[i] == paneID {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *SessionsModel) closeTabByPane(paneID string) {
-	for i := 0; i < m.tabCount; i++ {
-		if m.openTabs[i] == paneID {
-			m.tmux.BreakPane(paneID)
-			for j := i; j < m.tabCount-1; j++ {
-				m.openTabs[j] = m.openTabs[j+1]
-			}
-			m.tabCount--
-			m.openTabs[m.tabCount] = ""
-			return
-		}
-	}
+	cmd := exec.Command(exe, "attach", sessionID)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return attachFinished{err: err}
+	})
 }
 
 // ── Card rendering ──
@@ -633,6 +549,11 @@ func (m SessionsModel) renderCard(sess sessionInfo, selected bool, width int) st
 		if err == nil {
 			timeStr = humanDuration(time.Since(t))
 		}
+	}
+	// A cold session is still openable — attaching resumes it — so this is a
+	// note about the wait, not a warning.
+	if sess.Terminal == nil || *sess.Terminal == "" {
+		timeStr = strings.TrimSpace("cold · " + timeStr)
 	}
 
 	iconSty := withBG(lipgloss.NewStyle().Foreground(accent))
@@ -783,26 +704,6 @@ func (m SessionsModel) View() string {
 	// ── Separator ──
 	content.WriteString(sessSepStyle.Render(strings.Repeat("┈", iw)) + "\n")
 
-	// ── Tab bar ──
-	tabActive := lipgloss.NewStyle().Foreground(c.primary).Bold(true)
-	tabBar := lipgloss.NewStyle().Foreground(c.onSurfaceMuted)
-	if m.tabCount > 0 {
-		var tabs []string
-		for i := 0; i < m.tabCount; i++ {
-			name := m.openTabs[i]
-			for _, s := range m.sessions {
-				if s.TmuxPane != nil && *s.TmuxPane == m.openTabs[i] {
-					name = filepath.Base(s.CWD)
-					break
-				}
-			}
-			tabs = append(tabs, tabActive.Render("▸ "+name))
-		}
-		content.WriteString("  " + strings.Join(tabs, tabBar.Render("  │  ")) + "\n")
-	} else {
-		content.WriteString(dimText.Render("  no tabs open") + "\n")
-	}
-
 	// ── Help ──
 	content.WriteString(m.renderHelp(iw))
 
@@ -819,12 +720,9 @@ func (m SessionsModel) renderHelp(width int) string {
 	if m.searching {
 		b.WriteString(helpSty.Render("  esc clear  enter confirm  ↑/↓ navigate"))
 	} else {
-		b.WriteString(helpSty.Render("  j/k ↕  ⏎/t open  / search  c theme  r refresh  q quit"))
-	}
-
-	if m.tabCount > 0 {
+		b.WriteString(helpSty.Render("  j/k ↕  ⏎/t attach  / search  c theme  r refresh  q quit"))
 		b.WriteString("\n")
-		b.WriteString(hintSty.Render("  tmux: ^b ←→ switch panes  ^b z zoom  ^b ; last pane"))
+		b.WriteString(hintSty.Render("  inside a session: ^\\ d detaches and comes back here"))
 	}
 
 	return b.String()
@@ -875,50 +773,47 @@ func subscribeSSE(p *tea.Program, eventsURL string) {
 			continue
 		}
 
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			raw := strings.TrimPrefix(line, "data: ")
-
-			var envelope struct {
-				Type string          `json:"type"`
-				Data json.RawMessage `json:"data"`
-			}
-			if json.Unmarshal([]byte(raw), &envelope) != nil {
-				continue
-			}
-			if envelope.Type != "session_status" {
-				continue
-			}
-
-			var update sessSSEUpdate
-			if json.Unmarshal(envelope.Data, &update) == nil {
-				p.Send(sessSSEMsg(update))
-			}
-		}
+		readSessionEvents(resp.Body, func(u sessSSEUpdate) { p.Send(sessSSEMsg(u)) })
 		resp.Body.Close()
 		time.Sleep(time.Second)
 	}
 }
 
+// readSessionEvents calls emit for every session_status frame on an SSE stream,
+// returning when the stream ends.
+//
+// The daemon writes the type on its own `event:` line and the payload is the
+// bare update, so a `data:` line read on its own says nothing about what
+// arrived. A blank line closes the frame.
+func readSessionEvents(r io.Reader, emit func(sessSSEUpdate)) {
+	scanner := bufio.NewScanner(r)
+	var eventType string
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			eventType = ""
+		case strings.HasPrefix(line, "event: "):
+			eventType = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: ") && eventType == "session_status":
+			var update sessSSEUpdate
+			if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &update) == nil {
+				emit(update)
+			}
+		}
+	}
+}
+
+// filterVisibleSessions keeps the sessions worth showing. A cold session is
+// kept: it has no terminal right now, but attaching resumes it, so hiding it
+// would lose work the user can still get back to.
 func (m SessionsModel) filterVisibleSessions(sessions []sessionInfo) []sessionInfo {
 	var result []sessionInfo
 	for _, s := range sessions {
-		if s.TmuxPane == nil || *s.TmuxPane == "" {
-			continue
-		}
 		switch s.Status {
 		case "active", "idle", "waiting_permission", "compacting", "starting", "error":
-		default:
-			continue
+			result = append(result, s)
 		}
-		if !m.tmux.HasPane(*s.TmuxPane) {
-			continue
-		}
-		result = append(result, s)
 	}
 	return result
 }
@@ -926,12 +821,6 @@ func (m SessionsModel) filterVisibleSessions(sessions []sessionInfo) []sessionIn
 // ── Entry point ──
 
 func RunSessions(internalPort int) error {
-	if os.Getenv("TMUX") == "" {
-		fmt.Fprintln(os.Stderr, "helios sessions requires tmux.")
-		fmt.Fprintln(os.Stderr, "Run inside a tmux session, or use: helios sessions --list")
-		os.Exit(1)
-	}
-
 	m := NewSessionsModel(internalPort)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 

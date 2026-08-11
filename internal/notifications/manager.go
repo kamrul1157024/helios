@@ -12,7 +12,7 @@ import (
 
 // Decision carries the user's response back to the blocking hook handler.
 type Decision struct {
-	Status   string          `json:"status"`            // "approved", "denied", "answered", "dismissed", "timeout"
+	Status   string          `json:"status"`             // "approved", "denied", "answered", "dismissed", "timeout"
 	Response json.RawMessage `json:"response,omitempty"` // opaque — stored in notification.response
 }
 
@@ -29,12 +29,27 @@ func NewManager(db *store.Store) *Manager {
 	}
 }
 
-// WaitForDecision registers a channel for a notification and blocks until resolved.
-func (m *Manager) WaitForDecision(notifID string) (Decision, error) {
-	ch := make(chan Decision, 1)
-
+// Register reserves the pending slot for a notification. Call it before the
+// notification is published to clients: a decision can come back before the
+// handler reaches WaitForDecision, and without the slot Resolve has nowhere to
+// deliver it and the handler blocks until it times out.
+func (m *Manager) Register(notifID string) {
 	m.mu.Lock()
-	m.pending[notifID] = ch
+	if _, ok := m.pending[notifID]; !ok {
+		m.pending[notifID] = make(chan Decision, 1)
+	}
+	m.mu.Unlock()
+}
+
+// WaitForDecision blocks until the notification is resolved. It adopts the slot
+// left by Register, so a decision that arrived early is already buffered.
+func (m *Manager) WaitForDecision(notifID string) (Decision, error) {
+	m.mu.Lock()
+	ch, ok := m.pending[notifID]
+	if !ok {
+		ch = make(chan Decision, 1)
+		m.pending[notifID] = ch
+	}
 	m.mu.Unlock()
 
 	defer func() {
@@ -66,7 +81,12 @@ func (m *Manager) Resolve(notifID string, decision Decision, source string) erro
 	m.mu.Unlock()
 
 	if ok {
-		ch <- decision
+		// Non-blocking: a repeat resolve for the same notification must not
+		// wedge the caller behind the already-buffered decision.
+		select {
+		case ch <- decision:
+		default:
+		}
 	}
 
 	return nil
@@ -108,13 +128,16 @@ func (m *Manager) CancelPendingFromClaude(notifID string) {
 func (m *Manager) cancelPendingWithStatus(notifID, status, source string) {
 	m.mu.Lock()
 	ch, ok := m.pending[notifID]
-	if ok {
-		delete(m.pending, notifID)
-	}
 	m.mu.Unlock()
 
+	// Hand the waiter a dismissal rather than closing the channel: the slot may
+	// have been registered before the handler blocks on it, and the decision has
+	// to survive that gap. The waiter deletes the slot on its way out.
 	if ok {
-		close(ch)
+		select {
+		case ch <- Decision{Status: "dismissed"}:
+		default:
+		}
 	}
 
 	m.db.ResolveNotification(notifID, status, source)

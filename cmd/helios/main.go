@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
-	"github.com/kamrul1157024/helios/internal/tmux"
+	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tui"
 	"github.com/kamrul1157024/helios/internal/tunnel"
 )
@@ -51,6 +52,8 @@ func main() {
 		handleAttach(os.Args[2:])
 	case "notify":
 		handleNotify()
+	case "ptyhost":
+		handlePtyHost(os.Args[2:])
 	case "wrap":
 		handleWrap(os.Args[2:])
 	case "hooks":
@@ -184,13 +187,13 @@ func handleAuth(args []string) {
 
 		var result struct {
 			Devices []struct {
-				KID        string  `json:"kid"`
-				Name       string  `json:"name"`
-				Status     string  `json:"status"`
-				Platform   string  `json:"platform"`
-				Browser    string  `json:"browser"`
-				PushEnabled bool   `json:"push_enabled"`
-				LastSeenAt *string `json:"last_seen_at"`
+				KID         string  `json:"kid"`
+				Name        string  `json:"name"`
+				Status      string  `json:"status"`
+				Platform    string  `json:"platform"`
+				Browser     string  `json:"browser"`
+				PushEnabled bool    `json:"push_enabled"`
+				LastSeenAt  *string `json:"last_seen_at"`
 			} `json:"devices"`
 		}
 		json.NewDecoder(resp.Body).Decode(&result)
@@ -268,31 +271,10 @@ func handleStart() {
 	// Spawn desktop notifier as a detached background process.
 	spawnNotifier(exe, cfg.Server.InternalPort)
 
-	// If already inside tmux, run the TUI directly in the current pane.
-	if os.Getenv("TMUX") != "" {
-		if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Outside tmux: open the TUI in a dedicated helios tmux window, then
-	// attach — so the user lands inside tmux without any manual step.
-	tc := tmux.NewClient()
-
-	if _, err := tc.OpenWindow("helios", exe, "start"); err != nil {
-		// tmux not available — fall back to running TUI directly.
-		if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Replace this process with tmux attach — user is now inside tmux.
-	if err := tc.AttachSession(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error attaching to tmux: %v\n", err)
+	// The TUI runs in this terminal. Sessions live in their own terminal hosts,
+	// so there is no multiplexer to open a window in or attach to.
+	if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -506,37 +488,33 @@ func handleNew(args []string) {
 	defer resp.Body.Close()
 
 	var result struct {
-		Success  bool   `json:"success"`
-		TmuxPane string `json:"tmux_pane"`
-		CWD      string `json:"cwd"`
-		Message  string `json:"message"`
+		Success   bool   `json:"success"`
+		SessionID string `json:"session_id"`
+		CWD       string `json:"cwd"`
+		Message   string `json:"message"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read response: %v\n", err)
+		os.Exit(1)
+	}
 
 	if !result.Success {
 		fmt.Fprintf(os.Stderr, "Failed to create session: %s\n", result.Message)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Session started in tmux pane %s\n", result.TmuxPane)
+	fmt.Printf("Session %s started\n", result.SessionID)
 	fmt.Printf("  cwd: %s\n", result.CWD)
-	fmt.Println("  Attach with: tmux attach -t helios")
+	fmt.Printf("  Attach with: helios attach %s\n", result.SessionID)
 }
 
+// handleWrap runs a command inside a helios terminal host and attaches to it.
+//
+// To the user this looks exactly like running the command directly, but the
+// process now lives in a host of its own: closing the terminal, or detaching
+// with the detach key, leaves it running, and mobile or desktop clients can
+// watch and drive the same session.
 func handleWrap(args []string) {
-	// Parse --managed flag before "--" separator
-	managed := false
-	filtered := args[:0]
-	for _, a := range args {
-		if a == "--managed" {
-			managed = true
-		} else {
-			filtered = append(filtered, a)
-		}
-	}
-	args = filtered
-
-	// Find "--" separator
 	cmdStart := -1
 	for i, a := range args {
 		if a == "--" {
@@ -544,172 +522,272 @@ func handleWrap(args []string) {
 			break
 		}
 	}
-
 	if cmdStart < 0 || cmdStart >= len(args) {
-		fmt.Fprintln(os.Stderr, "Usage: helios wrap [--managed] -- <command> [args...]")
+		fmt.Fprintln(os.Stderr, "Usage: helios wrap -- <command> [args...]")
 		fmt.Fprintln(os.Stderr, "Example: helios wrap -- claude")
 		os.Exit(1)
 	}
 
-	cwd, _ := os.Getwd()
-
-	tc := tmux.NewClient()
-
-	// Generate a session ID for claude commands so we can map session→pane deterministically.
-	// If --resume or --continue is present, use the existing session ID from the args.
-	parts := args[cmdStart:]
-	sessionID := ""
-	if len(parts) > 0 && filepath.Base(parts[0]) == "claude" {
-		for i, a := range parts {
-			if (a == "--resume" || a == "--continue" || a == "--session-id") && i+1 < len(parts) {
-				sessionID = parts[i+1]
-				break
-			}
-		}
-		if sessionID == "" {
-			sessionID = uuid.New().String()
-			parts = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
-		}
+	// Already inside a helios terminal: run the command here instead of
+	// wrapping it. The shell wrapper users install turns every `claude` into
+	// `helios wrap`, and a host types that command into a login shell — so
+	// without this the wrap re-enters the session it is running inside and
+	// attaches to its own terminal, which loops until the terminal is unusable.
+	if os.Getenv(terminal.SessionEnv) != "" {
+		runInPlace(args[cmdStart:])
 	}
-	command := strings.Join(parts, " ")
 
-	// If already inside tmux, register this pane with the daemon, run claude,
-	// and notify daemon when it exits (handles Ctrl+C/crash where hooks don't fire).
-	if os.Getenv("TMUX") != "" {
-		paneID := os.Getenv("TMUX_PANE")
-		cfg, _ := daemon.LoadConfig()
-		internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+	cwd, _ := os.Getwd()
+	sessionID, parts, isClaude := wrapCommand(args[cmdStart:])
 
-		if paneID != "" && sessionID != "" {
-			// Tag pane with session ID in tmux memory for PaneMap reconstruction.
-			tc.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
-		}
-		if paneID != "" {
-			body, _ := json.Marshal(map[string]string{
-				"pane_id":    paneID,
-				"cwd":        cwd,
-				"session_id": sessionID,
-			})
-			http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
-		}
-
-		binary, err := exec.LookPath(parts[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "command not found: %s\n", parts[0])
+	heliosDir := daemon.HeliosDir()
+	socket := terminal.SocketPath(heliosDir, sessionID)
+	if !terminal.Probe(socket) {
+		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, shellCommand(parts)); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to start terminal host: %v\n", err)
 			os.Exit(1)
 		}
-
-		if managed {
-			// Exec directly — helios API manages lifecycle, no session.end needed.
-			if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
-				fmt.Fprintf(os.Stderr, "exec failed: %v\n", err)
-				os.Exit(1)
-			}
-			return
+		if !terminal.WaitForSocket(socket, 15*time.Second) {
+			fmt.Fprintln(os.Stderr, "Terminal host did not come up; see ~/.helios/logs/ptyhost.log")
+			os.Exit(1)
 		}
+	}
 
-		cmd := exec.Command(binary, parts[1:]...)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Run()
+	cfg, _ := daemon.LoadConfig()
+	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+	if isClaude {
+		registerWrappedSession(internalURL, socket, cwd, sessionID)
+	}
 
-		// Claude exited — fire session.end hook so daemon runs full
-		// cleanup (status update, SSE broadcast, reporter event).
-		if sessionID != "" {
-			body, _ := json.Marshal(map[string]interface{}{
-				"session_id": sessionID,
-				"cwd":        cwd,
-			})
-			http.Post(internalURL+"/hooks/claude/session.end", "application/json", bytes.NewBuffer(body))
-		}
+	res, err := terminal.Attach(context.Background(), terminal.AttachConfig{
+		Socket: socket,
+		Name:   attachViewerName(),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "attach: %v\n", err)
+		os.Exit(1)
+	}
+	if res.Detached {
+		fmt.Printf("[detached — still running; reattach with: helios attach %s]\n", sessionID)
 		return
 	}
 
-	// Create a new tmux window with the command
-	paneID, err := tc.CreateWindow(cwd, command)
+	// The process ended for real. Hooks do not fire on Ctrl-C or a crash, so
+	// the daemon is told directly rather than left showing a live session.
+	if isClaude {
+		body, err := json.Marshal(map[string]interface{}{
+			"session_id": sessionID,
+			"cwd":        cwd,
+		})
+		if err == nil {
+			postAndClose(internalURL+"/hooks/claude/session.end", body)
+		}
+	}
+	os.Exit(res.ExitCode)
+}
+
+// runInPlace replaces this process with the command, bypassing the shell
+// wrapper by resolving the binary itself. It does not return.
+func runInPlace(parts []string) {
+	bin, err := exec.LookPath(parts[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create tmux session: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Is tmux installed? brew install tmux")
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "helios: %s not found: %v\n", parts[0], err)
+		os.Exit(127)
 	}
-
-	// Tag pane with session ID in tmux memory for PaneMap reconstruction.
-	if sessionID != "" {
-		tc.SetPaneSessionID(paneID, sessionID) //nolint:errcheck
-	}
-
-	// Notify the daemon about this pane so it can track it
-	cfg, _ := daemon.LoadConfig()
-	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
-	body, _ := json.Marshal(map[string]string{
-		"pane_id":    paneID,
-		"cwd":        cwd,
-		"session_id": sessionID,
-	})
-	http.Post(internalURL+"/internal/wrap", "application/json", bytes.NewBuffer(body))
-
-	// Attach to the tmux session on the new pane
-	if err := tc.Attach(paneID); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to attach to tmux: %v\n", err)
+	if err := syscall.Exec(bin, parts, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "helios: exec %s: %v\n", bin, err)
 		os.Exit(1)
 	}
 }
 
+// shellCommand renders the command line a host types into its login shell.
+//
+// The binary is resolved to a path because that shell loads the user's rc
+// file, which is where the `claude` wrapper function lives: a bare name would
+// run the wrapper instead of the agent. Resolution can fail — the login shell
+// may have a PATH this process does not — and the bare name is then the best
+// guess, with the in-place guard above as the backstop.
+func shellCommand(parts []string) string {
+	out := make([]string, len(parts))
+	copy(out, parts)
+	if bin, err := exec.LookPath(out[0]); err == nil {
+		out[0] = bin
+	}
+	for i, p := range out {
+		if strings.ContainsAny(p, " \t'\"\\$`") {
+			out[i] = "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// wrapCommand decides the session ID a wrapped command runs under and returns
+// the command line to launch.
+//
+// Claude sessions are tracked, so they need an ID the daemon and the agent
+// agree on. --resume/--continue already carry one; otherwise we mint it and
+// pass it down, which is what makes the session addressable from the phone
+// before its first hook arrives.
+func wrapCommand(parts []string) (sessionID string, cmd []string, isClaude bool) {
+	isClaude = filepath.Base(parts[0]) == "claude"
+	if !isClaude {
+		return uuid.New().String(), parts, false
+	}
+
+	for i, a := range parts {
+		if (a == "--resume" || a == "--continue" || a == "--session-id") && i+1 < len(parts) {
+			return parts[i+1], parts, true
+		}
+	}
+
+	sessionID = uuid.New().String()
+	cmd = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
+	return sessionID, cmd, true
+}
+
+// registerWrappedSession binds a hand-started terminal to a session record.
+// The daemon being down is not fatal: the command still runs, it is simply not
+// tracked until the daemon comes back and recovers the host from its sidecar.
+func registerWrappedSession(internalURL, socket, cwd, sessionID string) {
+	body, err := json.Marshal(map[string]string{
+		"handle":     socket,
+		"cwd":        cwd,
+		"session_id": sessionID,
+	})
+	if err != nil {
+		return
+	}
+	if err := postAndClose(internalURL+"/internal/wrap", body); err != nil {
+		fmt.Fprintf(os.Stderr, "helios: session not registered (%v)\n", err)
+	}
+}
+
+func postAndClose(url string, body []byte) error {
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
 func handleAttach(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios attach <pane-id|session-id>")
+		fmt.Fprintln(os.Stderr, "Usage: helios attach <session-id|socket-path>")
 		os.Exit(1)
 	}
 
 	target := args[0]
-	tc := tmux.NewClient()
-
-	// If the target looks like a tmux pane ID (%N), attach directly.
-	if strings.HasPrefix(target, "%") {
-		if err := tc.Attach(target); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to attach to pane %s: %v\n", target, err)
+	socket := target
+	// A path is attached to as-is, which is what makes a host reachable even
+	// when the daemon is down.
+	if !strings.HasPrefix(target, "/") {
+		cfg, _ := daemon.LoadConfig()
+		var err error
+		socket, err = resolveTerminalSocket(
+			fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort), target)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		return
 	}
 
-	// Otherwise treat it as a session ID — look up the pane from the daemon.
-	cfg, _ := daemon.LoadConfig()
-	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
+	res, err := terminal.Attach(context.Background(), terminal.AttachConfig{
+		Socket: socket,
+		Name:   attachViewerName(),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "attach: %v\n", err)
+		os.Exit(1)
+	}
+	if res.Detached {
+		fmt.Printf("[detached — the session keeps running; reattach with: helios attach %s]\n", target)
+		return
+	}
+	os.Exit(res.ExitCode)
+}
 
-	client := &http.Client{Timeout: 3 * time.Second}
+// resolveTerminalSocket maps a session ID, or a unique prefix of one, to its
+// terminal socket, waking a cold session on the way.
+func resolveTerminalSocket(internalURL, target string) (string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+
 	resp, err := client.Get(internalURL + "/internal/sessions")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "helios is not running. Start it with: helios start")
-		os.Exit(1)
+		return "", fmt.Errorf("helios is not running. Start it with: helios start")
 	}
 	defer resp.Body.Close()
 
 	var result struct {
 		Sessions []struct {
 			SessionID string  `json:"session_id"`
-			TmuxPane  *string `json:"tmux_pane"`
+			Terminal  *string `json:"terminal"`
 		} `json:"sessions"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
-
-	for _, s := range result.Sessions {
-		if s.SessionID == target || strings.HasPrefix(s.SessionID, target) {
-			if s.TmuxPane == nil || *s.TmuxPane == "" {
-				fmt.Fprintf(os.Stderr, "Session %s has no active tmux pane\n", target)
-				os.Exit(1)
-			}
-			if err := tc.Attach(*s.TmuxPane); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to attach to pane %s: %v\n", *s.TmuxPane, err)
-				os.Exit(1)
-			}
-			return
-		}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("read session list: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Session not found: %s\n", target)
-	os.Exit(1)
+	var match string
+	var socket string
+	var prefixed int
+	for _, s := range result.Sessions {
+		live := ""
+		if s.Terminal != nil {
+			live = *s.Terminal
+		}
+		// An exact ID wins outright, even when it is also a prefix of another.
+		if s.SessionID == target {
+			match, socket, prefixed = s.SessionID, live, 1
+			break
+		}
+		if strings.HasPrefix(s.SessionID, target) {
+			match, socket = s.SessionID, live
+			prefixed++
+		}
+	}
+	switch {
+	case prefixed == 0:
+		return "", fmt.Errorf("session not found: %s", target)
+	case prefixed > 1:
+		return "", fmt.Errorf("%q matches %d sessions; use a longer prefix", target, prefixed)
+	case socket != "":
+		return socket, nil
+	}
+
+	// Cold: resume it. Claude reloads the transcript, so the conversation is
+	// still there even though the screen was lost.
+	fmt.Fprintf(os.Stderr, "Resuming %s...\n", match)
+	wake, err := client.Post(
+		internalURL+"/internal/sessions/"+match+"/resume", "application/json", nil)
+	if err != nil {
+		return "", fmt.Errorf("resume session: %w", err)
+	}
+	defer wake.Body.Close()
+
+	var woke struct {
+		Terminal string `json:"terminal"`
+		Error    string `json:"error"`
+	}
+	if err := json.NewDecoder(wake.Body).Decode(&woke); err != nil {
+		return "", fmt.Errorf("read resume response: %w", err)
+	}
+	if woke.Terminal == "" {
+		if woke.Error != "" {
+			return "", fmt.Errorf("resume session: %s", woke.Error)
+		}
+		return "", fmt.Errorf("resume session: daemon returned %s", wake.Status)
+	}
+	return woke.Terminal, nil
+}
+
+// attachViewerName labels this viewer in the writer indicator other clients
+// see, so a phone can tell someone is typing at a desk.
+func attachViewerName() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return "terminal"
+	}
+	return host + " terminal"
 }
 
 func handleSessions(args []string) {
@@ -747,7 +825,7 @@ func handleSessionsList() {
 			CWD         string  `json:"cwd"`
 			Status      string  `json:"status"`
 			Model       *string `json:"model"`
-			TmuxPane    *string `json:"tmux_pane"`
+			Terminal    *string `json:"terminal"`
 			LastEvent   *string `json:"last_event"`
 			LastEventAt *string `json:"last_event_at"`
 			CreatedAt   string  `json:"created_at"`
@@ -760,7 +838,7 @@ func handleSessionsList() {
 		return
 	}
 
-	fmt.Printf("%-10s %-12s %-40s %-8s %s\n", "Session", "Status", "CWD", "Pane", "Last Activity")
+	fmt.Printf("%-10s %-12s %-40s %-8s %s\n", "Session", "Status", "CWD", "Terminal", "Last Activity")
 	fmt.Println(strings.Repeat("-", 100))
 
 	for _, s := range result.Sessions {
@@ -772,9 +850,11 @@ func handleSessionsList() {
 		if len(cwdShort) > 40 {
 			cwdShort = "..." + cwdShort[len(cwdShort)-37:]
 		}
-		pane := "-"
-		if s.TmuxPane != nil {
-			pane = *s.TmuxPane
+		// The socket path itself is noise in a table; what the user needs is
+		// whether the session is live or has to be resumed.
+		term := "cold"
+		if s.Terminal != nil && *s.Terminal != "" {
+			term = "live"
 		}
 		lastActivity := ""
 		if s.LastEventAt != nil {
@@ -784,7 +864,7 @@ func handleSessionsList() {
 			}
 		}
 
-		fmt.Printf("%-10s %-12s %-40s %-8s %s\n", sid, s.Status, cwdShort, pane, lastActivity)
+		fmt.Printf("%-10s %-12s %-40s %-8s %s\n", sid, s.Status, cwdShort, term, lastActivity)
 	}
 }
 
@@ -938,12 +1018,14 @@ func handleHooks(args []string) {
 
 func handleSetup(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|editor|all>")
+		fmt.Fprintln(os.Stderr, "Usage: helios setup shell")
 		os.Exit(1)
 	}
 
 	switch args[0] {
-	case "shell":
+	// "all" is kept as an alias: setup once configured editors too, and there
+	// is nothing left to configure now that sessions bring their own terminal.
+	case "shell", "all":
 		info := daemon.DetectShell()
 		if daemon.ShellWrapperInstalled(info) {
 			fmt.Printf("Shell wrapper already installed in %s\n", info.RCPath)
@@ -957,70 +1039,10 @@ func handleSetup(args []string) {
 		fmt.Printf("Shell wrapper installed in %s\n", info.RCPath)
 		fmt.Println("Restart your shell or run: source", info.RCPath)
 
-	case "editor":
-		tmuxPath := findTmuxBinary()
-		editors := daemon.DetectEditors()
-		if len(editors) == 0 {
-			fmt.Println("No supported editors found.")
-			return
-		}
-		for _, editor := range editors {
-			if editor.Configured {
-				fmt.Printf("  ✓ %s — already configured\n", editor.Name)
-				continue
-			}
-			if err := daemon.ConfigureEditor(editor, tmuxPath); err != nil {
-				fmt.Printf("  ✗ %s — %v\n", editor.Name, err)
-				fmt.Println(daemon.ManualEditorInstructions(editor, tmuxPath, err))
-			} else {
-				fmt.Printf("  ✓ %s — configured\n", editor.Name)
-			}
-		}
-
-	case "all":
-		// Shell
-		info := daemon.DetectShell()
-		if daemon.ShellWrapperInstalled(info) {
-			fmt.Printf("  ✓ Shell wrapper (%s)\n", info.Name)
-		} else if err := daemon.InstallShellWrapper(info); err != nil {
-			fmt.Printf("  ✗ Shell wrapper — %v\n", err)
-			fmt.Println(daemon.ManualShellInstructions(info, err))
-		} else {
-			fmt.Printf("  ✓ Shell wrapper installed (%s)\n", info.Name)
-		}
-
-		// Editors
-		tmuxPath := findTmuxBinary()
-		editors := daemon.DetectEditors()
-		for _, editor := range editors {
-			if editor.Configured {
-				fmt.Printf("  ✓ %s — already configured\n", editor.Name)
-				continue
-			}
-			if err := daemon.ConfigureEditor(editor, tmuxPath); err != nil {
-				fmt.Printf("  ✗ %s — %v\n", editor.Name, err)
-				fmt.Println(daemon.ManualEditorInstructions(editor, tmuxPath, err))
-			} else {
-				fmt.Printf("  ✓ %s — configured\n", editor.Name)
-			}
-		}
-
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|editor|all>\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup shell\n", args[0])
 		os.Exit(1)
 	}
-}
-
-func findTmuxBinary() string {
-	if p, err := exec.LookPath("tmux"); err == nil {
-		return p
-	}
-	for _, p := range []string{"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return "tmux"
 }
 
 func printUsage() {
@@ -1033,11 +1055,12 @@ Commands:
   start                 Start helios (daemon + tunnel + device pairing TUI)
   stop                  Stop daemon (tunnel stays alive)
   devices               Device management (TUI)
-  new "prompt" [flags]  Launch Claude in a managed tmux pane
+  new "prompt" [flags]  Launch Claude in a helios-managed terminal
                         --cwd PATH  Working directory (default: current)
-  wrap -- <cmd> [args]  Run a command in a helios-managed tmux pane
+  attach <session>      Attach this terminal to a session (^\ d to detach)
+  wrap -- <cmd> [args]  Run a command in a helios-managed terminal
                         Example: helios wrap -- claude
-  sessions              Interactive session manager (TUI, requires tmux)
+  sessions              Interactive session manager (TUI)
                         --list  Plain table output
 
   daemon start [flags]  Start the helios daemon (with supervisor)
@@ -1051,8 +1074,6 @@ Commands:
   tunnel stop           Stop the tunnel (prompts for confirmation)
 
   setup shell           Install shell wrapper (claude → helios wrap)
-  setup editor          Configure editor terminals to use tmux
-  setup all             Install shell wrapper + configure editors
 
   auth init             Generate pairing QR (non-interactive)
   auth devices          List trusted devices

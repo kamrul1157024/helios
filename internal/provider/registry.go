@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 // ReportEvent is a narration event passed to the Reporter.
@@ -26,13 +26,14 @@ type ReportEvent struct {
 
 // HookContext provides everything a hook handler needs without importing server.
 type HookContext struct {
-	DB                *store.Store
-	Mgr               *notifications.Manager
-	Tmux              tmux.TmuxClient
-	PaneMap           *tmux.PaneMap
-	Notify            func(eventType string, data interface{}) // SSE broadcast
-	RemovePendingPane func(cwd string) string                  // remove pane from pending map by CWD, returns pane ID
-	Report            func(event ReportEvent)                  // push event to Reporter for narration
+	DB       *store.Store
+	Mgr      *notifications.Manager
+	Terminal backend.Backend
+	Notify   func(eventType string, data interface{}) // SSE broadcast
+	// SessionStarted marks a session as having reported in, which stops the
+	// trust-dialog watcher for it.
+	SessionStarted func(sessionID string)
+	Report         func(event ReportEvent) // push event to Reporter for narration
 }
 
 // HookHandler processes an incoming hook request and writes the response.
@@ -95,7 +96,7 @@ type ModelInfo struct {
 
 // ProviderCapabilities describes what a provider supports.
 type ProviderCapabilities struct {
-	PromptQueue bool `json:"prompt_queue"` // supports queuing prompts while active via tmux send-keys
+	PromptQueue bool `json:"prompt_queue"` // supports queuing prompts while the agent is mid-turn
 }
 
 // ProviderInfo describes a registered session provider.

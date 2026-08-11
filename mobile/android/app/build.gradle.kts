@@ -27,6 +27,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled = true
+        manifestPlaceholders["appLabel"] = "helios"
     }
 
     val keystorePath = System.getenv("KEYSTORE_PATH")
@@ -42,6 +43,16 @@ android {
     }
 
     buildTypes {
+        // Debug builds carry their own application ID so a locally built app
+        // installs alongside the release one instead of colliding with it: the
+        // two are signed with different keys, so they can never upgrade each
+        // other. The launcher label is suffixed too, so the two icons on the
+        // home screen are told apart.
+        debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            manifestPlaceholders["appLabel"] = "helios dev"
+        }
         release {
             signingConfig = if (keystorePath != null)
                 signingConfigs.getByName("release")

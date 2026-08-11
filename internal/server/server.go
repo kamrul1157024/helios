@@ -7,21 +7,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 // Shared holds shared dependencies between internal and public servers.
 type Shared struct {
-	DB           *store.Store
-	Mgr          *notifications.Manager
-	SSE          *SSEBroadcaster
-	Tmux         *tmux.Client
-	PendingPanes *PendingPaneMap
-	PaneMap      *tmux.PaneMap
-	Reporter     *reporter.Reporter
+	DB      *store.Store
+	Mgr     *notifications.Manager
+	SSE     *SSEBroadcaster
+	Backend backend.Backend
+	// Pending tracks sessions whose terminal has started but whose agent has
+	// not reported in yet, which is the window the trust dialog appears in.
+	Pending  *PendingSessionMap
+	Reporter *reporter.Reporter
 }
 
 // InternalServer handles hooks (Claude) and admin API (CLI).
@@ -38,22 +39,22 @@ type PublicServer struct {
 	shared     *Shared
 }
 
-// injectPane enriches a session with its current pane ID from the live PaneMap.
-func (sh *Shared) injectPane(sess *store.Session) {
-	if paneID, ok := sh.PaneMap.Get(sess.SessionID); ok {
-		sess.TmuxPane = &paneID
+// injectTerminal enriches a session with the handle of its live terminal, so
+// clients can tell a running session from a cold one.
+func (sh *Shared) injectTerminal(sess *store.Session) {
+	if handle, ok := sh.Backend.Handle(sess.SessionID); ok {
+		sess.Terminal = &handle
 	}
 }
 
-func NewShared(db *store.Store, mgr *notifications.Manager) *Shared {
+func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) *Shared {
 	return &Shared{
-		DB:           db,
-		Mgr:          mgr,
-		SSE:          NewSSEBroadcaster(),
-		Tmux:         tmux.NewClient(),
-		PendingPanes: NewPendingPaneMap(),
-		PaneMap:      tmux.NewPaneMap(),
-		Reporter:     reporter.New("claude", db),
+		DB:       db,
+		Mgr:      mgr,
+		SSE:      NewSSEBroadcaster(),
+		Backend:  be,
+		Pending:  NewPendingSessionMap(),
+		Reporter: reporter.New("claude", db),
 	}
 }
 
@@ -161,7 +162,6 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 		}
 	})
 
-	protectedMux.HandleFunc("GET /api/sessions/unbound-panes", s.handleUnboundPanes)
 	protectedMux.HandleFunc("/api/sessions/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
@@ -177,8 +177,10 @@ func NewPublicServer(port int, shared *Shared) *PublicServer {
 			s.handleSessionTerminate(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
-		case r.Method == "POST" && strings.HasSuffix(path, "/attach"):
-			s.handleSessionAttach(w, r)
+		case r.Method == "GET" && strings.HasSuffix(path, "/terminal"):
+			s.handleSessionTerminal(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/wake"):
+			s.handleSessionWake(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/title/generate"):
 			s.handleGenerateSessionTitle(w, r)
 		case r.Method == "PATCH":

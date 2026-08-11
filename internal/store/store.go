@@ -17,6 +17,13 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
+	// An in-memory database lives inside its connection, so a second pooled
+	// connection would open a separate, empty one. Pin the pool to a single
+	// connection to keep concurrent callers on the same database.
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
+	}
+
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}

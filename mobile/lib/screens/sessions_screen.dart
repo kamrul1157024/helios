@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../services/host_manager.dart';
-import '../services/daemon_api_service.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
@@ -290,17 +289,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
         final filtered = _sortSessions(_filterSessions(sessions));
 
-        final activeService = hm.activeHostId != null ? hm.serviceFor(hm.activeHostId!) : null;
-        final tmux = activeService?.tmuxStatus;
-        final banners = <Widget>[];
-        if (tmux != null && !tmux.installed && !(activeService?.tmuxMissingBannerDismissed ?? true)) {
-          banners.add(_buildTmuxMissingBanner(activeService!));
-        } else if (tmux != null &&
-            (!tmux.resurrectPlugin || !tmux.continuumPlugin) &&
-            !(activeService?.pluginBannerDismissed ?? true)) {
-          banners.add(_buildPluginBanner(tmux, activeService!));
-        }
-
         return Column(
           children: [
             if (_multiSelect) _buildMultiSelectBar(),
@@ -315,11 +303,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
                           : hm.refreshAll(),
                       child: ListView.builder(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemCount: filtered.length + banners.length,
-                        itemBuilder: (context, index) {
-                          if (index < banners.length) return banners[index];
-                          return _buildSwipeableCard(filtered[index - banners.length], hm);
-                        },
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) =>
+                            _buildSwipeableCard(filtered[index], hm),
                       ),
                     ),
             ),
@@ -631,7 +617,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                                 if (session.needsRecovery) ...[
                                   const SizedBox(width: 6),
                                   Tooltip(
-                                    message: 'No tmux pane — tap to recover',
+                                    message: 'Cold — tap to resume',
                                     child: Icon(Icons.link_off, size: 14, color: Colors.amber.shade700),
                                   ),
                                 ],
@@ -971,114 +957,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ),
           ],
         ],
-      ),
-    );
-  }
-
-  Widget _buildTmuxMissingBanner(DaemonAPIService service) {
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      color: theme.colorScheme.errorContainer,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.warning_amber, color: theme.colorScheme.onErrorContainer, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'tmux not installed',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: theme.colorScheme.onErrorContainer),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => service.dismissTmuxMissingBanner(),
-                  child: Icon(Icons.close, size: 18, color: theme.colorScheme.onErrorContainer),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Session management (send, stop, resume) requires tmux. Install it on your server:',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
-            ),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onErrorContainer.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'brew install tmux',
-                style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: theme.colorScheme.onErrorContainer),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPluginBanner(TmuxStatus tmux, DaemonAPIService service) {
-    final theme = Theme.of(context);
-    final missing = <String>[];
-    if (!tmux.resurrectPlugin) missing.add('tmux-resurrect');
-    if (!tmux.continuumPlugin) missing.add('tmux-continuum');
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      color: Colors.orange.withValues(alpha: 0.1),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.orange.withValues(alpha: 0.3)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.tips_and_updates, color: Colors.orange, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Recommended: ${missing.join(" & ")}',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: theme.colorScheme.onSurface),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => service.dismissPluginBanner(),
-                  child: Icon(Icons.close, size: 18, color: theme.colorScheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'These plugins save and auto-restore your tmux sessions '
-              'after crashes or reboots, so Claude sessions survive restarts.',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm',
-                style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: theme.colorScheme.onSurface),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

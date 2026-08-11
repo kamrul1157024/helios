@@ -1,5 +1,11 @@
 # 24 — Session Management with tmux
 
+> **Superseded by [29 — Terminal Host: Replacing tmux](29-terminal-host-replacing-tmux.md).**
+> The mechanism described here — panes, `send-keys`, `capture-pane`, the
+> `@helios_session_id` pane option — was removed with `internal/tmux`. The
+> session model it describes still holds; only the transport changed. Kept for
+> history.
+
 ## Overview
 
 Add session lifecycle tracking, transcript viewing, and remote prompting to Helios. Sessions are tmux-native: Helios launches Claude inside tmux panes, tracks them via hooks, and uses `tmux send-keys` for remote prompting. Desktop users can `tmux attach` to interact directly. tmux-resurrect + continuum provide crash/reboot survival.

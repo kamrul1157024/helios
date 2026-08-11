@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 // claudeJSONLEntry is the minimal structure we need from a .jsonl line.
@@ -26,9 +25,10 @@ type claudeMessageMeta struct {
 }
 
 // DiscoverClaudeSessions scans ~/.claude/projects/ for .jsonl transcript files,
-// extracts session metadata, cross-references with running tmux panes,
-// and upserts sessions that don't already exist in the DB.
-func DiscoverClaudeSessions(db *store.Store, tmuxClient *tmux.Client) {
+// extracts session metadata, and upserts sessions that don't already exist in
+// the DB. Discovered sessions are cold by definition: they are transcripts on
+// disk, and a live one would already be in the DB via hooks.
+func DiscoverClaudeSessions(db *store.Store) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -37,19 +37,6 @@ func DiscoverClaudeSessions(db *store.Store, tmuxClient *tmux.Client) {
 	projectsDir := filepath.Join(home, ".claude", "projects")
 	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
 		return
-	}
-
-	// Build a map of running Claude panes: CWD → paneID
-	runningPanes := make(map[string]tmux.PaneProcess)
-	if tmuxClient.Available() {
-		panes, err := tmuxClient.ListClaudePanes()
-		if err == nil {
-			for _, p := range panes {
-				if p.CWD != "" {
-					runningPanes[p.CWD] = p
-				}
-			}
-		}
 	}
 
 	// Scan all project directories
@@ -92,11 +79,6 @@ func DiscoverClaudeSessions(db *store.Store, tmuxClient *tmux.Client) {
 			sess := parseSessionFromJSONL(jsonlPath, sessionID)
 			if sess == nil {
 				continue
-			}
-
-			// Check if this session is currently running in tmux
-			if _, ok := runningPanes[sess.CWD]; ok {
-				sess.Status = "idle" // conservative — hooks will correct this
 			}
 
 			if err := db.InsertDiscoveredSession(sess); err != nil {
@@ -193,7 +175,7 @@ func parseSessionFromJSONL(path, sessionID string) *store.Session {
 		Source:    "claude",
 		CWD:       cwd,
 		Project:   filepath.Base(cwd),
-		Status:    "terminated", // default — assume terminated unless tmux says otherwise
+		Status:    "terminated", // default — hooks correct this when the session runs
 		LastEvent: strPtr("Discovered"),
 	}
 

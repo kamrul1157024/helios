@@ -162,7 +162,6 @@ class HostManager extends ChangeNotifier {
       service.fetchNotifications();
       service.fetchSessions();
       service.fetchCommands();
-      service.fetchHealth();
       service.fetchProviders();
       await service.startActive();
     } else {

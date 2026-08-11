@@ -12,12 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
+	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tunnel"
 )
 
@@ -64,14 +65,28 @@ func startDaemon(cfg *Config) error {
 	// Register providers
 	claude.Register()
 
+	// Terminal hosts are separate processes, so any that survived the last
+	// daemon are still serving; adopt them before anything else looks at
+	// session state.
+	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd, command string) error {
+		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, command)
+	})
+	if alive, cleaned, err := registry.Recover(); err != nil {
+		log.Printf("terminal: recover: %v", err)
+	} else {
+		log.Printf("terminal: adopted %d live hosts, cleaned %d stale", alive, cleaned)
+	}
+	term := backend.NewHost(registry)
+	defer term.Close()
+
 	// Shared state between both servers
-	shared := server.NewShared(db, mgr)
+	shared := server.NewShared(db, mgr, term)
 
-	// Give the claude action handlers access to the tmux client
-	claude.SetTmux(shared.Tmux)
+	// Give the claude action handlers access to session terminals
+	claude.SetBackend(term)
 
-	// Discover existing Claude sessions from transcript files + tmux
-	go discovery.DiscoverClaudeSessions(db, tmux.NewClient())
+	// Discover existing Claude sessions from transcript files
+	go discovery.DiscoverClaudeSessions(db)
 
 	// Create tunnel manager
 	tunnelMgr := tunnel.NewManager(HeliosDir())
@@ -124,8 +139,8 @@ func startDaemon(cfg *Config) error {
 	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
 	publicSrv := server.NewPublicServer(cfg.Server.PublicPort, shared)
 
-	// Start pane watcher for trust prompt detection
-	server.StartPaneWatcher(shared)
+	// Watch newly launched sessions for the workspace-trust dialog
+	server.StartTrustWatcher(shared)
 
 	// Write PID file
 	pidPath := filepath.Join(HeliosDir(), "daemon.pid")
@@ -180,21 +195,14 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
-	// Build pane map at startup so API has pane info immediately,
-	// then recover any managed sessions that lost their pane.
-	go func() {
-		shared.Tmux.RebuildPaneMap(shared.PaneMap)
-		recoverManagedSessions(db, shared.Tmux, shared.PaneMap, shared.SSE)
-	}()
-
-	// Periodic stale session reaper
+	// Periodic stale terminal reaper
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				reapStaleSessions(db, shared.Tmux, shared.PaneMap, shared.SSE)
+				reapStaleSessions(db, term, shared.SSE)
 			case <-ctx.Done():
 				return
 			}

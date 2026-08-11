@@ -14,8 +14,9 @@ class Session {
   final bool pinned;
   final bool archived;
   final bool managed;
-  final String? tmuxPane;
-  final int? tmuxPid;
+  /// Handle of the session's live terminal host, or null when the session is
+  /// cold and has to be resumed before it can be driven.
+  final String? terminal;
   final bool supportsPromptQueue;
   final String createdAt;
   final String? endedAt;
@@ -36,8 +37,7 @@ class Session {
     this.pinned = false,
     this.archived = false,
     this.managed = false,
-    this.tmuxPane,
-    this.tmuxPid,
+    this.terminal,
     this.supportsPromptQueue = false,
     required this.createdAt,
     this.endedAt,
@@ -60,8 +60,7 @@ class Session {
       pinned: json['pinned'] == true || json['pinned'] == 1,
       archived: json['archived'] == true || json['archived'] == 1,
       managed: json['managed'] == true || json['managed'] == 1,
-      tmuxPane: json['tmux_pane'] as String?,
-      tmuxPid: json['tmux_pid'] as int?,
+      terminal: json['terminal'] as String?,
       supportsPromptQueue: json['supports_prompt_queue'] == true,
       createdAt: json['created_at'] as String,
       endedAt: json['ended_at'] as String?,
@@ -81,8 +80,8 @@ class Session {
   bool get isQueueing => supportsPromptQueue && isActive;
 
   String get displayTitle => title ?? lastUserMessage ?? shortCwd;
-  bool get hasTmux => tmuxPane != null && tmuxPane!.isNotEmpty;
-  bool get needsRecovery => !hasTmux && !isTerminated && !managed;
+  bool get hasTerminal => terminal != null && terminal!.isNotEmpty;
+  bool get needsRecovery => !hasTerminal && !isTerminated && !managed;
   bool get canStop => isActive;
   bool get canTerminate => isActive || isIdle;
   bool get canResume => isTerminated;
@@ -109,8 +108,7 @@ class Session {
       pinned: pinned ?? this.pinned,
       archived: archived ?? this.archived,
       managed: managed ?? this.managed,
-      tmuxPane: tmuxPane,
-      tmuxPid: tmuxPid,
+      terminal: terminal,
       supportsPromptQueue: supportsPromptQueue,
       createdAt: createdAt,
       endedAt: endedAt,

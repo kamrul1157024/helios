@@ -1,10 +1,10 @@
 # Helios
 
-Helios is a daemon + TUI + mobile app for orchestrating AI coding agents (Claude Code sessions) via tmux.
+Helios is a daemon + TUI + mobile app for orchestrating AI coding agents (Claude Code sessions). Each session runs in a Helios-owned terminal host (`helios ptyhost`) rather than a multiplexer, so output is served from memory to any number of viewers.
 
 ## Architecture
 
-- **Go backend** (`cmd/helios/`, `internal/`): daemon server, tmux integration, provider registry, TUI
+- **Go backend** (`cmd/helios/`, `internal/`): daemon server, terminal hosts (`internal/terminal`, `internal/backend`), provider registry, TUI
 - **Flutter mobile/desktop** (`mobile/`): Dart app for remote session management
 - Daemon exposes a REST API consumed by both the TUI and mobile app
 

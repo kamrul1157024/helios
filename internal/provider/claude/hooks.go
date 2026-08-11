@@ -3,14 +3,15 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"path/filepath"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/tmux"
 )
 
 type hookInput struct {
@@ -76,6 +77,10 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		http.Error(w, "failed to create notification", http.StatusInternalServerError)
 		return
 	}
+
+	// Reserve the decision slot before publishing, so a client that answers
+	// immediately cannot beat this handler to WaitForDecision.
+	ctx.Mgr.Register(notifID)
 
 	ctx.Notify("notification", notif)
 
@@ -186,6 +191,10 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Reserve the decision slot before publishing, so a client that answers
+	// immediately cannot beat this handler to WaitForDecision.
+	ctx.Mgr.Register(notifID)
+
 	ctx.Notify("notification", notif)
 
 	if ctx.Report != nil {
@@ -294,6 +303,10 @@ func handleElicitation(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		http.Error(w, "failed to create notification", http.StatusInternalServerError)
 		return
 	}
+
+	// Reserve the decision slot before publishing, so a client that answers
+	// immediately cannot beat this handler to WaitForDecision.
+	ctx.Mgr.Register(notifID)
 
 	ctx.Notify("notification", notif)
 
@@ -489,16 +502,15 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		model = &input.Model
 	}
 
-	// Resolve pane: check PaneMap first (set by helios wrap), fallback to PendingPanes.
-	var paneID string
-	if ctx.PaneMap != nil {
-		paneID, _ = ctx.PaneMap.Get(input.SessionID)
+	// A session helios launched already has a terminal under the same ID; one
+	// the user started by hand does not, and stays unmanaged.
+	handle := ""
+	if ctx.Terminal != nil {
+		handle, _ = ctx.Terminal.Handle(input.SessionID)
 	}
-	if paneID == "" && ctx.RemovePendingPane != nil {
-		paneID = ctx.RemovePendingPane(input.CWD)
-		if paneID != "" && ctx.PaneMap != nil {
-			ctx.PaneMap.Set(input.SessionID, paneID)
-		}
+	// The agent has reported in, so the trust-dialog watcher can stop.
+	if ctx.SessionStarted != nil {
+		ctx.SessionStarted(input.SessionID)
 	}
 
 	sess := &store.Session{
@@ -509,11 +521,11 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		Model:          model,
 		Status:         "idle",
 		LastEvent:      strPtr("SessionStart"),
-		Managed:        paneID != "",
+		Managed:        handle != "",
 	}
 	ctx.DB.UpsertSession(sess)
 
-	// Rename window now that session is registered and pane is known.
+	// Relabel the terminal now that the session is registered.
 	renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)
 
 	sseData := map[string]interface{}{
@@ -522,8 +534,8 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		"status":     "idle",
 		"model":      input.Model,
 	}
-	if paneID != "" {
-		sseData["tmux_pane"] = paneID
+	if handle != "" {
+		sseData["terminal"] = handle
 	}
 	ctx.Notify("session_status", sseData)
 
@@ -546,12 +558,11 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		return
 	}
 
-	// SessionEnd fires on process exit AND on /clear command.
-	// Remove from PaneMap and mark terminated — reaper is the safety net for
-	// crashes. For /clear, SessionStart fires immediately after and repopulates
-	// PaneMap with the same pane.
-	if ctx.PaneMap != nil {
-		ctx.PaneMap.Delete(input.SessionID)
+	// SessionEnd fires on process exit AND on /clear. Drop the terminal
+	// mapping and mark terminated — the reaper is the safety net for crashes.
+	// For /clear, SessionStart fires immediately after and re-registers.
+	if ctx.Terminal != nil {
+		ctx.Terminal.Forget(input.SessionID)
 	}
 	ctx.DB.UpdateSessionStatus(input.SessionID, "terminated", "SessionEnd")
 	ctx.Notify("session_status", map[string]interface{}{
@@ -853,13 +864,9 @@ func updateSessionTranscript(ctx *provider.HookContext, input *hookInput) {
 	}
 }
 
-// renameSessionWindow renames the tmux window for a session based on its status.
+// renameSessionWindow relabels a session's terminal to match its status.
 func renameSessionWindow(ctx *provider.HookContext, sessionID, status, cwd string) {
-	if ctx.Tmux == nil || ctx.PaneMap == nil {
-		return
-	}
-	paneID, ok := ctx.PaneMap.Get(sessionID)
-	if !ok {
+	if ctx.Terminal == nil || !ctx.Terminal.Alive(sessionID) {
 		return
 	}
 	sess, _ := ctx.DB.GetSession(sessionID)
@@ -867,20 +874,19 @@ func renameSessionWindow(ctx *provider.HookContext, sessionID, status, cwd strin
 	if sess != nil {
 		label = sess.Label(30)
 	}
-	name := tmux.WindowName(status, cwd, label)
-	ctx.Tmux.RenameWindow(paneID, name)
+	if err := ctx.Terminal.Rename(sessionID, backend.DisplayName(status, cwd, label)); err != nil {
+		log.Printf("hook: rename terminal for %s: %v", sessionID, err)
+	}
 }
 
-// killSessionWindow kills the tmux window for a session.
+// killSessionWindow terminates a session's terminal.
 func killSessionWindow(ctx *provider.HookContext, sessionID string) {
-	if ctx.Tmux == nil || ctx.PaneMap == nil {
+	if ctx.Terminal == nil {
 		return
 	}
-	paneID, ok := ctx.PaneMap.Get(sessionID)
-	if !ok {
-		return
+	if err := ctx.Terminal.Kill(sessionID); err != nil {
+		log.Printf("hook: kill terminal for %s: %v", sessionID, err)
 	}
-	ctx.Tmux.KillPane(paneID)
 }
 
 func strPtr(s string) *string {
