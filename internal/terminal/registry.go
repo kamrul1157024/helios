@@ -2,8 +2,10 @@ package terminal
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,12 +14,21 @@ import (
 	"time"
 )
 
-// Defaults for the warm pool. max_warm is 3 rather than 5 because a warm
-// Claude Code measures ~380 MB RSS; re-warming an evicted session costs under
-// 5s via `claude --resume`, so memory is the binding constraint, not latency.
+// Defaults for the warm pool.
+//
+// A warm Claude Code measures ~380 MB RSS, so memory is the binding constraint
+// rather than latency: re-warming costs under 5s via `claude --resume`. That
+// makes MaxWarmRSS the ceiling that should actually bind, and MaxWarm a
+// backstop against pathological session counts rather than the everyday limit
+// — hence 20 and not 3.
+//
+// There is deliberately no idle TTL. A session goes away when the user closes
+// it, and at no other time: age is not evidence that nobody wants it, and an
+// eviction costs the host's scrollback ring, which no `claude --resume` brings
+// back. Sessions that outlive their usefulness sit idle until they are closed
+// or until the pool needs the room.
 const (
-	DefaultMaxWarm  = 3
-	DefaultIdleTTL  = 2 * time.Hour
+	DefaultMaxWarm  = 20
 	DefaultMaxWarmR = 0 // 0 means "derive from system memory"
 )
 
@@ -37,8 +48,16 @@ type Registry struct {
 	entries map[string]*entry
 
 	MaxWarm    int
-	IdleTTL    time.Duration
 	MaxWarmRSS int64 // bytes; 0 disables the memory ceiling
+
+	// InUse reports whether a session is being watched right now. Sessions it
+	// returns true for are never evicted to reclaim room, however old they
+	// look: killing the terminal somebody has open on their phone is the one
+	// eviction the user is guaranteed to notice.
+	//
+	// It is called without the registry lock held, because the implementation
+	// lives in the backend and takes its own mutex before ours.
+	InUse func(sessionID string) bool
 }
 
 type entry struct {
@@ -56,7 +75,6 @@ func NewRegistry(heliosDir string, spawn SpawnFunc) *Registry {
 		spawn:      spawn,
 		entries:    make(map[string]*entry),
 		MaxWarm:    DefaultMaxWarm,
-		IdleTTL:    DefaultIdleTTL,
 		MaxWarmRSS: defaultMaxWarmRSS(),
 	}
 }
@@ -154,7 +172,7 @@ func (r *Registry) start(sessionID, cwd string, argv []string) (string, error) {
 		return "", fmt.Errorf("terminal: no spawn function configured")
 	}
 	// Make room before adding, so the ceiling is respected at all times.
-	r.evictForRoom()
+	r.evictForRoom(1)
 
 	if err := r.spawn(sessionID, cwd, argv); err != nil {
 		return "", fmt.Errorf("spawn terminal host for %s: %w", sessionID, err)
@@ -192,6 +210,13 @@ func (r *Registry) adopt(sessionID, sock, cwd string) {
 		lastActive: time.Now(),
 	}
 }
+
+// Touch records that a session is active, so the LRU in evictForRoom reflects
+// use rather than adoption order.
+//
+// Callers should throttle: this takes the registry lock, and screen activity
+// arrives many times a second from a redrawing TUI.
+func (r *Registry) Touch(sessionID string) { r.touch(sessionID) }
 
 func (r *Registry) touch(sessionID string) {
 	r.mu.Lock()
@@ -255,18 +280,18 @@ func (r *Registry) Warm() []string {
 	return out
 }
 
-// Sweep evicts hosts that are idle past the TTL and any whose socket has gone
-// away, then enforces the count and memory ceilings.
+// Sweep forgets hosts whose socket has gone away, then enforces the count and
+// memory ceilings.
+//
+// It kills nothing on account of age. A session that has sat untouched for a
+// week is still a session the user did not close, and the only thing an
+// eviction would buy is memory the ceilings already govern.
 func (r *Registry) Sweep() {
 	r.mu.Lock()
-	var stale, idle []string
+	var stale []string
 	for id, e := range r.entries {
 		if !Probe(e.socket) {
 			stale = append(stale, id)
-			continue
-		}
-		if r.IdleTTL > 0 && time.Since(e.lastActive) > r.IdleTTL {
-			idle = append(idle, id)
 		}
 	}
 	r.mu.Unlock()
@@ -277,44 +302,77 @@ func (r *Registry) Sweep() {
 		r.mu.Unlock()
 		RemoveHostFiles(r.heliosDir, id)
 	}
-	for _, id := range idle {
-		r.Evict(id)
-	}
-	r.evictForRoom()
+	// Nothing is waiting on a slot here, unlike the call in start: a sweep that
+	// asked for headroom would evict a healthy session on every pass and hold
+	// the pool one below its ceiling forever.
+	r.evictForRoom(0)
+}
+
+// inUse consults the InUse predicate, if one is set. Never call it with the
+// registry lock held.
+func (r *Registry) inUse(sessionID string) bool {
+	return r.InUse != nil && r.InUse(sessionID)
 }
 
 // evictForRoom enforces both ceilings: at most MaxWarm hosts, and total warm
-// RSS under MaxWarmRSS. Least-recently-active goes first.
-func (r *Registry) evictForRoom() {
+// RSS under MaxWarmRSS. Least-recently-active goes first, and sessions with a
+// live viewer are never chosen.
+//
+// headroom is the number of hosts the caller is about to add. start passes 1
+// so the ceiling still holds once its host comes up; a caller that is only
+// tidying passes 0. Getting this wrong is not harmless: with headroom always
+// 1, every sweep evicts a healthy session to make room nobody asked for.
+//
+// Neither the RSS measurement nor the InUse check may run under the registry
+// lock. processTreeRSS shells out to ps and pgrep once per process in the
+// tree, and InUse calls back into the backend, which takes its own mutex
+// before this one.
+func (r *Registry) evictForRoom(headroom int) {
 	for {
 		r.mu.Lock()
 		if len(r.entries) == 0 {
 			r.mu.Unlock()
 			return
 		}
-		overCount := r.MaxWarm > 0 && len(r.entries) >= r.MaxWarm
-		var overMem bool
-		if r.MaxWarmRSS > 0 {
-			var total int64
-			for _, e := range r.entries {
-				total += processTreeRSS(e.pid)
-			}
-			overMem = total > r.MaxWarmRSS
-		}
-		if !overCount && !overMem {
-			r.mu.Unlock()
-			return
-		}
-		var oldest *entry
+		overCount := r.MaxWarm > 0 && len(r.entries)+headroom > r.MaxWarm
+		candidates := make([]*entry, 0, len(r.entries))
 		for _, e := range r.entries {
-			if oldest == nil || e.lastActive.Before(oldest.lastActive) {
-				oldest = e
-			}
+			candidates = append(candidates, e)
 		}
-		id := oldest.sessionID
+		measure := r.MaxWarmRSS
 		r.mu.Unlock()
 
-		if err := r.Evict(id); err != nil {
+		var overMem bool
+		if measure > 0 {
+			var total int64
+			for _, e := range candidates {
+				total += processTreeRSS(e.pid)
+			}
+			overMem = total > measure
+		}
+		if !overCount && !overMem {
+			return
+		}
+
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].lastActive.Before(candidates[j].lastActive)
+		})
+		victim := ""
+		for _, e := range candidates {
+			if !r.inUse(e.sessionID) {
+				victim = e.sessionID
+				break
+			}
+		}
+		if victim == "" {
+			// Everything warm is being watched. Going over the ceiling is the
+			// better failure: the alternative is killing a terminal somebody
+			// has open.
+			log.Printf("registry: over warm ceiling (%d hosts) but every session has a viewer", len(candidates))
+			return
+		}
+		if err := r.Evict(victim); err != nil {
+			log.Printf("registry: evict %s for room: %v", victim, err)
 			return
 		}
 	}
@@ -359,7 +417,14 @@ func processTreeRSS(pid int) int64 {
 }
 
 // defaultMaxWarmRSS budgets a quarter of physical memory for warm sessions.
+//
+// This is the ceiling that actually binds — MaxWarm is a backstop — so a
+// platform where it returns 0 has no memory ceiling at all. Linux is read from
+// /proc/meminfo rather than sysctl, which reports something unrelated there.
 func defaultMaxWarmRSS() int64 {
+	if runtime.GOOS == "linux" {
+		return linuxMemTotal() / 4
+	}
 	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
 	if err != nil {
 		return 0
@@ -369,4 +434,29 @@ func defaultMaxWarmRSS() int64 {
 		return 0
 	}
 	return total / 4
+}
+
+// linuxMemTotal returns physical memory in bytes from /proc/meminfo, or 0 if
+// it cannot be read.
+func linuxMemTotal() int64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		// "MemTotal:", value, unit — the kernel always reports kB here.
+		if len(fields) < 2 {
+			return 0
+		}
+		kb, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || kb <= 0 {
+			return 0
+		}
+		return kb * 1024
+	}
+	return 0
 }

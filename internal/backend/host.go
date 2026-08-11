@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/terminal"
 )
@@ -21,15 +23,57 @@ type Host struct {
 	mu       sync.Mutex
 	mirrors  map[string]*terminal.Mirror
 	onUpdate func(sessionID string)
+
+	// touched holds the last time each session's activity reached the
+	// registry, as unix nanos. See markActive.
+	touched sync.Map
 }
+
+// touchInterval bounds how often screen activity reaches the registry.
+// Registry.Touch takes the pool lock and a redrawing TUI produces output many
+// times a second; the LRU does not need that resolution.
+const touchInterval = 5 * time.Second
 
 // NewHost returns a Host backend over a warm-pool registry. The registry owns
 // process lifetime; the backend owns the daemon's view of each warm session.
 func NewHost(reg *terminal.Registry) *Host {
-	return &Host{
+	h := &Host{
 		reg:     reg,
 		mirrors: make(map[string]*terminal.Mirror),
 	}
+	// The registry decides what to evict but cannot see who is watching; only
+	// the mirrors know that.
+	reg.InUse = h.watched
+	return h
+}
+
+// watched reports whether a session has a viewer besides the daemon's own
+// mirror. A session with no mirror has no viewers by definition.
+func (h *Host) watched(sessionID string) bool {
+	h.mu.Lock()
+	m, ok := h.mirrors[sessionID]
+	h.mu.Unlock()
+	return ok && m.Watched()
+}
+
+// markActive pushes session activity into the registry's LRU, throttled to one
+// update per touchInterval so a busy screen does not hammer the pool lock.
+func (h *Host) markActive(sessionID string) {
+	v, _ := h.touched.LoadOrStore(sessionID, new(atomic.Int64))
+	last, ok := v.(*atomic.Int64)
+	if !ok {
+		return
+	}
+	now := time.Now().UnixNano()
+	prev := last.Load()
+	if now-prev < int64(touchInterval) {
+		return
+	}
+	// Lose the race, skip the touch: whoever won it just did the same work.
+	if !last.CompareAndSwap(prev, now) {
+		return
+	}
+	h.reg.Touch(sessionID)
 }
 
 // Registry exposes the warm pool for the endpoints that report or tune it.
@@ -54,6 +98,9 @@ func (h *Host) OnUpdate(fn func(sessionID string)) {
 func (h *Host) bind(m *terminal.Mirror) {
 	id := m.SessionID()
 	m.OnUpdate(func() {
+		// Output is the broadest activity signal there is: it covers the agent
+		// working and the user typing, without either having to report in.
+		h.markActive(id)
 		h.mu.Lock()
 		fn := h.onUpdate
 		h.mu.Unlock()
@@ -113,6 +160,7 @@ func (h *Host) dropMirror(sessionID string) {
 	m, ok := h.mirrors[sessionID]
 	delete(h.mirrors, sessionID)
 	h.mu.Unlock()
+	h.touched.Delete(sessionID)
 	if ok {
 		m.Close()
 	}
@@ -185,6 +233,9 @@ func (h *Host) SendText(sessionID, text string) error {
 	if err != nil {
 		return err
 	}
+	// Unthrottled: a prompt is a deliberate act and there is at most one every
+	// few seconds, so it should move the LRU even if the screen stays quiet.
+	h.reg.Touch(sessionID)
 	return m.SendText(text)
 }
 
@@ -197,6 +248,7 @@ func (h *Host) SendKey(sessionID string, key Key) error {
 	if err != nil {
 		return err
 	}
+	h.reg.Touch(sessionID)
 	return m.Send(seq)
 }
 

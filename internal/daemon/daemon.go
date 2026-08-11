@@ -213,9 +213,11 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
-	// Periodic stale terminal reaper
+	// Periodic stale terminal reaper. Twenty minutes, not ten seconds: it
+	// evicts nothing on a timer any more, and its remaining work — probing
+	// sockets and re-reading transcripts — costs more the more sessions exist.
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(20 * time.Minute)
 		defer ticker.Stop()
 		for {
 			select {

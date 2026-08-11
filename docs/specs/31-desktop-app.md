@@ -584,24 +584,33 @@ Flutter app goes back to being mobile-only.
 
 ## Daemon Changes Required
 
-Three, all in `internal/terminal`, all small, all defensible on their own merits
-without a desktop app. Two more candidates turned out to be unnecessary.
+Three were identified, all in `internal/terminal`, all small, all defensible
+on their own merits without a desktop app. **Two are now done**, landed while
+auditing the reaper. Two further candidates turned out to be unnecessary.
 
-1. **Close the connection when dropping a slow viewer.** In `broadcast`
-   (`host.go:255-258`), `v.close()` must be accompanied by closing the
-   underlying `net.Conn` so the reader loop unblocks, `serveConn` returns, and
-   the deferred `delete(h.viewers, v)` runs. Without it the viewer is a zombie
-   that holds a size vote forever — see "Zombie viewers", confirmed by test.
-   The fix is to give `viewer` its `conn` and close it in `close()`; the
-   existing comment already promises this behaviour.
-2. **Viewers count as activity.** `Registry.touch` on viewer attach and detach,
-   and `evictForRoom` (`registry.go:288`) must skip a host that currently has
-   viewers. `touch` is called from exactly one place today (`registry.go:142`,
-   on start/wake), so a tab open for an hour looks idle and is evicted first.
-3. **Raise `DefaultMaxWarm`.** Three is a phone-shaped number
-   (`registry.go:19`). The RSS ceiling (`MaxWarmRSS`) is the honest constraint
-   and is already implemented; make the count ceiling 8, or 0-means-unlimited
-   and let memory decide.
+1. **Close the connection when dropping a slow viewer.** *Still outstanding.*
+   In `broadcast` (`host.go:255-258`), `v.close()` must be accompanied by
+   closing the underlying `net.Conn` so the reader loop unblocks, `serveConn`
+   returns, and the deferred `delete(h.viewers, v)` runs. Without it the viewer
+   is a zombie that holds a size vote forever — see "Zombie viewers", confirmed
+   by test. The fix is to give `viewer` its `conn` and close it in `close()`;
+   the existing comment already promises this behaviour.
+2. **Viewers count as activity.** *Done.* `Registry.Touch` is now called on
+   screen activity (throttled to one update per 5s) and on every prompt or key
+   the daemon sends, and `evictForRoom` consults a `Registry.InUse` predicate
+   that the host backend answers from each mirror's last `Status.Viewers` — so
+   a session with a tab open is never the victim, and if every warm session is
+   watched the pool goes over its ceiling rather than killing one. Note the
+   mirror is itself a viewer, so the threshold is `> 1`.
+3. **Raise `DefaultMaxWarm`.** *Done*, 3 → 20, making `MaxWarmRSS` the ceiling
+   that actually binds. Two related fixes came with it: `evictForRoom` now
+   takes a `headroom` argument (it always reserved a slot, so the reaper evicted
+   a healthy session on every pass and held the pool at `MaxWarm-1`), and the
+   RSS ceiling now works on Linux, where `sysctl hw.memsize` returned nothing
+   and left the memory ceiling silently disabled. The idle TTL was **removed**
+   rather than tuned: a session goes cold when the user closes it and at no
+   other time, since an eviction costs the host's scrollback ring and no
+   `claude --resume` brings that back.
 
 Not needed after checking:
 
@@ -623,7 +632,7 @@ payoff from task 8 and from the mobile app having gone first.
 | 1 | Frame codec | golden fixtures shared with Go round-trip byte-identically |
 | 2 | `TerminalConn` over unix socket | a Node test attaches to a real `ptyhost`, types, sees output |
 | **3** | **Spike: one hard-coded tab** | **a live Claude session renders in xterm.js and accepts input — the go/no-go** |
-| 4 | Daemon fixes | zombie-viewer, viewer-touch and `MaxWarm` changes merged with tests |
+| 4 | Daemon fixes | zombie-viewer fix merged with tests (viewer-touch and `MaxWarm` already done) |
 | 5 | Auth + `ApiClient` + local pairing | the app pairs itself against the local daemon and lists sessions |
 | 6 | Sidebar + SSE | status changes appear without a refresh |
 | 7 | Tabs + size policy | two tabs and a `helios attach` coexist; a background tab shrinks nobody |

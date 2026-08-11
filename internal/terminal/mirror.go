@@ -31,11 +31,12 @@ type Mirror struct {
 	screen *Screen
 	client *Client
 
-	mu        sync.Mutex
-	onUpdate  func()
-	lastState State
-	exitCode  int
-	exited    bool
+	mu          sync.Mutex
+	onUpdate    func()
+	lastState   State
+	lastViewers int
+	exitCode    int
+	exited      bool
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -95,6 +96,7 @@ func (m *Mirror) pump() {
 			if st, err := ParseStatus(f.Payload); err == nil {
 				m.mu.Lock()
 				m.lastState = st.State
+				m.lastViewers = st.Viewers
 				m.mu.Unlock()
 			}
 		case FrameExit:
@@ -174,6 +176,19 @@ func (m *Mirror) State() State {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.lastState
+}
+
+// Watched reports whether anyone other than this mirror is attached to the
+// host, according to the last Status frame.
+//
+// The mirror is itself a viewer, so the host's count includes it and the
+// interesting threshold is two, not one. Status frames are dropped when a
+// viewer's queue is full (see broadcastStatus), so a stale false is possible;
+// callers must treat this as a hint and never as a lock.
+func (m *Mirror) Watched() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastViewers > 1
 }
 
 // Close drops the connection and stops mirroring.
