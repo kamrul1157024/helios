@@ -109,12 +109,37 @@ type ProviderInfo struct {
 	Name         string               `json:"name"`
 	Icon         string               `json:"icon"`
 	Capabilities ProviderCapabilities `json:"capabilities"`
+	// PermissionModes are the modes this provider's agent can run under, most
+	// restrictive first, or nil if it has no such concept. Served rather than
+	// hardcoded in clients: the vocabulary is the CLI's, and it has already
+	// gained a mode between releases.
+	PermissionModes []string `json:"permission_modes,omitempty"`
+}
+
+// SessionSpec is everything a provider needs to start a session. It is a
+// struct rather than a parameter list because it grows: permission mode
+// arrived after model, and whatever comes next should not break every caller.
+type SessionSpec struct {
+	SessionID string
+	Prompt    string
+	Model     string
+	CWD       string
+
+	// PermissionMode is the agent's permission mode. Empty means the
+	// provider's own default, which is not necessarily the agent's.
+	PermissionMode string
+
+	// SkipPermissions requests the agent's escape hatch for permission
+	// checks entirely, and overrides PermissionMode. Separate from the mode
+	// because the flag that spells it is provider-specific and, for Claude,
+	// is not simply a synonym for one of the modes.
+	SkipPermissions bool
 }
 
 // SessionBuilder builds the command to start a new session. It returns argv,
 // not a command line: terminals execute it directly, so a prompt full of
 // quotes and backticks reaches the agent as typed.
-type SessionBuilder func(prompt, model, cwd, sessionID string) []string
+type SessionBuilder func(SessionSpec) []string
 
 // ModelsFetcher returns available models for the provider.
 type ModelsFetcher func() ([]ModelInfo, error)

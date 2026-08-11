@@ -21,6 +21,7 @@ type hookInput struct {
 	Model                 string          `json:"model,omitempty"`
 	ToolName              string          `json:"tool_name,omitempty"`
 	ToolInput             json.RawMessage `json:"tool_input,omitempty"`
+	PermissionMode        string          `json:"permission_mode,omitempty"`
 	PermissionSuggestions json.RawMessage `json:"permission_suggestions,omitempty"`
 	HookEventName         string          `json:"hook_event_name,omitempty"`
 	MCPServerName         string          `json:"mcp_server_name,omitempty"`
@@ -524,6 +525,7 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		Managed:        handle != "",
 	}
 	ctx.DB.UpsertSession(sess)
+	updateSessionPermissionMode(ctx, &input)
 
 	// Relabel the terminal now that the session is registered.
 	renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)
@@ -623,6 +625,7 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "UserPromptSubmit")
 	updateSessionTranscript(ctx, &input)
+	updateSessionPermissionMode(ctx, &input)
 	renameSessionWindow(ctx, input.SessionID, "active", input.CWD)
 
 	if input.Message != "" {
@@ -867,6 +870,21 @@ func handleSubagentStop(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 func updateSessionTranscript(ctx *provider.HookContext, input *hookInput) {
 	if input.TranscriptPath != "" {
 		ctx.DB.UpdateSessionTranscriptPath(input.SessionID, input.TranscriptPath)
+	}
+}
+
+// updateSessionPermissionMode records the mode the agent says it is in.
+//
+// This is the only authoritative source: the user can change the mode with
+// Shift+Tab in the terminal at any time, and nothing else tells us. Waking a
+// cold session replays the stored mode, so a stale value here would silently
+// undo a switch the user made by hand.
+func updateSessionPermissionMode(ctx *provider.HookContext, input *hookInput) {
+	if !ValidPermissionMode(input.PermissionMode) {
+		return
+	}
+	if err := ctx.DB.UpdateSessionPermissionMode(input.SessionID, input.PermissionMode); err != nil {
+		log.Printf("claude: record permission mode for %s: %v", input.SessionID, err)
 	}
 }
 

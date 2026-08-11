@@ -14,6 +14,12 @@ class Session {
   final bool pinned;
   final bool archived;
   final bool managed;
+
+  /// The agent's permission mode, or null for a session that has not reported
+  /// one yet. Switching it restarts the agent, so it is only offered when the
+  /// session is idle.
+  final String? permissionMode;
+
   /// Handle of the session's live terminal host, or null when the session is
   /// cold and has to be resumed before it can be driven.
   final String? terminal;
@@ -37,6 +43,7 @@ class Session {
     this.pinned = false,
     this.archived = false,
     this.managed = false,
+    this.permissionMode,
     this.terminal,
     this.supportsPromptQueue = false,
     required this.createdAt,
@@ -60,6 +67,7 @@ class Session {
       pinned: json['pinned'] == true || json['pinned'] == 1,
       archived: json['archived'] == true || json['archived'] == 1,
       managed: json['managed'] == true || json['managed'] == 1,
+      permissionMode: json['permission_mode'] as String?,
       terminal: json['terminal'] as String?,
       supportsPromptQueue: json['supports_prompt_queue'] == true,
       createdAt: json['created_at'] as String,
@@ -68,7 +76,11 @@ class Session {
   }
 
   bool get isStarting => status == 'starting';
-  bool get isActive => status == 'active' || status == 'waiting_permission' || status == 'compacting' || status == 'starting';
+  bool get isActive =>
+      status == 'active' ||
+      status == 'waiting_permission' ||
+      status == 'compacting' ||
+      status == 'starting';
   bool get isCompacting => status == 'compacting';
   bool get isIdle => status == 'idle';
   bool get isTerminated => status == 'terminated';
@@ -77,10 +89,12 @@ class Session {
     if (supportsPromptQueue && isActive) return true;
     return false;
   }
+
   bool get isQueueing => supportsPromptQueue && isActive;
 
   String get displayTitle => title ?? lastUserMessage ?? shortCwd;
   bool get hasTerminal => terminal != null && terminal!.isNotEmpty;
+
   /// A session with no live terminal has to be woken before it can do
   /// anything. Being helios-managed does not spare it that: nothing resurrects
   /// a host on its own.
@@ -89,10 +103,15 @@ class Session {
   bool get canTerminate => isActive || isIdle;
   bool get canResume => isTerminated;
 
+  /// Switching the mode restarts the agent, which would discard a turn in
+  /// flight and strand any pending permission prompt.
+  bool get canSwitchPermissionMode => source == 'claude' && isIdle;
+
   Session copyWith({
     String? title,
     bool? pinned,
     bool? archived,
+    String? permissionMode,
   }) {
     return Session(
       hostId: hostId,
@@ -110,6 +129,7 @@ class Session {
       pinned: pinned ?? this.pinned,
       archived: archived ?? this.archived,
       managed: managed,
+      permissionMode: permissionMode ?? this.permissionMode,
       terminal: terminal,
       supportsPromptQueue: supportsPromptQueue,
       createdAt: createdAt,

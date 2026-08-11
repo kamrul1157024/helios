@@ -66,6 +66,27 @@ func TunnelProviderConfig(cfg *Config) tunnel.ProviderConfig {
 	}
 }
 
+// resumeArgs builds the command that brings a cold session back.
+//
+// Empty argv means "resume" to the registry, and ptyhost has a hardcoded
+// fallback for it. The daemon overrides that here because only the daemon can
+// see the session's stored permission mode; without this, every wake would
+// reset the mode to the default and undo the user's last switch.
+//
+// Returning nil is the safe answer for anything we cannot look up — ptyhost's
+// fallback then applies, which is the behaviour that predates this.
+func resumeArgs(db *store.Store, sessionID string) []string {
+	sess, err := db.GetSession(sessionID)
+	if err != nil || sess == nil || sess.Source != "claude" {
+		return nil
+	}
+	mode := ""
+	if sess.PermissionMode != nil {
+		mode = *sess.PermissionMode
+	}
+	return claude.ResumeArgs(sessionID, mode)
+}
+
 func startDaemon(cfg *Config) error {
 	if err := os.MkdirAll(HeliosDir(), 0755); err != nil {
 		return fmt.Errorf("create helios dir: %w", err)
@@ -102,6 +123,9 @@ func startDaemon(cfg *Config) error {
 	// daemon are still serving; adopt them before anything else looks at
 	// session state.
 	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string) error {
+		if len(argv) == 0 {
+			argv = resumeArgs(db, sessionID)
+		}
 		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv)
 	})
 	if alive, cleaned, err := registry.Recover(); err != nil {

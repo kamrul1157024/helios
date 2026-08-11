@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
+	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/terminal"
 )
 
@@ -82,7 +83,12 @@ func handlePtyHost(args []string) {
 		command = resolved
 		// Interactive resume, never `-p`: one-shot spawns cost 6-9s per
 		// message and cannot be handed off between mobile and terminal.
-		cmdArgs = []string{"--resume", sessionID}
+		//
+		// The permission mode is repeated here because it is a per-invocation
+		// flag rather than conversation state: without it a session that went
+		// cold would come back in the CLI's default mode and start asking
+		// questions it had stopped asking.
+		cmdArgs = []string{"--resume", sessionID, "--permission-mode", claude.DefaultPermissionMode}
 	}
 
 	heliosDir := daemon.HeliosDir()

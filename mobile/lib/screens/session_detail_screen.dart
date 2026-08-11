@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
 import '../models/notification.dart';
+import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
 import '../providers/claude/verbs.dart';
@@ -28,8 +29,10 @@ class SessionDetailScreen extends StatefulWidget {
 class _SessionDetailScreenState extends State<SessionDetailScreen>
     with SingleTickerProviderStateMixin {
   // Persisted across session switches (static = app-lifetime)
-  static final _worktreeSelections = <String, String>{}; // sessionId → worktreePath
-  static final _lastSubRoute = <String, _SubRoute>{}; // sessionId → last sub-screen
+  static final _worktreeSelections =
+      <String, String>{}; // sessionId → worktreePath
+  static final _lastSubRoute =
+      <String, _SubRoute>{}; // sessionId → last sub-screen
 
   final _promptController = TextEditingController();
   final _scrollController = ScrollController();
@@ -53,7 +56,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
   String get _effectiveCwd => _selectedWorktreePath ?? widget.session.cwd;
 
-  bool get _isVoiceActive => VoiceService.instance.isSessionActive(widget.session.sessionId);
+  bool get _isVoiceActive =>
+      VoiceService.instance.isSessionActive(widget.session.sessionId);
 
   @override
   void initState() {
@@ -80,13 +84,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         // Refresh on session status changes and notification events for this session
         if (event.type == 'session_status' &&
             data['session_id'] == widget.session.sessionId) {
-          debugPrint('[Transcript][${widget.session.sessionId}] SSE session_status → reload transcript (status=${data['status']})');
+          debugPrint(
+            '[Transcript][${widget.session.sessionId}] SSE session_status → reload transcript (status=${data['status']})',
+          );
           _transcriptDebounce?.cancel();
           _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
             _loadTranscript();
           });
         }
-        if (event.type == 'notification' || event.type == 'notification_resolved') {
+        if (event.type == 'notification' ||
+            event.type == 'notification_resolved') {
           if (mounted) setState(() {});
         }
       }
@@ -140,18 +147,23 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     }
   }
 
-  DaemonAPIService? get _sse => context.read<HostManager>().serviceFor(widget.session.hostId);
+  DaemonAPIService? get _sse =>
+      context.read<HostManager>().serviceFor(widget.session.hostId);
 
   Future<void> _loadTranscript() async {
     final sid = widget.session.sessionId;
-    debugPrint('[Transcript][$sid] _loadTranscript start, _loading=$_loading messages=${_messages.length}');
+    debugPrint(
+      '[Transcript][$sid] _loadTranscript start, _loading=$_loading messages=${_messages.length}',
+    );
     final sse = _sse;
     if (sse == null) {
       debugPrint('[Transcript][$sid] no SSE service, aborting');
       return;
     }
     final result = await sse.fetchTranscript(sid, limit: 200);
-    debugPrint('[Transcript][$sid] fetchTranscript result=${result == null ? "null" : "total=${result.total} returned=${result.messages.length} hasMore=${result.hasMore}"}');
+    debugPrint(
+      '[Transcript][$sid] fetchTranscript result=${result == null ? "null" : "total=${result.total} returned=${result.messages.length} hasMore=${result.hasMore}"}',
+    );
     if (result != null && mounted) {
       setState(() {
         _messages = result.messages;
@@ -160,7 +172,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         _loading = false;
       });
     } else if (mounted) {
-      debugPrint('[Transcript][$sid] result null — setting loading=false, messages unchanged (${_messages.length})');
+      debugPrint(
+        '[Transcript][$sid] result null — setting loading=false, messages unchanged (${_messages.length})',
+      );
       setState(() => _loading = false);
     }
   }
@@ -229,7 +243,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             autofocus: true,
             decoration: InputDecoration(
               hintText: session.lastUserMessage ?? 'Session title',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
             onSubmitted: (_) {
               Navigator.pop(ctx);
@@ -271,7 +287,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   /// Get pending notifications for this session.
   List<HeliosNotification> _pendingNotifications(DaemonAPIService sse) {
     return sse.notifications
-        .where((n) => n.sourceSession == widget.session.sessionId && n.isPending)
+        .where(
+          (n) => n.sourceSession == widget.session.sessionId && n.isPending,
+        )
         .toList();
   }
 
@@ -280,12 +298,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     return Consumer<HostManager>(
       builder: (context, hm, _) {
         final sse = hm.serviceFor(widget.session.hostId);
-        final session = sse?.sessions.firstWhere(
-          (s) => s.sessionId == widget.session.sessionId,
-          orElse: () => widget.session,
-        ) ?? widget.session;
+        final session =
+            sse?.sessions.firstWhere(
+              (s) => s.sessionId == widget.session.sessionId,
+              orElse: () => widget.session,
+            ) ??
+            widget.session;
         _updateBreathAnimation(session);
-        final pendingNotifs = sse != null ? _pendingNotifications(sse) : <HeliosNotification>[];
+        final pendingNotifs = sse != null
+            ? _pendingNotifications(sse)
+            : <HeliosNotification>[];
 
         return Scaffold(
           appBar: AppBar(
@@ -320,8 +342,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 child: _loading
                     ? const MessageListSkeleton()
                     : _messages.isEmpty && pendingNotifs.isEmpty
-                        ? _buildEmptyTranscript()
-                        : _buildMessageList(),
+                    ? _buildEmptyTranscript()
+                    : _buildMessageList(),
               ),
               // Inline HITL: pending notifications for this session
               if (pendingNotifs.isNotEmpty && sse != null)
@@ -337,7 +359,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     );
   }
 
-  Widget _buildInlineNotifications(List<HeliosNotification> notifs, DaemonAPIService sse) {
+  Widget _buildInlineNotifications(
+    List<HeliosNotification> notifs,
+    DaemonAPIService sse,
+  ) {
     final theme = Theme.of(context);
     return Container(
       decoration: BoxDecoration(
@@ -412,7 +437,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             const SizedBox(height: 4),
             Text(
               n.displayDetail,
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 8),
             Row(
@@ -455,64 +483,74 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     await Future.delayed(const Duration(milliseconds: 300));
 
     debugPrint('[SessionDetail] calling startListening...');
-    VoiceService.instance.startListening(
-      onResult: (text, finalResult) {
-        debugPrint('[SessionDetail] onResult: "$text" final=$finalResult');
-        if (!mounted) return;
-        setState(() {
-          _promptController.text = text;
-          _promptController.selection = TextSelection.fromPosition(
-            TextPosition(offset: text.length),
-          );
+    VoiceService.instance
+        .startListening(
+          onResult: (text, finalResult) {
+            debugPrint('[SessionDetail] onResult: "$text" final=$finalResult');
+            if (!mounted) return;
+            setState(() {
+              _promptController.text = text;
+              _promptController.selection = TextSelection.fromPosition(
+                TextPosition(offset: text.length),
+              );
+            });
+            // Auto-send when speech engine detects a pause (finalResult)
+            if (finalResult && text.trim().isNotEmpty) {
+              debugPrint('[SessionDetail] finalResult detected, auto-sending');
+              setState(() => _isRecording = false);
+              _sendPrompt();
+            }
+          },
+          onDone: () {
+            debugPrint('[SessionDetail] onDone called');
+            if (mounted) setState(() => _isRecording = false);
+          },
+          onError: (error) {
+            debugPrint('[SessionDetail] onError: $error');
+            if (mounted) {
+              setState(() => _isRecording = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Voice input error: $error'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          },
+        )
+        .then((started) {
+          debugPrint('[SessionDetail] startListening returned: $started');
+          if (mounted) {
+            if (started) {
+              setState(() => _isRecording = true);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Microphone permission denied'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+          }
         });
-        // Auto-send when speech engine detects a pause (finalResult)
-        if (finalResult && text.trim().isNotEmpty) {
-          debugPrint('[SessionDetail] finalResult detected, auto-sending');
-          setState(() => _isRecording = false);
-          _sendPrompt();
-        }
-      },
-      onDone: () {
-        debugPrint('[SessionDetail] onDone called');
-        if (mounted) setState(() => _isRecording = false);
-      },
-      onError: (error) {
-        debugPrint('[SessionDetail] onError: $error');
-        if (mounted) {
-          setState(() => _isRecording = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Voice input error: $error'), duration: const Duration(seconds: 2)),
-          );
-        }
-      },
-    ).then((started) {
-      debugPrint('[SessionDetail] startListening returned: $started');
-      if (mounted) {
-        if (started) {
-          setState(() => _isRecording = true);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Microphone permission denied'), duration: Duration(seconds: 2)),
-          );
-        }
-      }
-    });
   }
 
   void _openFileBrowser(Session session) {
     _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.fileBrowser);
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/file-browser'),
-        builder: (_) => FileBrowserScreen(
-          hostId: session.hostId,
-          rootPath: _effectiveCwd,
-          sessionId: session.sessionId,
-        ),
-      ),
-    ).then((_) {
-      _lastSubRoute.remove(session.sessionId);
-    });
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            settings: const RouteSettings(name: '/file-browser'),
+            builder: (_) => FileBrowserScreen(
+              hostId: session.hostId,
+              rootPath: _effectiveCwd,
+              sessionId: session.sessionId,
+            ),
+          ),
+        )
+        .then((_) {
+          _lastSubRoute.remove(session.sessionId);
+        });
   }
 
   List<Widget> _buildActions(Session session, DaemonAPIService? sse) {
@@ -538,85 +576,113 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               )
             : Icon(
                 _isVoiceActive ? Icons.headset : Icons.headset_off,
-                color: _isVoiceActive ? Theme.of(context).colorScheme.primary : null,
+                color: _isVoiceActive
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
               ),
         tooltip: _isVoiceActive ? 'Voice mode on' : 'Voice mode off',
         onPressed: _voiceLoading
             ? null
             : () async {
-          if (!_isVoiceActive) {
-            // Try to auto-start TTS and STT services
-            setState(() => _voiceLoading = true);
-            final warning = await VoiceService.instance.ensureServicesReady();
-            if (!mounted) return;
-            setState(() => _voiceLoading = false);
-            final ttsReady = VoiceService.instance.ttsReady;
-            final sttReady = VoiceService.instance.sttAvailable;
-            if (!ttsReady && !sttReady) {
-              // Both services failed — don't activate voice mode
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(warning ?? 'Voice services unavailable.'),
-                  duration: const Duration(seconds: 8),
-                  action: SnackBarAction(
-                    label: 'Settings',
-                    onPressed: () => VoiceService.instance.openVoiceSettings(),
-                  ),
-                ),
-              );
-              return;
-            }
-            if (warning != null) {
-              // One service failed — activate but warn
-              final label = !ttsReady ? 'TTS Settings' : 'STT Settings';
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(warning),
-                  duration: const Duration(seconds: 8),
-                  action: SnackBarAction(
-                    label: label,
-                    onPressed: () => VoiceService.instance.openVoiceSettings(),
-                  ),
-                ),
-              );
-            }
-            final wasGlobalActive = VoiceService.instance.globalVoiceActive;
-            setState(() {
-              VoiceService.instance.setActiveSession(widget.session.sessionId);
-            });
-            // Connect reporter SSE for this session (disconnects all others)
-            final svc = _sse;
-            if (svc != null) {
-              NarrationService.instance.connectSession(
-                host: ReporterHost(
-                  hostId: widget.session.hostId,
-                  serverUrl: svc.serverUrl,
-                  getToken: svc.getToken,
-                ),
-                sessionId: widget.session.sessionId,
-              );
-            }
-            if (wasGlobalActive && mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Global announcements turned off'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            }
-          } else {
-            NarrationService.instance.disconnectAll();
-            setState(() {
-              VoiceService.instance.setActiveSession(null);
-              if (_isRecording) {
-                VoiceService.instance.stopListening();
-                _isRecording = false;
-              }
-            });
-          }
-        },
+                if (!_isVoiceActive) {
+                  // Try to auto-start TTS and STT services
+                  setState(() => _voiceLoading = true);
+                  final warning = await VoiceService.instance
+                      .ensureServicesReady();
+                  if (!mounted) return;
+                  setState(() => _voiceLoading = false);
+                  final ttsReady = VoiceService.instance.ttsReady;
+                  final sttReady = VoiceService.instance.sttAvailable;
+                  if (!ttsReady && !sttReady) {
+                    // Both services failed — don't activate voice mode
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(warning ?? 'Voice services unavailable.'),
+                        duration: const Duration(seconds: 8),
+                        action: SnackBarAction(
+                          label: 'Settings',
+                          onPressed: () =>
+                              VoiceService.instance.openVoiceSettings(),
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  if (warning != null) {
+                    // One service failed — activate but warn
+                    final label = !ttsReady ? 'TTS Settings' : 'STT Settings';
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(warning),
+                        duration: const Duration(seconds: 8),
+                        action: SnackBarAction(
+                          label: label,
+                          onPressed: () =>
+                              VoiceService.instance.openVoiceSettings(),
+                        ),
+                      ),
+                    );
+                  }
+                  final wasGlobalActive =
+                      VoiceService.instance.globalVoiceActive;
+                  setState(() {
+                    VoiceService.instance.setActiveSession(
+                      widget.session.sessionId,
+                    );
+                  });
+                  // Connect reporter SSE for this session (disconnects all others)
+                  final svc = _sse;
+                  if (svc != null) {
+                    NarrationService.instance.connectSession(
+                      host: ReporterHost(
+                        hostId: widget.session.hostId,
+                        serverUrl: svc.serverUrl,
+                        getToken: svc.getToken,
+                      ),
+                      sessionId: widget.session.sessionId,
+                    );
+                  }
+                  if (wasGlobalActive && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Global announcements turned off'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                } else {
+                  NarrationService.instance.disconnectAll();
+                  setState(() {
+                    VoiceService.instance.setActiveSession(null);
+                    if (_isRecording) {
+                      VoiceService.instance.stopListening();
+                      _isRecording = false;
+                    }
+                  });
+                }
+              },
       ),
     );
+
+    // Permission mode. Shown always so the mode is visible at a glance;
+    // tappable only when idle, because switching restarts the agent.
+    if (session.source == 'claude') {
+      final mode = PermissionMode.of(session.permissionMode ?? 'auto');
+      actions.add(
+        IconButton(
+          icon: Icon(
+            mode.isRisky ? Icons.lock_open : Icons.tune,
+            color: mode.isRisky ? Colors.orange.shade700 : null,
+          ),
+          tooltip: session.canSwitchPermissionMode
+              ? 'Permission mode: ${mode.label}'
+              : 'Permission mode: ${mode.label} (stop the session to change)',
+          onPressed: session.canSwitchPermissionMode
+              ? () => _showPermissionModeSheet(session)
+              : null,
+        ),
+      );
+    }
 
     if (session.managed) {
       actions.add(
@@ -627,7 +693,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             child: Icon(
               Icons.shield_outlined,
               size: 20,
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+              color: Theme.of(
+                context,
+              ).colorScheme.primary.withValues(alpha: 0.7),
             ),
           ),
         ),
@@ -675,14 +743,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           Icon(
             Icons.chat_bubble_outline,
             size: 48,
-            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
           ),
           const SizedBox(height: 16),
           Text(
             'No messages yet.',
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           if (_total > 0) ...[
             const SizedBox(height: 4),
@@ -732,6 +802,133 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     );
   }
 
+  /// Offers the modes the daemon says this provider has. Picking one
+  /// restarts the agent, so the sheet says so rather than letting the restart
+  /// look like a crash.
+  void _showPermissionModeSheet(Session session) {
+    final sse = _sse;
+    final provider = sse?.providers
+        .where((p) => p.id == session.source)
+        .firstOrNull;
+    final ids = provider?.permissionModes ?? const <String>[];
+    if (ids.isEmpty) {
+      // Either the provider list has not loaded yet or the daemon predates
+      // permission modes. Say so rather than making the tap do nothing.
+      sse?.fetchProviders();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Permission modes unavailable — try again in a moment'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    final current = session.permissionMode ?? 'auto';
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                child: Text(
+                  'Permission mode',
+                  style: Theme.of(ctx).textTheme.titleSmall,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  'Changing this restarts the agent. The conversation is kept; '
+                  'the terminal scrollback is not.',
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    ...ids.map((id) {
+                      final mode = PermissionMode.of(id);
+                      final selected = id == current;
+                      return ListTile(
+                        leading: Icon(
+                          selected
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          color: mode.isRisky ? Colors.orange.shade700 : null,
+                        ),
+                        title: Text(mode.label),
+                        subtitle: mode.description.isEmpty
+                            ? null
+                            : Text(
+                                mode.description,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                        onTap: selected
+                            ? null
+                            : () {
+                                Navigator.pop(ctx);
+                                _setPermissionMode(session, mode);
+                              },
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _setPermissionMode(Session session, PermissionMode mode) async {
+    if (mode.isRisky && !await _confirmRiskyMode(mode)) return;
+    if (!mounted) return;
+
+    final sse = _sse;
+    final error = sse == null
+        ? 'Not connected'
+        : await sse.setPermissionMode(session.sessionId, mode.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'Permission mode set to ${mode.label}'),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<bool> _confirmRiskyMode(PermissionMode mode) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(mode.label),
+        content: Text(
+          '${mode.description}\n\n'
+          'You will not be asked to approve anything from your phone while '
+          'this session is in this mode.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   void _showCommandSheet() {
     final commands = _sse?.commands ?? [];
     if (commands.isEmpty) return;
@@ -754,15 +951,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 child: ListView(
                   shrinkWrap: true,
                   children: [
-                    ...commands.map((cmd) => ListTile(
-                      leading: Icon(_iconForCommand(cmd.icon)),
-                      title: Text(cmd.name, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600)),
-                      subtitle: Text(cmd.description, style: const TextStyle(fontSize: 12)),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _sendCommand(cmd.name);
-                      },
-                    )),
+                    ...commands.map(
+                      (cmd) => ListTile(
+                        leading: Icon(_iconForCommand(cmd.icon)),
+                        title: Text(
+                          cmd.name,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          cmd.description,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _sendCommand(cmd.name);
+                        },
+                      ),
+                    ),
                     const SizedBox(height: 8),
                   ],
                 ),
@@ -815,18 +1023,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.gitStatus);
     // Use resolved git root so diffs work from any subdirectory
     final gitRoot = _gitStatus?.root ?? _effectiveCwd;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/git-status'),
-        builder: (_) => GitStatusScreen(
-          hostId: session.hostId,
-          cwd: gitRoot,
-          sessionId: session.sessionId,
-        ),
-      ),
-    ).then((_) {
-      _lastSubRoute.remove(session.sessionId);
-    });
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            settings: const RouteSettings(name: '/git-status'),
+            builder: (_) => GitStatusScreen(
+              hostId: session.hostId,
+              cwd: gitRoot,
+              sessionId: session.sessionId,
+            ),
+          ),
+        )
+        .then((_) {
+          _lastSubRoute.remove(session.sessionId);
+        });
   }
 
   Widget _buildGitBar(Session session) {
@@ -838,9 +1048,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     // Git-themed colors
     const gitOrange = Color(0xFFF05033);
     final barBg = isDark ? const Color(0xFF1B1F23) : const Color(0xFFF6F8FA);
-    final borderColor = isDark ? const Color(0xFF30363D) : const Color(0xFFD0D7DE);
-    final branchColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
-    final textMuted = isDark ? const Color(0xFF8B949E) : const Color(0xFF656D76);
+    final borderColor = isDark
+        ? const Color(0xFF30363D)
+        : const Color(0xFFD0D7DE);
+    final branchColor = isDark
+        ? const Color(0xFF58A6FF)
+        : const Color(0xFF0969DA);
+    final textMuted = isDark
+        ? const Color(0xFF8B949E)
+        : const Color(0xFF656D76);
 
     return GestureDetector(
       onTap: () => _openGitStatus(session),
@@ -885,31 +1101,62 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             ),
             if (g.staged.isNotEmpty) ...[
               const SizedBox(width: 10),
-              const Icon(Icons.check_circle_outline, size: 12, color: Color(0xFF3FB950)),
+              const Icon(
+                Icons.check_circle_outline,
+                size: 12,
+                color: Color(0xFF3FB950),
+              ),
               const SizedBox(width: 2),
-              Text('${g.staged.length}', style: const TextStyle(fontSize: 11, color: Color(0xFF3FB950))),
+              Text(
+                '${g.staged.length}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF3FB950)),
+              ),
             ],
             if (g.unstaged.isNotEmpty) ...[
               const SizedBox(width: 8),
-              const Icon(Icons.edit_outlined, size: 12, color: Color(0xFFD29922)),
+              const Icon(
+                Icons.edit_outlined,
+                size: 12,
+                color: Color(0xFFD29922),
+              ),
               const SizedBox(width: 2),
-              Text('${g.unstaged.length}', style: const TextStyle(fontSize: 11, color: Color(0xFFD29922))),
+              Text(
+                '${g.unstaged.length}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFFD29922)),
+              ),
             ],
             if (g.untracked.isNotEmpty) ...[
               const SizedBox(width: 8),
               Icon(Icons.add_circle_outline, size: 12, color: textMuted),
               const SizedBox(width: 2),
-              Text('${g.untracked.length}', style: TextStyle(fontSize: 11, color: textMuted)),
+              Text(
+                '${g.untracked.length}',
+                style: TextStyle(fontSize: 11, color: textMuted),
+              ),
             ],
             if (g.ahead > 0) ...[
               const SizedBox(width: 10),
-              const Icon(Icons.arrow_upward, size: 12, color: Color(0xFF3FB950)),
-              Text('${g.ahead}', style: const TextStyle(fontSize: 11, color: Color(0xFF3FB950))),
+              const Icon(
+                Icons.arrow_upward,
+                size: 12,
+                color: Color(0xFF3FB950),
+              ),
+              Text(
+                '${g.ahead}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF3FB950)),
+              ),
             ],
             if (g.behind > 0) ...[
               const SizedBox(width: 6),
-              const Icon(Icons.arrow_downward, size: 12, color: Color(0xFFD29922)),
-              Text('${g.behind}', style: const TextStyle(fontSize: 11, color: Color(0xFFD29922))),
+              const Icon(
+                Icons.arrow_downward,
+                size: 12,
+                color: Color(0xFFD29922),
+              ),
+              Text(
+                '${g.behind}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFFD29922)),
+              ),
             ],
             const Spacer(),
             Icon(Icons.chevron_right, size: 16, color: textMuted),
@@ -974,19 +1221,23 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         ),
         child: Row(
           children: [
-            Icon(Icons.stop_circle_outlined, size: 18, color: theme.colorScheme.outline),
+            Icon(
+              Icons.stop_circle_outlined,
+              size: 18,
+              color: theme.colorScheme.outline,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 'Session terminated — resume to continue',
-                style: TextStyle(fontSize: 13, color: theme.colorScheme.outline),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.outline,
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            FilledButton.tonal(
-              onPressed: _resume,
-              child: const Text('Resume'),
-            ),
+            FilledButton.tonal(onPressed: _resume, child: const Text('Resume')),
           ],
         ),
       );
@@ -1025,10 +1276,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 400),
                     transitionBuilder: (child, animation) {
-                      final slideIn = Tween<Offset>(
-                        begin: const Offset(0, 0.5),
-                        end: Offset.zero,
-                      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                      final slideIn =
+                          Tween<Offset>(
+                            begin: const Offset(0, 0.5),
+                            end: Offset.zero,
+                          ).animate(
+                            CurvedAnimation(
+                              parent: animation,
+                              curve: Curves.easeOut,
+                            ),
+                          );
                       return SlideTransition(
                         position: slideIn,
                         child: FadeTransition(opacity: animation, child: child),
@@ -1052,7 +1309,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               if (hasCommands)
                 IconButton(
                   onPressed: canSend && !_sending ? _showCommandSheet : null,
-                  icon: const Text('/', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  icon: const Text(
+                    '/',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
                   tooltip: 'Commands',
                 ),
               Expanded(
@@ -1091,10 +1351,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                             hintText: isQueueing
                                 ? 'Queue a prompt...'
                                 : canSend
-                                    ? 'Send a prompt...'
-                                    : session.isActive
-                                        ? ''
-                                        : 'Session ${session.status}',
+                                ? 'Send a prompt...'
+                                : session.isActive
+                                ? ''
+                                : 'Session ${session.status}',
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(radius),
                               borderSide: BorderSide.none,
@@ -1108,8 +1368,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                               borderSide: BorderSide.none,
                             ),
                             filled: true,
-                            fillColor: theme.colorScheme.surfaceContainerHighest,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            fillColor:
+                                theme.colorScheme.surfaceContainerHighest,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
                             isDense: true,
                           ),
                           style: const TextStyle(fontSize: 14),
@@ -1122,13 +1386,22 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                               child: AnimatedSwitcher(
                                 duration: const Duration(milliseconds: 400),
                                 transitionBuilder: (child, animation) {
-                                  final slideIn = Tween<Offset>(
-                                    begin: const Offset(0, 0.5),
-                                    end: Offset.zero,
-                                  ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut));
+                                  final slideIn =
+                                      Tween<Offset>(
+                                        begin: const Offset(0, 0.5),
+                                        end: Offset.zero,
+                                      ).animate(
+                                        CurvedAnimation(
+                                          parent: animation,
+                                          curve: Curves.easeOut,
+                                        ),
+                                      );
                                   return SlideTransition(
                                     position: slideIn,
-                                    child: FadeTransition(opacity: animation, child: child),
+                                    child: FadeTransition(
+                                      opacity: animation,
+                                      child: child,
+                                    ),
                                   );
                                 },
                                 child: Text(
@@ -1165,8 +1438,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               if (session.canStop) ...[
                 IconButton.filled(
                   onPressed: _stop,
-                  style: IconButton.styleFrom(backgroundColor: theme.colorScheme.errorContainer),
-                  icon: Icon(Icons.stop, size: 20, color: theme.colorScheme.onErrorContainer),
+                  style: IconButton.styleFrom(
+                    backgroundColor: theme.colorScheme.errorContainer,
+                  ),
+                  icon: Icon(
+                    Icons.stop,
+                    size: 20,
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
                   tooltip: 'Stop generation',
                 ),
                 const SizedBox(width: 6),
@@ -1174,7 +1453,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               IconButton.filled(
                 onPressed: canSend && !_sending ? _sendPrompt : null,
                 icon: _sending
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.send, size: 20),
               ),
             ],
@@ -1257,9 +1540,11 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
     if (_query.isEmpty) return widget.worktrees;
     final q = _query.toLowerCase();
     return widget.worktrees
-        .where((wt) =>
-            wt.branch.toLowerCase().contains(q) ||
-            wt.path.toLowerCase().contains(q))
+        .where(
+          (wt) =>
+              wt.branch.toLowerCase().contains(q) ||
+              wt.path.toLowerCase().contains(q),
+        )
         .toList();
   }
 
@@ -1290,11 +1575,16 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                 style: const TextStyle(fontSize: 13),
                 decoration: InputDecoration(
                   hintText: 'Search branch or path...',
-                  hintStyle: TextStyle(fontSize: 13, color: widget.theme.colorScheme.onSurfaceVariant),
+                  hintStyle: TextStyle(
+                    fontSize: 13,
+                    color: widget.theme.colorScheme.onSurfaceVariant,
+                  ),
                   prefixIcon: const Icon(Icons.search, size: 18),
                   isDense: true,
                   contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 onChanged: (v) => setState(() => _query = v),
               ),
@@ -1306,14 +1596,17 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
               itemCount: filtered.length,
               itemBuilder: (ctx, i) {
                 final wt = filtered[i];
-                final isSelected = wt.path == widget.effectiveCwd ||
+                final isSelected =
+                    wt.path == widget.effectiveCwd ||
                     (wt.isMain && widget.selectedWorktreePath == null);
                 final wtStatus = widget.worktreeStatuses[wt.path];
                 final changes = wtStatus?.totalChanges ?? 0;
 
                 return ListTile(
                   leading: Icon(
-                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    isSelected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
                     size: 20,
                     color: isSelected
                         ? widget.theme.colorScheme.primary
@@ -1327,7 +1620,9 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                           style: TextStyle(
                             fontSize: 13,
                             fontFamily: 'monospace',
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                            fontWeight: isSelected
+                                ? FontWeight.w600
+                                : FontWeight.normal,
                             color: widget.theme.colorScheme.onSurface,
                           ),
                           overflow: TextOverflow.ellipsis,
@@ -1336,9 +1631,14 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                       if (changes > 0) ...[
                         const SizedBox(width: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
-                            color: widget.isDark ? const Color(0xFF2D1B00) : const Color(0xFFFFF3CD),
+                            color: widget.isDark
+                                ? const Color(0xFF2D1B00)
+                                : const Color(0xFFFFF3CD),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
@@ -1346,7 +1646,9 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
-                              color: widget.isDark ? const Color(0xFFD29922) : const Color(0xFF9A6700),
+                              color: widget.isDark
+                                  ? const Color(0xFFD29922)
+                                  : const Color(0xFF9A6700),
                             ),
                           ),
                         ),
@@ -1355,10 +1657,19 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                   ),
                   subtitle: Text(
                     wt.shortPath,
-                    style: TextStyle(fontSize: 11, color: widget.theme.colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: widget.theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   trailing: wt.isMain
-                      ? Text('main', style: TextStyle(fontSize: 10, color: widget.theme.colorScheme.onSurfaceVariant))
+                      ? Text(
+                          'main',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: widget.theme.colorScheme.onSurfaceVariant,
+                          ),
+                        )
                       : null,
                   dense: true,
                   onTap: () => widget.onSelected(wt),

@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -611,6 +610,97 @@ func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "status": "idle"})
 }
 
+// setPermissionMode changes a session's permission mode by restarting its
+// agent under the new one.
+//
+// Claude has no way to set a mode on a running session — the flag is
+// spawn-only and the only live control is a blind Shift+Tab cycle — so the
+// mode is stored and applied on the next launch. A warm session is restarted
+// here to make the change take effect now; a cold one just picks it up when it
+// next wakes.
+//
+// The restart costs the host's scrollback ring, which is why it is refused
+// while the agent is mid-turn: interrupting work to change a setting is never
+// what the user meant, and a pending permission prompt would be stranded.
+func (sh *Shared) setPermissionMode(w http.ResponseWriter, id, mode string) {
+	if !claudeprovider.ValidPermissionMode(mode) {
+		jsonError(w, fmt.Sprintf("unknown permission mode: %q", mode), http.StatusBadRequest)
+		return
+	}
+
+	session, err := sh.DB.GetSession(id)
+	if err != nil || session == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if session.Source != "claude" {
+		jsonError(w, fmt.Sprintf("provider %s has no permission modes", session.Source), http.StatusBadRequest)
+		return
+	}
+	if session.Status == "terminated" || session.Status == "ended" {
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_ended",
+		})
+		return
+	}
+	if session.Status != "idle" {
+		// Busy covers active, waiting_permission, compacting and starting. The
+		// client is expected to disable the control rather than rely on this,
+		// but the check has to live here: status can change between render and
+		// tap.
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"success": false, "error": "session_busy", "status": session.Status,
+		})
+		return
+	}
+
+	if err := sh.DB.UpdateSessionPermissionMode(id, mode); err != nil {
+		jsonError(w, "failed to store permission mode", http.StatusInternalServerError)
+		return
+	}
+
+	// Cold sessions need no restart: the stored mode is read when they wake.
+	restarted := false
+	if sh.Backend.Alive(id) {
+		if err := sh.restartForPermissionMode(id, session.CWD); err != nil {
+			jsonError(w, fmt.Sprintf("failed to restart session: %v", err), http.StatusInternalServerError)
+			return
+		}
+		restarted = true
+	}
+
+	sh.SSE.Broadcast(SSEEvent{
+		Type: "session_updated",
+		Data: map[string]interface{}{
+			"session_id":      id,
+			"permission_mode": mode,
+		},
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true, "permission_mode": mode, "restarted": restarted,
+	})
+}
+
+// restartForPermissionMode cycles a session's terminal so the agent relaunches
+// under the mode just stored.
+//
+// Kill before Wake, not Wake alone: Wake adopts a live host, so without the
+// kill the old process would keep running in the old mode and report success.
+func (sh *Shared) restartForPermissionMode(id, cwd string) error {
+	waker, ok := sh.Backend.(backend.Waker)
+	if !ok {
+		return fmt.Errorf("backend %s cannot resume sessions", sh.Backend.Name())
+	}
+	if err := sh.Backend.Kill(id); err != nil {
+		return fmt.Errorf("kill terminal: %w", err)
+	}
+	if _, err := waker.Wake(id, cwd); err != nil {
+		return fmt.Errorf("restart terminal: %w", err)
+	}
+	return nil
+}
+
 // settleInterrupted moves a stopped session back to idle and tells every client.
 //
 // An interrupted turn produces no Stop hook — the agent just returns to its
@@ -721,6 +811,17 @@ func (s *PublicServer) handleSessionStop(w http.ResponseWriter, r *http.Request)
 
 func (s *PublicServer) handleSessionTerminate(w http.ResponseWriter, r *http.Request) {
 	s.shared.terminateSession(w, extractSessionID(r.URL.Path, "/terminate"))
+}
+
+func (s *PublicServer) handleSessionPermissionMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	s.shared.setPermissionMode(w, extractSessionID(r.URL.Path, "/permission-mode"), req.Mode)
 }
 
 func (s *PublicServer) handleSessionResume(w http.ResponseWriter, r *http.Request) {
@@ -899,6 +1000,7 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		Prompt                     string `json:"prompt"`
 		Model                      string `json:"model,omitempty"`
 		CWD                        string `json:"cwd"`
+		PermissionMode             string `json:"permission_mode,omitempty"`
 		DangerouslySkipPermissions bool   `json:"dangerously_skip_permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -926,10 +1028,14 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	}
 
 	sessionID := uuid.New().String()
-	argv := builder(req.Prompt, req.Model, req.CWD, sessionID)
-	if req.DangerouslySkipPermissions {
-		argv = slices.Insert(argv, 1, "--dangerously-skip-permissions")
-	}
+	argv := builder(provider.SessionSpec{
+		SessionID:       sessionID,
+		Prompt:          req.Prompt,
+		Model:           req.Model,
+		CWD:             req.CWD,
+		PermissionMode:  req.PermissionMode,
+		SkipPermissions: req.DangerouslySkipPermissions,
+	})
 
 	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
 	if err != nil {
@@ -949,6 +1055,14 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		Managed:   true,
 	}
 	s.shared.DB.UpsertSession(sess)
+	// Record the requested mode now, not on the first hook: a session evicted
+	// before it reports in would otherwise wake in the provider default. An
+	// empty request mode is left null, which means exactly that default.
+	if req.PermissionMode != "" {
+		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, req.PermissionMode); err != nil {
+			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
+		}
+	}
 
 	// Watch for the workspace-trust dialog until the agent reports in.
 	s.shared.Pending.Add(sessionID, req.CWD)
@@ -1458,6 +1572,7 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		Prompt                     string `json:"prompt"`
 		Model                      string `json:"model,omitempty"`
 		CWD                        string `json:"cwd,omitempty"`
+		PermissionMode             string `json:"permission_mode,omitempty"`
 		DangerouslySkipPermissions bool   `json:"dangerously_skip_permissions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1484,10 +1599,14 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	sessionID := uuid.New().String()
-	argv := builder(req.Prompt, req.Model, req.CWD, sessionID)
-	if req.DangerouslySkipPermissions {
-		argv = slices.Insert(argv, 1, "--dangerously-skip-permissions")
-	}
+	argv := builder(provider.SessionSpec{
+		SessionID:       sessionID,
+		Prompt:          req.Prompt,
+		Model:           req.Model,
+		CWD:             req.CWD,
+		PermissionMode:  req.PermissionMode,
+		SkipPermissions: req.DangerouslySkipPermissions,
+	})
 
 	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
 	if err != nil {
@@ -1507,6 +1626,14 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		Managed:   true,
 	}
 	s.shared.DB.UpsertSession(sess)
+	// Record the requested mode now, not on the first hook: a session evicted
+	// before it reports in would otherwise wake in the provider default. An
+	// empty request mode is left null, which means exactly that default.
+	if req.PermissionMode != "" {
+		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, req.PermissionMode); err != nil {
+			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
+		}
+	}
 
 	// Watch for the workspace-trust dialog until the agent reports in.
 	s.shared.Pending.Add(sessionID, req.CWD)

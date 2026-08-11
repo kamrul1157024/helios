@@ -185,6 +185,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleSessionTerminate(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/permission-mode"):
+			s.handleSessionPermissionMode(w, r)
 		case r.Method == "GET" && strings.HasSuffix(path, "/terminal"):
 			s.handleSessionTerminal(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/wake"):

@@ -152,7 +152,11 @@ class DaemonAPIService extends ChangeNotifier {
       final raw = prefs.getString(_sessionCacheKey);
       if (raw == null) return;
       final list = (jsonDecode(raw) as List?) ?? [];
-      _sessions = list.map((s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId)).toList();
+      _sessions = list
+          .map(
+            (s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId),
+          )
+          .toList();
       _sessionsLoaded = true;
       notifyListeners();
     } catch (_) {
@@ -280,7 +284,9 @@ class DaemonAPIService extends ChangeNotifier {
     final delay = Duration(
       seconds: (3 * (1 << (_consecutiveFailures - 1).clamp(0, 3))).clamp(3, 30),
     );
-    debugPrint('[$hostId] reconnecting in ${delay.inSeconds}s (failures=$_consecutiveFailures)');
+    debugPrint(
+      '[$hostId] reconnecting in ${delay.inSeconds}s (failures=$_consecutiveFailures)',
+    );
     _reconnectTimer = Timer(delay, _connect);
   }
 
@@ -300,7 +306,9 @@ class DaemonAPIService extends ChangeNotifier {
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['notifications'] as List?) ?? [];
-        _notifications = list.map((n) => HeliosNotification.fromJson(n, hostId: hostId)).toList();
+        _notifications = list
+            .map((n) => HeliosNotification.fromJson(n, hostId: hostId))
+            .toList();
         _notificationsLoaded = true;
         notifyListeners();
       }
@@ -335,12 +343,15 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> batchAction(List<String> ids, Map<String, dynamic> action) async {
+  Future<bool> batchAction(
+    List<String> ids,
+    Map<String, dynamic> action,
+  ) async {
     try {
-      final resp = await _api.post('/api/notifications/batch', body: {
-        'notification_ids': ids,
-        'action': action,
-      });
+      final resp = await _api.post(
+        '/api/notifications/batch',
+        body: {'notification_ids': ids, 'action': action},
+      );
       if (resp.statusCode == 200) {
         await fetchNotifications();
         return true;
@@ -353,7 +364,13 @@ class DaemonAPIService extends ChangeNotifier {
 
   // ==================== Session API ====================
 
-  Future<void> fetchSessions({String? q, String? status, String? filter, String? cwd, bool updateFilters = false}) async {
+  Future<void> fetchSessions({
+    String? q,
+    String? status,
+    String? filter,
+    String? cwd,
+    bool updateFilters = false,
+  }) async {
     // When called with explicit params from search UI, remember them.
     if (updateFilters) {
       _lastSessionQ = q;
@@ -370,21 +387,32 @@ class DaemonAPIService extends ChangeNotifier {
       final params = <String, String>{};
       if (effectiveQ != null && effectiveQ.isNotEmpty) params['q'] = effectiveQ;
       if (status != null && status.isNotEmpty) params['status'] = status;
-      if (effectiveFilter != null && effectiveFilter.isNotEmpty) params['filter'] = effectiveFilter;
-      if (effectiveCwd != null && effectiveCwd.isNotEmpty) params['cwd'] = effectiveCwd;
+      if (effectiveFilter != null && effectiveFilter.isNotEmpty) {
+        params['filter'] = effectiveFilter;
+      }
+      if (effectiveCwd != null && effectiveCwd.isNotEmpty) {
+        params['cwd'] = effectiveCwd;
+      }
 
-      final queryString = params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
-      final path = queryString.isNotEmpty ? '/api/sessions?$queryString' : '/api/sessions';
+      final queryString = params.entries
+          .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+          .join('&');
+      final path = queryString.isNotEmpty
+          ? '/api/sessions?$queryString'
+          : '/api/sessions';
 
       final resp = await _api.get(path);
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['sessions'] as List?) ?? [];
-        _sessions = list.map((s) => Session.fromJson(s, hostId: hostId)).toList();
+        _sessions = list
+            .map((s) => Session.fromJson(s, hostId: hostId))
+            .toList();
         _sessionsLoaded = true;
         notifyListeners();
         // Cache the full unfiltered list for instant display on next launch
-        final isUnfiltered = (effectiveQ == null || effectiveQ.isEmpty) &&
+        final isUnfiltered =
+            (effectiveQ == null || effectiveQ.isEmpty) &&
             (effectiveCwd == null || effectiveCwd.isEmpty);
         if (isUnfiltered) {
           _saveSessionCache(jsonEncode(list));
@@ -409,14 +437,24 @@ class DaemonAPIService extends ChangeNotifier {
     return [];
   }
 
-  Future<TranscriptResult?> fetchTranscript(String sessionId, {int limit = 200, int offset = 0}) async {
+  Future<TranscriptResult?> fetchTranscript(
+    String sessionId, {
+    int limit = 200,
+    int offset = 0,
+  }) async {
     try {
-      final resp = await _api.get('/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset');
-      debugPrint('[$hostId] fetchTranscript[$sessionId] status=${resp.statusCode}');
+      final resp = await _api.get(
+        '/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset',
+      );
+      debugPrint(
+        '[$hostId] fetchTranscript[$sessionId] status=${resp.statusCode}',
+      );
       if (resp.statusCode == 200) {
         return TranscriptResult.fromJson(jsonDecode(resp.body));
       }
-      debugPrint('[$hostId] fetchTranscript[$sessionId] non-200 body=${resp.body}');
+      debugPrint(
+        '[$hostId] fetchTranscript[$sessionId] non-200 body=${resp.body}',
+      );
     } catch (e) {
       debugPrint('[$hostId] fetchTranscript[$sessionId] exception: $e');
     }
@@ -444,8 +482,13 @@ class DaemonAPIService extends ChangeNotifier {
   /// failure here means the message is not in the session.
   Future<String?> sendSessionPrompt(String sessionId, String message) async {
     try {
-      final resp = await _api.post('/api/sessions/$sessionId/send', body: {'message': message});
-      debugPrint('[$hostId] sendSessionPrompt: status=${resp.statusCode} body=${resp.body}');
+      final resp = await _api.post(
+        '/api/sessions/$sessionId/send',
+        body: {'message': message},
+      );
+      debugPrint(
+        '[$hostId] sendSessionPrompt: status=${resp.statusCode} body=${resp.body}',
+      );
       if (resp.statusCode == 200) {
         await fetchSessions();
         return null;
@@ -497,6 +540,37 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
+  /// Switches a session's permission mode, returning null on success or a
+  /// message to show the user.
+  ///
+  /// Unlike the other session actions this reports why it failed: the daemon
+  /// restarts the agent to apply the mode and refuses while it is working, and
+  /// a silent no-op would leave the sheet showing the old mode with no
+  /// explanation.
+  Future<String?> setPermissionMode(String sessionId, String mode) async {
+    try {
+      final resp = await _api.post(
+        '/api/sessions/$sessionId/permission-mode',
+        body: {'mode': mode},
+      );
+      if (resp.statusCode == 200) {
+        await fetchSessions();
+        return null;
+      }
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (body['error'] == 'session_busy') {
+        return 'Session is busy — stop it first to change the mode';
+      }
+      if (body['error'] == 'session_ended') {
+        return 'Session has ended';
+      }
+      return body['error'] as String? ?? 'Failed to change permission mode';
+    } catch (e) {
+      debugPrint('[$hostId] Failed to set permission mode: $e');
+      return 'Failed to change permission mode';
+    }
+  }
+
   Future<bool> resumeSession(String sessionId) async {
     try {
       final resp = await _api.post('/api/sessions/$sessionId/resume');
@@ -510,7 +584,12 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> patchSession(String sessionId, {bool? pinned, bool? archived, String? title}) async {
+  Future<bool> patchSession(
+    String sessionId, {
+    bool? pinned,
+    bool? archived,
+    String? title,
+  }) async {
     // Optimistically update the local session list for instant UI feedback.
     // Use Future.microtask to defer the notification so any dialog/sheet that
     // triggered this call finishes its pop transition first — avoids the
@@ -640,7 +719,10 @@ class DaemonAPIService extends ChangeNotifier {
     return DateTime.now().difference(fetchedAt) < _modelCacheTTL;
   }
 
-  Future<List<ModelInfo>> fetchModels(String providerId, {bool forceRefresh = false}) async {
+  Future<List<ModelInfo>> fetchModels(
+    String providerId, {
+    bool forceRefresh = false,
+  }) async {
     if (!forceRefresh && hasModelCache(providerId)) {
       return _modelCache[providerId]!;
     }
@@ -671,7 +753,9 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<FileListing?> listFiles(String path) async {
     try {
-      final resp = await _api.get('/api/files?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get(
+        '/api/files?path=${Uri.encodeComponent(path)}',
+      );
       if (resp.statusCode == 200) {
         return FileListing.fromJson(jsonDecode(resp.body));
       }
@@ -683,7 +767,9 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<FileReadResult?> readFile(String path) async {
     try {
-      final resp = await _api.get('/api/file?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get(
+        '/api/file?path=${Uri.encodeComponent(path)}',
+      );
       if (resp.statusCode == 413) {
         final data = jsonDecode(resp.body);
         return FileReadResult.tooLarge(
@@ -713,12 +799,12 @@ class DaemonAPIService extends ChangeNotifier {
     bool dangerouslySkipPermissions = false,
   }) async {
     try {
-      final body = <String, dynamic>{
-        'provider': provider,
-      };
+      final body = <String, dynamic>{'provider': provider};
       if (model != null && model.isNotEmpty) body['model'] = model;
       if (cwd != null && cwd.isNotEmpty) body['cwd'] = cwd;
-      if (dangerouslySkipPermissions) body['dangerously_skip_permissions'] = true;
+      if (dangerouslySkipPermissions) {
+        body['dangerously_skip_permissions'] = true;
+      }
 
       final resp = await _api.post('/api/sessions', body: body);
       if (resp.statusCode == 200) {
@@ -733,7 +819,9 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<GitStatus?> gitStatus(String path) async {
     try {
-      final resp = await _api.get('/api/git/status?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get(
+        '/api/git/status?path=${Uri.encodeComponent(path)}',
+      );
       if (resp.statusCode == 200) {
         return GitStatus.fromJson(jsonDecode(resp.body));
       }
@@ -743,7 +831,11 @@ class DaemonAPIService extends ChangeNotifier {
     return null;
   }
 
-  Future<GitDiff?> gitDiff(String path, String file, {bool staged = false}) async {
+  Future<GitDiff?> gitDiff(
+    String path,
+    String file, {
+    bool staged = false,
+  }) async {
     try {
       final stagedParam = staged ? '&staged=true' : '';
       final resp = await _api.get(
@@ -760,10 +852,15 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<List<Worktree>> gitWorktrees(String path) async {
     try {
-      final resp = await _api.get('/api/git/worktrees?path=${Uri.encodeComponent(path)}');
+      final resp = await _api.get(
+        '/api/git/worktrees?path=${Uri.encodeComponent(path)}',
+      );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
-        return (data['worktrees'] as List?)?.map((e) => Worktree.fromJson(e)).toList() ?? [];
+        return (data['worktrees'] as List?)
+                ?.map((e) => Worktree.fromJson(e))
+                .toList() ??
+            [];
       }
     } catch (e) {
       debugPrint('[$hostId] Failed to get worktrees for $path: $e');
@@ -813,7 +910,9 @@ class FileEntry {
   String get formattedSize {
     if (size < 1024) return '$size B';
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
-    if (size < 1024 * 1024 * 1024) return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (size < 1024 * 1024 * 1024) {
+      return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(size / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 }
@@ -828,7 +927,9 @@ class FileListing {
     final list = (json['entries'] as List?) ?? [];
     return FileListing(
       path: json['path'] as String,
-      entries: list.map((e) => FileEntry.fromJson(e as Map<String, dynamic>)).toList(),
+      entries: list
+          .map((e) => FileEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -889,7 +990,11 @@ class SlashCommand {
   final String description;
   final String icon;
 
-  SlashCommand({required this.name, required this.description, required this.icon});
+  SlashCommand({
+    required this.name,
+    required this.description,
+    required this.icon,
+  });
 
   factory SlashCommand.fromJson(Map<String, dynamic> json) {
     return SlashCommand(
@@ -973,9 +1078,21 @@ class GitStatus {
       dirty: json['dirty'] as bool? ?? false,
       ahead: json['ahead'] as int? ?? 0,
       behind: json['behind'] as int? ?? 0,
-      staged: (json['staged'] as List?)?.map((e) => GitChange.fromJson(e)).toList() ?? [],
-      unstaged: (json['unstaged'] as List?)?.map((e) => GitChange.fromJson(e)).toList() ?? [],
-      untracked: (json['untracked'] as List?)?.map((e) => GitChange.fromJson(e)).toList() ?? [],
+      staged:
+          (json['staged'] as List?)
+              ?.map((e) => GitChange.fromJson(e))
+              .toList() ??
+          [],
+      unstaged:
+          (json['unstaged'] as List?)
+              ?.map((e) => GitChange.fromJson(e))
+              .toList() ??
+          [],
+      untracked:
+          (json['untracked'] as List?)
+              ?.map((e) => GitChange.fromJson(e))
+              .toList() ??
+          [],
     );
   }
 
@@ -1026,5 +1143,3 @@ class Worktree {
     return '.../${parts.sublist(parts.length - 2).join('/')}';
   }
 }
-
-

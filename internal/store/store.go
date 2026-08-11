@@ -145,6 +145,7 @@ func (s *Store) migrate() error {
 		{"drop_sessions_tmux_pid", `ALTER TABLE sessions DROP COLUMN tmux_pid`},
 		{"add_sessions_autotitle_attempts", `ALTER TABLE sessions ADD COLUMN autotitle_attempts INTEGER NOT NULL DEFAULT 0`},
 		{"add_sessions_managed", `ALTER TABLE sessions ADD COLUMN managed INTEGER NOT NULL DEFAULT 0`},
+		{"add_sessions_permission_mode", `ALTER TABLE sessions ADD COLUMN permission_mode TEXT`},
 	}
 
 	for _, cm := range columnMigrations {

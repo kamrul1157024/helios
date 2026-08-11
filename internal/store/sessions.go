@@ -22,6 +22,11 @@ type Session struct {
 	Pinned          bool    `json:"pinned"`
 	Archived        bool    `json:"archived"`
 	Managed         bool    `json:"managed"`
+	// PermissionMode is the agent's permission mode. It is stored because the
+	// mode is a per-invocation flag rather than conversation state: without a
+	// record of it, a session that goes cold comes back in the default mode
+	// and silently discards whatever the user chose.
+	PermissionMode *string `json:"permission_mode,omitempty"`
 	// Terminal is the handle of the session's live terminal host, injected by
 	// the daemon rather than stored: a cold session simply has none.
 	Terminal            *string `json:"terminal,omitempty"`
@@ -138,6 +143,16 @@ func (s *Store) UpdateSessionLastUserMessage(sessionID, message string) error {
 	return err
 }
 
+// UpdateSessionPermissionMode records the permission mode a session is running
+// under, so waking it later can put it back in the same mode.
+func (s *Store) UpdateSessionPermissionMode(sessionID, mode string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET permission_mode = ? WHERE session_id = ?`,
+		mode, sessionID,
+	)
+	return err
+}
+
 // UpdateSessionTranscriptPath sets the transcript path if not already set.
 func (s *Store) UpdateSessionTranscriptPath(sessionID, path string) error {
 	_, err := s.db.Exec(
@@ -153,12 +168,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 		        last_event, last_event_at, last_user_message, pinned, archived, managed,
-		        created_at, ended_at
+		        permission_mode, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed,
-		&sess.CreatedAt, &sess.EndedAt)
+		&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -212,7 +227,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_user_message, pinned, archived, managed,
-	        created_at, ended_at
+	        permission_mode, created_at, ended_at
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -231,7 +246,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed,
-			&sess.CreatedAt, &sess.EndedAt); err != nil {
+			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, sess)
