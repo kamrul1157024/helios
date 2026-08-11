@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/session.dart';
@@ -452,6 +453,9 @@ class DaemonAPIService extends ChangeNotifier {
       return _sendErrorMessage(resp.body);
     } catch (e) {
       debugPrint('[$hostId] Failed to send prompt: $e');
+      if (HostConnection.isTailnetUrl(serverUrl)) {
+        return 'Could not reach the daemon — switch Tailscale on';
+      }
       return 'Could not reach the daemon';
     }
   }

@@ -214,10 +214,7 @@ class HostManager extends ChangeNotifier {
           }),
         );
       } catch (e) {
-        return SetupResult.error(
-          'Could not reach server at $serverUrl.\n'
-          'Check that the tunnel is running and try again.',
-        );
+        return SetupResult.error(_unreachableMessage(serverUrl));
       }
       if (pairResp.statusCode >= 500) {
         return SetupResult.error(
@@ -298,14 +295,27 @@ class HostManager extends ChangeNotifier {
       notifyListeners();
       final msg = e.toString();
       if (msg.contains('SocketException') || msg.contains('ClientException') || msg.contains('Connection')) {
-        return SetupResult.error(
-          'Could not connect to the server.\n'
-          'The tunnel may have expired or hit its bandwidth limit.\n'
-          'Restart the tunnel and try again.',
-        );
+        return SetupResult.error(_unreachableMessage(serverUrl));
       }
       return SetupResult.error('Setup failed: $e');
     }
+  }
+
+  /// Explain an unreachable server in terms of the provider it belongs to.
+  ///
+  /// A Tailscale Serve URL is only routable while the VPN is on, so the generic
+  /// "the tunnel may have expired" advice sends people to fix the wrong thing —
+  /// the tunnel is almost certainly fine and the phone is simply off the
+  /// tailnet.
+  static String _unreachableMessage(String serverUrl) {
+    if (HostConnection.isTailnetUrl(serverUrl)) {
+      return 'Could not reach $serverUrl.\n'
+          'This is a Tailscale address, so it only works while Tailscale is '
+          'connected. Switch the Tailscale VPN on and try again.';
+    }
+    return 'Could not reach server at $serverUrl.\n'
+        'The tunnel may have expired or hit its bandwidth limit.\n'
+        'Restart the tunnel and try again.';
   }
 
   /// Remove a host and clean up its credentials and service.
@@ -365,6 +375,33 @@ class HostManager extends ChangeNotifier {
     if (host == null) return;
     host.label = label;
     await _saveHosts();
+    notifyListeners();
+  }
+
+  /// Point an existing host at a new URL, keeping its identity and keys.
+  ///
+  /// Most tunnel providers issue a fresh URL on every restart. Re-pairing to
+  /// follow one would throw away the device's approval and its history, so the
+  /// URL is edited in place instead. The service is rebuilt because it captures
+  /// the URL when it is constructed.
+  Future<void> updateHostUrl(String hostId, String newUrl) async {
+    final host = hostById(hostId);
+    if (host == null) return;
+
+    final trimmed = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    if (trimmed.isEmpty || trimmed == host.serverUrl) return;
+
+    host.serverUrl = trimmed;
+    await _saveHosts();
+
+    final service = _services.remove(hostId);
+    if (service != null) {
+      service.stop();
+      service.removeListener(_onServiceChanged);
+      service.dispose();
+    }
+    await _startServiceFor(host);
+
     notifyListeners();
   }
 

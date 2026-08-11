@@ -3,7 +3,10 @@ import 'dart:ui';
 class HostConnection {
   final String id;
   String label;
-  final String serverUrl;
+
+  /// Mutable: most tunnel providers hand out a fresh URL on every restart, and
+  /// following one must not cost the device its pairing.
+  String serverUrl;
   final String deviceId;
   int colorIndex;
   String? hostname;
@@ -20,6 +23,13 @@ class HostConnection {
   });
 
   Color get color => hostColors[colorIndex % hostColors.length];
+
+  /// Whether a URL is a MagicDNS name, which is reachable only from the
+  /// tailnet. Matched on the host component so a path or query cannot spoof it.
+  static bool isTailnetUrl(String serverUrl) {
+    final host = Uri.tryParse(serverUrl)?.host.toLowerCase();
+    return host != null && (host == 'ts.net' || host.endsWith('.ts.net'));
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

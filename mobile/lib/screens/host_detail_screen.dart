@@ -14,6 +14,7 @@ class HostDetailScreen extends StatefulWidget {
 
 class _HostDetailScreenState extends State<HostDetailScreen> {
   late TextEditingController _labelController;
+  late TextEditingController _urlController;
 
   @override
   void initState() {
@@ -21,11 +22,13 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
     final hm = context.read<HostManager>();
     final host = hm.hostById(widget.hostId);
     _labelController = TextEditingController(text: host?.label ?? '');
+    _urlController = TextEditingController(text: host?.serverUrl ?? '');
   }
 
   @override
   void dispose() {
     _labelController.dispose();
+    _urlController.dispose();
     super.dispose();
   }
 
@@ -111,8 +114,40 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
               ),
               const SizedBox(height: 16),
 
+              // Server URL. Editable because most tunnel providers hand out a
+              // fresh URL on every restart, and re-pairing to follow one would
+              // throw away this device's approval and its history.
+              Text('Server URL', style: theme.textTheme.labelLarge),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _urlController,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: 'https://my-machine.tailnet.ts.net',
+                ),
+                onSubmitted: (value) => _saveUrl(hm, value),
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => _saveUrl(hm, _urlController.text),
+                  child: const Text('Save'),
+                ),
+              ),
+              if (HostConnection.isTailnetUrl(host.serverUrl))
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Tailnet address — reachable only while Tailscale is connected.',
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              const SizedBox(height: 16),
+
               // Info fields
-              _infoRow('Server URL', host.serverUrl, theme),
               _infoRow('Device ID', host.deviceId, theme),
               _infoRow('Status', isConnected ? 'Connected' : 'Offline', theme,
                   valueColor: isConnected ? Colors.green : theme.colorScheme.onSurfaceVariant),
@@ -136,6 +171,30 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Validate and apply a new server URL. Only http and https are accepted:
+  /// anything else is a typo that would otherwise leave the host unreachable
+  /// with no explanation.
+  Future<void> _saveUrl(HostManager hm, String value) async {
+    final trimmed = value.trim();
+    final uri = Uri.tryParse(trimmed);
+    final valid = uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty;
+
+    if (!valid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a full URL, e.g. https://host.tailnet.ts.net')),
+      );
+      return;
+    }
+
+    await hm.updateHostUrl(widget.hostId, trimmed);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Server URL updated — reconnecting')),
     );
   }
 
