@@ -38,11 +38,13 @@
   <h1>Helios</h1>
   <p class="subtitle">Orchestrate AI coding agents from your phone</p>
   <div class="downloads">
-    <a href="{{APK_URL}}" class="btn btn-primary" download="helios.apk">
+    <!-- Opened in a new tab, and without a download attribute: the targets are
+         cross-origin, where browsers ignore that attribute anyway. -->
+    <a href="{{APK_URL}}" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
       <span class="label">Download for Android</span>
       <span class="meta">APK</span>
     </a>
-    <a href="{{DMG_URL}}" class="btn btn-secondary" download="helios.dmg">
+    <a href="{{DMG_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
       <span class="label">Download for macOS</span>
       <span class="meta">DMG</span>
     </a>
