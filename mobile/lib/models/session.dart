@@ -81,7 +81,10 @@ class Session {
 
   String get displayTitle => title ?? lastUserMessage ?? shortCwd;
   bool get hasTerminal => terminal != null && terminal!.isNotEmpty;
-  bool get needsRecovery => !hasTerminal && !isTerminated && !managed;
+  /// A session with no live terminal has to be woken before it can do
+  /// anything. Being helios-managed does not spare it that: nothing resurrects
+  /// a host on its own.
+  bool get needsRecovery => !hasTerminal && !isTerminated;
   bool get canStop => isActive;
   bool get canTerminate => isActive || isIdle;
   bool get canResume => isTerminated;
@@ -90,7 +93,6 @@ class Session {
     String? title,
     bool? pinned,
     bool? archived,
-    bool? managed,
   }) {
     return Session(
       hostId: hostId,
@@ -107,7 +109,7 @@ class Session {
       lastUserMessage: lastUserMessage,
       pinned: pinned ?? this.pinned,
       archived: archived ?? this.archived,
-      managed: managed ?? this.managed,
+      managed: managed,
       terminal: terminal,
       supportsPromptQueue: supportsPromptQueue,
       createdAt: createdAt,

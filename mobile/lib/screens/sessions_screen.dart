@@ -793,15 +793,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   }
                 },
               ),
-              const Divider(height: 1),
-              ListTile(
-                leading: Icon(session.managed ? Icons.link_off : Icons.shield_outlined),
-                title: Text(session.managed ? 'Detach from Helios' : 'Hand off to Helios'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  service?.patchSession(sessionId, managed: !session.managed);
-                },
-              ),
               if (session.canStop || session.canTerminate || session.canResume) ...[
                 const Divider(height: 1),
                 if (session.canStop)

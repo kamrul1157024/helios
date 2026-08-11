@@ -87,34 +87,6 @@ func TestManagedFlag_SetOnUpsert(t *testing.T) {
 	}
 }
 
-func TestUpdateSessionManaged(t *testing.T) {
-	s := setupTestStore(t)
-
-	sess := &Session{
-		SessionID: "toggle-session-1",
-		Source:    "claude",
-		CWD:       "/tmp/test",
-		Status:    "idle",
-		LastEvent: strPtr("Discovered"),
-		Managed:   false,
-	}
-	if err := s.UpsertSession(sess); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-
-	if err := s.UpdateSessionManaged("toggle-session-1", true); err != nil {
-		t.Fatalf("update managed: %v", err)
-	}
-
-	got, err := s.GetSession("toggle-session-1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Managed {
-		t.Error("managed = false after update, want true")
-	}
-}
-
 func TestUpsertSession_UpdatesStatus(t *testing.T) {
 	s := setupTestStore(t)
 

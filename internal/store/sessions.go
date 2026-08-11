@@ -318,15 +318,6 @@ func (s *Store) UpdateSessionFlags(sessionID string, pinned, archived bool) erro
 	return err
 }
 
-// UpdateSessionManaged sets the managed flag for a session.
-func (s *Store) UpdateSessionManaged(sessionID string, managed bool) error {
-	_, err := s.db.Exec(
-		`UPDATE sessions SET managed = ? WHERE session_id = ?`,
-		managed, sessionID,
-	)
-	return err
-}
-
 // DeleteSession permanently removes a session and its subagents.
 func (s *Store) DeleteSession(sessionID string) error {
 	tx, err := s.db.Begin()
