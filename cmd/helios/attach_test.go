@@ -254,6 +254,41 @@ func TestWrapCommand_NonClaudeLeavesArgsAlone(t *testing.T) {
 	}
 }
 
+// ==================== runsHostOwnSession ====================
+
+// A host types its command into a login shell whose rc file turns `claude`
+// back into `helios wrap`. Wrapping again would attach the session to its own
+// terminal and loop, so this one case runs in place.
+func TestRunsHostOwnSession_HostsOwnCommandRunsInPlace(t *testing.T) {
+	t.Setenv("HELIOS_SESSION_ID", "sess-1")
+
+	if !runsHostOwnSession("sess-1") {
+		t.Error("the host's own session should run in place")
+	}
+}
+
+// Anything else started from inside a helios terminal is a session of its own:
+// running it in place would leave it with no record and no terminal the daemon
+// can reach, while the phone happily starts a second copy of it elsewhere.
+func TestRunsHostOwnSession_OtherSessionsAreWrapped(t *testing.T) {
+	t.Setenv("HELIOS_SESSION_ID", "sess-1")
+
+	if runsHostOwnSession("sess-2") {
+		t.Error("resuming another session should go through the normal wrap")
+	}
+	if runsHostOwnSession("") {
+		t.Error("a session with no ID should go through the normal wrap")
+	}
+}
+
+func TestRunsHostOwnSession_OutsideAHostNothingRunsInPlace(t *testing.T) {
+	t.Setenv("HELIOS_SESSION_ID", "")
+
+	if runsHostOwnSession("sess-1") {
+		t.Error("outside a host every command is wrapped")
+	}
+}
+
 // ==================== shellCommand ====================
 
 // The host types this line into a login shell that has the user's rc file

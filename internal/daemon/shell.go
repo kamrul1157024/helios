@@ -45,28 +45,20 @@ func DetectShell() ShellInfo {
 // ShellWrapperSnippet returns the shell wrapper code for the given shell syntax.
 func ShellWrapperSnippet(syntax string) string {
 	switch syntax {
+	// The wrapper delegates unconditionally, including inside a helios terminal:
+	// a session started from in there is a session of its own and needs to be
+	// registered like any other. `helios wrap` recognises the one case that must
+	// not be wrapped again — the host's own session — and runs it in place.
 	case "posix":
 		return fmt.Sprintf(`%s
 claude() {
-  # Inside a helios terminal the session is already hosted; wrapping again
-  # would start a host around this one.
-  if [ -n "$HELIOS_SESSION_ID" ]; then
-    command claude "$@"
-  else
-    helios wrap -- claude "$@"
-  fi
+  helios wrap -- claude "$@"
 }
 %s`, shellMarkerStart, shellMarkerEnd)
 	case "fish":
 		return fmt.Sprintf(`%s
 function claude
-  # Inside a helios terminal the session is already hosted; wrapping again
-  # would start a host around this one.
-  if set -q HELIOS_SESSION_ID
-    command claude $argv
-  else
-    helios wrap -- claude $argv
-  end
+  helios wrap -- claude $argv
 end
 %s`, shellMarkerStart, shellMarkerEnd)
 	default:

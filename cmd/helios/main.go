@@ -528,17 +528,21 @@ func handleWrap(args []string) {
 		os.Exit(1)
 	}
 
-	// Already inside a helios terminal: run the command here instead of
-	// wrapping it. The shell wrapper users install turns every `claude` into
-	// `helios wrap`, and a host types that command into a login shell — so
-	// without this the wrap re-enters the session it is running inside and
-	// attaches to its own terminal, which loops until the terminal is unusable.
-	if os.Getenv(terminal.SessionEnv) != "" {
-		runInPlace(args[cmdStart:])
-	}
-
 	cwd, _ := os.Getwd()
 	sessionID, parts, isClaude := wrapCommand(args[cmdStart:])
+
+	// This is the host's own session, so its terminal already exists and is
+	// already registered: run the command here rather than wrapping it.
+	//
+	// A host types its command into a login shell, and the shell wrapper users
+	// install turns every `claude` back into `helios wrap` — without this the
+	// wrap re-enters the session it is running inside and attaches to its own
+	// terminal, which loops until the terminal is unusable. Any *other* session
+	// started from in here is a session of its own and takes the normal path,
+	// or it would run untracked with no terminal the daemon can reach.
+	if runsHostOwnSession(sessionID) {
+		runInPlace(parts)
+	}
 
 	heliosDir := daemon.HeliosDir()
 	socket := terminal.SocketPath(heliosDir, sessionID)
@@ -584,6 +588,13 @@ func handleWrap(args []string) {
 		}
 	}
 	os.Exit(res.ExitCode)
+}
+
+// runsHostOwnSession reports whether a wrap is for the session of the terminal
+// host it is running inside.
+func runsHostOwnSession(sessionID string) bool {
+	host := os.Getenv(terminal.SessionEnv)
+	return host != "" && host == sessionID
 }
 
 // runInPlace replaces this process with the command, bypassing the shell
