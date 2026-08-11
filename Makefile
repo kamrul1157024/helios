@@ -4,18 +4,23 @@
 
 VERSION = 0.2.5
 REPO = kamrul1157024/helios
+UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
 DMG_PATH = helios.dmg
 
 build:
 	go build -o helios ./cmd/helios/
+ifeq ($(UNAME_S),Darwin)
 	codesign -s - -f ./helios
+endif
 
 install: build
 	sudo cp helios /usr/local/bin/helios
+ifeq ($(UNAME_S),Darwin)
 	sudo codesign -s - -f /usr/local/bin/helios
 	sudo xattr -d com.apple.quarantine /usr/local/bin/helios 2>/dev/null || true
+endif
 	@echo "helios installed to /usr/local/bin/helios"
 
 uninstall:
