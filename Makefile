@@ -16,7 +16,13 @@ ifeq ($(UNAME_S),Darwin)
 endif
 
 install: build
+ifeq ($(UNAME_S),Linux)
+	# Linux returns ETXTBSY when overwriting a mapped binary; rename over it instead
+	sudo cp helios /usr/local/bin/helios.new
+	sudo mv -f /usr/local/bin/helios.new /usr/local/bin/helios
+else
 	sudo cp helios /usr/local/bin/helios
+endif
 ifeq ($(UNAME_S),Darwin)
 	sudo codesign -s - -f /usr/local/bin/helios
 	sudo xattr -d com.apple.quarantine /usr/local/bin/helios 2>/dev/null || true
