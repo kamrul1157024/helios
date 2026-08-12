@@ -733,6 +733,20 @@ small {
   color: var(--on-surface-variant);
 }
 
+/* A mounted panel waiting its turn. hidden alone would be overridden by the
+   flex display its contents need. */
+.panel-keep {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.panel-keep[hidden] {
+  display: none;
+}
+
 .panel-loading {
   flex: 1;
   display: flex;

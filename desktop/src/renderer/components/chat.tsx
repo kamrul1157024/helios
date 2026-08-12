@@ -21,7 +21,16 @@ import {
 
 const PAGE = 200
 
-export function ChatPanel({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
+export function ChatPanel({
+  hostId,
+  session,
+  active = true,
+}: {
+  hostId: string
+  session: Session
+  /** False while another tab is showing: a hidden panel must not poll. */
+  active?: boolean
+}): JSX.Element {
   const [messages, setMessages] = useState<TranscriptMessage[]>([])
   // Which session the messages belong to. Switching sessions would otherwise
   // show the previous transcript until the new one arrives, and "No transcript
@@ -40,6 +49,10 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
   const cold = needsRecovery(session)
 
   useEffect(() => {
+    // last_event_at moves with every hook the agent fires, so an unwatched
+    // transcript would refetch itself all day. Reading it again on the way
+    // back costs one request instead.
+    if (!active) return
     let cancelled = false
     const load = async (): Promise<void> => {
       try {
@@ -59,7 +72,7 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
     }
     // Reloads as the agent works: last_event_at moves on every hook, and the
     // transcript is a file the daemon re-reads rather than a stream.
-  }, [hostId, session.session_id, session.last_event_at, status])
+  }, [hostId, session.session_id, session.last_event_at, status, active])
 
   useEffect(() => {
     if (pinnedToBottom.current && scroller.current) {
