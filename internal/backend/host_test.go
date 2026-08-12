@@ -277,6 +277,10 @@ func TestKeySequence(t *testing.T) {
 		KeyEnter:  "\r",
 		KeyEscape: "\x1b",
 		KeyCtrlC:  "\x03",
+		// Arrows move the highlight in Claude's own question UI, which is how
+		// an answer from the phone reaches a dialog the CLI owns.
+		KeyUp:   "\x1b[A",
+		KeyDown: "\x1b[B",
 	}
 	for key, want := range cases {
 		got, err := keySequence(key)

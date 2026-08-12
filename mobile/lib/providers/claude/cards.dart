@@ -307,9 +307,32 @@ class ClaudeQuestionCard extends StatefulWidget {
 }
 
 class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
-  final Map<String, String> _answers = {};
+  /// Question index → chosen option index. Indices rather than labels: the
+  /// daemon answers by moving the CLI's own highlight, so position is what it
+  /// needs, and two options can share a label.
+  final Map<int, int> _selections = {};
+  bool _submitting = false;
 
   HeliosNotification get n => widget.notification;
+
+  Future<void> _submit() async {
+    setState(() => _submitting = true);
+    final error = await widget.sse.sendActionError(n.id, {
+      'action': 'answer',
+      'selections': _selections.entries
+          .map((e) => {'question_index': e.key, 'option_index': e.value})
+          .toList()
+        ..sort((a, b) =>
+            (a['question_index'] as int).compareTo(b['question_index'] as int)),
+    });
+    if (!mounted) return;
+    setState(() => _submitting = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't answer: $error")),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -351,8 +374,10 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
               ],
             ),
             const SizedBox(height: 12),
-            ...questions.map((q) {
+            ...questions.asMap().entries.map((qe) {
+              final q = qe.value;
               if (q is! Map) return const SizedBox.shrink();
+              final questionIndex = qe.key;
               final question = q['question']?.toString() ?? '';
               final header = q['header']?.toString();
               final options = (q['options'] as List?) ?? [];
@@ -369,62 +394,48 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
                     ],
                     Text(question, style: const TextStyle(fontSize: 13)),
                     const SizedBox(height: 6),
-                    ...options.map((opt) {
+                    ...options.asMap().entries.map((oe) {
+                      final optionIndex = oe.key;
+                      final opt = oe.value;
                       final label = (opt is Map ? opt['label'] : opt)?.toString() ?? '';
-                      if (multiSelect) {
-                        final currentAnswers = (_answers[question] ?? '').split(', ').where((s) => s.isNotEmpty).toSet();
-                        final isSelected = currentAnswers.contains(label);
-                        return InkWell(
-                          onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                currentAnswers.remove(label);
-                              } else {
-                                currentAnswers.add(label);
-                              }
-                              _answers[question] = currentAnswers.join(', ');
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  isSelected ? Icons.check_box : Icons.check_box_outline_blank,
-                                  size: 20,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(label, style: const TextStyle(fontSize: 13)),
-                              ],
-                            ),
+                      final isSelected = _selections[questionIndex] == optionIndex;
+                      return InkWell(
+                        onTap: _submitting
+                            ? null
+                            : () {
+                                setState(() {
+                                  _selections[questionIndex] = optionIndex;
+                                });
+                              },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                size: 20,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+                            ],
                           ),
-                        );
-                      } else {
-                        final isSelected = _answers[question] == label;
-                        return InkWell(
-                          onTap: () {
-                            setState(() {
-                              _answers[question] = label;
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                                  size: 20,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(label, style: const TextStyle(fontSize: 13)),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
+                        ),
+                      );
                     }),
+                    // Answering drives the CLI's own list, which takes one
+                    // highlighted option per question. Picking several needs
+                    // the terminal.
+                    if (multiSelect) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Pick one here, or answer in the terminal to choose several.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               );
@@ -455,9 +466,11 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _answers.isNotEmpty
-                    ? () => widget.sse.sendAction(n.id, {'action': 'answer', 'answers': _answers})
-                    : null,
+                // Every question, not just one: the daemon walks the CLI
+                // through them in order and a gap would leave it stranded.
+                onPressed: _submitting || _selections.length != questions.length
+                    ? null
+                    : _submit,
                 child: Text(questions.length > 1 ? 'Submit Answers' : 'Submit Answer'),
               ),
             ),

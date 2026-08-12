@@ -177,7 +177,26 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 	notifID := notifications.GenerateNotificationID()
 	title := "Claude has a question"
 	detail := "Answer required to continue"
-	payloadStr := string(input.ToolInput)
+
+	// input.ToolInput is already {"questions": [...]}; splice session_id into it
+	// rather than wrapping, which would nest questions under itself and break
+	// the mobile card's payload['questions'] accessor.
+	payload := map[string]json.RawMessage{}
+	if err := json.Unmarshal(input.ToolInput, &payload); err != nil {
+		payload = map[string]json.RawMessage{}
+	}
+	sessionJSON, err := json.Marshal(input.SessionID)
+	if err != nil {
+		http.Error(w, "failed to encode session id", http.StatusInternalServerError)
+		return
+	}
+	payload["session_id"] = sessionJSON
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "failed to encode question payload", http.StatusInternalServerError)
+		return
+	}
+	payloadStr := string(payloadJSON)
 
 	notif := &store.Notification{
 		ID:            notifID,
@@ -196,9 +215,9 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Reserve the decision slot before publishing, so a client that answers
-	// immediately cannot beat this handler to WaitForDecision.
-	ctx.Mgr.Register(notifID)
+	// No Register: nothing waits on a decision channel for questions any more.
+	// Resolution comes from handleQuestionAction via Mgr.Resolve, or from the
+	// PostToolUse / idle_prompt paths, neither of which needs a reserved slot.
 
 	ctx.Notify("notification", notif)
 
@@ -221,39 +240,12 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 		})
 	}
 
-	decision := waitForDecision(ctx, notifID, r)
-	if decision == nil {
-		return
-	}
-
-	type preToolUseResponse struct {
-		HookSpecificOutput struct {
-			HookEventName      string                 `json:"hookEventName"`
-			PermissionDecision string                 `json:"permissionDecision"`
-			UpdatedInput       map[string]interface{} `json:"updatedInput,omitempty"`
-		} `json:"hookSpecificOutput"`
-	}
-
-	resp := preToolUseResponse{}
-	resp.HookSpecificOutput.HookEventName = "PreToolUse"
-
-	if decision.Status == "answered" && len(decision.Response) > 0 {
-		resp.HookSpecificOutput.PermissionDecision = "allow"
-		var respData map[string]interface{}
-		json.Unmarshal(decision.Response, &respData)
-
-		var toolInput map[string]interface{}
-		json.Unmarshal(input.ToolInput, &toolInput)
-		for k, v := range respData {
-			toolInput[k] = v
-		}
-		resp.HookSpecificOutput.UpdatedInput = toolInput
-	} else {
-		resp.HookSpecificOutput.PermissionDecision = "deny"
-	}
-
+	// Deliberately no decision and no block. Returning an empty object lets the
+	// CLI run AskUserQuestion and render its own UI, which is the only way the
+	// terminal user can answer at all. The phone answers by driving that same
+	// UI — see handleQuestionAction.
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	fmt.Fprint(w, `{}`)
 }
 
 // ==================== Elicitation Hook ====================
@@ -516,6 +508,10 @@ func handleNotification(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 			"session_id": input.SessionID,
 			"status":     "idle",
 		})
+		// Escaping out of a question returns Claude to its prompt without a
+		// PostToolUse, so this is the only signal that the question is gone.
+		// The phone must stop offering to answer it.
+		resolveSessionQuestions(ctx, input.SessionID)
 	}
 
 	if ctx.Report != nil {
@@ -701,10 +697,38 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	fmt.Fprint(w, `{}`)
 }
 
+// askUserQuestionTool is the tool whose PreToolUse has a dedicated handler.
+const askUserQuestionTool = "AskUserQuestion"
+
+// resolveSessionQuestions clears a session's pending claude.question
+// notifications and tells clients to drop them, whichever surface answered.
+//
+// Narrowed to the one type rather than reusing ResolveSessionNotifications,
+// which would also clear a permission request the session is still waiting on.
+func resolveSessionQuestions(ctx *provider.HookContext, sessionID string) {
+	ids, err := ctx.DB.ResolveSessionNotificationsByType(sessionID, "claude.question", "resolved", "claude")
+	if err != nil {
+		log.Printf("hook: resolve questions for %s: %v", sessionID, err)
+		return
+	}
+	for _, id := range ids {
+		ctx.Notify("notification_resolved", map[string]string{"id": id, "action": "resolved", "source": "claude"})
+	}
+}
+
 func handleToolPre(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
 	var input hookInput
 	if err := json.Unmarshal(raw, &input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// AskUserQuestion has a dedicated hook that sets waiting_permission. The
+	// "*" PreToolUse matcher fires for it too, and writing "active" here is
+	// what used to erase that status a millisecond after it was set.
+	if input.ToolName == askUserQuestionTool {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{}`)
 		return
 	}
 
@@ -740,6 +764,12 @@ func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUse:"+input.ToolName)
 	updateSessionTranscript(ctx, &input)
+
+	// The tool finished, so the question is answered. Retract the notification
+	// on every other surface. Which side answered does not matter.
+	if input.ToolName == askUserQuestionTool {
+		resolveSessionQuestions(ctx, input.SessionID)
+	}
 
 	if ctx.Report != nil {
 		ctx.Report(provider.ReportEvent{
