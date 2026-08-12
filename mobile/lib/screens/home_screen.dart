@@ -78,6 +78,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     // Voice narration is handled by reporter SSE — no manual event pushing needed
 
+    // Answered in the terminal, in the desktop app, or on another device: the
+    // tray copy here is now stale and nothing else retracts it.
+    if (event.type == 'notification_resolved') {
+      if (event.data is! Map) return;
+      final id = (event.data as Map)['id']?.toString();
+      if (id != null && id.isNotEmpty) {
+        NotificationService.instance
+            .cancel(NotificationService.notifKey(hostId, id));
+      }
+      return;
+    }
+
     if (event.type != 'notification') return;
     if (event.data is! Map) {
       debugPrint('[HomeScreen] notification data is not Map: ${event.data.runtimeType}');
@@ -87,7 +99,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final data = event.data as Map;
     final type = data['type']?.toString() ?? '';
     final id = data['id']?.toString() ?? '';
-    debugPrint('[HomeScreen] notification: notifType=$type id=$id');
+    final status = data['status']?.toString();
+    debugPrint('[HomeScreen] notification: notifType=$type id=$id status=$status');
+
+    final key = NotificationService.notifKey(hostId, id);
+    final shouldRaise = registry.shouldRaiseNotification(
+      type: type,
+      status: status,
+      alreadyPosted: NotificationService.instance.isPosted(key),
+    );
+    if (!shouldRaise) return;
 
     final host = _hm.hostById(hostId);
     final hostLabel = _hm.hosts.length > 1 ? (host?.label ?? '') : '';
@@ -103,6 +124,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('[HomeScreen] showing OS permission notification');
       notifSvc.showPermissionNotification(
         id: payload,
+        key: key,
         toolName: '$prefix${data['title'] ?? 'Unknown tool'}',
         detail: data['detail']?.toString() ?? 'Permission requested',
         silent: silent,
@@ -111,6 +133,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('[HomeScreen] showing OS question notification');
       notifSvc.showNotification(
         id: payload,
+        key: key,
         title: '${prefix}Claude has a question',
         body: data['detail']?.toString() ?? 'Answer required',
         silent: silent,
@@ -119,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('[HomeScreen] showing OS elicitation notification');
       notifSvc.showNotification(
         id: payload,
+        key: key,
         title: '$prefix${data['title'] ?? 'Input requested'}',
         body: data['detail']?.toString() ?? 'Input required',
         silent: silent,
@@ -127,6 +151,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('[HomeScreen] showing OS trust notification');
       notifSvc.showNotification(
         id: payload,
+        key: key,
         title: '${prefix}Workspace trust required',
         body: data['detail']?.toString() ?? 'Claude is asking to trust the workspace.',
         silent: silent,
@@ -135,6 +160,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('[HomeScreen] showing OS done notification');
       notifSvc.showNotification(
         id: payload,
+        key: key,
         title: '${prefix}Task completed',
         body: data['detail']?.toString() ?? 'Claude finished a task.',
         silent: silent,
@@ -143,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('[HomeScreen] showing OS error notification');
       notifSvc.showNotification(
         id: payload,
+        key: key,
         title: '${prefix}Session error',
         body: data['detail']?.toString() ?? 'Claude stopped due to an error.',
         silent: silent,
@@ -166,6 +193,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       } else if (action == 'deny') {
         service.sendAction(notificationId, {'action': 'deny'});
       }
+
+      // Answering from the notification's own buttons does not otherwise
+      // retract it — the tray copy would sit there already answered.
+      NotificationService.instance
+          .cancel(NotificationService.notifKey(hostId, notificationId));
 
       // Switch UI filter to this host
       _hm.setActiveHost(hostId);
