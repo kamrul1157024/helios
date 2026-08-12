@@ -106,6 +106,20 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
                 <span className="chevron">{isCollapsed ? '▸' : '▾'}</span>
               </button>
 
+              {/* Above the list, not below it: revealed sessions are appended,
+                  so a toggle under them walks further down the page with every
+                  use and the way back is a scroll. */}
+              {!isCollapsed && (hidden > 0 || showTerminated[host.id]) && (
+                <button
+                  className="link show-terminated"
+                  onClick={() =>
+                    setShowTerminated((current) => ({ ...current, [host.id]: !current[host.id] }))
+                  }
+                >
+                  {showTerminated[host.id] ? 'Hide terminated' : `Show ${hidden} terminated`}
+                </button>
+              )}
+
               {!isCollapsed &&
                 rows.map(({ session, pending }) => (
                   <SessionRow
@@ -121,19 +135,6 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
 
               {!isCollapsed && rows.length === 0 && hidden === 0 && (
                 <p className="empty-note">No sessions</p>
-              )}
-
-              {!isCollapsed && (hidden > 0 || showTerminated[host.id]) && (
-                <button
-                  className="link show-terminated"
-                  onClick={() =>
-                    setShowTerminated((current) => ({ ...current, [host.id]: !current[host.id] }))
-                  }
-                >
-                  {showTerminated[host.id]
-                    ? 'Hide terminated'
-                    : `Show ${hidden} terminated`}
-                </button>
               )}
             </section>
           )
