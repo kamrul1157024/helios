@@ -4,7 +4,9 @@ import type {
   FileContent,
   FileEntry,
   FileSearchResult,
+  GitChanges,
   GitDiff,
+  GitLog,
   GitStatus,
   GrepResult,
   HostRecord,
@@ -162,8 +164,18 @@ export class HostApi {
   gitStatus(path: string): Promise<GitStatus> {
     return this.call('gitStatus', path)
   }
-  gitDiff(path: string, file: string): Promise<GitDiff> {
-    return this.call('gitDiff', path, file)
+  gitDiff(
+    path: string,
+    file: string,
+    at?: { from?: string; to?: string; staged?: boolean; untracked?: boolean },
+  ): Promise<GitDiff> {
+    return this.call('gitDiff', path, file, at)
+  }
+  gitLog(path: string, opts?: { base?: string; all?: boolean; limit?: number; skip?: number }): Promise<GitLog> {
+    return this.call('gitLog', path, opts)
+  }
+  gitChanges(path: string, to: string, from?: string): Promise<GitChanges> {
+    return this.call('gitChanges', path, to, from)
   }
   gitWorktrees(path: string): Promise<Worktree[]> {
     return this.call('gitWorktrees', path)

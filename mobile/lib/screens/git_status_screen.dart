@@ -20,9 +20,19 @@ class GitStatusScreen extends StatefulWidget {
   State<GitStatusScreen> createState() => _GitStatusScreenState();
 }
 
+enum _GitView { changes, commits, worktrees }
+
 class _GitStatusScreenState extends State<GitStatusScreen> {
   GitStatus? _status;
   bool _loading = true;
+  _GitView _view = _GitView.changes;
+
+  /// The worktree the screen is scoped to — the session's own until another is
+  /// picked from the Worktrees tab.
+  late String _root = widget.cwd;
+
+  /// Bumped by the refresh button so the commit and worktree tabs reload.
+  int _reload = 0;
 
   DaemonAPIService? get _svc =>
       context.read<HostManager>().serviceFor(widget.hostId);
@@ -35,7 +45,7 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final status = await _svc?.gitStatus(widget.cwd);
+    final status = await _svc?.gitStatus(_root);
     if (!mounted) return;
     setState(() {
       _status = status;
@@ -43,17 +53,52 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
     });
   }
 
+  void _refresh() {
+    setState(() => _reload++);
+    _load();
+  }
+
+  void _scopeTo(String path) {
+    setState(() {
+      _root = path;
+      _view = _GitView.changes;
+    });
+    _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final rescoped = _root != widget.cwd;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Git Status'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Git'),
+            if (rescoped)
+              Text(
+                _shortPath(_root),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
         actions: [
+          if (rescoped)
+            IconButton(
+              icon: const Icon(Icons.undo),
+              tooltip: "Back to this session's worktree",
+              onPressed: () => _scopeTo(widget.cwd),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
-            onPressed: _load,
+            onPressed: _refresh,
           ),
           IconButton(
             icon: const Icon(Icons.chat_bubble_outline),
@@ -61,25 +106,60 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
             onPressed: () => Navigator.of(context).pop(),
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(40),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: SegmentedButton<_GitView>(
+              segments: const [
+                ButtonSegment(value: _GitView.changes, label: Text('Changes', style: TextStyle(fontSize: 12))),
+                ButtonSegment(value: _GitView.commits, label: Text('Commits', style: TextStyle(fontSize: 12))),
+                ButtonSegment(value: _GitView.worktrees, label: Text('Worktrees', style: TextStyle(fontSize: 12))),
+              ],
+              selected: {_view},
+              onSelectionChanged: (s) => setState(() => _view = s.first),
+              style: ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+        ),
       ),
-      body: _loading
-          ? const _GitStatusSkeleton()
-          : _status == null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
-                      const SizedBox(height: 12),
-                      const Text('Not a git repository'),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: _buildContent(theme),
-                ),
+      body: switch (_view) {
+        _GitView.changes => _buildChanges(theme),
+        _GitView.commits => _CommitsTab(
+            key: ValueKey('commits:$_root:$_reload'),
+            hostId: widget.hostId,
+            root: _root,
+            sessionId: widget.sessionId,
+          ),
+        _GitView.worktrees => _WorktreesTab(
+            key: ValueKey('worktrees:$_root:$_reload'),
+            hostId: widget.hostId,
+            root: _root,
+            active: _root,
+            onPick: _scopeTo,
+          ),
+      },
     );
+  }
+
+  Widget _buildChanges(ThemeData theme) {
+    if (_loading) return const _GitStatusSkeleton();
+    if (_status == null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
+            const SizedBox(height: 12),
+            const Text('Not a git repository'),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(onRefresh: _load, child: _buildContent(theme));
   }
 
   Widget _buildContent(ThemeData theme) {
@@ -301,6 +381,787 @@ class _ChangeTile extends StatelessWidget {
   }
 }
 
+/// The last two segments: the parent directory is what tells worktrees apart.
+String _shortPath(String path) {
+  final parts = path.split('/').where((p) => p.isNotEmpty).toList();
+  if (parts.length <= 2) return path;
+  return '.../${parts.sublist(parts.length - 2).join('/')}';
+}
+
+String _shortSha(String sha) => sha.length > 7 ? sha.substring(0, 7) : sha;
+
+Color _statusTint(String status) {
+  switch (status) {
+    case 'M':
+      return Colors.orange;
+    case 'A':
+      return Colors.green;
+    case 'D':
+      return Colors.red;
+    case 'R':
+    case 'C':
+      return Colors.blue;
+    default:
+      return Colors.grey;
+  }
+}
+
+/// Insertion and deletion counts, the way git writes them.
+List<Widget> _statChips(int insertions, int deletions) {
+  return [
+    if (insertions > 0)
+      Text(
+        '+$insertions',
+        style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.green),
+      ),
+    if (insertions > 0 && deletions > 0) const SizedBox(width: 6),
+    if (deletions > 0)
+      Text(
+        '-$deletions',
+        style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.red),
+      ),
+  ];
+}
+
+// ==================== Commits ====================
+
+/// The commit history of the current branch.
+///
+/// Tapping a commit shows what it changed; long-pressing one marks it, and the
+/// next tap shows everything between the two.
+class _CommitsTab extends StatefulWidget {
+  final String hostId;
+  final String root;
+  final String? sessionId;
+
+  const _CommitsTab({super.key, required this.hostId, required this.root, this.sessionId});
+
+  @override
+  State<_CommitsTab> createState() => _CommitsTabState();
+}
+
+class _CommitsTabState extends State<_CommitsTab> {
+  GitLog? _log;
+  final List<Commit> _commits = [];
+  bool _all = false;
+  bool _loading = true;
+  bool _loadingMore = false;
+  String? _compareFrom;
+
+  DaemonAPIService? get _svc =>
+      context.read<HostManager>().serviceFor(widget.hostId);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _compareFrom = null;
+    });
+    final log = await _svc?.gitLog(widget.root, all: _all);
+    if (!mounted) return;
+    setState(() {
+      _log = log;
+      _commits
+        ..clear()
+        ..addAll(log?.commits ?? []);
+      _loading = false;
+    });
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    final next = await _svc?.gitLog(widget.root, all: _all, skip: _commits.length);
+    if (!mounted) return;
+    setState(() {
+      if (next != null) {
+        _commits.addAll(next.commits);
+        _log = next;
+      }
+      _loadingMore = false;
+    });
+  }
+
+  void _tap(Commit commit) {
+    final anchor = _compareFrom;
+    if (anchor == null || anchor == commit.sha) {
+      _open(to: commit.sha, subject: commit.subject);
+      return;
+    }
+    final a = _commits.indexWhere((c) => c.sha == anchor);
+    final b = _commits.indexWhere((c) => c.sha == commit.sha);
+    if (a < 0 || b < 0) {
+      _open(to: commit.sha, subject: commit.subject);
+      return;
+    }
+    // Lower in the list is older, and the older end is what we diff from.
+    final newer = a < b ? a : b;
+    final older = a < b ? b : a;
+    setState(() => _compareFrom = null);
+    _open(
+      to: _commits[newer].sha,
+      from: _commits[older].sha,
+      subject: '${older - newer + 1} commits',
+    );
+  }
+
+  void _open({required String to, String? from, required String subject}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CommitDetailScreen(
+          hostId: widget.hostId,
+          root: widget.root,
+          to: to,
+          from: from,
+          title: subject,
+          sessionId: widget.sessionId,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_loading) return const _GitStatusSkeleton();
+    final log = _log;
+    if (log == null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
+            const SizedBox(height: 12),
+            const Text('Failed to load history'),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        _buildScopeBar(theme, log),
+        if (_compareFrom != null) _buildCompareBanner(theme),
+        Expanded(
+          child: _commits.isEmpty
+              ? Center(
+                  child: Text(
+                    'No commits',
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.builder(
+                    itemCount: _commits.length + (log.hasMore ? 1 : 0),
+                    itemBuilder: (ctx, i) {
+                      if (i == _commits.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: _loadingMore
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : TextButton(
+                                    onPressed: _loadMore,
+                                    child: const Text('Load more', style: TextStyle(fontSize: 13)),
+                                  ),
+                          ),
+                        );
+                      }
+                      final commit = _commits[i];
+                      return _CommitTile(
+                        commit: commit,
+                        marked: commit.sha == _compareFrom,
+                        onTap: () => _tap(commit),
+                        onLongPress: () {
+                          HapticFeedback.lightImpact();
+                          setState(() => _compareFrom = commit.sha);
+                        },
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScopeBar(ThemeData theme, GitLog log) {
+    final label = log.scope == 'branch' && log.base.isNotEmpty
+        ? 'vs ${log.base}'
+        : 'full history';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.fork_right, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              log.branch,
+              style: TextStyle(
+                fontSize: 13,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurface,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const Spacer(),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('Branch', style: TextStyle(fontSize: 11))),
+              ButtonSegment(value: true, label: Text('All', style: TextStyle(fontSize: 11))),
+            ],
+            selected: {_all},
+            onSelectionChanged: (s) {
+              setState(() => _all = s.first);
+              _load();
+            },
+            showSelectedIcon: false,
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompareBanner(ThemeData theme) {
+    final short = _compareFrom!.substring(0, 7);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: theme.colorScheme.primaryContainer,
+      child: Row(
+        children: [
+          Icon(Icons.compare_arrows, size: 16, color: theme.colorScheme.onPrimaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Comparing from $short — tap another commit',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onPrimaryContainer),
+            ),
+          ),
+          GestureDetector(
+            onTap: () => setState(() => _compareFrom = null),
+            child: Icon(Icons.close, size: 16, color: theme.colorScheme.onPrimaryContainer),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CommitTile extends StatelessWidget {
+  final Commit commit;
+  final bool marked;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _CommitTile({
+    required this.commit,
+    required this.marked,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: marked ? theme.colorScheme.primaryContainer.withValues(alpha: 0.4) : null,
+          border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5))),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              commit.subject,
+              style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text(
+                  commit.short,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    commit.author,
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  commit.timeAgo,
+                  style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                ),
+                const Spacer(),
+                ..._statChips(commit.insertions, commit.deletions),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// What one commit changed, or everything between two.
+class CommitDetailScreen extends StatefulWidget {
+  final String hostId;
+  final String root;
+  final String to;
+  final String? from;
+  final String title;
+  final String? sessionId;
+
+  const CommitDetailScreen({
+    super.key,
+    required this.hostId,
+    required this.root,
+    required this.to,
+    this.from,
+    required this.title,
+    this.sessionId,
+  });
+
+  @override
+  State<CommitDetailScreen> createState() => _CommitDetailScreenState();
+}
+
+class _CommitDetailScreenState extends State<CommitDetailScreen> {
+  GitChanges? _changes;
+  bool _loading = true;
+
+  DaemonAPIService? get _svc =>
+      context.read<HostManager>().serviceFor(widget.hostId);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final changes = await _svc?.gitChanges(widget.root, widget.to, from: widget.from);
+    if (!mounted) return;
+    setState(() {
+      _changes = changes;
+      _loading = false;
+    });
+  }
+
+  void _openFile(CommitFile file) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GitDiffScreen(
+          hostId: widget.hostId,
+          cwd: widget.root,
+          change: GitChange(path: file.path, status: file.status),
+          staged: false,
+          from: widget.from,
+          to: widget.to,
+          sessionId: widget.sessionId,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final changes = _changes;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          changes?.single == true && changes!.subject.isNotEmpty ? changes.subject : widget.title,
+          style: const TextStyle(fontSize: 15),
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            tooltip: 'Back to chat',
+            onPressed: () => Navigator.of(context).popUntil(
+              (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
+            ),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const _GitStatusSkeleton()
+          : changes == null
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
+                      const SizedBox(height: 12),
+                      const Text('Failed to load commit'),
+                    ],
+                  ),
+                )
+              : _buildBody(theme, changes),
+    );
+  }
+
+  Widget _buildBody(ThemeData theme, GitChanges changes) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    changes.single ? changes.shortTo : '${changes.shortFrom}...${changes.shortTo}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  if (changes.author.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        changes.author,
+                        style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  if (changes.date.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      changes.timeAgo,
+                      style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                  const Spacer(),
+                  ..._statChips(changes.insertions, changes.deletions),
+                ],
+              ),
+              if (changes.body.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SelectableText(
+                  changes.body,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            '${changes.files.length} ${changes.files.length == 1 ? 'FILE' : 'FILES'}',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.2,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        if (changes.files.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Center(
+              child: Text(
+                'No files — a merge commit',
+                style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+          ),
+        ...changes.files.map((file) => _CommitFileTile(file: file, onTap: () => _openFile(file))),
+        if (changes.truncated)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              'Showing the first ${changes.files.length} files.',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CommitFileTile extends StatelessWidget {
+  final CommitFile file;
+  final VoidCallback onTap;
+
+  const _CommitFileTile({required this.file, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 22,
+              child: Text(
+                file.status,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'monospace',
+                  color: _statusTint(file.status),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    file.path,
+                    style: TextStyle(fontSize: 13, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (file.from.isNotEmpty)
+                    Text(
+                      'was ${file.from}',
+                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            ..._statChips(file.insertions, file.deletions),
+            Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== Worktrees ====================
+
+/// Every worktree of this repository. Read-only: Helios shows worktrees, it
+/// does not make them. Tapping one points the whole screen at it.
+class _WorktreesTab extends StatefulWidget {
+  final String hostId;
+  final String root;
+  final String active;
+  final ValueChanged<String> onPick;
+
+  const _WorktreesTab({
+    super.key,
+    required this.hostId,
+    required this.root,
+    required this.active,
+    required this.onPick,
+  });
+
+  @override
+  State<_WorktreesTab> createState() => _WorktreesTabState();
+}
+
+class _WorktreesTabState extends State<_WorktreesTab> {
+  List<Worktree>? _worktrees;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final svc = context.read<HostManager>().serviceFor(widget.hostId);
+    final worktrees = await svc?.gitWorktrees(widget.root);
+    if (!mounted) return;
+    setState(() => _worktrees = worktrees ?? []);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final worktrees = _worktrees;
+    if (worktrees == null) return const _GitStatusSkeleton();
+    if (worktrees.isEmpty) {
+      return Center(
+        child: Text('No worktrees', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
+        itemCount: worktrees.length,
+        itemBuilder: (ctx, i) => _WorktreeTile(
+          worktree: worktrees[i],
+          selected: worktrees[i].path == widget.active,
+          onTap: () => widget.onPick(worktrees[i].path),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorktreeTile extends StatelessWidget {
+  final Worktree worktree;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _WorktreeTile({required this.worktree, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? theme.colorScheme.primaryContainer.withValues(alpha: 0.35) : null,
+          border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5))),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  size: 16,
+                  color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    worktree.branch.isEmpty ? '(detached)' : worktree.branch,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontFamily: 'monospace',
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                if (worktree.isMain) const _Pill(text: 'main'),
+                if (worktree.locked) const _Pill(text: 'locked'),
+                if (worktree.ahead > 0) _Pill(text: '↑${worktree.ahead}', color: Colors.green),
+                if (worktree.behind > 0) _Pill(text: '↓${worktree.behind}', color: Colors.orange),
+                if (worktree.dirty > 0)
+                  _Pill(text: '●${worktree.dirty}', color: Colors.orange)
+                else
+                  const _Pill(text: 'clean', color: Colors.green),
+              ],
+            ),
+            if (worktree.subject.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                worktree.subject,
+                style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const SizedBox(height: 2),
+            Text(
+              '${worktree.head} ${_shortPath(worktree.path)}',
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  final String text;
+  final Color? color;
+
+  const _Pill({required this.text, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tint = color ?? theme.colorScheme.onSurfaceVariant;
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: tint),
+      ),
+    );
+  }
+}
+
 // ==================== Git Diff Screen ====================
 
 enum DiffViewMode { diff, unified, full }
@@ -310,6 +1171,11 @@ class GitDiffScreen extends StatefulWidget {
   final String cwd;
   final GitChange change;
   final bool staged;
+
+  /// The revisions to diff, when this is a committed change rather than a
+  /// working-tree one: [to] alone is that commit against its parent.
+  final String? from;
+  final String? to;
   final String? sessionId;
 
   const GitDiffScreen({
@@ -318,6 +1184,8 @@ class GitDiffScreen extends StatefulWidget {
     required this.cwd,
     required this.change,
     required this.staged,
+    this.from,
+    this.to,
     this.sessionId,
   });
 
@@ -385,19 +1253,29 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
       setState(() => _loading = false);
       return;
     }
-    final diff = await svc.gitDiff(widget.cwd, widget.change.path, staged: widget.staged);
+    final diff = await svc.gitDiff(
+      widget.cwd,
+      widget.change.path,
+      staged: widget.staged,
+      from: widget.from,
+      to: widget.to,
+    );
     if (!mounted) return;
     setState(() {
       _diff = diff;
       _loading = false;
     });
-    // Preload full file for full-file mode.
+    // Preload full file for full-file mode. Only for the working tree: on disk
+    // is the current file, which is not what an old commit changed.
+    if (_atRevision) return;
     final fullPath = '${widget.cwd}/${widget.change.path}';
     final file = await svc.readFile(fullPath);
     if (mounted && file != null) {
       setState(() => _fullFile = file);
     }
   }
+
+  bool get _atRevision => widget.to != null && widget.to!.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -408,8 +1286,14 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.change.fileName, style: const TextStyle(fontSize: 15), overflow: TextOverflow.ellipsis),
-            if (_diff?.stat.isNotEmpty == true)
-              Text(_diff!.stat, style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+            if (_diff?.stat.isNotEmpty == true || _atRevision)
+              Text(
+                [
+                  if (_diff?.stat.isNotEmpty == true) _diff!.stat,
+                  if (_atRevision) 'at ${_shortSha(widget.to!)}',
+                ].join(' · '),
+                style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+              ),
           ],
         ),
         actions: [
@@ -438,10 +1322,13 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: SegmentedButton<DiffViewMode>(
-              segments: const [
-                ButtonSegment(value: DiffViewMode.diff, label: Text('Diff', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: DiffViewMode.unified, label: Text('Unified', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: DiffViewMode.full, label: Text('Full', style: TextStyle(fontSize: 12))),
+              segments: [
+                const ButtonSegment(value: DiffViewMode.diff, label: Text('Diff', style: TextStyle(fontSize: 12))),
+                const ButtonSegment(value: DiffViewMode.unified, label: Text('Unified', style: TextStyle(fontSize: 12))),
+                // The file on disk is the current one, so "full" only makes
+                // sense for a working-tree diff.
+                if (!_atRevision)
+                  const ButtonSegment(value: DiffViewMode.full, label: Text('Full', style: TextStyle(fontSize: 12))),
               ],
               selected: {_mode},
               onSelectionChanged: (s) => setState(() => _mode = s.first),
@@ -587,6 +1474,13 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
     final svc = context.read<HostManager>().serviceFor(widget.hostId);
     if (svc == null || widget.sessionId == null) return;
 
+    // Say which commit, so the agent looks at the same thing you are.
+    final at = !_atRevision
+        ? ''
+        : widget.from == null || widget.from!.isEmpty
+            ? ' at ${_shortSha(widget.to!)}'
+            : ' between ${_shortSha(widget.from!)} and ${_shortSha(widget.to!)}';
+
     String prompt;
     if (_hasSelection) {
       final allLines = _parseDiff(_diff!.diff);
@@ -597,9 +1491,9 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
         return '$prefix${l.text}';
       }).join('\n');
       final ext = _diff?.language ?? '';
-      prompt = 'Regarding diff of `${widget.change.path}` $_selLabel:\n```$ext\n$selectedTexts\n```\n${question.trim()}';
+      prompt = 'Regarding diff of `${widget.change.path}`$at $_selLabel:\n```$ext\n$selectedTexts\n```\n${question.trim()}';
     } else {
-      prompt = 'Regarding diff of `${widget.change.path}`:\n${question.trim()}';
+      prompt = 'Regarding diff of `${widget.change.path}`$at:\n${question.trim()}';
     }
 
     final nav = Navigator.of(context);

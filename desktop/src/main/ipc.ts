@@ -32,6 +32,8 @@ const API_METHODS = new Set<keyof ApiClient>([
   'dismissNotification',
   'gitStatus',
   'gitDiff',
+  'gitLog',
+  'gitChanges',
   'gitWorktrees',
   'listFiles',
   'readFile',

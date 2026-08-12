@@ -5,7 +5,9 @@ import type {
   FileContent,
   FileEntry,
   FileSearchResult,
+  GitChanges,
   GitDiff,
+  GitLog,
   GitStatus,
   GrepResult,
   ModelInfo,
@@ -221,8 +223,43 @@ export class ApiClient {
     return this.request('GET', `/api/git/status${queryString({ path })}`)
   }
 
-  gitDiff(path: string, file: string): Promise<GitDiff> {
-    return this.request('GET', `/api/git/diff${queryString({ path, file })}`)
+  /**
+   * The working-tree diff for a file, or its diff at a revision: `to` alone is
+   * that commit against its parent, `from` and `to` together are a range.
+   */
+  gitDiff(
+    path: string,
+    file: string,
+    at: { from?: string; to?: string; staged?: boolean; untracked?: boolean } = {},
+  ): Promise<GitDiff> {
+    return this.request(
+      'GET',
+      `/api/git/diff${queryString({
+        path,
+        file,
+        from: at.from,
+        to: at.to,
+        staged: at.staged ? 'true' : undefined,
+        untracked: at.untracked ? 'true' : undefined,
+      })}`,
+    )
+  }
+
+  gitLog(path: string, opts: { base?: string; all?: boolean; limit?: number; skip?: number } = {}): Promise<GitLog> {
+    return this.request(
+      'GET',
+      `/api/git/log${queryString({
+        path,
+        base: opts.base,
+        all: opts.all ? 'true' : undefined,
+        limit: opts.limit,
+        skip: opts.skip,
+      })}`,
+    )
+  }
+
+  gitChanges(path: string, to: string, from?: string): Promise<GitChanges> {
+    return this.request('GET', `/api/git/changes${queryString({ path, to, from })}`)
   }
 
   async gitWorktrees(path: string): Promise<Worktree[]> {
@@ -315,10 +352,10 @@ export class ApiClient {
   }
 }
 
-function queryString(params: Record<string, string | undefined>): string {
+function queryString(params: Record<string, string | number | undefined>): string {
   const pairs = Object.entries(params).filter(([, v]) => v !== undefined && v !== '')
   if (pairs.length === 0) return ''
-  return `?${pairs.map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`).join('&')}`
+  return `?${pairs.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')}`
 }
 
 function safeParse(text: string): unknown {

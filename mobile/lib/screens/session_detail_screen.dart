@@ -1602,7 +1602,9 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                     wt.path == widget.effectiveCwd ||
                     (wt.isMain && widget.selectedWorktreePath == null);
                 final wtStatus = widget.worktreeStatuses[wt.path];
-                final changes = wtStatus?.totalChanges ?? 0;
+                // The worktree listing already carries a dirty count; the
+                // per-worktree status is more precise but arrives later.
+                final changes = wtStatus?.totalChanges ?? wt.dirty;
 
                 return ListTile(
                   leading: Icon(
@@ -1658,11 +1660,18 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
                     ],
                   ),
                   subtitle: Text(
-                    wt.shortPath,
+                    [
+                      wt.shortPath,
+                      if (wt.ahead > 0) '↑${wt.ahead}',
+                      if (wt.behind > 0) '↓${wt.behind}',
+                      if (wt.subject.isNotEmpty) wt.subject,
+                    ].join('  '),
                     style: TextStyle(
                       fontSize: 11,
                       color: widget.theme.colorScheme.onSurfaceVariant,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   trailing: wt.isMain
                       ? Text(
