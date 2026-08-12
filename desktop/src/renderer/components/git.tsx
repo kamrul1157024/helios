@@ -21,7 +21,18 @@ import type { GitChange, GitDiff, GitStatus } from '../../shared/models.ts'
  * Picking a worktree rescopes the whole panel to it, so a session started in
  * one checkout can still read the branch an agent is working in next door.
  */
-export function GitPanel({ hostId, cwd, revision }: { hostId: string; cwd: string; revision?: string }): JSX.Element {
+export function GitPanel({
+  hostId,
+  cwd,
+  revision,
+  active = true,
+}: {
+  hostId: string
+  cwd: string
+  revision?: string
+  /** False while another tab is showing: a hidden panel must not poll. */
+  active?: boolean
+}): JSX.Element {
   const [worktree, setWorktree] = useState<string | null>(null)
   const [scope, setScope] = useState<Scope>({ kind: 'working' })
   const [worktrees, setWorktrees] = useState(false)
@@ -44,6 +55,9 @@ export function GitPanel({ hostId, cwd, revision }: { hostId: string; cwd: strin
   // Status is fetched here rather than in the changes view because the header
   // shows the branch in every scope — reading a commit is no reason to lose it.
   useEffect(() => {
+    // revision moves with every hook the agent fires; behind another tab that
+    // is a status call per tool call, for a panel nobody is looking at.
+    if (!active) return
     let cancelled = false
     setError(null)
     api(hostId)
@@ -59,7 +73,7 @@ export function GitPanel({ hostId, cwd, revision }: { hostId: string; cwd: strin
     }
     // Re-reads whenever the agent does something: a tool call is the usual way
     // the working tree changes here.
-  }, [hostId, root, revision])
+  }, [hostId, root, revision, active])
 
   return (
     <div className="git">

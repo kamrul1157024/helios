@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
 import { store, terminalId, useStore, type RightPanel } from '../store.ts'
@@ -30,6 +30,20 @@ const PANEL_LABELS: Record<RightPanel, string> = {
   files: 'files',
 }
 
+/**
+ * Every panel but the terminal, which keeps itself mounted a level up.
+ *
+ * A panel holds work as much as it displays it — a file open in the editor, a
+ * diff scrolled to the hunk being read, a transcript scrolled back through —
+ * and unmounting on a tab switch throws all of it away. Once opened they stay
+ * mounted and hidden.
+ */
+const KEEP_MOUNTED: RightPanel[] = ['chat', 'approvals', 'git', 'files']
+
+/** How long an unseen panel keeps its state before it is unmounted. */
+const PANEL_TTL = 5 * 60 * 1000
+const SWEEP_INTERVAL = 60 * 1000
+
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
   const sessions = useStore((s) => s.sessions)
@@ -46,6 +60,39 @@ export function Detail(): JSX.Element {
     ? (notifications[hostId ?? ''] ?? []).filter((n) => n.source_session === session.session_id).length
     : 0
   const term = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
+
+  // When each panel was last on screen, for the idle sweep below.
+  const [kept, setKept] = useState<Partial<Record<RightPanel, number>>>({})
+  const sessionKey = hostId && session ? `${hostId}:${session.session_id}` : ''
+  // A terminated session's file and diff describe a working tree nobody is
+  // changing any more, so they close with it. Switching sessions drops them
+  // too: they belong to the tree they were opened from.
+  const terminated = session ? canResume(session) : false
+
+  useEffect(() => {
+    setKept({})
+  }, [sessionKey, terminated])
+
+  useEffect(() => {
+    if (!KEEP_MOUNTED.includes(panel) || terminated) return
+    setKept((current) => ({ ...current, [panel]: Date.now() }))
+  }, [panel, terminated])
+
+  // Held state is worth memory for as long as the user is moving between
+  // panels, and not much longer. A panel untouched for the timeout is
+  // unmounted, and comes back fetched fresh.
+  useEffect(() => {
+    const sweep = setInterval(() => {
+      setKept((current) => {
+        const cutoff = Date.now() - PANEL_TTL
+        const next = Object.fromEntries(
+          Object.entries(current).filter(([name, seen]) => name === panel || seen > cutoff),
+        ) as Partial<Record<RightPanel, number>>
+        return Object.keys(next).length === Object.keys(current).length ? current : next
+      })
+    }, SWEEP_INTERVAL)
+    return () => clearInterval(sweep)
+  }, [panel])
 
   return (
     <div className="detail">
@@ -101,32 +148,43 @@ export function Detail(): JSX.Element {
             </div>
           ))}
 
-        {hostId && session && panel !== 'terminal' && (
-          <PanelBoundary resetKey={`${hostId}:${session.session_id}:${panel}`}>
-            {/* Approvals ride alongside the transcript instead of behind their
-                own tab: an agent that stops for permission stops the panel the
-                user is already looking at, and a tab round-trip per approval
-                is the whole interaction. */}
-            {panel === 'chat' && (
-              <div className="agent-split">
-                <ChatPanel hostId={hostId} session={session} />
-                {pending > 0 && (
-                  <aside className="approvals-dock">
-                    <h3 className="dock-title">
-                      Approvals <span className="badge">{pending}</span>
-                    </h3>
-                    <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />
-                  </aside>
+        {hostId &&
+          session &&
+          KEEP_MOUNTED.filter((name) => name === panel || kept[name]).map((name) => (
+            <div key={name} className="panel-keep" hidden={name !== panel}>
+              <PanelBoundary resetKey={`${hostId}:${session.session_id}:${name}`}>
+                {/* Approvals ride alongside the transcript instead of behind
+                    their own tab: an agent that stops for permission stops the
+                    panel the user is already looking at, and a tab round-trip
+                    per approval is the whole interaction. */}
+                {name === 'chat' && (
+                  <div className="agent-split">
+                    <ChatPanel hostId={hostId} session={session} active={name === panel} />
+                    {pending > 0 && (
+                      <aside className="approvals-dock">
+                        <h3 className="dock-title">
+                          Approvals <span className="badge">{pending}</span>
+                        </h3>
+                        <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />
+                      </aside>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-            {panel === 'approvals' && <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />}
-            {panel === 'git' && (
-              <GitPanel hostId={hostId} cwd={session.cwd} revision={session.last_event_at} />
-            )}
-            {panel === 'files' && <FilesPanel hostId={hostId} cwd={session.cwd} />}
-          </PanelBoundary>
-        )}
+                {name === 'approvals' && (
+                  <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />
+                )}
+                {name === 'git' && (
+                  <GitPanel
+                    hostId={hostId}
+                    cwd={session.cwd}
+                    revision={session.last_event_at}
+                    active={name === panel}
+                  />
+                )}
+                {name === 'files' && <FilesPanel hostId={hostId} cwd={session.cwd} />}
+              </PanelBoundary>
+            </div>
+          ))}
 
         {/* Outside the switch above, and outside the boundary: the panes stay
             mounted whatever is selected, or every terminal would lose its
