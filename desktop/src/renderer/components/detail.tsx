@@ -44,6 +44,14 @@ const KEEP_MOUNTED: RightPanel[] = ['chat', 'approvals', 'git', 'files']
 const PANEL_TTL = 5 * 60 * 1000
 const SWEEP_INTERVAL = 60 * 1000
 
+/**
+ * Panels the sweep leaves alone. What they hold is a place the user chose —
+ * the file they were reading, the diff they were working through — and losing
+ * it to a timer means finding it again by hand. They cost nothing while
+ * hidden, so they stay until the session does.
+ */
+const NO_TTL: RightPanel[] = ['git', 'files']
+
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
   const sessions = useStore((s) => s.sessions)
@@ -86,7 +94,10 @@ export function Detail(): JSX.Element {
       setKept((current) => {
         const cutoff = Date.now() - PANEL_TTL
         const next = Object.fromEntries(
-          Object.entries(current).filter(([name, seen]) => name === panel || seen > cutoff),
+          Object.entries(current).filter(
+            ([name, seen]) =>
+              name === panel || NO_TTL.includes(name as RightPanel) || seen > cutoff,
+          ),
         ) as Partial<Record<RightPanel, number>>
         return Object.keys(next).length === Object.keys(current).length ? current : next
       })
@@ -181,7 +192,9 @@ export function Detail(): JSX.Element {
                     active={name === panel}
                   />
                 )}
-                {name === 'files' && <FilesPanel hostId={hostId} cwd={session.cwd} />}
+                {name === 'files' && (
+                  <FilesPanel hostId={hostId} cwd={session.cwd} visible={name === panel} />
+                )}
               </PanelBoundary>
             </div>
           ))}

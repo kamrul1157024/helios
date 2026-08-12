@@ -34,7 +34,16 @@ interface OpenFile {
  * the machine Helios runs on is just another host — so a remote session browses
  * exactly like a local one.
  */
-export function FilesPanel({ hostId, cwd }: { hostId: string; cwd: string }): JSX.Element {
+export function FilesPanel({
+  hostId,
+  cwd,
+  visible = true,
+}: {
+  hostId: string
+  cwd: string
+  /** False while another tab is showing. */
+  visible?: boolean
+}): JSX.Element {
   const root = useMemo(() => cwd.replace(/\/+$/, '') || '/', [cwd])
   const [files, setFiles] = useState<OpenFile[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
@@ -150,6 +159,20 @@ export function FilesPanel({ hostId, cwd }: { hostId: string; cwd: string }): JS
     },
     [hostId],
   )
+
+  // The agent edits the tree while the user is elsewhere, so the buffer that
+  // was accurate on the way out is stale on the way back. Unsaved edits
+  // outrank what is on disk and are left alone; the file keeps its unsaved
+  // marker and the user can revert deliberately.
+  const wasVisible = useRef(visible)
+  useEffect(() => {
+    const returning = visible && !wasVisible.current
+    wasVisible.current = visible
+    if (!returning || !activePath) return
+    const file = filesRef.current.find((f) => f.path === activePath)
+    if (!file || file.dirty) return
+    void reload(activePath)
+  }, [visible, activePath, reload])
 
   const close = (path: string): void => {
     const file = filesRef.current.find((f) => f.path === path)
