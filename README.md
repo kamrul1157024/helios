@@ -402,6 +402,40 @@ Open the app to see all your sessions, drill into live session details, manage n
   <img src="docs/assets/mobile/question-notification.jpg" width="250" alt="Question notification" />
 </p>
 
+## Desktop app
+
+`make desktop-install` builds the Electron app and drops it in `/Applications`.
+On first launch it pairs itself with the daemon on the same machine — no QR
+code, no token — and `Add host` in the sidebar pairs it with the remote ones
+the same way the phone does.
+
+The sidebar lists every session on every paired host with its live status. The
+right side is the selected session, across five tabs:
+
+**Chat** — the transcript, rendered, with a prompt box. The header carries the
+session status, the permission mode (switchable inline), and a shortcut to the
+terminal.
+
+<p align="center">
+  <img src="docs/assets/desktop/chat.png" width="700" alt="Desktop app — chat transcript for a session" />
+</p>
+
+**Terminal** — the real Claude TUI, attached over the daemon. It is the same
+terminal the CLI attaches to, so anything you can do in `helios attach` you can
+do here, including on a host across the tunnel.
+
+<p align="center">
+  <img src="docs/assets/desktop/terminal.png" width="700" alt="Desktop app — live terminal attached to a session" />
+</p>
+
+**Git** — uncommitted changes, branch and worktrees for the session's
+repository, with a diff for whichever file you pick. **Approvals** and
+**Files** cover the pending permission requests and the working tree.
+
+<p align="center">
+  <img src="docs/assets/desktop/git.png" width="700" alt="Desktop app — git panel showing uncommitted changes" />
+</p>
+
 ## What is this?
 
 Helios is a **platform**, not a tool. It orchestrates AI coding agents on your local machine without requiring a remote environment. Everything runs on your hardware. Everything except the AI itself is free.
