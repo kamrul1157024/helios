@@ -405,9 +405,14 @@ Open the app to see all your sessions, drill into live session details, manage n
 ## Desktop app
 
 `make desktop-install` builds the Electron app and drops it in `/Applications`.
-On first launch it pairs itself with the daemon on the same machine — no QR
-code, no token — and `Add host` in the sidebar pairs it with the remote ones
-the same way the phone does.
+Prebuilt packages — DMGs for Apple silicon and Intel, an AppImage and a `.deb` —
+are attached to every
+[release](https://github.com/kamrul1157024/helios/releases/latest), and the
+daemon's landing page links to them.
+
+On first launch the app pairs itself with the daemon on the same machine — no QR
+code, no token — and `Add host` in the sidebar pairs it with the remote ones the
+same way the phone does.
 
 The sidebar lists every session on every paired host with its live status. The
 right side is the selected session, across five tabs:

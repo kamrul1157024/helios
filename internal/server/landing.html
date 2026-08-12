@@ -15,6 +15,10 @@
   h1 { font-size: 2rem; font-weight: 700; color: #fff; margin-bottom: 0.25rem; }
   .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
   .downloads { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 2.5rem; }
+  /* The two builds of a platform sit side by side, so the list stays short. */
+  .pair { display: flex; gap: 0.75rem; }
+  .pair .btn { flex: 1; }
+  .group { font-size: 0.75rem; color: #71717a; text-align: left; margin-top: 0.5rem; }
   .btn {
     display: block; padding: 0.875rem 1.5rem; border-radius: 8px;
     text-decoration: none; font-weight: 600; font-size: 0.95rem;
@@ -44,10 +48,27 @@
       <span class="label">Download for Android</span>
       <span class="meta">APK</span>
     </a>
-    <a href="{{DMG_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
-      <span class="label">Download for macOS</span>
-      <span class="meta">DMG</span>
-    </a>
+    <p class="group">Desktop app</p>
+    <div class="pair">
+      <a href="{{MAC_ARM64_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+        <span class="label">macOS</span>
+        <span class="meta">Apple silicon · DMG</span>
+      </a>
+      <a href="{{MAC_INTEL_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+        <span class="label">macOS</span>
+        <span class="meta">Intel · DMG</span>
+      </a>
+    </div>
+    <div class="pair">
+      <a href="{{LINUX_APPIMAGE_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+        <span class="label">Linux</span>
+        <span class="meta">AppImage</span>
+      </a>
+      <a href="{{LINUX_DEB_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+        <span class="label">Linux</span>
+        <span class="meta">.deb</span>
+      </a>
+    </div>
   </div>
   <div class="setup">
     <h2>How to connect</h2>

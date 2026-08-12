@@ -1428,11 +1428,20 @@ func (s *InternalServer) handleDeviceRevoke(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// APKDownloadURL is the GitHub release URL for the APK (always points to latest release).
-var APKDownloadURL = "https://github.com/kamrul1157024/helios/releases/latest/download/helios.apk"
+// Download URLs for the packaged clients, served on the landing page. Each one
+// points at the latest release rather than a tag, which is why the release
+// workflow strips the version out of the asset names.
+var (
+	APKDownloadURL           = releaseAsset("helios.apk")
+	MacArm64DownloadURL      = releaseAsset("helios-desktop-macos-arm64.dmg")
+	MacIntelDownloadURL      = releaseAsset("helios-desktop-macos-x64.dmg")
+	LinuxAppImageDownloadURL = releaseAsset("helios-desktop-linux-x86_64.AppImage")
+	LinuxDebDownloadURL      = releaseAsset("helios-desktop-linux-amd64.deb")
+)
 
-// DMGDownloadURL is the GitHub release URL for the macOS DMG (always points to latest release).
-var DMGDownloadURL = "https://github.com/kamrul1157024/helios/releases/latest/download/helios.dmg"
+func releaseAsset(name string) string {
+	return "https://github.com/kamrul1157024/helios/releases/latest/download/" + name
+}
 
 // ==================== Commands ====================
 
