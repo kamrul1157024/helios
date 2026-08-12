@@ -48,6 +48,11 @@ Widget? buildCardForType({
         notification: notification,
         sse: sse,
       );
+    case 'claude.error':
+      return ClaudeErrorCard(
+        notification: notification,
+        sse: sse,
+      );
     default:
       return null;
   }
@@ -66,6 +71,7 @@ bool isActionableType(String type) =>
     type == 'claude.permission' ||
     type == 'claude.question' ||
     type == 'claude.trust' ||
+    type == 'claude.error' ||
     type.startsWith('claude.elicitation.');
 
 /// Whether an incoming notification event should raise an OS notification.

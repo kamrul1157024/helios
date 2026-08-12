@@ -33,6 +33,7 @@ type fakeBackend struct {
 	renames []string // "sessionID:name"
 	kills   []string
 	keys    []string // "sessionID:key"
+	texts   []string // "sessionID:text"
 }
 
 func newFakeBackend() *fakeBackend {
@@ -75,7 +76,10 @@ func (f *fakeBackend) Snapshot() map[string]string {
 	return out
 }
 
-func (f *fakeBackend) SendText(sessionID, text string) error { return nil }
+func (f *fakeBackend) SendText(sessionID, text string) error {
+	f.texts = append(f.texts, sessionID+":"+text)
+	return nil
+}
 
 func (f *fakeBackend) SendKey(sessionID string, k backend.Key) error {
 	f.keys = append(f.keys, sessionID+":"+string(k))
@@ -528,6 +532,151 @@ func TestStopFailure_CreatesErrorNotification(t *testing.T) {
 	if notifs[0].Status != "pending" {
 		t.Errorf("notification status = %q, want pending", notifs[0].Status)
 	}
+}
+
+// The detail used to be sessionContext(), which showed the user their own last
+// prompt back and said nothing about what broke.
+func TestStopFailure_DetailIsTheErrorText(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	const errText = "API Error: Response stalled mid-stream. The response above may be incomplete."
+
+	callHook(handleStopFailure, ctx, hookInput{
+		SessionID:      "sess-1",
+		CWD:            "/tmp/proj",
+		TranscriptPath: writeTranscript(t, apiErrorLine(errText)),
+	})
+
+	notif := onlyErrorNotif(t, db)
+	if notif.Detail == nil || *notif.Detail != errText {
+		t.Errorf("detail = %v, want %q", notif.Detail, errText)
+	}
+	if notif.Title == nil || *notif.Title != "Session error" {
+		t.Errorf("title = %v, want \"Session error\"", notif.Title)
+	}
+}
+
+func TestStopFailure_FallsBackToSessionContext(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleStopFailure, ctx, hookInput{
+		SessionID:      "sess-1",
+		CWD:            "/tmp/proj",
+		TranscriptPath: writeTranscript(t, assistantLine("no error here")),
+	})
+
+	notif := onlyErrorNotif(t, db)
+	if notif.Detail == nil || *notif.Detail == "" {
+		t.Error("detail is empty, want the session context fallback")
+	}
+}
+
+func TestStopFailure_ReasonBeatsTranscript(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleStopFailure, ctx, hookInput{
+		SessionID:      "sess-1",
+		CWD:            "/tmp/proj",
+		TranscriptPath: writeTranscript(t, apiErrorLine("stale transcript error")),
+		Reason:         "reason from the CLI",
+	})
+
+	notif := onlyErrorNotif(t, db)
+	if notif.Detail == nil || *notif.Detail != "reason from the CLI" {
+		t.Errorf("detail = %v, want the CLI-supplied reason", notif.Detail)
+	}
+}
+
+func TestStopFailure_RateLimitPayload(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleStopFailure, ctx, hookInput{
+		SessionID:      "sess-1",
+		CWD:            "/tmp/proj",
+		TranscriptPath: writeTranscript(t, apiErrorLine("Claude AI usage limit reached|1754899200")),
+	})
+
+	notif := onlyErrorNotif(t, db)
+	if notif.Title == nil || *notif.Title != "Rate limit reached" {
+		t.Errorf("title = %v, want \"Rate limit reached\"", notif.Title)
+	}
+	payload := decodePayload(t, notif)
+	if payload["is_rate_limit"] != true {
+		t.Errorf("is_rate_limit = %v, want true", payload["is_rate_limit"])
+	}
+	if payload["reset_at"] != "2025-08-11T08:00:00Z" {
+		t.Errorf("reset_at = %v, want 2025-08-11T08:00:00Z", payload["reset_at"])
+	}
+	if payload["session_id"] != "sess-1" {
+		t.Errorf("session_id = %v, want sess-1", payload["session_id"])
+	}
+	if payload["retryable"] != true {
+		t.Errorf("retryable = %v, want true", payload["retryable"])
+	}
+}
+
+func TestStopFailure_NoResetAtForATransientError(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleStopFailure, ctx, hookInput{
+		SessionID:      "sess-1",
+		CWD:            "/tmp/proj",
+		TranscriptPath: writeTranscript(t, apiErrorLine("API Error: Stream idle timeout - no chunks received")),
+	})
+
+	payload := decodePayload(t, onlyErrorNotif(t, db))
+	if payload["is_rate_limit"] != false {
+		t.Errorf("is_rate_limit = %v, want false", payload["is_rate_limit"])
+	}
+	if _, ok := payload["reset_at"]; ok {
+		t.Errorf("reset_at = %v, want absent", payload["reset_at"])
+	}
+}
+
+// Without a decision slot the notification can never be resolved, so it sits
+// pending forever — TruncateNotifications skips pending rows.
+func TestStopFailure_RegistersDecisionSlot(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleStopFailure, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+	})
+
+	notif := onlyErrorNotif(t, db)
+	if !ctx.Mgr.HasPending(notif.ID) {
+		t.Error("no decision slot registered; the notification can never resolve")
+	}
+}
+
+// onlyErrorNotif returns the single claude.error notification in the store.
+func onlyErrorNotif(t *testing.T, db *store.Store) *store.Notification {
+	t.Helper()
+	notifs, err := db.ListNotifications("claude", "", "claude.error")
+	if err != nil {
+		t.Fatalf("list notifications: %v", err)
+	}
+	if len(notifs) != 1 {
+		t.Fatalf("want 1 claude.error notification, got %d", len(notifs))
+	}
+	return &notifs[0]
+}
+
+func decodePayload(t *testing.T, n *store.Notification) map[string]interface{} {
+	t.Helper()
+	if n.Payload == nil {
+		t.Fatal("notification has no payload")
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(*n.Payload), &out); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	return out
 }
 
 // ==================== SessionEnd ====================

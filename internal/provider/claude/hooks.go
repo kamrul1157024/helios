@@ -30,6 +30,10 @@ type hookInput struct {
 	RequestedSchema       json.RawMessage `json:"requested_schema,omitempty"`
 	URL                   string          `json:"url,omitempty"`
 	ElicitationID         string          `json:"elicitation_id,omitempty"`
+	// Reason is populated by StopFailure when the CLI reports why the turn
+	// ended. It is absent in Claude Code v2.1.x, hence the transcript fallback
+	// in lastAPIError.
+	Reason string `json:"reason,omitempty"`
 	// Subagent fields
 	AgentID     string `json:"agent_id,omitempty"`
 	AgentType   string `json:"agent_type,omitempty"`
@@ -419,8 +423,34 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 	notifID := notifications.GenerateNotificationID()
 	lastDetail := ctx.DB.LastSessionDetail(input.SessionID)
 	sess, _ := ctx.DB.GetSession(input.SessionID)
+
+	errText := lastAPIError(input.TranscriptPath)
+	if input.Reason != "" {
+		errText = input.Reason
+	}
+	rate := classifyAPIError(errText)
+
 	title := "Session error"
-	detail := sessionContext(input.CWD, sess)
+	if rate.IsRateLimit {
+		title = "Rate limit reached"
+	}
+	// Detail is the error itself. It used to be sessionContext(), which showed
+	// the user their own last prompt back and said nothing about what broke.
+	detail := errText
+	if detail == "" {
+		detail = sessionContext(input.CWD, sess)
+	}
+
+	payload := map[string]interface{}{
+		"session_id":    input.SessionID,
+		"error":         errText,
+		"is_rate_limit": rate.IsRateLimit,
+		"retryable":     true,
+	}
+	if rate.ResetAt != nil {
+		payload["reset_at"] = rate.ResetAt.Format(time.RFC3339)
+	}
+
 	notif := &store.Notification{
 		ID:            notifID,
 		Source:        "claude",
@@ -431,7 +461,21 @@ func handleStopFailure(ctx *provider.HookContext, w http.ResponseWriter, r *http
 		Title:         &title,
 		Detail:        &detail,
 	}
-	ctx.Mgr.CreateNotification(notif)
+	if raw, err := json.Marshal(payload); err != nil {
+		log.Printf("claude: marshal error payload for %s: %v", input.SessionID, err)
+	} else {
+		s := string(raw)
+		notif.Payload = &s
+	}
+
+	if err := ctx.Mgr.CreateNotification(notif); err != nil {
+		log.Printf("claude: create error notification for %s: %v", input.SessionID, err)
+	} else {
+		// Unlike a permission hook there is no CLI request waiting on the
+		// answer — the turn is already over. Register only so Resolve has
+		// somewhere to deliver, which is what lets the notification clear.
+		ctx.Mgr.Register(notifID)
+	}
 	ctx.Notify("notification", notif)
 
 	ctx.Notify("session_status", map[string]interface{}{

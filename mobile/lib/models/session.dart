@@ -86,6 +86,11 @@ class Session {
   bool get isTerminated => status == 'terminated';
   bool get canSendPrompt {
     if (status == 'idle') return true;
+    // A turn that died on an API error leaves a live, idle agent. The daemon
+    // accepts a prompt in this state — handleSessionSend treats only active,
+    // waiting_permission and terminated as unsendable — and typing "continue"
+    // is exactly the terminal recovery. Blocking it here stranded the session.
+    if (status == 'error') return true;
     if (supportsPromptQueue && isActive) return true;
     return false;
   }

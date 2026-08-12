@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../models/notification.dart';
@@ -815,6 +816,183 @@ class ClaudeElicitationUrlCard extends StatelessWidget {
                       foregroundColor: Theme.of(context).colorScheme.onError,
                     ),
                     child: const Text('Decline'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== Error Card ====================
+
+/// A turn that died on an API error. Retry sends "continue", which is what a
+/// user types in the terminal to pick the turn up where it stopped.
+class ClaudeErrorCard extends StatefulWidget {
+  final HeliosNotification notification;
+  final DaemonAPIService sse;
+
+  const ClaudeErrorCard({
+    super.key,
+    required this.notification,
+    required this.sse,
+  });
+
+  @override
+  State<ClaudeErrorCard> createState() => _ClaudeErrorCardState();
+}
+
+class _ClaudeErrorCardState extends State<ClaudeErrorCard> {
+  Timer? _ticker;
+  bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Only a rate limit with a known reset time needs a countdown; everything
+    // else is retryable immediately and has nothing to tick.
+    if (_resetsInTheFuture) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {});
+        if (!_resetsInTheFuture) {
+          _ticker?.cancel();
+          _ticker = null;
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  bool get _resetsInTheFuture {
+    final reset = widget.notification.rateLimitResetAt;
+    return reset != null && reset.isAfter(DateTime.now().toUtc());
+  }
+
+  /// Time until the limit lifts, rendered coarsely — a second-by-second
+  /// countdown on a multi-hour window is noise.
+  String get _remainingLabel {
+    final reset = widget.notification.rateLimitResetAt;
+    if (reset == null) return '';
+    final left = reset.difference(DateTime.now().toUtc());
+    if (left.inHours >= 1) return 'Retry in ${left.inHours}h ${left.inMinutes % 60}m';
+    if (left.inMinutes >= 1) return 'Retry in ${left.inMinutes}m';
+    return 'Retry in ${left.inSeconds}s';
+  }
+
+  Future<void> _send(Map<String, dynamic> body) async {
+    setState(() => _sending = true);
+    final ok = await widget.sse.sendAction(widget.notification.id, body);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (!ok) {
+      // The daemon rejects a retry when the session has no live terminal.
+      // Waking one goes through the composer's send path, not this action.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Retry failed — send a prompt to wake the session.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = widget.notification;
+    final theme = Theme.of(context);
+    final blocked = _resetsInTheFuture;
+    final accent = n.isRateLimit ? Colors.orange : theme.colorScheme.error;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: accent.withValues(alpha: 0.3), width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: accent.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    n.isRateLimit ? 'rate limit' : 'error',
+                    style: TextStyle(fontSize: 11, color: accent),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    n.claudeDisplayTitle,
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                n.errorText?.isNotEmpty == true ? n.errorText! : n.displayDetail,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Spacer(),
+                Text(
+                  n.timeAgo,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: (blocked || _sending)
+                        ? null
+                        : () => _send({'action': 'retry'}),
+                    child: Text(blocked ? _remainingLabel : 'Retry'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed:
+                        _sending ? null : () => _send({'action': 'dismiss'}),
+                    child: const Text('Dismiss'),
                   ),
                 ),
               ],

@@ -15,7 +15,32 @@ extension ClaudeNotification on HeliosNotification {
 
   /// Whether this Claude notification needs user action.
   bool get needsClaudeAction =>
-      isPending && (isClaudePermission || isClaudeQuestion || isClaudeElicitation || isClaudeTrust);
+      isPending &&
+      (isClaudePermission ||
+          isClaudeQuestion ||
+          isClaudeElicitation ||
+          isClaudeTrust ||
+          isClaudeError);
+
+  // ==================== Error payload ====================
+
+  /// The API error text Claude recorded for the failed turn.
+  String? get errorText => payload?['error'] as String?;
+
+  /// The session the failed turn belongs to. Carried in the payload because
+  /// that is what the retry action handler reads.
+  String? get errorSessionId => payload?['session_id'] as String?;
+
+  bool get isRateLimit => payload?['is_rate_limit'] == true;
+  bool get isRetryable => payload?['retryable'] == true;
+
+  /// When a usage limit lifts, or null when the error carried no reset time.
+  /// An unknown window is not a reason to lock the user out of retrying.
+  DateTime? get rateLimitResetAt {
+    final raw = payload?['reset_at'] as String?;
+    if (raw == null) return null;
+    return DateTime.tryParse(raw)?.toUtc();
+  }
 
   String get claudeDisplayTitle => title ?? _claudeTypeLabel;
 
