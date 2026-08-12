@@ -46,8 +46,13 @@ void main() {
 
     test('does not treat terminal types as actionable', () {
       expect(isActionableType('claude.done'), isFalse);
-      expect(isActionableType('claude.error'), isFalse);
       expect(isActionableType('something.else'), isFalse);
+    });
+
+    // claude.error gained a Retry action, so it is answerable now and a
+    // resolved one must stop re-raising like any other approval.
+    test('treats claude.error as actionable', () {
+      expect(isActionableType('claude.error'), isTrue);
     });
   });
 
@@ -91,7 +96,7 @@ void main() {
       );
     });
 
-    test('raises claude.error regardless of status', () {
+    test('raises a pending error but not a retried one', () {
       expect(
         shouldRaiseNotification(
           type: 'claude.error',
@@ -99,6 +104,16 @@ void main() {
           alreadyPosted: false,
         ),
         isTrue,
+      );
+      // Retried from the desktop or the terminal: re-raising it on the phone
+      // would offer a Retry button for a turn that already resumed.
+      expect(
+        shouldRaiseNotification(
+          type: 'claude.error',
+          status: 'approved',
+          alreadyPosted: false,
+        ),
+        isFalse,
       );
     });
 

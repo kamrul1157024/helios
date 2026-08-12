@@ -71,6 +71,7 @@ bool isActionableType(String type) =>
     type == 'claude.permission' ||
     type == 'claude.question' ||
     type == 'claude.trust' ||
+    type == 'claude.error' ||
     type.startsWith('claude.elicitation.');
 
 /// Whether an incoming notification event should raise an OS notification.
