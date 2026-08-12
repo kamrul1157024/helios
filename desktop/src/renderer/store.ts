@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-import { api, bridge } from './bridge.ts'
+import { api, bridge, statusOf } from './bridge.ts'
 import type { HostRecord, HostStatus, Notification, Session, SSEEvent, TabStatus } from '../shared/models.ts'
 
 export interface Tab {
@@ -180,7 +180,12 @@ class Store {
         const id = str(event.data.session_id)
         const status = str(event.data.status)
         if (!id || !status) return
-        this.patchSession(hostId, id, { status } as Partial<Session>)
+        // A resume carries the new host handle. Taking it matters: the session
+        // is cold in this client's copy until something says otherwise, and
+        // most session_status events say nothing about the terminal at all —
+        // so an absent handle is no evidence the host went away.
+        const terminal = str(event.data.terminal)
+        this.patchSession(hostId, id, (terminal ? { status, terminal } : { status }) as Partial<Session>)
         return
       }
       case 'session_updated':
@@ -288,6 +293,25 @@ class Store {
       this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== tab.id) }))
       this.fail(err)
     }
+  }
+
+  /**
+   * Brings a terminated session's agent back and moves the daemon's record out
+   * of `terminated`, which is what re-enables prompts. Distinct from waking:
+   * a wake starts the host but leaves the status alone, so a woken terminated
+   * session looks alive and refuses everything.
+   */
+  async resumeSession(hostId: string, sessionId: string): Promise<void> {
+    try {
+      await api(hostId).resume(sessionId)
+      this.notify('Session resumed')
+    } catch (err) {
+      // The daemon refuses to resume a session that is already running its
+      // turn, which is not a failure worth a red error from the user's side.
+      if (statusOf(err) === 409) this.notify('Session is already running', 'error')
+      else this.fail(err)
+    }
+    await this.refreshSessions(hostId)
   }
 
   setActiveTab(activeTab: string | null): void {
