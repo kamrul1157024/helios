@@ -11,22 +11,20 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  apk:
+    name: Android APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          # `make apk-release` derives the Android build number from
+          # `git rev-list --count HEAD`, which a shallow clone reports as 1.
           fetch-depth: 0
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
 
       - name: Install Flutter dependencies
         run: cd mobile && flutter pub get
@@ -35,11 +33,114 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > mobile/android/app/helios-release.jks
 
-      - name: Build APK and create GitHub release
+      - name: Build release APK
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEYSTORE_PATH: helios-release.jks
-        run: make release VERSION=${{ inputs.version }}
+        run: make apk-release VERSION=${{ inputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  desktop-mac:
+    name: Desktop (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: cd desktop && npm ci
+
+      - name: Package DMGs
+        env:
+          # electron-builder.yml sets `identity: null`, so there is nothing to
+          # find; without this it still probes the runner's empty keychain and
+          # warns at length about it.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        # Both slices: the runner is arm64, and an Intel Mac cannot open that
+        # DMG. The `--mac` is load-bearing — the arch flags are scoped to a
+        # platform, and without it electron-builder silently builds the host
+        # arch alone. `--publish never` stops it creating a release of its own,
+        # which the publish job below owns.
+        run: make desktop-app DESKTOP_DIST_FLAGS="--mac --arm64 --x64 --publish never"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac
+          path: desktop/release/*.dmg
+          if-no-files-found: error
+
+  desktop-linux:
+    name: Desktop (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: cd desktop && npm ci
+
+      - name: Package AppImage and deb
+        # Targets come from electron-builder.yml; the runner is x64, which is
+        # the only Linux arch this ships.
+        run: make desktop-app DESKTOP_DIST_FLAGS="--linux --publish never"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [apk, desktop-mac, desktop-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The changelog covers the commits since the last tag, so both the
+          # tags and the history behind them have to be here.
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage assets
+        # Asset names are version-free on purpose: the landing page and the
+        # README link `releases/latest/download/<name>`, which only resolves if
+        # the name is the same in every release. electron-builder stamps the
+        # version into what it produces, so it is dropped here.
+        run: |
+          mkdir -p dist
+          mv artifacts/apk/app-release.apk dist/helios.apk
+          for file in artifacts/desktop-mac/* artifacts/desktop-linux/*; do
+            case "$file" in
+              *arm64.dmg) mv "$file" dist/helios-desktop-macos-arm64.dmg ;;
+              *x64.dmg)   mv "$file" dist/helios-desktop-macos-x64.dmg ;;
+              *.AppImage) mv "$file" dist/helios-desktop-linux-x86_64.AppImage ;;
+              *.deb)      mv "$file" dist/helios-desktop-linux-amd64.deb ;;
+              *) echo "unexpected artifact: $file" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make release-publish VERSION=${{ inputs.version }}

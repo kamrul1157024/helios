@@ -3,6 +3,9 @@
 *.apk
 *.dmg
 
+# Release staging (filled by `make release` and by the release workflow)
+/dist/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

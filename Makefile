@@ -1,6 +1,6 @@
 .PHONY: build clean install uninstall test
 .PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
-.PHONY: dmg dmg-dev changelog release
+.PHONY: dmg dmg-dev changelog release release-publish
 .PHONY: desktop desktop-dev desktop-test desktop-app desktop-install desktop-clean
 
 VERSION = 0.2.5
@@ -9,6 +9,9 @@ UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
 DMG_PATH = helios.dmg
+# Staging directory for release assets. The release job fills it from the
+# per-platform build jobs, which never share a runner.
+DIST = dist
 
 build:
 	go build -o helios ./cmd/helios/
@@ -159,9 +162,14 @@ desktop-dev: desktop
 desktop-test:
 	cd desktop && $(NODE_ENV_PATH) npm test
 
-## Package the desktop app (macOS: DMG in desktop/release)
+# Extra electron-builder flags. The release runner asks for both Mac slices and
+# pins publishing off; a local build stays on the host arch.
+DESKTOP_DIST_FLAGS =
+
+## Package the desktop app (macOS: DMG; Linux: AppImage + deb; in desktop/release)
 desktop-app: desktop
-	cd desktop && $(NODE_ENV_PATH) npm run dist
+	cd desktop && $(NODE_ENV_PATH) npm run dist -- $(DESKTOP_DIST_FLAGS)
+ifeq ($(UNAME_S),Darwin)
 	@if [ -f "$(DESKTOP_DMG)" ]; then \
 		mkdir -p ~/.helios; \
 		cp "$(DESKTOP_DMG)" ~/.helios/helios-desktop.dmg; \
@@ -170,6 +178,9 @@ desktop-app: desktop
 	else \
 		echo "Built, but $(DESKTOP_DMG) is missing — see desktop/release"; \
 	fi
+else
+	@echo "Desktop packages: desktop/release"
+endif
 
 ## Build the desktop app and install it into /Applications (macOS)
 desktop-install: desktop-app
@@ -196,10 +207,15 @@ desktop-clean:
 changelog:
 	@./scripts/changelog.sh
 
-## Create a GitHub release with available artifacts (APK required, DMG optional)
+## Publish everything staged in $(DIST) as a GitHub release
 ## Changelog is auto-generated from conventional commits since the last tag.
 ## Fails if a release with the same tag already exists.
-release: apk-release
+##
+## Split out from `release` because the macOS and Linux packages are built on
+## runners of their own: CI stages them into $(DIST) and calls this directly.
+release-publish:
+	@ls $(DIST)/* > /dev/null 2>&1 || \
+		(echo "Error: nothing staged in $(DIST)/ — build the artifacts first." >&2 && exit 1)
 	@echo "Creating GitHub release v$(VERSION)..."
 	@if gh release view v$(VERSION) --repo $(REPO) > /dev/null 2>&1; then \
 		echo "Error: Release v$(VERSION) already exists. Bump VERSION in the Makefile." >&2; \
@@ -209,23 +225,26 @@ release: apk-release
 	@echo "--- Changelog ---"
 	@cat /tmp/helios-changelog.md
 	@echo "---"
-	cp $(APK_RELEASE) helios.apk
-	@ASSETS="helios.apk"; \
-	if [ -f "$(DMG_PATH)" ]; then \
-		ASSETS="$$ASSETS $(DMG_PATH)"; \
-		echo "Including DMG in release"; \
-	else \
-		echo "DMG not found — releasing APK only (run 'make dmg' first to include it)"; \
-	fi; \
+	@echo "--- Assets ---"
+	@ls -1 $(DIST)
+	@echo "---"
 	gh release create v$(VERSION) \
 		--repo $(REPO) \
 		--title "helios v$(VERSION)" \
 		--notes-file /tmp/helios-changelog.md \
-		$$ASSETS
-	rm -f helios.apk /tmp/helios-changelog.md
+		$(DIST)/*
+	rm -f /tmp/helios-changelog.md
 	@echo ""
 	@echo "Release created: https://github.com/$(REPO)/releases/tag/v$(VERSION)"
-	@echo "APK download:    https://github.com/$(REPO)/releases/download/v$(VERSION)/helios.apk"
+
+## Build the APK, stage it with any DMG already built, and publish the release
+release: apk-release
+	@mkdir -p $(DIST)
+	cp $(APK_RELEASE) $(DIST)/helios.apk
 	@if [ -f "$(DMG_PATH)" ]; then \
-		echo "DMG download:    https://github.com/$(REPO)/releases/download/v$(VERSION)/helios.dmg"; \
+		cp $(DMG_PATH) $(DIST)/helios.dmg; \
+		echo "Including $(DMG_PATH)"; \
+	else \
+		echo "$(DMG_PATH) not found — releasing without it (run 'make dmg' first to include it)"; \
 	fi
+	@$(MAKE) release-publish VERSION=$(VERSION)
