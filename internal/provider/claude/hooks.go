@@ -42,10 +42,54 @@ type hookInput struct {
 
 // ==================== Permission Hook ====================
 
+// permResponse is the PermissionRequest hook's reply to the CLI.
+type permResponse struct {
+	HookSpecificOutput struct {
+		HookEventName string `json:"hookEventName"`
+		Decision      struct {
+			Behavior           string                 `json:"behavior"`
+			Message            string                 `json:"message,omitempty"`
+			UpdatedInput       map[string]interface{} `json:"updatedInput,omitempty"`
+			UpdatedPermissions json.RawMessage        `json:"updatedPermissions,omitempty"`
+		} `json:"decision"`
+	} `json:"hookSpecificOutput"`
+}
+
+func newPermResponse() permResponse {
+	resp := permResponse{}
+	resp.HookSpecificOutput.HookEventName = "PermissionRequest"
+	return resp
+}
+
+func writePermResponse(w http.ResponseWriter, resp permResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("hook: encode permission response: %v", err)
+	}
+}
+
+// allowTool lets a tool run without asking anyone.
+func allowTool(w http.ResponseWriter) {
+	resp := newPermResponse()
+	resp.HookSpecificOutput.Decision.Behavior = "allow"
+	writePermResponse(w, resp)
+}
+
 func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
 	var input hookInput
 	if err := json.Unmarshal(raw, &input); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// AskUserQuestion is not an approval, and it already has a surface: the
+	// PreToolUse hook raises claude.question for it. Raising a second,
+	// blocking notification here put two cards on the phone for one question —
+	// and because this hook blocks the tool, the CLI never rendered the
+	// question UI that answering the other card drives, so neither card could
+	// be answered correctly. Let the tool run; claude.question owns it.
+	if input.ToolName == askUserQuestionTool {
+		allowTool(w)
 		return
 	}
 
@@ -108,20 +152,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PermissionResolved")
 	renameSessionWindow(ctx, input.SessionID, "active", input.CWD)
 
-	type permResponse struct {
-		HookSpecificOutput struct {
-			HookEventName string `json:"hookEventName"`
-			Decision      struct {
-				Behavior           string                 `json:"behavior"`
-				Message            string                 `json:"message,omitempty"`
-				UpdatedInput       map[string]interface{} `json:"updatedInput,omitempty"`
-				UpdatedPermissions json.RawMessage        `json:"updatedPermissions,omitempty"`
-			} `json:"decision"`
-		} `json:"hookSpecificOutput"`
-	}
-
-	resp := permResponse{}
-	resp.HookSpecificOutput.HookEventName = "PermissionRequest"
+	resp := newPermResponse()
 
 	if decision.Status == "approved" {
 		resp.HookSpecificOutput.Decision.Behavior = "allow"
@@ -157,8 +188,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		resp.HookSpecificOutput.Decision.Message = "Denied via helios"
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writePermResponse(w, resp)
 }
 
 // ==================== AskUserQuestion Hook ====================

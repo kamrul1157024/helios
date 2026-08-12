@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -16,6 +17,10 @@ type wakingBackend struct {
 	*stubBackend
 	killed []string
 	woken  []string
+	// onWake stands in for the relaunched agent's SessionStart hook. A real
+	// wake returns before the agent is up, so the restart path waits for this;
+	// leaving it nil is how a test plays an agent that never boots.
+	onWake func(sessionID string)
 }
 
 func (b *wakingBackend) Kill(sessionID string) error {
@@ -27,6 +32,9 @@ func (b *wakingBackend) Kill(sessionID string) error {
 func (b *wakingBackend) Wake(sessionID, cwd string) (bool, error) {
 	b.woken = append(b.woken, sessionID)
 	b.handles[sessionID] = "sock-" + sessionID
+	if b.onWake != nil {
+		b.onWake(sessionID)
+	}
 	return true, nil
 }
 
@@ -47,7 +55,9 @@ func newPermModeEnv(t *testing.T) *permModeEnv {
 	t.Cleanup(func() { db.Close() })
 
 	be := &wakingBackend{stubBackend: newStubBackend()}
-	return &permModeEnv{t: t, db: db, be: be, shared: NewShared(db, notifications.NewManager(db), be)}
+	shared := NewShared(db, notifications.NewManager(db), be)
+	be.onWake = func(sessionID string) { shared.Signals.Fire(SignalAgentReady, sessionID) }
+	return &permModeEnv{t: t, db: db, be: be, shared: shared}
 }
 
 // session inserts a claude session in the given status. warm decides whether
@@ -112,6 +122,82 @@ func TestSetPermissionModeRestartsWarmSession(t *testing.T) {
 	}
 	if len(e.be.killed) != 1 || len(e.be.woken) != 1 {
 		t.Errorf("killed = %v, woken = %v, want one of each", e.be.killed, e.be.woken)
+	}
+	if body["ready"] != true {
+		t.Errorf("ready = %v, want true once the agent has reported in", body["ready"])
+	}
+}
+
+// The restart must not return until the relaunched agent has reported in.
+//
+// Wake returns as soon as the host's socket is listening, but the session is
+// idle with a live terminal for the seconds the CLI spends booting — which is
+// precisely the state the send path reads as "type into it". A client that
+// changes the mode and sends the next prompt straight after would have that
+// prompt typed into a booting CLI and lost, with the send failing on a timeout
+// no one can act on.
+func TestSetPermissionModeWaitsForTheAgentToComeBack(t *testing.T) {
+	e := newPermModeEnv(t)
+	e.session("s1", "idle", true)
+
+	// The agent reports in only after Wake has returned, as a real one does.
+	ready := make(chan struct{})
+	e.be.onWake = func(sessionID string) {
+		go func() {
+			<-ready
+			e.shared.Signals.Fire(SignalAgentReady, sessionID)
+		}()
+	}
+
+	done := make(chan map[string]interface{}, 1)
+	go func() {
+		_, body := e.set("s1", "plan")
+		done <- body
+	}()
+
+	select {
+	case body := <-done:
+		t.Fatalf("the switch returned before the agent was up: %v — the next prompt "+
+			"would be typed into a booting CLI and lost", body)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ready)
+	select {
+	case body := <-done:
+		if body["ready"] != true {
+			t.Errorf("ready = %v, want true", body["ready"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the switch never returned after the agent reported in")
+	}
+}
+
+// A boot that never finishes is not a failed switch: the mode is stored and the
+// terminal is up, so the caller is told the session is not usable yet rather
+// than handed an error for work that did happen.
+func TestSetPermissionModeReportsAnAgentThatNeverBoots(t *testing.T) {
+	restore := agentBootTimeout
+	agentBootTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { agentBootTimeout = restore })
+
+	e := newPermModeEnv(t)
+	e.session("s1", "idle", true)
+	e.be.onWake = nil // nothing ever reports in
+
+	w, body := e.set("s1", "plan")
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200: the mode was stored and the terminal restarted", w.Code)
+	}
+	if body["restarted"] != true {
+		t.Errorf("restarted = %v, want true", body["restarted"])
+	}
+	if body["ready"] != false {
+		t.Errorf("ready = %v, want false: no agent ever reported in", body["ready"])
+	}
+	if got := e.storedMode("s1"); got != "plan" {
+		t.Errorf("stored mode = %q, want plan", got)
 	}
 }
 

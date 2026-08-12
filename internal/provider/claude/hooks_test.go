@@ -1070,6 +1070,71 @@ func TestQuestion_ReturnsImmediatelyWithoutBlocking(t *testing.T) {
 	}
 }
 
+// AskUserQuestion trips both the PermissionRequest hook and the PreToolUse
+// question hook. Raising a card from each put two approvals on the phone for
+// one question — and since the permission hook blocks the tool, the CLI never
+// rendered the question UI that answering the other card is supposed to drive.
+func TestPermission_AskUserQuestionRaisesNoSecondApproval(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- callHook(handlePermission, ctx, hookInput{
+			SessionID: "sess-1",
+			CWD:       "/tmp/proj",
+			ToolName:  askUserQuestionTool,
+			ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
+		})
+	}()
+
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handlePermission blocked on AskUserQuestion; the CLI can never render its question UI")
+	}
+
+	if notifs := notifsOfType(t, db, "claude.permission"); len(notifs) != 0 {
+		t.Fatalf("AskUserQuestion raised %d permission notifications, want 0 — "+
+			"claude.question is the only surface for a question", len(notifs))
+	}
+
+	// The tool has to be allowed through, or the question is never asked at all.
+	var resp permResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response %q: %v", w.Body.String(), err)
+	}
+	if got := resp.HookSpecificOutput.Decision.Behavior; got != "allow" {
+		t.Errorf("decision behavior = %q, want allow", got)
+	}
+	if got := resp.HookSpecificOutput.HookEventName; got != "PermissionRequest" {
+		t.Errorf("hookEventName = %q, want PermissionRequest", got)
+	}
+}
+
+// The bypass is scoped to AskUserQuestion; every other tool still asks.
+func TestPermission_OtherToolsStillRaiseAnApproval(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	notifIDs := captureNotifIDs(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		callHook(handlePermission, ctx, hookInput{
+			SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		})
+	}()
+
+	notifID := awaitNotifID(t, notifIDs)
+	if notifs := notifsOfType(t, db, "claude.permission"); len(notifs) != 1 {
+		t.Fatalf("Bash raised %d permission notifications, want 1", len(notifs))
+	}
+	ctx.Mgr.Resolve(notifID, notifications.Decision{Status: "approved"}, "mobile")
+	<-done
+}
+
 // Wrapping rather than splicing would produce {"questions":{"questions":[...]}}
 // and the mobile card's payload['questions'] accessor would cast a Map to a
 // List, silently emptying the card.
