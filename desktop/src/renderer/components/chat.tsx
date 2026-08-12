@@ -161,16 +161,17 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
             placeholder={
               cold
                 ? 'Send a prompt — the session wakes first'
-                : session.supports_prompt_queue
-                  ? 'Send a prompt (⌘↵)'
-                  : 'Send a prompt'
+                : 'Send a prompt (↵ to send, ⇧↵ for a new line)'
             }
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault()
-                void send()
-              }
+              if (event.key !== 'Enter') return
+              // An IME uses Enter to accept a candidate; sending there would
+              // post half a word and swallow the rest.
+              if (event.nativeEvent.isComposing) return
+              if (event.shiftKey) return
+              event.preventDefault()
+              void send()
             }}
           />
           <div className="composer-actions">

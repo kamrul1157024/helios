@@ -20,6 +20,16 @@ import {
 
 const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'git', 'files']
 
+// The transcript is the agent's side of the session, not a chat room. The
+// store key stays 'chat' — it is persisted and referenced from elsewhere.
+const PANEL_LABELS: Record<RightPanel, string> = {
+  chat: 'agent',
+  terminal: 'terminal',
+  approvals: 'approvals',
+  git: 'git',
+  files: 'files',
+}
+
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
   const sessions = useStore((s) => s.sessions)
@@ -54,7 +64,7 @@ export function Detail(): JSX.Element {
                     still the one thing about a terminal worth seeing from
                     another panel. */}
                 {name === 'terminal' && term && <span className={`dot ${term.status.state}`} />}
-                {name}
+                {PANEL_LABELS[name]}
                 {name === 'approvals' && pending > 0 && <span className="badge">{pending}</span>}
                 {name === 'terminal' && term && (
                   <span
@@ -93,7 +103,23 @@ export function Detail(): JSX.Element {
 
         {hostId && session && panel !== 'terminal' && (
           <PanelBoundary resetKey={`${hostId}:${session.session_id}:${panel}`}>
-            {panel === 'chat' && <ChatPanel hostId={hostId} session={session} />}
+            {/* Approvals ride alongside the transcript instead of behind their
+                own tab: an agent that stops for permission stops the panel the
+                user is already looking at, and a tab round-trip per approval
+                is the whole interaction. */}
+            {panel === 'chat' && (
+              <div className="agent-split">
+                <ChatPanel hostId={hostId} session={session} />
+                {pending > 0 && (
+                  <aside className="approvals-dock">
+                    <h3 className="dock-title">
+                      Approvals <span className="badge">{pending}</span>
+                    </h3>
+                    <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />
+                  </aside>
+                )}
+              </div>
+            )}
             {panel === 'approvals' && <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />}
             {panel === 'git' && (
               <GitPanel hostId={hostId} cwd={session.cwd} revision={session.last_event_at} />
