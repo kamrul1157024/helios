@@ -97,6 +97,27 @@ class NotificationService {
     }
   }
 
+  /// Retract every notification posted for [hostId] that is not in
+  /// [pendingIds], so the tray matches what the daemon still considers pending.
+  ///
+  /// Set-based rather than cancelling the ids the daemon reported as resolved:
+  /// the daemon keeps only its most recent notifications, so one resolved long
+  /// enough ago is not in the list at all, and cancelling only what is listed
+  /// would leave it in the tray forever.
+  Future<void> retainOnly(String hostId, Set<String> pendingIds) async {
+    final prefix = '$hostId:';
+    final stale = _posted.keys
+        .where(
+          (key) =>
+              key.startsWith(prefix) &&
+              !pendingIds.contains(key.substring(prefix.length)),
+        )
+        .toList();
+    for (final key in stale) {
+      await cancel(key);
+    }
+  }
+
   /// Retract every notification this service has posted.
   Future<void> cancelAll() async {
     final ids = _posted.values.toList();

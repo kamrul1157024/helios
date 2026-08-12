@@ -134,6 +134,68 @@ void main() {
     expect(NotificationService.instance.isPosted('host-b:n2'), isFalse);
   });
 
+  // The daemon owns notification status; the tray is only a view of it. So the
+  // sweep is driven by the pending set, not by the rows the daemon reported as
+  // resolved — the daemon prunes old notifications, and one that ages out of
+  // the response entirely would never be reached by a per-row sweep.
+  group('retainOnly', () {
+    Future<void> post(String host, String id) =>
+        NotificationService.instance.showNotification(
+          id: '{"hostId":"$host","notificationId":"$id"}',
+          key: NotificationService.notifKey(host, id),
+          title: id,
+          body: id,
+          silent: true,
+        );
+
+    test('retracts a posted notification the daemon no longer lists', () async {
+      await post('host-a', 'n1');
+      await post('host-a', 'n2');
+
+      // n1 is gone from the response altogether, not merely marked resolved.
+      await NotificationService.instance.retainOnly('host-a', {'n2'});
+
+      expect(NotificationService.instance.isPosted('host-a:n1'), isFalse);
+      expect(NotificationService.instance.isPosted('host-a:n2'), isTrue);
+    });
+
+    test('leaves other hosts alone', () async {
+      await post('host-a', 'n1');
+      await post('host-b', 'n1');
+
+      await NotificationService.instance.retainOnly('host-a', {});
+
+      expect(NotificationService.instance.isPosted('host-a:n1'), isFalse);
+      expect(NotificationService.instance.isPosted('host-b:n1'), isTrue);
+    });
+
+    test('an empty pending set clears the host', () async {
+      await post('host-a', 'n1');
+      await post('host-a', 'n2');
+      calls.clear();
+
+      await NotificationService.instance.retainOnly('host-a', {});
+
+      expect(calls.where((c) => c.method == 'cancel').length, 2);
+    });
+
+    test('everything still pending is left posted and nothing is cancelled',
+        () async {
+      await post('host-a', 'n1');
+      calls.clear();
+
+      await NotificationService.instance.retainOnly('host-a', {'n1'});
+
+      expect(calls.where((c) => c.method == 'cancel'), isEmpty);
+      expect(NotificationService.instance.isPosted('host-a:n1'), isTrue);
+    });
+
+    test('a host with nothing posted is a no-op', () async {
+      await NotificationService.instance.retainOnly('host-z', {'n1'});
+      expect(calls.where((c) => c.method == 'cancel'), isEmpty);
+    });
+  });
+
   test('notifKey is stable and host-scoped', () {
     expect(NotificationService.notifKey('h', 'n'), 'h:n');
     expect(

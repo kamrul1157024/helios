@@ -62,7 +62,13 @@ export class Notifier {
     const stillPending = new Set<string>()
     for (const notif of notifications) {
       if (notif.status !== 'pending') continue
-      stillPending.add(`${hostId}:${notif.id}`)
+      const key = `${hostId}:${notif.id}`
+      stillPending.add(key)
+      // Tracked here rather than left to present(): the badge counts what the
+      // daemon says is pending, while `seen` only decides whether to raise a
+      // banner. present() skips anything seen before, so an approval that has
+      // already alerted once would otherwise never come back onto the tray.
+      this.pending.set(key, { hostId, notificationId: notif.id, sessionId: notif.source_session })
       this.present(hostId, notif)
     }
     for (const key of [...this.pending.keys()]) {

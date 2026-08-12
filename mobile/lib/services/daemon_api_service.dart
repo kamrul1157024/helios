@@ -214,6 +214,10 @@ class DaemonAPIService extends ChangeNotifier {
       // SSE is healthy — stop fallback polling
       _pollTimer?.cancel();
       _pollTimer = null;
+      // A dead stream is exactly when notification_resolved events go missing,
+      // so re-sync the tray against the daemon before trusting the stream
+      // again. Resuming the app already does this; a network flap does not.
+      fetchNotifications();
       notifyListeners();
 
       String buffer = '';
@@ -319,16 +323,18 @@ class DaemonAPIService extends ChangeNotifier {
     }
   }
 
-  /// Retract OS notifications for anything the daemon no longer considers
-  /// pending. This is the only thing that clears a notification answered while
-  /// the SSE stream was dead, which is every approval made while the phone was
-  /// dozing.
+  /// Bring the tray in line with the daemon, which owns notification status.
+  ///
+  /// This is the only thing that clears a notification answered while the SSE
+  /// stream was dead, which is every approval made while the phone was dozing.
+  /// Driven by the pending set rather than by the resolved rows: the daemon
+  /// prunes old notifications, so one resolved a while back is absent from the
+  /// response entirely and no per-row sweep would ever reach it.
   void _reconcilePostedNotifications() {
-    for (final n in _notifications) {
-      if (n.isPending) continue;
-      NotificationService.instance
-          .cancel(NotificationService.notifKey(hostId, n.id));
-    }
+    NotificationService.instance.retainOnly(
+      hostId,
+      _notifications.where((n) => n.isPending).map((n) => n.id).toSet(),
+    );
   }
 
   Future<bool> sendAction(String id, Map<String, dynamic> body) async {
