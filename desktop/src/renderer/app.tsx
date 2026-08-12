@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react'
 
-import { store, useStore } from './store.ts'
+import { store, terminalId, useStore } from './store.ts'
 import { Detail } from './components/detail.tsx'
 import { HostsDialog } from './components/hosts.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
 import { Sidebar } from './components/sidebar.tsx'
-import { TerminalTabs } from './components/terminal.tsx'
 
 export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
   const toast = useStore((s) => s.toast)
-  const tabs = useStore((s) => s.tabs)
   const pairingLink = useStore((s) => s.pairingLink)
   const [dialog, setDialog] = useState<'new' | 'hosts' | null>(null)
 
@@ -29,10 +27,15 @@ export function App(): JSX.Element {
         event.preventDefault()
         setDialog('new')
       }
-      if ((event.metaKey || event.ctrlKey) && event.key === 'w' && store.getSnapshot().activeTab) {
-        event.preventDefault()
-        const active = store.getSnapshot().activeTab
-        if (active) store.closeTab(active)
+      // ⌘W closes the selected session's terminal, not the window: the
+      // terminal is the only thing in this layout that can be closed.
+      if ((event.metaKey || event.ctrlKey) && event.key === 'w') {
+        const { selection, tabs } = store.getSnapshot()
+        const id = selection ? terminalId(selection.hostId, selection.sessionId) : null
+        if (id && tabs.some((t) => t.id === id)) {
+          event.preventDefault()
+          store.closeTab(id)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -52,9 +55,8 @@ export function App(): JSX.Element {
       <div className="titlebar" />
       <div className="body">
         <Sidebar onNewSession={() => setDialog('new')} onAddHost={() => setDialog('hosts')} />
-        <main className={tabs.length > 0 ? 'main split' : 'main'}>
+        <main className="main">
           <Detail />
-          <TerminalTabs />
         </main>
       </div>
 

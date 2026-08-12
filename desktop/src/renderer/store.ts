@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 import { api, bridge, statusOf } from './bridge.ts'
+import { hasTerminal } from '../shared/models.ts'
 import type { HostRecord, HostStatus, Notification, Session, SSEEvent, TabStatus } from '../shared/models.ts'
 
 export interface Tab {
@@ -11,12 +12,17 @@ export interface Tab {
   status: TabStatus
 }
 
+/** One terminal per session, so the session it belongs to is its identity. */
+export function terminalId(hostId: string, sessionId: string): string {
+  return `${hostId}:${sessionId}`
+}
+
 export interface Selection {
   hostId: string
   sessionId: string
 }
 
-export type RightPanel = 'chat' | 'approvals' | 'git' | 'files'
+export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
 
 /**
  * A file the user asked to see, from a chip in the transcript. The counter is
@@ -34,8 +40,8 @@ export interface State {
   hostStatus: Record<string, HostStatus>
   sessions: Record<string, Session[]>
   notifications: Record<string, Notification[]>
+  /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
-  activeTab: string | null
   selection: Selection | null
   panel: RightPanel
   fileTarget: FileTarget | null
@@ -53,7 +59,6 @@ const initial: State = {
   sessions: {},
   notifications: {},
   tabs: [],
-  activeTab: null,
   selection: null,
   panel: 'chat',
   fileTarget: null,
@@ -255,28 +260,29 @@ class Store {
     this.set({ pairingLink })
   }
 
-  // ─── Tabs ──────────────────────────────────────────────────────────────
+  // ─── Terminals ─────────────────────────────────────────────────────────
 
   /**
-   * Opens (or focuses) a terminal for a session. Waking is explicit: attaching
-   * to a cold session would otherwise spawn an agent process every time someone
-   * clicked through a list.
+   * Shows a session's terminal panel, attaching if nothing is attached yet.
+   * Waking is explicit: attaching to a cold session would otherwise spawn an
+   * agent process every time someone clicked through a list.
    */
   async openTerminal(hostId: string, session: Session, wake: boolean): Promise<void> {
-    const existing = this.state.tabs.find((t) => t.hostId === hostId && t.sessionId === session.session_id)
-    if (existing) {
-      this.setActiveTab(existing.id)
-      return
-    }
+    // The panel belongs to whichever session is selected, so showing one
+    // session's terminal means selecting it.
+    this.set({ selection: { hostId, sessionId: session.session_id }, panel: 'terminal' })
+
+    const id = terminalId(hostId, session.session_id)
+    if (this.state.tabs.some((t) => t.id === id)) return
 
     const tab: Tab = {
-      id: `${hostId}:${session.session_id}`,
+      id,
       hostId,
       sessionId: session.session_id,
       title: session.title ?? session.project ?? session.session_id.slice(0, 8),
       status: { state: 'connecting' },
     }
-    this.set((s) => ({ tabs: [...s.tabs, tab], activeTab: tab.id }))
+    this.set((s) => ({ tabs: [...s.tabs, tab] }))
 
     try {
       // Geometry is a placeholder; the tab reports its real size once xterm has
@@ -314,18 +320,20 @@ class Store {
     await this.refreshSessions(hostId)
   }
 
-  setActiveTab(activeTab: string | null): void {
-    this.set({ activeTab })
+  /**
+   * Shows the terminal panel for a session, attaching only if the host is
+   * already running. A cold session is left alone — moving between tabs should
+   * not start an agent process — and the panel offers the wake instead.
+   */
+  showTerminal(hostId: string, session: Session): void {
+    this.set({ panel: 'terminal' })
+    if (this.state.tabs.some((t) => t.id === terminalId(hostId, session.session_id))) return
+    if (hasTerminal(session)) void this.openTerminal(hostId, session, false)
   }
 
   closeTab(tabId: string): void {
     void bridge.term.close(tabId)
-    this.set((s) => {
-      const tabs = s.tabs.filter((t) => t.id !== tabId)
-      const activeTab =
-        s.activeTab === tabId ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTab
-      return { tabs, activeTab }
-    })
+    this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== tabId) }))
   }
 
   // ─── Feedback ──────────────────────────────────────────────────────────
