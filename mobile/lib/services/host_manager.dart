@@ -444,8 +444,11 @@ class HostManager extends ChangeNotifier {
     for (final host in _hosts) {
       final service = _services[host.id];
       if (service == null) continue;
+      // Every host, not just the active one: a background host's approvals are
+      // the ones most likely to have been answered elsewhere while the app was
+      // suspended, and the reconcile sweep only runs on fetch.
+      service.fetchNotifications();
       if (host.id == _activeHostId) {
-        service.fetchNotifications();
         service.fetchSessions();
         await service.startActive();
       } else {

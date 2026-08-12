@@ -70,6 +70,46 @@ class NotificationService {
   /// Convert a string ID to a positive notification ID.
   static int _notifId(String id) => id.hashCode & 0x7FFFFFFF;
 
+  /// Posted OS notifications, keyed by [notifKey] → the integer id handed to
+  /// the plugin. The integer is derived from the JSON payload string, so
+  /// rebuilding it at cancel time would depend on map key order; a retraction
+  /// that silently misses is worse than none.
+  final Map<String, int> _posted = {};
+
+  /// Stable key for a notification, independent of payload encoding.
+  static String notifKey(String hostId, String notificationId) =>
+      '$hostId:$notificationId';
+
+  /// Whether a notification is currently posted for this key. Doubles as the
+  /// de-dupe check, so a replayed event does not re-alert.
+  bool isPosted(String key) => _posted.containsKey(key);
+
+  /// Retract a posted notification. A no-op when nothing is posted for this
+  /// key, which is the common case for types that never raise one.
+  Future<void> cancel(String key) async {
+    final nid = _posted.remove(key);
+    if (nid == null) return;
+    try {
+      await _plugin.cancel(nid);
+      debugPrint('[NotificationService] cancel key=$key nid=$nid');
+    } catch (e) {
+      debugPrint('[NotificationService] cancel failed for $key: $e');
+    }
+  }
+
+  /// Retract every notification this service has posted.
+  Future<void> cancelAll() async {
+    final ids = _posted.values.toList();
+    _posted.clear();
+    for (final nid in ids) {
+      try {
+        await _plugin.cancel(nid);
+      } catch (e) {
+        debugPrint('[NotificationService] cancelAll failed for $nid: $e');
+      }
+    }
+  }
+
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _soundEnabled = prefs.getBool(_keySoundEnabled) ?? true;
@@ -194,6 +234,7 @@ class NotificationService {
   /// Show a permission request notification with approve/deny actions.
   Future<void> showPermissionNotification({
     required String id,
+    required String key,
     required String toolName,
     required String detail,
     bool silent = false,
@@ -232,6 +273,7 @@ class NotificationService {
         NotificationDetails(android: androidDetails, iOS: iosDetails),
         payload: id,
       );
+      _posted[key] = nid;
       if (!silent) await _playSound();
       debugPrint('[NotificationService] showPermission SUCCESS');
     } catch (e) {
@@ -242,6 +284,7 @@ class NotificationService {
   /// Show a generic notification.
   Future<void> showNotification({
     required String id,
+    required String key,
     required String title,
     required String body,
     bool silent = false,
@@ -276,6 +319,7 @@ class NotificationService {
         NotificationDetails(android: androidDetails, iOS: iosDetails),
         payload: id,
       );
+      _posted[key] = nid;
       if (!silent) await _playSound();
       debugPrint('[NotificationService] showNotification SUCCESS');
     } catch (e) {

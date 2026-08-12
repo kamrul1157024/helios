@@ -9,6 +9,7 @@ import '../models/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
 import 'api_client.dart';
+import 'notification_service.dart';
 
 /// Callback fired when an SSE event arrives on this host.
 typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
@@ -310,10 +311,23 @@ class DaemonAPIService extends ChangeNotifier {
             .map((n) => HeliosNotification.fromJson(n, hostId: hostId))
             .toList();
         _notificationsLoaded = true;
+        _reconcilePostedNotifications();
         notifyListeners();
       }
     } catch (e) {
       debugPrint('[$hostId] Failed to fetch notifications: $e');
+    }
+  }
+
+  /// Retract OS notifications for anything the daemon no longer considers
+  /// pending. This is the only thing that clears a notification answered while
+  /// the SSE stream was dead, which is every approval made while the phone was
+  /// dozing.
+  void _reconcilePostedNotifications() {
+    for (final n in _notifications) {
+      if (n.isPending) continue;
+      NotificationService.instance
+          .cancel(NotificationService.notifKey(hostId, n.id));
     }
   }
 
