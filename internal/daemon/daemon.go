@@ -107,6 +107,8 @@ func startDaemon(cfg *Config) error {
 	defer logFile.Close()
 	log.SetOutput(logFile)
 
+	log.Printf("PATH: %s", importLoginPATH())
+
 	db, err := store.Open(cfg.DB.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
