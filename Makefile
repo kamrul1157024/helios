@@ -1,7 +1,7 @@
 .PHONY: build clean install uninstall test
 .PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
 .PHONY: dmg dmg-dev changelog release
-.PHONY: desktop desktop-dev desktop-test desktop-app desktop-clean
+.PHONY: desktop desktop-dev desktop-test desktop-app desktop-install desktop-clean
 
 VERSION = 0.2.5
 REPO = kamrul1157024/helios
@@ -134,6 +134,9 @@ dmg-dev:
 DESKTOP_VERSION = $(shell sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/package.json | head -1)
 DESKTOP_ARCH = $(if $(filter arm64,$(shell uname -m)),arm64,x64)
 DESKTOP_DMG = desktop/release/helios-desktop-$(DESKTOP_VERSION)-$(DESKTOP_ARCH).dmg
+# electron-builder suffixes the staging directory with the arch, except on the
+# x64 build, where it is bare `mac`.
+DESKTOP_APP = desktop/release/$(if $(filter arm64,$(DESKTOP_ARCH)),mac-arm64,mac)/Helios.app
 
 # make runs recipes under /bin/sh, which never sources a profile, so an nvm
 # install is invisible unless the parent shell already exported it.
@@ -167,6 +170,21 @@ desktop-app: desktop
 	else \
 		echo "Built, but $(DESKTOP_DMG) is missing — see desktop/release"; \
 	fi
+
+## Build the desktop app and install it into /Applications (macOS)
+desktop-install: desktop-app
+ifneq ($(UNAME_S),Darwin)
+	@echo "make desktop-install is macOS-only; on Linux install the AppImage or .deb from desktop/release" >&2
+	@exit 1
+else
+	@test -d "$(DESKTOP_APP)" || (echo "$(DESKTOP_APP) not found — see desktop/release" >&2 && exit 1)
+	# Replaced rather than copied over: a copy leaves the previous build's files
+	# behind inside the bundle.
+	rm -rf /Applications/Helios.app
+	cp -R "$(DESKTOP_APP)" /Applications/Helios.app
+	xattr -dr com.apple.quarantine /Applications/Helios.app 2>/dev/null || true
+	@echo "Helios.app installed to /Applications"
+endif
 
 desktop-clean:
 	rm -rf desktop/dist desktop/release
