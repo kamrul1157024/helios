@@ -193,6 +193,7 @@ func Register() {
 	provider.RegisterAction("claude.elicitation.form", handleElicitationAction)
 	provider.RegisterAction("claude.elicitation.url", handleElicitationAction)
 	provider.RegisterAction("claude.trust", handleTrustAction)
+	provider.RegisterAction("claude.error", handleErrorAction)
 
 	// Small model caller — runs claude CLI with haiku for lightweight text generation
 	claudeBin := findClaude()

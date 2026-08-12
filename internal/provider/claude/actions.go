@@ -93,6 +93,54 @@ func handleElicitationAction(notif *store.Notification, body json.RawMessage) (n
 	return notifications.Decision{Status: status, Response: response}, nil
 }
 
+// handleErrorAction retries or dismisses a turn that died on an API error.
+//
+// Retry sends "continue", which is what a user types in the terminal after an
+// API error: the CLI picks the turn up where it stopped rather than starting a
+// new one.
+func handleErrorAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
+	var req struct {
+		Action string `json:"action"` // "retry" or "dismiss"
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return notifications.Decision{}, fmt.Errorf("invalid body: %w", err)
+	}
+
+	if req.Action == "dismiss" {
+		return notifications.Decision{Status: "dismissed"}, nil
+	}
+	if req.Action != "retry" {
+		return notifications.Decision{}, fmt.Errorf("action must be retry/dismiss")
+	}
+
+	sessionID := notif.SourceSession
+	if notif.Payload != nil {
+		var payload struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal([]byte(*notif.Payload), &payload); err == nil && payload.SessionID != "" {
+			sessionID = payload.SessionID
+		}
+	}
+	if sessionID == "" {
+		return notifications.Decision{}, fmt.Errorf("missing session_id in notification payload")
+	}
+
+	// Reject rather than resolve when there is nothing to type into: a
+	// notification consumed by a send that went nowhere is unrecoverable. A
+	// dead terminal needs the wake path in handleSessionSend, which the
+	// composer reaches.
+	if terminalBackend == nil || !terminalBackend.Alive(sessionID) {
+		return notifications.Decision{}, fmt.Errorf("session %s has no live terminal", sessionID)
+	}
+
+	if err := terminalBackend.SendText(sessionID, "continue"); err != nil {
+		return notifications.Decision{}, fmt.Errorf("send continue to session %s: %w", sessionID, err)
+	}
+	log.Printf("error-action: retried session %s", sessionID)
+	return notifications.Decision{Status: "approved"}, nil
+}
+
 func handleTrustAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
 		Action string `json:"action"` // "trust" or "deny"

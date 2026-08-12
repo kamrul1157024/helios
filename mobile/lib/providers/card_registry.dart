@@ -48,6 +48,11 @@ Widget? buildCardForType({
         notification: notification,
         sse: sse,
       );
+    case 'claude.error':
+      return ClaudeErrorCard(
+        notification: notification,
+        sse: sse,
+      );
     default:
       return null;
   }
