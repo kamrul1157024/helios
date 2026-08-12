@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -143,6 +144,45 @@ func (s *Store) ResolveSessionNotifications(sourceSession, status, source string
 			`UPDATE notifications SET status = ?, resolved_at = ?, resolved_source = ? WHERE source_session = ? AND status = 'pending'`,
 			status, now, source, sourceSession,
 		)
+	}
+
+	return ids, nil
+}
+
+// ResolveSessionNotificationsByType is ResolveSessionNotifications narrowed to
+// a single notification type, so clearing a session's answered question does
+// not also clear a permission request the same session is still waiting on.
+func (s *Store) ResolveSessionNotificationsByType(sourceSession, nType, status, source string) ([]string, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	rows, err := s.db.Query(
+		`SELECT id FROM notifications WHERE source_session = ? AND type = ? AND status = 'pending'`,
+		sourceSession, nType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query pending %s notifications: %w", nType, err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan pending %s notifications: %w", nType, err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	if _, err := s.db.Exec(
+		`UPDATE notifications SET status = ?, resolved_at = ?, resolved_source = ? WHERE source_session = ? AND type = ? AND status = 'pending'`,
+		status, now, source, sourceSession, nType,
+	); err != nil {
+		return nil, fmt.Errorf("resolve pending %s notifications: %w", nType, err)
 	}
 
 	return ids, nil

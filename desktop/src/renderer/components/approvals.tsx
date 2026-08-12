@@ -179,45 +179,48 @@ function QuestionCard({
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
   const questions = (Array.isArray(payload.questions) ? payload.questions : []) as Question[]
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  // Question index → option index. Indices rather than labels: the daemon
+  // answers by moving the CLI's own highlight, so position is what it needs.
+  const [chosen, setChosen] = useState<Record<number, number>>({})
 
-  const toggle = (question: Question, option: string): void => {
-    setAnswers((current) => {
-      if (!question.multiSelect) return { ...current, [question.question]: option }
-      const chosen = new Set((current[question.question] ?? '').split(', ').filter(Boolean))
-      if (chosen.has(option)) chosen.delete(option)
-      else chosen.add(option)
-      return { ...current, [question.question]: [...chosen].join(', ') }
-    })
+  const submit = (): void => {
+    const selections = Object.entries(chosen)
+      .map(([questionIndex, optionIndex]) => ({
+        question_index: Number(questionIndex),
+        option_index: optionIndex,
+      }))
+      .sort((a, b) => a.question_index - b.question_index)
+    void act({ action: 'answer', selections })
   }
 
   return (
     <>
-      {questions.map((question) => (
-        <div key={question.question} className="question">
+      {questions.map((question, questionIndex) => (
+        <div key={questionIndex} className="question">
           {question.header && <span className="question-head">{question.header}</span>}
           <p>{question.question}</p>
-          {(question.options ?? []).map((option) => {
-            const chosen = (answers[question.question] ?? '').split(', ').includes(option.label)
-            return (
-              <button
-                key={option.label}
-                className={`option ${chosen ? 'chosen' : ''}`}
-                onClick={() => toggle(question, option.label)}
-              >
-                <span className="option-label">{option.label}</span>
-                {option.description && <span className="option-desc">{option.description}</span>}
-              </button>
-            )
-          })}
+          {(question.options ?? []).map((option, optionIndex) => (
+            <button
+              key={optionIndex}
+              className={`option ${chosen[questionIndex] === optionIndex ? 'chosen' : ''}`}
+              onClick={() => setChosen((current) => ({ ...current, [questionIndex]: optionIndex }))}
+            >
+              <span className="option-label">{option.label}</span>
+              {option.description && <span className="option-desc">{option.description}</span>}
+            </button>
+          ))}
+          {/* Answering drives the CLI's own list, which takes one highlighted
+              option per question. Picking several needs the terminal. */}
+          {question.multiSelect && (
+            <small className="option-desc">Pick one here, or answer in the terminal to choose several.</small>
+          )}
         </div>
       ))}
 
       <Actions busy={busy}>
-        <button
-          disabled={Object.keys(answers).length === 0}
-          onClick={() => void act({ action: 'answer', answers })}
-        >
+        {/* Every question, not just one: the daemon walks the CLI through them
+            in order and a gap would leave it stranded. */}
+        <button disabled={Object.keys(chosen).length !== questions.length} onClick={submit}>
           Submit
         </button>
         <button className="ghost" onClick={() => void act({ action: 'skip' })}>

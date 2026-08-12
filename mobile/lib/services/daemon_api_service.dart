@@ -332,16 +332,46 @@ class DaemonAPIService extends ChangeNotifier {
   }
 
   Future<bool> sendAction(String id, Map<String, dynamic> body) async {
+    return await sendActionError(id, body) == null;
+  }
+
+  /// [sendAction] that reports why it failed, so a card can tell the user
+  /// instead of silently doing nothing — indistinguishable, otherwise, from
+  /// the action never having been wired up. Returns null on success.
+  Future<String?> sendActionError(String id, Map<String, dynamic> body) async {
     try {
       final resp = await _api.post('/api/notifications/$id/action', body: body);
       if (resp.statusCode == 200) {
         await fetchNotifications();
-        return true;
+        return null;
       }
+      // 410 means someone else got there first — the terminal, or our own
+      // answer racing the hook that retracts the notification. Either way the
+      // question is answered, which is not a failure worth reporting.
+      if (resp.statusCode == 410) {
+        await fetchNotifications();
+        return null;
+      }
+      final message = _actionErrorMessage(resp.body);
+      debugPrint('[$hostId] Action failed (${resp.statusCode}): $message');
+      return message;
     } catch (e) {
       debugPrint('[$hostId] Failed to send action: $e');
+      return 'Could not reach the daemon';
     }
-    return false;
+  }
+
+  String _actionErrorMessage(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      // jsonError puts the reason in "message"; "error" holds the status text.
+      if (decoded is Map && decoded['message'] is String) {
+        return decoded['message'] as String;
+      }
+    } catch (_) {
+      // Fall through to the generic message.
+    }
+    return 'The daemon rejected the action';
   }
 
   Future<bool> dismissNotification(String id) async {

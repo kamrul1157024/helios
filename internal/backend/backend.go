@@ -19,6 +19,8 @@ const (
 	KeyEnter  Key = "enter"
 	KeyEscape Key = "escape"
 	KeyCtrlC  Key = "ctrl-c"
+	KeyUp     Key = "up"
+	KeyDown   Key = "down"
 )
 
 // Status reports backend health for the doctor/status endpoints.

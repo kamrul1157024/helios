@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kamrul1157024/helios/internal/store"
@@ -128,4 +129,207 @@ func TestErrorAction_MissingSessionID(t *testing.T) {
 	if _, err := handleErrorAction(notif, json.RawMessage(`{"action":"retry"}`)); err == nil {
 		t.Fatal("want an error when no session can be identified")
 	}
+}
+
+// ==================== Question injection ====================
+
+// questionNotif builds the notification handleQuestion stores: the tool input
+// with session_id spliced in at the top level.
+func questionNotif(sessionID string, questions string) *store.Notification {
+	payload := `{"questions":` + questions + `,"session_id":"` + sessionID + `"}`
+	return &store.Notification{
+		ID:            "notif-q",
+		Source:        "claude",
+		SourceSession: sessionID,
+		Type:          "claude.question",
+		Status:        "pending",
+		Payload:       &payload,
+	}
+}
+
+const twoOptions = `[{"question":"Which approach?","header":"Approach","options":[{"label":"Rewrite"},{"label":"Patch"},{"label":"Leave it"}]}]`
+
+// The rendered CLI wraps the question inside a box, so the text never appears
+// contiguously — the screen check has to survive that.
+const questionScreen = `
+╭──────────────────────────────────────╮
+│ Approach                             │
+│ Which approach should we take for    │
+│ the migration?                       │
+│                                      │
+│ ❯ 1. Rewrite                         │
+│   2. Patch                           │
+│   3. Leave it                        │
+╰──────────────────────────────────────╯
+`
+
+func TestQuestionAction_SelectsOptionByIndex(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen(questionScreen)
+
+	dec, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":2}]}`),
+	)
+	if err != nil {
+		t.Fatalf("handleQuestionAction: %v", err)
+	}
+	if dec.Status != "answered" {
+		t.Errorf("status = %q, want answered", dec.Status)
+	}
+	// Option 2 is two moves down from the highlighted first option.
+	want := []string{"sess-1:down", "sess-1:down", "sess-1:enter"}
+	if got := fb.sentKeys(); !equalStrings(got, want) {
+		t.Errorf("keys = %v, want %v", got, want)
+	}
+}
+
+func TestQuestionAction_FirstOptionSendsOnlyEnter(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen(questionScreen)
+
+	if _, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":0}]}`),
+	); err != nil {
+		t.Fatalf("handleQuestionAction: %v", err)
+	}
+	if got := fb.sentKeys(); !equalStrings(got, []string{"sess-1:enter"}) {
+		t.Errorf("keys = %v, want [sess-1:enter]", got)
+	}
+}
+
+// The single most important safety property: a stray Enter into a session that
+// has moved on is a real action the user did not ask for.
+func TestQuestionAction_AbortsWhenScreenDoesNotShowQuestion(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen("$ git status\nnothing to commit\n")
+
+	_, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":1}]}`),
+	)
+	if err == nil {
+		t.Fatal("want an error when the question is not on screen")
+	}
+	if got := fb.sentKeys(); len(got) != 0 {
+		t.Errorf("keys = %v, want none sent", got)
+	}
+}
+
+func TestQuestionAction_SkipSendsEscape(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen(questionScreen)
+
+	dec, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"skip"}`),
+	)
+	if err != nil {
+		t.Fatalf("handleQuestionAction: %v", err)
+	}
+	if dec.Status != "denied" {
+		t.Errorf("status = %q, want denied", dec.Status)
+	}
+	if got := fb.sentKeys(); !equalStrings(got, []string{"sess-1:escape"}) {
+		t.Errorf("keys = %v, want [sess-1:escape]", got)
+	}
+}
+
+func TestQuestionAction_DeadTerminalErrors(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.setScreen(questionScreen)
+
+	_, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":0}]}`),
+	)
+	if err == nil {
+		t.Fatal("want an error for a session with no live terminal")
+	}
+	if !strings.Contains(err.Error(), "no live terminal") {
+		t.Errorf("error = %v, want it to mention the missing terminal", err)
+	}
+}
+
+func TestQuestionAction_OptionIndexOutOfRange(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen(questionScreen)
+
+	if _, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":7}]}`),
+	); err == nil {
+		t.Fatal("want an error for an out-of-range option")
+	}
+	if got := fb.sentKeys(); len(got) != 0 {
+		t.Errorf("keys = %v, want none sent", got)
+	}
+}
+
+func TestQuestionAction_FreeTextIsSubmittedAsAPrompt(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen(questionScreen)
+
+	dec, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","text":"something else"}`),
+	)
+	if err != nil {
+		t.Fatalf("handleQuestionAction: %v", err)
+	}
+	if dec.Status != "answered" {
+		t.Errorf("status = %q, want answered", dec.Status)
+	}
+	if len(fb.texts) != 1 || fb.texts[0] != "sess-1:something else" {
+		t.Errorf("texts = %v, want [sess-1:something else]", fb.texts)
+	}
+}
+
+// Two devices answering at once must not interleave keystrokes into the same
+// dialog: each answer's Downs have to stay contiguous with its own Enter.
+func TestQuestionAction_ConcurrentAnswersDoNotInterleave(t *testing.T) {
+	fb := withBackend(t, newFakeBackend())
+	fb.live("sess-1")
+	fb.setScreen(questionScreen)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			handleQuestionAction(
+				questionNotif("sess-1", twoOptions),
+				json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":2}]}`),
+			)
+		}()
+	}
+	wg.Wait()
+
+	got := fb.sentKeys()
+	want := []string{
+		"sess-1:down", "sess-1:down", "sess-1:enter",
+		"sess-1:down", "sess-1:down", "sess-1:enter",
+	}
+	if !equalStrings(got, want) {
+		t.Errorf("keys = %v, want two uninterleaved runs %v", got, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

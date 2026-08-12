@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,12 +30,18 @@ func openMemoryStore(t *testing.T) *store.Store {
 }
 
 // fakeBackend satisfies backend.Backend and records the calls hooks make.
+//
+// The recording fields are mutex-guarded: question answering is serialised per
+// session by the code under test, and the test that proves it drives two
+// answers at once.
 type fakeBackend struct {
+	mu      sync.Mutex
 	handles map[string]string
 	renames []string // "sessionID:name"
 	kills   []string
 	keys    []string // "sessionID:key"
 	texts   []string // "sessionID:text"
+	screen  string   // what Capture returns
 }
 
 func newFakeBackend() *fakeBackend {
@@ -77,13 +85,31 @@ func (f *fakeBackend) Snapshot() map[string]string {
 }
 
 func (f *fakeBackend) SendText(sessionID, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.texts = append(f.texts, sessionID+":"+text)
 	return nil
 }
 
 func (f *fakeBackend) SendKey(sessionID string, k backend.Key) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, sessionID+":"+string(k))
 	return nil
+}
+
+// setScreen sets what Capture reports, standing in for the rendered CLI.
+func (f *fakeBackend) setScreen(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.screen = s
+}
+
+// sentKeys returns a copy of the recorded keystrokes.
+func (f *fakeBackend) sentKeys() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.keys...)
 }
 
 func (f *fakeBackend) Interrupt(sessionID string) error { return nil }
@@ -94,7 +120,11 @@ func (f *fakeBackend) Kill(sessionID string) error {
 	return nil
 }
 
-func (f *fakeBackend) Capture(sessionID string) (string, error) { return "", nil }
+func (f *fakeBackend) Capture(sessionID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.screen, nil
+}
 
 func (f *fakeBackend) Rename(sessionID, name string) error {
 	f.renames = append(f.renames, sessionID+":"+name)
@@ -960,92 +990,197 @@ func makeRequestWithCancel(body []byte) (*http.Request, context.CancelFunc) {
 
 // ==================== Question flow ====================
 
-func TestQuestion_TransitionsToWaitingPermission(t *testing.T) {
+// questionInput builds an AskUserQuestion tool input in the shape Claude
+// sends: {"questions": [...]}.
+func questionInput(t *testing.T, questions ...map[string]interface{}) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]interface{}{"questions": questions})
+	if err != nil {
+		t.Fatalf("marshal tool input: %v", err)
+	}
+	return raw
+}
+
+func oneQuestion(question, header string, options ...string) map[string]interface{} {
+	opts := make([]interface{}, 0, len(options))
+	for _, o := range options {
+		opts = append(opts, map[string]string{"label": o, "description": o})
+	}
+	return map[string]interface{}{"question": question, "header": header, "options": opts}
+}
+
+func notifsOfType(t *testing.T, db *store.Store, nType string) []store.Notification {
+	t.Helper()
+	notifs, err := db.ListNotifications("claude", "", nType)
+	if err != nil {
+		t.Fatalf("list %s notifications: %v", nType, err)
+	}
+	return notifs
+}
+
+func onlyQuestionNotif(t *testing.T, db *store.Store) *store.Notification {
+	t.Helper()
+	notifs := notifsOfType(t, db, "claude.question")
+	if len(notifs) != 1 {
+		t.Fatalf("want 1 claude.question notification, got %d", len(notifs))
+	}
+	return &notifs[0]
+}
+
+// The direct regression guard for the five-minute block: the hook used to wait
+// for a mobile answer, which is why the CLI never rendered its own question UI
+// and the terminal had nothing to answer.
+func TestQuestion_ReturnsImmediatelyWithoutBlocking(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	notifIDs := captureNotifIDs(ctx)
-
-	toolInput, _ := json.Marshal(map[string]string{"question": "Are you sure?"})
-	done := make(chan struct{})
+	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		defer close(done)
-		callHook(handleQuestion, ctx, hookInput{
+		done <- callHook(handleQuestion, ctx, hookInput{
 			SessionID: "sess-1",
 			CWD:       "/tmp/proj",
-			ToolInput: toolInput,
+			ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
 		})
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		sess, _ := db.GetSession("sess-1")
-		if sess != nil && sess.Status == "waiting_permission" {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleQuestion blocked; it must return so the CLI can render its own UI")
+	}
+
+	if got := strings.TrimSpace(w.Body.String()); got != "{}" {
+		t.Errorf("body = %q, want {}", got)
 	}
 	assertStatus(t, db, "sess-1", "waiting_permission")
 
-	capturedNotifID := awaitNotifID(t, notifIDs)
-	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "answered"}, "mobile")
-	<-done
-}
-
-func TestQuestion_Answer_ReturnsAllow(t *testing.T) {
-	ctx, db, _ := setupCtx(t)
-	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-
-	notifIDs := captureNotifIDs(ctx)
-
-	toolInput, _ := json.Marshal(map[string]string{"question": "Proceed?"})
-	resultCh := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		resultCh <- callHook(handleQuestion, ctx, hookInput{
-			SessionID: "sess-1",
-			CWD:       "/tmp/proj",
-			ToolInput: toolInput,
-		})
-	}()
-
-	capturedNotifID := awaitNotifID(t, notifIDs)
-	answerPayload, _ := json.Marshal(map[string]string{"answer": "yes"})
-	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "answered", Response: answerPayload}, "mobile")
-
-	w := <-resultCh
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp)
-	output := resp["hookSpecificOutput"].(map[string]interface{})
-	if output["permissionDecision"] != "allow" {
-		t.Errorf("permissionDecision = %v, want allow", output["permissionDecision"])
+	notif := onlyQuestionNotif(t, db)
+	if notif.Status != "pending" {
+		t.Errorf("notification status = %q, want pending", notif.Status)
+	}
+	// Nothing waits on a decision channel any more, so no slot is reserved.
+	if ctx.Mgr.HasPending(notif.ID) {
+		t.Error("question registered a decision slot; nothing waits on one")
 	}
 }
 
-func TestQuestion_Skip_ReturnsDeny(t *testing.T) {
+// Wrapping rather than splicing would produce {"questions":{"questions":[...]}}
+// and the mobile card's payload['questions'] accessor would cast a Map to a
+// List, silently emptying the card.
+func TestQuestion_PayloadKeepsQuestionsAtTopLevel(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	notifIDs := captureNotifIDs(ctx)
+	callHook(handleQuestion, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
+	})
 
-	toolInput, _ := json.Marshal(map[string]string{"question": "Proceed?"})
-	resultCh := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		resultCh <- callHook(handleQuestion, ctx, hookInput{
-			SessionID: "sess-1",
-			CWD:       "/tmp/proj",
-			ToolInput: toolInput,
-		})
-	}()
+	payload := decodePayload(t, onlyQuestionNotif(t, db))
+	questions, ok := payload["questions"].([]interface{})
+	if !ok {
+		t.Fatalf("payload[questions] = %T, want a JSON array", payload["questions"])
+	}
+	if len(questions) != 1 {
+		t.Fatalf("questions length = %d, want 1", len(questions))
+	}
+	if payload["session_id"] != "sess-1" {
+		t.Errorf("payload[session_id] = %v, want sess-1", payload["session_id"])
+	}
+}
 
-	capturedNotifID := awaitNotifID(t, notifIDs)
-	ctx.Mgr.Resolve(capturedNotifID, notifications.Decision{Status: "denied"}, "mobile")
+// Both PreToolUse matchers fire for AskUserQuestion. Writing "active" from the
+// wildcard one is what used to erase waiting_permission a millisecond after
+// handleQuestion set it.
+func TestToolPre_LeavesQuestionStatusAlone(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "waiting_permission")
 
-	w := <-resultCh
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp)
-	output := resp["hookSpecificOutput"].(map[string]interface{})
-	if output["permissionDecision"] != "deny" {
-		t.Errorf("permissionDecision = %v, want deny", output["permissionDecision"])
+	callHook(handleToolPre, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "AskUserQuestion",
+	})
+
+	assertStatus(t, db, "sess-1", "waiting_permission")
+}
+
+func TestToolPre_StillMarksOtherToolsActive(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "idle")
+
+	callHook(handleToolPre, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "Read",
+	})
+
+	assertStatus(t, db, "sess-1", "active")
+}
+
+// The tool completed, so whoever answered — terminal or phone — the question is
+// gone and the other surface must stop offering it.
+func TestToolPost_ResolvesQuestionButNotPermission(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleQuestion, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
+	})
+	perm := &store.Notification{
+		ID:            "notif-perm",
+		Source:        "claude",
+		SourceSession: "sess-1",
+		CWD:           "/tmp/proj",
+		Type:          "claude.permission",
+		Status:        "pending",
+	}
+	if err := db.CreateNotification(perm); err != nil {
+		t.Fatalf("create permission notification: %v", err)
+	}
+
+	callHook(handleToolPost, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "AskUserQuestion",
+	})
+
+	if got := onlyQuestionNotif(t, db).Status; got != "resolved" {
+		t.Errorf("question status = %q, want resolved", got)
+	}
+	stored, err := db.GetNotification("notif-perm")
+	if err != nil {
+		t.Fatalf("get permission notification: %v", err)
+	}
+	if stored.Status != "pending" {
+		t.Errorf("permission status = %q, want pending", stored.Status)
+	}
+}
+
+// Escaping out of a question returns Claude to its prompt without a
+// PostToolUse, so idle_prompt is the only signal the question is gone.
+func TestIdlePrompt_ResolvesPendingQuestion(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	callHook(handleQuestion, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
+	})
+
+	callHook(handleNotification, ctx, hookInput{
+		SessionID:     "sess-1",
+		CWD:           "/tmp/proj",
+		HookEventName: "idle_prompt",
+	})
+
+	if got := onlyQuestionNotif(t, db).Status; got != "resolved" {
+		t.Errorf("question status = %q, want resolved", got)
 	}
 }
 

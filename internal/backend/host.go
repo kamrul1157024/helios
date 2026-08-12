@@ -263,6 +263,10 @@ func keySequence(key Key) ([]byte, error) {
 		return []byte("\x1b"), nil
 	case KeyCtrlC:
 		return []byte("\x03"), nil
+	case KeyUp:
+		return []byte("\x1b[A"), nil
+	case KeyDown:
+		return []byte("\x1b[B"), nil
 	default:
 		return nil, fmt.Errorf("backend: unknown key %q", key)
 	}
