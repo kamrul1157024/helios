@@ -146,6 +146,15 @@ button.link {
   padding: 4px 8px;
 }
 
+/* Cold, not broken: amber rather than red, as on the mobile app bar. */
+button.cold {
+  color: var(--s-waiting);
+}
+
+button.cold:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--s-waiting) 14%, transparent);
+}
+
 button.danger {
   color: var(--error);
 }
@@ -599,6 +608,13 @@ small {
   font-size: 12px;
 }
 
+/* No live host behind the status: the card says idle, this says it will take a
+   moment to prove it. */
+.cold-mark {
+  color: var(--s-waiting);
+  font-size: 12px;
+}
+
 .card-title {
   margin-top: 8px;
   font-size: 14px;
@@ -645,7 +661,10 @@ small {
 }
 
 .session-card:hover .row-btn,
-.session-card.selected .row-btn {
+.session-card.selected .row-btn,
+/* The only move a terminated session has left, so it does not wait for a
+   hover to admit it exists. */
+.row-btn.resume {
   opacity: 1;
 }
 
@@ -1217,6 +1236,19 @@ small {
 
 .composer {
   padding: 12px 16px 14px;
+}
+
+/* What replaces the composer once the session has ended. */
+.composer.ended {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ended-note {
+  font-size: 13px;
+  color: var(--on-surface-variant);
 }
 
 .composer textarea {

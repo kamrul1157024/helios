@@ -3,6 +3,9 @@ import { useMemo, useState } from 'react'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
+  canResume,
+  hasTerminal,
+  needsRecovery,
   sessionLabel,
   shortCwd,
   statusLabel,
@@ -142,13 +145,21 @@ function SessionRow({
   pending: number
   selected: boolean
 }): JSX.Element {
-  const live = Boolean(session.terminal)
+  const live = hasTerminal(session)
   const busy = BUSY_STATUSES.has(session.status)
+  const terminated = canResume(session)
+  const cold = needsRecovery(session)
   return (
     <article
       className={`session-card ${session.status} ${selected ? 'selected' : ''}`}
       onClick={() => store.select(hostId, session.session_id)}
-      onDoubleClick={() => void store.openTerminal(hostId, session, !live)}
+      // A terminated session has to be resumed before it has a terminal worth
+      // opening, so the shortcut resumes instead of waking one it will refuse.
+      onDoubleClick={() =>
+        void (terminated
+          ? store.resumeSession(hostId, session.session_id)
+          : store.openTerminal(hostId, session, !live))
+      }
     >
       <div className="card-inner">
         <div className="card-top">
@@ -156,6 +167,11 @@ function SessionRow({
             <span className={busy ? 'dot pulse' : 'dot'} />
             {statusLabel(session.status)}
           </span>
+          {cold && (
+            <span className="cold-mark" title="Cold — no live terminal">
+              ⚯
+            </span>
+          )}
           {session.pinned && (
             <span className="pin" title="Pinned">
               ★
@@ -177,14 +193,21 @@ function SessionRow({
             {session.permission_mode ? ` · ${shortMode(session.permission_mode)}` : ''}
           </span>
           <button
-            className="row-btn"
-            title={live ? 'Open terminal' : 'Wake and open terminal'}
+            className={terminated ? 'row-btn resume' : 'row-btn'}
+            title={
+              terminated
+                ? 'Resume — bring the agent back'
+                : live
+                  ? 'Open terminal'
+                  : 'Cold — wake and open terminal'
+            }
             onClick={(event) => {
               event.stopPropagation()
-              void store.openTerminal(hostId, session, !live)
+              if (terminated) void store.resumeSession(hostId, session.session_id)
+              else void store.openTerminal(hostId, session, !live)
             }}
           >
-            {live ? 'Terminal' : 'Wake'}
+            {terminated ? 'Resume' : live ? 'Terminal' : 'Wake'}
           </button>
         </div>
       </div>
@@ -196,8 +219,8 @@ function SessionRow({
 function compareRows(a: Row, b: Row): number {
   if (a.pending !== b.pending) return b.pending - a.pending
   if (a.session.pinned !== b.session.pinned) return a.session.pinned ? -1 : 1
-  const aLive = Boolean(a.session.terminal)
-  const bLive = Boolean(b.session.terminal)
+  const aLive = hasTerminal(a.session)
+  const bLive = hasTerminal(b.session)
   if (aLive !== bLive) return aLive ? -1 : 1
   return (b.session.last_event_at ?? b.session.created_at).localeCompare(
     a.session.last_event_at ?? a.session.created_at,

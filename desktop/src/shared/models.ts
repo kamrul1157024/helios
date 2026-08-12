@@ -45,8 +45,35 @@ export const BUSY_STATUSES: ReadonlySet<string> = new Set([
   'waiting_permission',
 ])
 
-export function isLive(session: Session): boolean {
-  return session.status !== 'ended' && session.status !== 'terminated'
+/** A live terminal host is attached. Absent means the session is cold. */
+export function hasTerminal(session: Session): boolean {
+  return Boolean(session.terminal)
+}
+
+/**
+ * The one final state. The daemon refuses prompts for a terminated session
+ * outright (internal/server/api.go, session-send returns 409 session_terminated)
+ * and POST /resume is the only way back — waking it would revive the process
+ * but leave the record terminated, so every prompt would still be refused.
+ */
+export function isTerminated(session: Session): boolean {
+  return session.status === 'terminated'
+}
+
+/**
+ * Alive on paper with no host to run in: evicted, or the daemon restarted
+ * under it. Nothing resurrects a host on its own, but anything that needs one
+ * — a prompt, a terminal, a resume — brings it back in place.
+ *
+ * Mirrors Session.needsRecovery in mobile/lib/models/session.dart.
+ */
+export function needsRecovery(session: Session): boolean {
+  return !hasTerminal(session) && !isTerminated(session)
+}
+
+/** Resume relaunches the agent and moves the session back to idle. */
+export function canResume(session: Session): boolean {
+  return isTerminated(session)
 }
 
 /** Display label: the generated title, else the last prompt, else the directory. */

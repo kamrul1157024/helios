@@ -7,7 +7,15 @@ import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
-import { BUSY_STATUSES, sessionLabel, statusLabel, type Session } from '../../shared/models.ts'
+import {
+  BUSY_STATUSES,
+  canResume,
+  hasTerminal,
+  needsRecovery,
+  sessionLabel,
+  statusLabel,
+  type Session,
+} from '../../shared/models.ts'
 
 const PANELS: RightPanel[] = ['chat', 'approvals', 'git', 'files']
 
@@ -74,8 +82,10 @@ export function Detail(): JSX.Element {
 function SessionHeader({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(session.title ?? '')
-  const live = Boolean(session.terminal)
+  const live = hasTerminal(session)
   const busy = BUSY_STATUSES.has(session.status)
+  const terminated = canResume(session)
+  const cold = needsRecovery(session)
 
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
@@ -122,11 +132,32 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
           {statusLabel(session.status)}
         </span>
 
+        {cold && (
+          <button
+            className="ghost cold"
+            title="Cold — no live terminal. Resume brings the agent back."
+            onClick={() => void store.resumeSession(hostId, session.session_id)}
+          >
+            ⚯ Cold
+          </button>
+        )}
+
         <PermissionMode hostId={hostId} session={session} />
 
-        <button className="filled" onClick={() => void store.openTerminal(hostId, session, !live)}>
-          {live ? 'Terminal' : 'Wake'}
-        </button>
+        {/* Resume, not Wake: waking a terminated session starts its host but
+            leaves the daemon refusing every prompt. */}
+        {terminated ? (
+          <button
+            className="filled"
+            onClick={() => void store.resumeSession(hostId, session.session_id)}
+          >
+            Resume
+          </button>
+        ) : (
+          <button className="filled" onClick={() => void store.openTerminal(hostId, session, !live)}>
+            {live ? 'Terminal' : 'Wake'}
+          </button>
+        )}
 
         {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
 
@@ -152,9 +183,6 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
             >
               {session.archived ? 'Unarchive' : 'Archive'}
             </button>
-            {!live && (
-              <button onClick={() => void run(() => api(hostId).resume(session.session_id))}>Resume</button>
-            )}
             <button onClick={() => void run(() => api(hostId).terminate(session.session_id))}>
               Terminate
             </button>

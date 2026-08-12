@@ -9,7 +9,13 @@ import {
   resolveFilePath,
 } from '../markdown.ts'
 import { store } from '../store.ts'
-import { BUSY_STATUSES, type Session, type TranscriptMessage } from '../../shared/models.ts'
+import {
+  BUSY_STATUSES,
+  canResume,
+  needsRecovery,
+  type Session,
+  type TranscriptMessage,
+} from '../../shared/models.ts'
 
 const PAGE = 200
 
@@ -24,6 +30,8 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
 
   const status = session.status
   const busy = BUSY_STATUSES.has(status)
+  const terminated = canResume(session)
+  const cold = needsRecovery(session)
 
   useEffect(() => {
     let cancelled = false
@@ -73,12 +81,17 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
       void store.refreshSessions(hostId)
     } catch (err) {
       // 409 is an answer, not a fault: the session is busy without a queue, or
-      // it has ended. Saying which is more use than "request failed".
+      // it ended between this render and the click. Refreshing swaps the
+      // composer for the resume banner, so the second attempt is not the same
+      // dead end as the first.
       if (statusOf(err) === 409) {
         store.notify(
-          status === 'terminated' ? 'Session has ended' : 'Session is busy and cannot queue prompts',
+          status === 'terminated'
+            ? 'Session has ended — resume to continue'
+            : 'Session is busy and cannot queue prompts',
           'error',
         )
+        void store.refreshSessions(hostId)
       } else {
         store.fail(err)
       }
@@ -114,30 +127,50 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
         {busy && <div className="typing">agent is working…</div>}
       </div>
 
-      <div className="composer">
-        <textarea
-          value={draft}
-          rows={3}
-          placeholder={session.supports_prompt_queue ? 'Send a prompt (⌘↵)' : 'Send a prompt'}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-        />
-        <div className="composer-actions">
-          {busy && (
-            <button className="ghost" onClick={() => void api(hostId).stop(session.session_id)}>
-              Stop
-            </button>
-          )}
-          <button disabled={!draft.trim() || sending} onClick={() => void send()}>
-            {sending ? 'Sending…' : 'Send'}
+      {/* No composer for a terminated session: the daemon refuses its prompts,
+          so offering the box only trades a typed prompt for a 409. */}
+      {terminated ? (
+        <div className="composer ended">
+          <span className="ended-note">Session terminated — resume to continue</span>
+          <button
+            className="filled"
+            onClick={() => void store.resumeSession(hostId, session.session_id)}
+          >
+            Resume
           </button>
         </div>
-      </div>
+      ) : (
+        <div className="composer">
+          <textarea
+            value={draft}
+            rows={3}
+            placeholder={
+              cold
+                ? 'Send a prompt — the session wakes first'
+                : session.supports_prompt_queue
+                  ? 'Send a prompt (⌘↵)'
+                  : 'Send a prompt'
+            }
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault()
+                void send()
+              }
+            }}
+          />
+          <div className="composer-actions">
+            {busy && (
+              <button className="ghost" onClick={() => void api(hostId).stop(session.session_id)}>
+                Stop
+              </button>
+            )}
+            <button disabled={!draft.trim() || sending} onClick={() => void send()}>
+              {sending ? 'Sending…' : cold ? 'Wake and send' : 'Send'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
