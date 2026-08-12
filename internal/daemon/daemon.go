@@ -178,6 +178,7 @@ func startDaemon(cfg *Config) error {
 
 	// Create both servers
 	publicBind := ResolvePublicBind(cfg)
+	server.PublicBind = publicBind
 	internalSrv := server.NewInternalServer(cfg.Server.InternalPort, shared)
 	publicSrv := server.NewPublicServer(publicBind, cfg.Server.PublicPort, shared)
 
@@ -269,11 +270,12 @@ func startDaemon(cfg *Config) error {
 	}()
 
 	// Wait for shutdown or error
+	var srvErr error
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nShutting down...")
-	case err := <-errCh:
-		fmt.Printf("Server error: %v\n", err)
+	case srvErr = <-errCh:
+		fmt.Printf("Server error: %v\n", srvErr)
 	}
 
 	// Graceful shutdown (3 second timeout to avoid hanging on open SSE connections)
@@ -286,7 +288,7 @@ func startDaemon(cfg *Config) error {
 
 	log.Printf("helios daemon stopped")
 	fmt.Println("helios daemon stopped")
-	return nil
+	return srvErr
 }
 
 func Stop() error {

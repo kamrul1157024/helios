@@ -67,8 +67,9 @@ type tunnelStartRequest struct {
 }
 
 type tunnelStartResponse struct {
-	PublicURL string `json:"public_url"`
-	Message   string `json:"message"`
+	PublicURL       string `json:"public_url"`
+	Message         string `json:"message"`
+	RestartRequired bool   `json:"restart_required"`
 }
 
 func (c *client) tunnelStart(provider, customURL string, localPort int, tailscaleMode string) (*tunnelStartResponse, error) {
