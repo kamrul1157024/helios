@@ -3,7 +3,10 @@
 .PHONY: dmg dmg-dev changelog release release-publish
 .PHONY: desktop desktop-dev desktop-test desktop-app desktop-install desktop-clean
 
-VERSION = 0.2.5
+# Release version. The workflow passes it in; a local build falls back to the
+# last tag, so an APK built by hand is not stamped with a number from an
+# unrelated release.
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 REPO = kamrul1157024/helios
 UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
@@ -214,11 +217,13 @@ changelog:
 ## Split out from `release` because the macOS and Linux packages are built on
 ## runners of their own: CI stages them into $(DIST) and calls this directly.
 release-publish:
+	@test -n "$(VERSION)" || \
+		(echo "Error: VERSION is empty and this checkout has no tags — pass VERSION=x.y.z." >&2 && exit 1)
 	@ls $(DIST)/* > /dev/null 2>&1 || \
 		(echo "Error: nothing staged in $(DIST)/ — build the artifacts first." >&2 && exit 1)
 	@echo "Creating GitHub release v$(VERSION)..."
 	@if gh release view v$(VERSION) --repo $(REPO) > /dev/null 2>&1; then \
-		echo "Error: Release v$(VERSION) already exists. Bump VERSION in the Makefile." >&2; \
+		echo "Error: Release v$(VERSION) already exists — pass a new one: make release VERSION=x.y.z" >&2; \
 		exit 1; \
 	fi
 	@./scripts/changelog.sh > /tmp/helios-changelog.md
