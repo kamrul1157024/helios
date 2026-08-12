@@ -647,9 +647,10 @@ func (sh *Shared) setPermissionMode(w http.ResponseWriter, id, mode string) {
 	}
 
 	// Cold sessions need no restart: the stored mode is read when they wake.
-	restarted := false
+	restarted, ready := false, true
 	if sh.Backend.Alive(id) {
-		if err := sh.restartForPermissionMode(id, session.CWD); err != nil {
+		var err error
+		if ready, err = sh.restartForPermissionMode(id, session.CWD); err != nil {
 			jsonError(w, fmt.Sprintf("failed to restart session: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -665,27 +666,50 @@ func (sh *Shared) setPermissionMode(w http.ResponseWriter, id, mode string) {
 	})
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true, "permission_mode": mode, "restarted": restarted,
+		"success": true, "permission_mode": mode, "restarted": restarted, "ready": ready,
 	})
 }
 
 // restartForPermissionMode cycles a session's terminal so the agent relaunches
-// under the mode just stored.
+// under the mode just stored, and reports whether it came back up.
 //
 // Kill before Wake, not Wake alone: Wake adopts a live host, so without the
 // kill the old process would keep running in the old mode and report success.
-func (sh *Shared) restartForPermissionMode(id, cwd string) error {
+//
+// Waiting for the agent is not politeness. Wake returns once the host's socket
+// is listening, seconds before the agent inside it is reading its terminal, and
+// throughout that gap the session is idle with a live terminal — which is
+// exactly what the send path takes as "type into it now". A client that changes
+// the mode and immediately sends a prompt therefore loses it: the keystrokes go
+// into a booting CLI, no hook ever acknowledges them, and the send fails.
+// Returning only once the agent has reported in closes the gap.
+//
+// Subscribed before the kill, because the agent can report in while Wake is
+// still returning and a signal fired with nobody listening is gone.
+func (sh *Shared) restartForPermissionMode(id, cwd string) (bool, error) {
 	waker, ok := sh.Backend.(backend.Waker)
 	if !ok {
-		return fmt.Errorf("backend %s cannot resume sessions", sh.Backend.Name())
+		return false, fmt.Errorf("backend %s cannot resume sessions", sh.Backend.Name())
 	}
+
+	ready := sh.Signals.Await(SignalAgentReady, id)
+	defer ready.Release()
+
 	if err := sh.Backend.Kill(id); err != nil {
-		return fmt.Errorf("kill terminal: %w", err)
+		return false, fmt.Errorf("kill terminal: %w", err)
 	}
 	if _, err := waker.Wake(id, cwd); err != nil {
-		return fmt.Errorf("restart terminal: %w", err)
+		return false, fmt.Errorf("restart terminal: %w", err)
 	}
-	return nil
+
+	// A slow boot is not a failed switch: the mode is stored and the terminal is
+	// up, so the change stands and the caller is told it is not usable yet
+	// rather than being handed an error for work that did happen.
+	if !ready.Wait(agentBootTimeout) {
+		log.Printf("permission-mode: session %s did not report ready within %s", id, agentBootTimeout)
+		return false, nil
+	}
+	return true, nil
 }
 
 // settleInterrupted moves a stopped session back to idle and tells every client.

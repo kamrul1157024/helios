@@ -168,15 +168,21 @@ func createTrustNotification(shared *Shared, p *PendingSession) {
 	detail := "Claude needs permission to access this workspace"
 	payloadStr := `{"session_id":"` + p.SessionID + `","cwd":"` + p.CWD + `"}`
 
+	// SourceSession, not just the payload: it is the column every
+	// session-scoped sweep keys on. Without it the dialog stays pending after
+	// the session is answered, terminated or deleted — a permanent approval on
+	// every tray for a session that no longer exists — and a client has nothing
+	// to route a tap on it to.
 	notif := &store.Notification{
-		ID:      notifications.GenerateNotificationID(),
-		Source:  "claude",
-		CWD:     p.CWD,
-		Type:    "claude.trust",
-		Status:  "pending",
-		Title:   &title,
-		Detail:  &detail,
-		Payload: &payloadStr,
+		ID:            notifications.GenerateNotificationID(),
+		Source:        "claude",
+		SourceSession: p.SessionID,
+		CWD:           p.CWD,
+		Type:          "claude.trust",
+		Status:        "pending",
+		Title:         &title,
+		Detail:        &detail,
+		Payload:       &payloadStr,
 	}
 
 	if err := shared.Mgr.CreateNotification(notif); err != nil {
