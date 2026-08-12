@@ -94,11 +94,7 @@ func (s *PublicServer) handleNotificationAction(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s.shared.SSE.Broadcast(SSEEvent{
-		Type: "notification_resolved",
-		Data: map[string]string{"id": id, "action": decision.Status, "source": source},
-	})
-
+	// Mgr.Resolve broadcasts notification_resolved itself.
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -119,11 +115,6 @@ func (s *PublicServer) handleDismissNotification(w http.ResponseWriter, r *http.
 		jsonError(w, "failed to dismiss", http.StatusInternalServerError)
 		return
 	}
-
-	s.shared.SSE.Broadcast(SSEEvent{
-		Type: "notification_resolved",
-		Data: map[string]string{"id": id, "action": "dismissed", "source": source},
-	})
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }
@@ -176,10 +167,6 @@ func (s *PublicServer) handleBatchNotifications(w http.ResponseWriter, r *http.R
 			result["error"] = "already_resolved"
 		} else {
 			result["success"] = true
-			s.shared.SSE.Broadcast(SSEEvent{
-				Type: "notification_resolved",
-				Data: map[string]string{"id": id, "action": decision.Status, "source": source},
-			})
 		}
 		results = append(results, result)
 	}

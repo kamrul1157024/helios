@@ -145,13 +145,18 @@ func setupCtx(t *testing.T) (*provider.HookContext, *store.Store, *[]string) {
 	mgr := notifications.NewManager(db)
 	var sseEvents []string
 
+	notify := func(eventType string, _ interface{}) {
+		sseEvents = append(sseEvents, eventType)
+	}
+	// Mirrors server.NewShared: the manager announces its own resolutions, so
+	// tests see the same events clients would.
+	mgr.SetBroadcaster(notify)
+
 	ctx := &provider.HookContext{
-		DB:       db,
-		Mgr:      mgr,
-		Terminal: newFakeBackend(),
-		Notify: func(eventType string, _ interface{}) {
-			sseEvents = append(sseEvents, eventType)
-		},
+		DB:             db,
+		Mgr:            mgr,
+		Terminal:       newFakeBackend(),
+		Notify:         notify,
 		Report:         func(provider.ReportEvent) {},
 		SessionStarted: func(string) {},
 	}

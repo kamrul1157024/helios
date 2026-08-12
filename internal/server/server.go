@@ -54,7 +54,7 @@ func (sh *Shared) injectTerminal(sess *store.Session) {
 }
 
 func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) *Shared {
-	return &Shared{
+	sh := &Shared{
 		DB:       db,
 		Mgr:      mgr,
 		SSE:      NewSSEBroadcaster(),
@@ -63,6 +63,12 @@ func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) 
 		Signals:  NewSessionSignals(),
 		Reporter: reporter.New("claude", db),
 	}
+	// The manager owns notification state, so it announces its own writes. No
+	// caller has to remember to, and none can resolve one silently.
+	mgr.SetBroadcaster(func(eventType string, data interface{}) {
+		sh.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
+	})
+	return sh
 }
 
 // NewInternalServer creates the localhost-only server for hooks and admin API.

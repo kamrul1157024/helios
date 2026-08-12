@@ -355,11 +355,11 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 	updateSessionTranscript(ctx, &input)
 	renameSessionWindow(ctx, input.SessionID, "idle", input.CWD)
 
-	// Resolve any pending notifications for this session (approved from CLI)
-	resolvedIDs, _ := ctx.DB.ResolveSessionNotifications(input.SessionID, "resolved", "claude")
-	for _, id := range resolvedIDs {
-		ctx.Mgr.CancelPendingFromClaude(id)
-		ctx.Notify("notification_resolved", map[string]string{"id": id, "action": "resolved", "source": "claude"})
+	// Resolve any pending notifications for this session (approved from CLI).
+	// The manager announces each one, so clients drop them without being told
+	// separately.
+	if _, err := ctx.Mgr.ResolveSession(input.SessionID, "resolved", "claude"); err != nil {
+		log.Printf("hook: resolve notifications for %s: %v", input.SessionID, err)
 	}
 
 	notifID := notifications.GenerateNotificationID()
@@ -649,7 +649,6 @@ func waitForDecision(ctx *provider.HookContext, notifID string, r *http.Request)
 		return &denied
 	case <-r.Context().Done():
 		ctx.Mgr.CancelPendingFromClaude(notifID)
-		ctx.Notify("notification_resolved", map[string]string{"id": notifID, "action": "resolved", "source": "claude"})
 		return nil
 	}
 }
@@ -701,18 +700,13 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 const askUserQuestionTool = "AskUserQuestion"
 
 // resolveSessionQuestions clears a session's pending claude.question
-// notifications and tells clients to drop them, whichever surface answered.
+// notifications, whichever surface answered. The manager tells clients.
 //
-// Narrowed to the one type rather than reusing ResolveSessionNotifications,
-// which would also clear a permission request the session is still waiting on.
+// Narrowed to the one type rather than resolving the whole session, which
+// would also clear a permission request the session is still waiting on.
 func resolveSessionQuestions(ctx *provider.HookContext, sessionID string) {
-	ids, err := ctx.DB.ResolveSessionNotificationsByType(sessionID, "claude.question", "resolved", "claude")
-	if err != nil {
+	if _, err := ctx.Mgr.ResolveSessionByType(sessionID, "claude.question", "resolved", "claude"); err != nil {
 		log.Printf("hook: resolve questions for %s: %v", sessionID, err)
-		return
-	}
-	for _, id := range ids {
-		ctx.Notify("notification_resolved", map[string]string{"id": id, "action": "resolved", "source": "claude"})
 	}
 }
 
