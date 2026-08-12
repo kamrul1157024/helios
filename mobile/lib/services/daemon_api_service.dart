@@ -831,21 +831,76 @@ class DaemonAPIService extends ChangeNotifier {
     return null;
   }
 
+  /// The working-tree diff for a file, or its diff at a revision: [to] alone is
+  /// that commit against its parent, [from] and [to] together are a range.
   Future<GitDiff?> gitDiff(
     String path,
     String file, {
     bool staged = false,
+    String? from,
+    String? to,
+    bool untracked = false,
   }) async {
     try {
-      final stagedParam = staged ? '&staged=true' : '';
-      final resp = await _api.get(
-        '/api/git/diff?path=${Uri.encodeComponent(path)}&file=${Uri.encodeComponent(file)}$stagedParam',
-      );
+      final query = <String>[
+        'path=${Uri.encodeComponent(path)}',
+        'file=${Uri.encodeComponent(file)}',
+        if (staged) 'staged=true',
+        if (untracked) 'untracked=true',
+        if (from != null && from.isNotEmpty) 'from=${Uri.encodeComponent(from)}',
+        if (to != null && to.isNotEmpty) 'to=${Uri.encodeComponent(to)}',
+      ];
+      final resp = await _api.get('/api/git/diff?${query.join('&')}');
       if (resp.statusCode == 200) {
         return GitDiff.fromJson(jsonDecode(resp.body));
       }
     } catch (e) {
       debugPrint('[$hostId] Failed to get git diff for $file: $e');
+    }
+    return null;
+  }
+
+  /// Commit history. Defaults to what this branch added on top of its base;
+  /// pass [all] for the whole history.
+  Future<GitLog?> gitLog(
+    String path, {
+    String? base,
+    bool all = false,
+    int limit = 50,
+    int skip = 0,
+  }) async {
+    try {
+      final query = <String>[
+        'path=${Uri.encodeComponent(path)}',
+        'limit=$limit',
+        if (skip > 0) 'skip=$skip',
+        if (all) 'all=true',
+        if (base != null && base.isNotEmpty) 'base=${Uri.encodeComponent(base)}',
+      ];
+      final resp = await _api.get('/api/git/log?${query.join('&')}');
+      if (resp.statusCode == 200) {
+        return GitLog.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to get git log for $path: $e');
+    }
+    return null;
+  }
+
+  /// The files one commit touched, or everything between two.
+  Future<GitChanges?> gitChanges(String path, String to, {String? from}) async {
+    try {
+      final query = <String>[
+        'path=${Uri.encodeComponent(path)}',
+        'to=${Uri.encodeComponent(to)}',
+        if (from != null && from.isNotEmpty) 'from=${Uri.encodeComponent(from)}',
+      ];
+      final resp = await _api.get('/api/git/changes?${query.join('&')}');
+      if (resp.statusCode == 200) {
+        return GitChanges.fromJson(jsonDecode(resp.body));
+      }
+    } catch (e) {
+      debugPrint('[$hostId] Failed to get changes for $to: $e');
     }
     return null;
   }
@@ -1122,18 +1177,230 @@ class GitDiff {
   }
 }
 
+class Commit {
+  final String sha;
+  final String short;
+  final String author;
+  final String date;
+  final String subject;
+  final int files;
+  final int insertions;
+  final int deletions;
+
+  Commit({
+    required this.sha,
+    required this.short,
+    required this.author,
+    required this.date,
+    required this.subject,
+    required this.files,
+    required this.insertions,
+    required this.deletions,
+  });
+
+  factory Commit.fromJson(Map<String, dynamic> json) {
+    return Commit(
+      sha: json['sha'] as String? ?? '',
+      short: json['short'] as String? ?? '',
+      author: json['author'] as String? ?? '',
+      date: json['date'] as String? ?? '',
+      subject: json['subject'] as String? ?? '',
+      files: json['files'] as int? ?? 0,
+      insertions: json['insertions'] as int? ?? 0,
+      deletions: json['deletions'] as int? ?? 0,
+    );
+  }
+
+  String get timeAgo => _timeAgo(date);
+}
+
+/// Formats an ISO-8601 commit date the way the rest of the app formats times.
+String _timeAgo(String iso) {
+  if (iso.isEmpty) return '';
+  try {
+    final d = DateTime.parse(iso);
+    final diff = DateTime.now().toUtc().difference(d.toUtc());
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${d.month}/${d.day}';
+  } catch (_) {
+    return iso;
+  }
+}
+
+class GitLog {
+  final String root;
+  final String branch;
+
+  /// What the branch was compared against — empty when there was nothing to
+  /// compare against.
+  final String base;
+
+  /// 'branch' for base..HEAD, 'all' for the whole history.
+  final String scope;
+  final List<Commit> commits;
+  final bool hasMore;
+
+  GitLog({
+    required this.root,
+    required this.branch,
+    required this.base,
+    required this.scope,
+    required this.commits,
+    required this.hasMore,
+  });
+
+  factory GitLog.fromJson(Map<String, dynamic> json) {
+    return GitLog(
+      root: json['root'] as String? ?? '',
+      branch: json['branch'] as String? ?? '',
+      base: json['base'] as String? ?? '',
+      scope: json['scope'] as String? ?? 'all',
+      commits:
+          (json['commits'] as List?)?.map((e) => Commit.fromJson(e)).toList() ??
+          [],
+      hasMore: json['has_more'] as bool? ?? false,
+    );
+  }
+}
+
+class CommitFile {
+  final String path;
+
+  /// The old path, on a rename or a copy.
+  final String from;
+  final String status;
+  final int insertions;
+  final int deletions;
+
+  CommitFile({
+    required this.path,
+    required this.from,
+    required this.status,
+    required this.insertions,
+    required this.deletions,
+  });
+
+  factory CommitFile.fromJson(Map<String, dynamic> json) {
+    return CommitFile(
+      path: json['path'] as String? ?? '',
+      from: json['from'] as String? ?? '',
+      status: json['status'] as String? ?? 'M',
+      insertions: json['insertions'] as int? ?? 0,
+      deletions: json['deletions'] as int? ?? 0,
+    );
+  }
+
+  String get fileName => path.split('/').last;
+}
+
+class GitChanges {
+  final String from;
+  final String to;
+
+  /// True when this is one commit rather than a range — only then are the
+  /// commit's own subject, author, date and body filled in.
+  final bool single;
+  final List<CommitFile> files;
+  final int insertions;
+  final int deletions;
+  final bool truncated;
+  final String subject;
+  final String author;
+  final String date;
+  final String body;
+  final List<String> parents;
+
+  GitChanges({
+    required this.from,
+    required this.to,
+    required this.single,
+    required this.files,
+    required this.insertions,
+    required this.deletions,
+    required this.truncated,
+    required this.subject,
+    required this.author,
+    required this.date,
+    required this.body,
+    required this.parents,
+  });
+
+  factory GitChanges.fromJson(Map<String, dynamic> json) {
+    return GitChanges(
+      from: json['from'] as String? ?? '',
+      to: json['to'] as String? ?? '',
+      single: json['single'] as bool? ?? false,
+      files:
+          (json['files'] as List?)
+              ?.map((e) => CommitFile.fromJson(e))
+              .toList() ??
+          [],
+      insertions: json['insertions'] as int? ?? 0,
+      deletions: json['deletions'] as int? ?? 0,
+      truncated: json['truncated'] as bool? ?? false,
+      subject: json['subject'] as String? ?? '',
+      author: json['author'] as String? ?? '',
+      date: json['date'] as String? ?? '',
+      body: json['body'] as String? ?? '',
+      parents:
+          (json['parents'] as List?)?.map((e) => e.toString()).toList() ?? [],
+    );
+  }
+
+  String get timeAgo => _timeAgo(date);
+
+  String get shortTo => to.length > 7 ? to.substring(0, 7) : to;
+
+  String get shortFrom => from.length > 7 ? from.substring(0, 7) : from;
+}
+
 class Worktree {
   final String path;
   final String branch;
   final bool isMain;
+  final String head;
+  final String subject;
+  final bool detached;
+  final bool locked;
+  final int ahead;
+  final int behind;
 
-  Worktree({required this.path, required this.branch, required this.isMain});
+  /// Number of changed files in that worktree.
+  final int dirty;
+
+  /// What ahead/behind were measured against — empty when nothing was found.
+  final String base;
+
+  Worktree({
+    required this.path,
+    required this.branch,
+    required this.isMain,
+    this.head = '',
+    this.subject = '',
+    this.detached = false,
+    this.locked = false,
+    this.ahead = 0,
+    this.behind = 0,
+    this.dirty = 0,
+    this.base = '',
+  });
 
   factory Worktree.fromJson(Map<String, dynamic> json) {
     return Worktree(
       path: json['path'] as String,
       branch: json['branch'] as String? ?? '',
       isMain: json['is_main'] as bool? ?? false,
+      head: json['head'] as String? ?? '',
+      subject: json['subject'] as String? ?? '',
+      detached: json['detached'] as bool? ?? false,
+      locked: json['locked'] as bool? ?? false,
+      ahead: json['ahead'] as int? ?? 0,
+      behind: json['behind'] as int? ?? 0,
+      dirty: json['dirty'] as int? ?? 0,
+      base: json['base'] as String? ?? '',
     );
   }
 

@@ -2162,3 +2162,218 @@ hr {
     transform: translate(-50%, 8px);
   }
 }
+
+/* ─── Git: commits and worktrees ────────────────────────────────────────── */
+
+.git-views {
+  flex: 1;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* The branch line lives under the view switcher rather than beside it: the
+   switcher is the same in all three views and the branch is not. */
+.git-substatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.commit-list {
+  width: clamp(220px, 42%, 380px);
+  flex: none;
+  overflow-y: auto;
+  padding: 6px;
+  background: color-mix(in srgb, var(--on-surface) 3%, transparent);
+}
+
+.commit-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 8px;
+}
+
+.commit-scope .muted {
+  margin-left: auto;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  color: var(--on-surface);
+  font-weight: 400;
+}
+
+.commit-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.commit-row.selected {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.commit-subject {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.commit-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  min-width: 0;
+}
+
+.commit-row.selected .commit-meta {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.commit-sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--primary);
+}
+
+.commit-row.selected .commit-sha {
+  color: inherit;
+}
+
+.commit-more {
+  width: 100%;
+  padding: 8px;
+  margin-top: 4px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+}
+
+.commit-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.commit-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.commit-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.commit-body {
+  margin: 0;
+  padding: 8px 14px;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--on-surface-variant);
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+/* Files above, patch below: the commit pane is already the narrow half, and
+   splitting it again sideways leaves neither side readable. */
+.commit-split {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.commit-files {
+  flex: none;
+  max-height: 38%;
+  overflow-y: auto;
+  padding: 6px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.commit-counts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.worktrees {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.worktree {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-high);
+  color: var(--on-surface);
+  font-weight: 400;
+}
+
+.worktree:hover {
+  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
+}
+
+.worktree.selected {
+  outline: 1px solid var(--primary);
+}
+
+.worktree-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.worktree-subject {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.worktree-path {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}

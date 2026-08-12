@@ -188,6 +188,62 @@ export interface Worktree {
   path: string
   branch: string
   is_main: boolean
+  head?: string
+  subject?: string
+  detached: boolean
+  locked: boolean
+  ahead: number
+  behind: number
+  /** A count of changed files, not a flag: "7 touched" says an agent is mid-flight. */
+  dirty: number
+  /** What ahead and behind were measured against. */
+  base?: string
+}
+
+/** internal/server/githistory.go:35 */
+export interface Commit {
+  sha: string
+  short: string
+  author: string
+  date: string
+  subject: string
+  files: number
+  insertions: number
+  deletions: number
+}
+
+export interface GitLog {
+  root: string
+  branch: string
+  base: string
+  /** 'branch' is base..HEAD; 'all' is the whole history. */
+  scope: 'branch' | 'all'
+  commits: Commit[]
+  has_more: boolean
+}
+
+export interface CommitFile {
+  path: string
+  /** Set on a rename or a copy. */
+  from?: string
+  status: string
+  insertions: number
+  deletions: number
+}
+
+export interface GitChanges {
+  from: string
+  to: string
+  single: boolean
+  subject?: string
+  body?: string
+  author?: string
+  date?: string
+  parents?: string[]
+  files: CommitFile[]
+  insertions: number
+  deletions: number
+  truncated: boolean
 }
 
 /** internal/server/files.go:16 */
