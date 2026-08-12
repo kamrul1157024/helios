@@ -2,6 +2,38 @@
 
 **A platform that orchestrates AI coding agents on your machine.**
 
+## Install
+
+```bash
+git clone https://github.com/kamrul1157024/helios.git && cd helios
+
+make install           # daemon + CLI  → /usr/local/bin/helios   (needs Go 1.26+)
+make desktop-install   # desktop app   → /Applications/Helios.app (macOS, needs Node 20+)
+make apk-install       # Android app   → the device on adb        (needs Flutter 3.32+)
+
+helios start           # the TUI checks your setup and walks you through the rest
+```
+
+Only `make install` is required — the daemon is the product, and the apps are
+clients for it. Everything after that happens in the TUI: pick a tunnel, show a
+QR code, pair a device.
+
+| Command | Builds | Installs to |
+| --- | --- | --- |
+| `make install` | Go binary | `/usr/local/bin/helios` |
+| `make desktop-install` | Electron app | `/Applications/Helios.app` |
+| `make desktop-app` | Electron app | `desktop/release/*.dmg` (no install) |
+| `make apk-install` | Debug APK | the connected Android device |
+| `make apk-release` | Release APK | `~/.helios/helios.apk` |
+
+Pick one tunnel provider so your phone can reach the daemon —
+`brew install cloudflared` (recommended, no account) or `brew install ngrok`.
+
+The full walkthrough, with screenshots of each step, is in the
+[Setup Guide](#setup-guide) below.
+
+---
+
 You run 5 Claude sessions across 3 projects. One needs permission to run a test. Another finished refactoring and is waiting for your next instruction. A third hit a rate limit 20 minutes ago. You don't know any of this because you're in a different terminal tab.
 
 Helios fixes this. It's a daemon that sits between you and your AI coding tools. It runs each session in a terminal of its own, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are. It also narrates what your agents are doing in real time via voice reporting, so you can stay informed hands-free without watching the screen.
@@ -487,7 +519,7 @@ helios resume 1
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.26+ (the version in go.mod)
 - At least one AI CLI tool (claude, aider, codex, etc.)
 - Flutter 3.32+ (only if building the mobile/desktop app from source)
 
