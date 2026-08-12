@@ -740,6 +740,52 @@ func resolveSessionQuestions(ctx *provider.HookContext, sessionID string) {
 	}
 }
 
+// resolveToolPermissions retracts the pending permission card for a tool call
+// that has finished, whichever surface answered it.
+//
+// Answering in the CLI leaves no trace the daemon can see: the permission hook
+// stays blocked on a request Claude has stopped waiting for, so the card
+// outlived the decision by as long as the turn had left to run — minutes of a
+// phone and a desktop offering to approve something already approved. A
+// PostToolUse for the tool is the missing evidence: the tool ran, so the
+// question is settled.
+//
+// Matched by tool name because a turn can have several calls in flight, and
+// clearing the session's cards wholesale would retract one still being waited
+// on.
+func resolveToolPermissions(ctx *provider.HookContext, sessionID, toolName string) {
+	if toolName == "" {
+		return
+	}
+	pending, err := ctx.Mgr.ListNotifications("claude", "pending", "claude.permission")
+	if err != nil {
+		log.Printf("hook: list pending permissions for %s: %v", sessionID, err)
+		return
+	}
+	for i := range pending {
+		notif := &pending[i]
+		if notif.SourceSession != sessionID || permissionToolName(notif) != toolName {
+			continue
+		}
+		// The same call the blocked handler makes when Claude drops the
+		// request, so a decision that arrives late still finds the slot gone.
+		ctx.Mgr.CancelPendingFromClaude(notif.ID)
+	}
+}
+
+func permissionToolName(notif *store.Notification) string {
+	if notif.Payload == nil {
+		return ""
+	}
+	var payload struct {
+		ToolName string `json:"tool_name"`
+	}
+	if err := json.Unmarshal([]byte(*notif.Payload), &payload); err != nil {
+		return ""
+	}
+	return payload.ToolName
+}
+
 func handleToolPre(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
 	var input hookInput
 	if err := json.Unmarshal(raw, &input); err != nil {
@@ -794,6 +840,7 @@ func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 	if input.ToolName == askUserQuestionTool {
 		resolveSessionQuestions(ctx, input.SessionID)
 	}
+	resolveToolPermissions(ctx, input.SessionID, input.ToolName)
 
 	if ctx.Report != nil {
 		ctx.Report(provider.ReportEvent{
@@ -818,6 +865,8 @@ func handleToolPostFailure(ctx *provider.HookContext, w http.ResponseWriter, r *
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUseFailure:"+input.ToolName)
 	updateSessionTranscript(ctx, &input)
+	// A tool that ran and failed was still permitted by somebody.
+	resolveToolPermissions(ctx, input.SessionID, input.ToolName)
 
 	if ctx.Report != nil {
 		ctx.Report(provider.ReportEvent{
