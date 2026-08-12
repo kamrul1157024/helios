@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1228,6 +1229,99 @@ func TestToolPost_ResolvesQuestionButNotPermission(t *testing.T) {
 	}
 	if stored.Status != "pending" {
 		t.Errorf("permission status = %q, want pending", stored.Status)
+	}
+}
+
+// Answering in the CLI tells the daemon nothing. The tool running afterwards
+// does: the permission card must not outlive the tool call it was asking
+// about, or the phone keeps offering to approve work already done.
+func TestToolPost_ResolvesPermissionForTheSameTool(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	seedPermission(t, db, "notif-perm", "sess-1", "Bash")
+
+	callHook(handleToolPost, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "Bash",
+	})
+
+	assertNotificationStatus(t, db, "notif-perm", "resolved")
+}
+
+// A turn can have several tool calls in flight, so a finished one must not
+// retract the card for a different tool still waiting on an answer.
+func TestToolPost_LeavesOtherToolsPermissionPending(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	seedPermission(t, db, "notif-perm", "sess-1", "Write")
+
+	callHook(handleToolPost, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "Bash",
+	})
+
+	assertNotificationStatus(t, db, "notif-perm", "pending")
+}
+
+// Another session's card is another session's business.
+func TestToolPost_LeavesOtherSessionsPermissionPending(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	seedSession(t, db, "sess-2", "/tmp/other", "active")
+	seedPermission(t, db, "notif-perm", "sess-2", "Bash")
+
+	callHook(handleToolPost, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "Bash",
+	})
+
+	assertNotificationStatus(t, db, "notif-perm", "pending")
+}
+
+// A tool that ran and failed was still permitted by somebody.
+func TestToolPostFailure_ResolvesPermissionForTheSameTool(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	seedPermission(t, db, "notif-perm", "sess-1", "Bash")
+
+	callHook(handleToolPostFailure, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolName:  "Bash",
+	})
+
+	assertNotificationStatus(t, db, "notif-perm", "resolved")
+}
+
+func seedPermission(t *testing.T, db *store.Store, id, sessionID, toolName string) {
+	t.Helper()
+	payload := fmt.Sprintf(`{"tool_name":%q,"tool_input":{}}`, toolName)
+	notif := &store.Notification{
+		ID:            id,
+		Source:        "claude",
+		SourceSession: sessionID,
+		CWD:           "/tmp/proj",
+		Type:          "claude.permission",
+		Status:        "pending",
+		Title:         &toolName,
+		Payload:       &payload,
+	}
+	if err := db.CreateNotification(notif); err != nil {
+		t.Fatalf("create permission notification: %v", err)
+	}
+}
+
+func assertNotificationStatus(t *testing.T, db *store.Store, id, want string) {
+	t.Helper()
+	stored, err := db.GetNotification(id)
+	if err != nil {
+		t.Fatalf("get notification %s: %v", id, err)
+	}
+	if stored.Status != want {
+		t.Errorf("notification %s status = %q, want %q", id, stored.Status, want)
 	}
 }
 
