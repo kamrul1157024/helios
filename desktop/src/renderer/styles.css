@@ -2165,28 +2165,126 @@ hr {
 
 /* ─── Git: commits and worktrees ────────────────────────────────────────── */
 
-.git-views {
-  flex: 1;
-  box-shadow: none;
-  padding: 0;
+/* The scope picker takes the header's spare width and the Worktrees toggle is
+   pushed to the far end, so the two controls never crowd each other. */
+.git-head .ws-view {
+  margin-left: auto;
 }
 
-/* The branch line lives under the view switcher rather than beside it: the
-   switcher is the same in all three views and the branch is not. */
+.scope {
+  position: relative;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.scope-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-high);
+  color: var(--on-surface);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.scope-button:hover,
+.scope-button.on {
+  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
+}
+
+.scope-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scope-caret {
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+/* Catches the click that dismisses the menu: over the panel, under the menu. */
+.scope-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+
+/* Fixed, and placed from a measured rect — see anchorFor in commits.tsx. */
+.scope-menu {
+  position: fixed;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: var(--r-md);
+  background: var(--surface-high);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 9px;
+  border-radius: var(--r-sm);
+  color: var(--on-surface);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.scope-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.scope-row.selected {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.scope-row-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.scope-row.selected .scope-row-meta {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.scope-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--outline-variant);
+}
+
+.scope-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.scope-hint {
+  padding: 7px 9px 2px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+/* Commit metadata sits where the branch line sits for the working tree, so the
+   row below the header means the same thing in both scopes. */
 .git-substatus {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
   box-shadow: inset 0 -1px 0 var(--outline-variant);
-}
-
-.commit-list {
-  width: clamp(220px, 42%, 380px);
-  flex: none;
-  overflow-y: auto;
-  padding: 6px;
-  background: color-mix(in srgb, var(--on-surface) 3%, transparent);
 }
 
 .commit-scope {
@@ -2224,6 +2322,12 @@ hr {
 .commit-row.selected {
   background: var(--primary-container);
   color: var(--on-primary-container);
+}
+
+/* The commits a range covers between its two endpoints. Without this a range
+   selection looks like two unrelated picks. */
+.commit-row.in-range {
+  background: color-mix(in srgb, var(--primary-container) 40%, transparent);
 }
 
 .commit-subject {
@@ -2267,26 +2371,6 @@ hr {
   background: color-mix(in srgb, var(--on-surface) 5%, transparent);
 }
 
-.commit-detail {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.commit-head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 14px;
-  box-shadow: inset 0 -1px 0 var(--outline-variant);
-}
-
-.commit-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .commit-body {
   margin: 0;
   padding: 8px 14px;
@@ -2296,23 +2380,6 @@ hr {
   line-height: 1.5;
   white-space: pre-wrap;
   color: var(--on-surface-variant);
-  box-shadow: inset 0 -1px 0 var(--outline-variant);
-}
-
-/* Files above, patch below: the commit pane is already the narrow half, and
-   splitting it again sideways leaves neither side readable. */
-.commit-split {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.commit-files {
-  flex: none;
-  max-height: 38%;
-  overflow-y: auto;
-  padding: 6px;
   box-shadow: inset 0 -1px 0 var(--outline-variant);
 }
 
