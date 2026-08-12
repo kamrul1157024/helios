@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
+import { multiEditDiff, unifiedDiff } from '../diff.ts'
+import { DiffView } from './diff-view.tsx'
 import {
   extractFilePaths,
   highlightCode,
@@ -155,35 +157,43 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
         </div>
       ) : (
         <div className="composer">
-          <textarea
-            value={draft}
-            rows={3}
-            placeholder={
-              cold
-                ? 'Send a prompt — the session wakes first'
-                : 'Send a prompt (↵ to send, ⇧↵ for a new line)'
-            }
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return
-              // An IME uses Enter to accept a candidate; sending there would
-              // post half a word and swallow the rest.
-              if (event.nativeEvent.isComposing) return
-              if (event.shiftKey) return
-              event.preventDefault()
-              void send()
-            }}
-          />
-          <div className="composer-actions">
-            {busy && (
+          <div className="composer-input">
+            <textarea
+              value={draft}
+              rows={3}
+              placeholder={
+                cold
+                  ? 'Send a prompt — the session wakes first'
+                  : 'Send a prompt (↵ to send, ⇧↵ for a new line)'
+              }
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                // An IME uses Enter to accept a candidate; sending there would
+                // post half a word and swallow the rest.
+                if (event.nativeEvent.isComposing) return
+                if (event.shiftKey) return
+                event.preventDefault()
+                void send()
+              }}
+            />
+            <button
+              className="filled send-btn"
+              disabled={!draft.trim() || sending}
+              title={cold ? 'Wake and send' : 'Send (↵)'}
+              aria-label={cold ? 'Wake and send' : 'Send'}
+              onClick={() => void send()}
+            >
+              {sending ? <span className="spinner" /> : '↑'}
+            </button>
+          </div>
+          {busy && (
+            <div className="composer-actions">
               <button className="ghost" onClick={() => void api(hostId).stop(session.session_id)}>
                 Stop
               </button>
-            )}
-            <button disabled={!draft.trim() || sending} onClick={() => void send()}>
-              {sending ? 'Sending…' : cold ? 'Wake and send' : 'Send'}
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -311,16 +321,21 @@ const CODE_FIELDS: { key: string; label?: string }[] = [
   { key: 'old_string', label: 'old' },
 ]
 
+/** Tools whose call changes a file, and whose diff is the point of the row. */
+const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
+
 /**
  * A tool call: one line collapsed, the input expanded. The expansion is
  * tool-aware because a Bash command and an Edit's replacement text want
  * different treatment, and a raw JSON dump serves neither.
  */
 function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
-  const [open, setOpen] = useState(false)
   const tool = message.tool ?? 'tool'
   const input = (message.metadata ?? {}) as Record<string, unknown>
   const filePath = typeof input.file_path === 'string' ? input.file_path : null
+  // A write is the part of a session worth reading, and a collapsed row names
+  // the tool without saying what it did to the file.
+  const [open, setOpen] = useState(WRITING_TOOLS.has(tool))
 
   return (
     <div className="msg tool">
@@ -358,6 +373,21 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
     )
   }
 
+  // What changed, as a patch. Two code blocks — the text searched for and the
+  // text written — leave the reader diffing them by eye.
+  const diff = diffFor(tool, input)
+  if (diff) {
+    const coded = new Set([...CODE_FIELDS.map((f) => f.key), 'edits'])
+    return (
+      <>
+        <KeyValues entries={entries.filter(([key]) => !coded.has(key))} />
+        <div className="tool-diff">
+          <DiffView diff={diff} />
+        </div>
+      </>
+    )
+  }
+
   if (tool === 'Read' || tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit') {
     const language = languageForPath(str(input.file_path))
     const coded = new Set(CODE_FIELDS.map((f) => f.key))
@@ -375,6 +405,21 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
   }
 
   return <KeyValues entries={entries} />
+}
+
+/** The patch a tool call implies, or "" for calls that changed no file. */
+function diffFor(tool: string, input: Record<string, unknown>): string {
+  if (tool === 'MultiEdit') return multiEditDiff(input.edits)
+  if (tool === 'Edit') {
+    const before = str(input.old_string)
+    const after = str(input.new_string)
+    return before || after ? unifiedDiff(before, after) : ''
+  }
+  if (tool === 'Write') {
+    const content = str(input.content) || str(input.new_content)
+    return content ? unifiedDiff('', content) : ''
+  }
+  return ''
 }
 
 function KeyValues({ entries }: { entries: [string, unknown][] }): JSX.Element | null {

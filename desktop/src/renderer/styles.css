@@ -960,11 +960,12 @@ small {
   padding: 16px;
 }
 
-/* A centred column rather than the full window: on a wide display the reply
-   sits at the left edge and the prompt that produced it at the right, far
-   enough apart to read as unrelated. */
+/* A column rather than the full window: on a wide display the reply sits at
+   the left edge and the prompt that produced it at the right, far enough
+   apart to read as unrelated. Left aligned, not centred — the transcript
+   stays put as the window widens. */
 .msg {
-  margin: 0 auto 14px;
+  margin: 0 0 14px;
   width: 100%;
   max-width: var(--chat-column);
 }
@@ -1241,6 +1242,17 @@ small {
   margin-bottom: 0;
 }
 
+.tool-diff pre {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--surface-container);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .tool-code-label {
   display: inline-block;
   margin-bottom: 4px;
@@ -1325,7 +1337,7 @@ small {
    lines up with the messages it produces. */
 .composer > * {
   max-width: var(--chat-column);
-  margin: 0 auto;
+  margin: 0;
 }
 
 /* What replaces the composer once the session has ended. */
@@ -1341,10 +1353,42 @@ small {
   color: var(--on-surface-variant);
 }
 
+.composer-input {
+  position: relative;
+}
+
+/* Inside the box rather than under it: the button belongs to the text being
+   typed, and the row it used to sit in was empty most of the time. */
+.send-btn {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.send-btn:disabled {
+  opacity: 0.4;
+}
+
+.send-btn .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
 .composer textarea {
   /* Inline-block by default, and auto margins do not centre one. */
   display: block;
   width: 100%;
+  /* Room for the send button, so a long line does not run under it. */
+  padding-right: 48px;
   resize: vertical;
   min-height: 60px;
   border-radius: var(--r-md);
