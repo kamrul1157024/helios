@@ -1049,6 +1049,13 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		req.CWD = cwd
 	}
 
+	resolved, err := resolveCWD(req.CWD)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.CWD = resolved
+
 	sessionID := uuid.New().String()
 	spec := provider.SessionSpec{
 		SessionID:       sessionID,
@@ -1658,6 +1665,13 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		}
 		req.CWD = home
 	}
+
+	resolved, err := resolveCWD(req.CWD)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.CWD = resolved
 
 	sessionID := uuid.New().String()
 	spec := provider.SessionSpec{

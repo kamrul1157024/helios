@@ -45,7 +45,14 @@ export function App(): JSX.Element {
   if (loading) {
     return (
       <div className="boot">
-        <span className="spinner" />
+        {/* The window is frameless, so without a drag region the splash is a
+            surface the user cannot move while it is up. */}
+        <div className="titlebar" />
+        <div className="boot-card">
+          <span className="boot-mark">helios</span>
+          <span className="spinner" />
+          <span className="boot-caption">Connecting to your daemons…</span>
+        </div>
       </div>
     )
   }

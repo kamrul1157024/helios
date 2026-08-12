@@ -48,6 +48,13 @@ func SpawnHost(heliosDir, sessionID, cwd string, argv []string) error {
 		cmd.Stderr = logFile
 	}
 	if cwd != "" {
+		// Checked up front because exec blames the binary for a missing Dir:
+		// a deleted working directory surfaces as "fork/exec
+		// /usr/local/bin/helios: no such file or directory", which sends
+		// whoever reads it hunting for a broken install.
+		if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+			return fmt.Errorf("working directory does not exist: %s", cwd)
+		}
 		cmd.Dir = cwd
 	}
 	if err := cmd.Start(); err != nil {

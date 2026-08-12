@@ -21,6 +21,10 @@ const PAGE = 200
 
 export function ChatPanel({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
   const [messages, setMessages] = useState<TranscriptMessage[]>([])
+  // Which session the messages belong to. Switching sessions would otherwise
+  // show the previous transcript until the new one arrives, and "No transcript
+  // yet." for a session whose transcript is merely still loading.
+  const [loadedFor, setLoadedFor] = useState('')
   const [hasMore, setHasMore] = useState(false)
   const [total, setTotal] = useState(0)
   const [draft, setDraft] = useState('')
@@ -42,6 +46,7 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
         setMessages(page.messages)
         setTotal(page.total)
         setHasMore(page.has_more)
+        setLoadedFor(session.session_id)
       } catch (err) {
         if (!cancelled) store.fail(err)
       }
@@ -110,21 +115,30 @@ export function ChatPanel({ hostId, session }: { hostId: string; session: Sessio
           pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
         }}
       >
-        {hasMore && (
-          <button className="link load-more" onClick={() => void loadOlder()}>
-            Load older ({total - messages.length} more)
-          </button>
+        {loadedFor !== session.session_id ? (
+          <div className="panel-loading">
+            <span className="spinner" />
+            <span>Loading transcript…</span>
+          </div>
+        ) : (
+          <>
+            {hasMore && (
+              <button className="link load-more" onClick={() => void loadOlder()}>
+                Load older ({total - messages.length} more)
+              </button>
+            )}
+            {messages.length === 0 && <p className="empty-note">No transcript yet.</p>}
+            {messages.map((message, index) => (
+              <Message
+                key={`${message.timestamp}-${index}`}
+                message={message}
+                hostId={hostId}
+                cwd={session.cwd}
+              />
+            ))}
+            {busy && <div className="typing">agent is working…</div>}
+          </>
         )}
-        {messages.length === 0 && <p className="empty-note">No transcript yet.</p>}
-        {messages.map((message, index) => (
-          <Message
-            key={`${message.timestamp}-${index}`}
-            message={message}
-            hostId={hostId}
-            cwd={session.cwd}
-          />
-        ))}
-        {busy && <div className="typing">agent is working…</div>}
       </div>
 
       {/* No composer for a terminated session: the daemon refuses its prompts,

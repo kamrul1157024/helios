@@ -384,9 +384,30 @@ small {
 }
 
 .boot {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
   height: 100%;
+}
+
+.boot-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.boot-mark {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+}
+
+.boot-caption {
+  font-size: 12px;
+  color: var(--on-surface-variant);
 }
 
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
@@ -696,6 +717,18 @@ small {
   flex: 1;
   display: grid;
   place-items: center;
+  color: var(--on-surface-variant);
+}
+
+.panel-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 0;
+  font-size: 12px;
   color: var(--on-surface-variant);
 }
 
