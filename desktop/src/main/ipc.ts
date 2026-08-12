@@ -85,8 +85,26 @@ export function registerIpc(deps: IpcDeps): void {
   })
   handle('hosts:rename', async (_e, id: string, name: string) => hosts.rename(id, name))
 
+  /**
+   * Brings the tray in line with the daemon.
+   *
+   * Coming back online means whatever happened while offline was missed, and a
+   * missed `notification_resolved` leaves an approval on the tray that nothing
+   * else will ever take off it.
+   */
+  const reconcile = async (hostId: string): Promise<void> => {
+    try {
+      notifier.seed(hostId, await hosts.require(hostId).api.notifications({ status: 'pending' }))
+    } catch {
+      // Offline again already; the next status change tries once more.
+    }
+  }
+
   hosts.on('hosts', (list) => send('hosts:changed', list))
-  hosts.on('status', (status) => send('hosts:status', status))
+  hosts.on('status', (status: { id: string; state: string }) => {
+    send('hosts:status', status)
+    if (status.state === 'online') void reconcile(status.id)
+  })
   hosts.on('event', ({ hostId, event }: { hostId: string; event: { type: string; data: Record<string, unknown> } }) => {
     notifier.handleEvent(hostId, event.type, event.data)
     send('hosts:event', { hostId, event })

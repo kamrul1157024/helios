@@ -27,6 +27,8 @@ export class Notifier {
   private tray: Tray | null = null
   private seen = new Set<string>()
   private pending = new Map<string, NotifyTarget>()
+  /** Notifications still on screen, so one answered elsewhere can be taken down. */
+  private shown = new Map<string, ElectronNotification>()
 
   constructor(
     private readonly hosts: HostRegistry,
@@ -48,10 +50,23 @@ export class Notifier {
     }
   }
 
-  /** Called after a poll, so notifications raised while the app was down still show. */
+  /**
+   * Called after a poll, so notifications raised while the app was down still
+   * show — and, just as importantly, so ones answered while the app was down
+   * stop showing. A reconnect can drop the `notification_resolved` event, and
+   * without this the tray would keep counting approvals that no longer exist.
+   *
+   * [notifications] must be the host's full pending set, not a delta.
+   */
   seed(hostId: string, notifications: Notification[]): void {
+    const stillPending = new Set<string>()
     for (const notif of notifications) {
-      if (notif.status === 'pending') this.present(hostId, notif)
+      if (notif.status !== 'pending') continue
+      stillPending.add(`${hostId}:${notif.id}`)
+      this.present(hostId, notif)
+    }
+    for (const key of [...this.pending.keys()]) {
+      if (key.startsWith(`${hostId}:`) && !stillPending.has(key)) this.retract(key)
     }
     this.refreshTray()
   }
@@ -81,18 +96,30 @@ export class Notifier {
       timeoutType: notif.type.endsWith('permission') ? 'never' : 'default',
     })
     notification.on('click', () => this.onActivate(target))
+    notification.on('close', () => this.shown.delete(key))
+    this.shown.set(key, notification)
     notification.show()
   }
 
   private resolve(hostId: string, notificationId: string): void {
-    const key = `${hostId}:${notificationId}`
-    if (this.pending.delete(key)) this.refreshTray()
+    if (this.retract(`${hostId}:${notificationId}`)) this.refreshTray()
+  }
+
+  /**
+   * Takes a notification down: off the tray and off the screen. Leaving the
+   * banner up offers an Approve button for a request that was already answered
+   * on the phone or auto-approved here.
+   */
+  private retract(key: string): boolean {
+    this.shown.get(key)?.close()
+    this.shown.delete(key)
+    return this.pending.delete(key)
   }
 
   /** Forgets a host's notifications when it is removed or goes offline for good. */
   clearHost(hostId: string): void {
     for (const key of [...this.pending.keys()]) {
-      if (key.startsWith(`${hostId}:`)) this.pending.delete(key)
+      if (key.startsWith(`${hostId}:`)) this.retract(key)
     }
     this.refreshTray()
   }
@@ -160,6 +187,8 @@ function titleFor(type: string): string {
       return 'Claude has a question'
     case 'claude.trust':
       return 'Trust this folder?'
+    case 'claude.error':
+      return 'Session error'
     default:
       return 'Helios'
   }

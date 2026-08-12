@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
@@ -70,6 +70,8 @@ function Card({ hostId, notif }: { hostId: string; notif: Notification }): JSX.E
         return <UrlCard payload={payload} busy={busy} act={act} />
       case 'claude.elicitation.form':
         return <FormCard payload={payload} busy={busy} act={act} />
+      case 'claude.error':
+        return <ErrorCard payload={payload} busy={busy} act={act} />
       default:
         return (
           <Actions busy={busy}>
@@ -298,6 +300,59 @@ function FormCard({
   )
 }
 
+/**
+ * A turn that died on an API error.
+ *
+ * Retry sends "continue", which is what a user types in the terminal after an
+ * API error: the CLI picks the turn up where it stopped. A rate limit with a
+ * known reset time disables the button until the window lifts — retrying
+ * before then just burns another failure.
+ */
+function ErrorCard({
+  payload,
+  busy,
+  act,
+}: {
+  payload: Record<string, unknown>
+  busy: boolean
+  act: (body: Record<string, unknown>) => Promise<void>
+}): JSX.Element {
+  const text = typeof payload.error === 'string' ? payload.error : ''
+  const resetAt = typeof payload.reset_at === 'string' ? Date.parse(payload.reset_at) : NaN
+  const [now, setNow] = useState(() => Date.now())
+
+  const blocked = !Number.isNaN(resetAt) && resetAt > now
+
+  useEffect(() => {
+    // Only a rate limit with a known reset time has anything to tick.
+    if (!blocked) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [blocked])
+
+  return (
+    <>
+      {text && <pre className="code">{text}</pre>}
+      <Actions busy={busy}>
+        <button disabled={blocked} onClick={() => void act({ action: 'retry' })}>
+          {blocked ? remainingLabel(resetAt - now) : 'Retry'}
+        </button>
+        <button className="ghost" onClick={() => void act({ action: 'dismiss' })}>
+          Dismiss
+        </button>
+      </Actions>
+    </>
+  )
+}
+
+/** Coarse on purpose: a second-by-second countdown on a multi-hour window is noise. */
+function remainingLabel(ms: number): string {
+  const seconds = Math.max(0, Math.ceil(ms / 1000))
+  if (seconds >= 3600) return `Retry in ${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
+  if (seconds >= 60) return `Retry in ${Math.floor(seconds / 60)}m`
+  return `Retry in ${seconds}s`
+}
+
 function Actions({ busy, children }: { busy: boolean; children: React.ReactNode }): JSX.Element {
   return <div className={`card-actions ${busy ? 'busy' : ''}`}>{children}</div>
 }
@@ -342,6 +397,8 @@ function label(type: string): string {
       return 'Authentication required'
     case 'claude.trust':
       return 'Workspace trust'
+    case 'claude.error':
+      return 'Session error'
     default:
       return type
   }
