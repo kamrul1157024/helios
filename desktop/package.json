@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Helios desktop client — session sidebar and live terminal tabs",
+  "homepage": "https://github.com/kamrul1157024/helios",
+  "author": {
+    "name": "Md Kamrul Hassan",
+    "email": "kamrul1157024@gmail.com"
+  },
   "main": "dist/main/main.js",
   "scripts": {
     "build": "node build.mjs",
