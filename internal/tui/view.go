@@ -220,6 +220,20 @@ func (m StartModel) viewTunnelSelect() string {
 
 	b.WriteString(titleStyle.Render("helios — Tunnel Setup"))
 	b.WriteString("\n\n")
+
+	// Reached with a tunnel already up, this screen is "change the tunnel", so
+	// it has to say what the current one is — otherwise the only place the URL
+	// appears is the main screen the user just left.
+	if m.tunnelOK {
+		name := m.tunnelProv
+		if m.tunnelMode != "" {
+			name = m.tunnelProv + " " + m.tunnelMode
+		}
+		b.WriteString(fmt.Sprintf("  %s %s\n", dimStyle.Render("Current:"), urlStyle.Render(m.tunnelURL)))
+		b.WriteString(dimStyle.Render("  · via " + name))
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString(subtitleStyle.Render("  How will your phone connect?"))
 	b.WriteString("\n\n")
 
@@ -389,6 +403,8 @@ func (m StartModel) viewMain() string {
 			b.WriteString(dimStyle.Render("  · " + exposure))
 			b.WriteString("\n")
 		}
+	} else {
+		b.WriteString(cross("No tunnel configured"))
 	}
 	if m.notifyBin != "" {
 		b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))
@@ -464,6 +480,14 @@ func (m StartModel) viewMain() string {
 		} else {
 			b.WriteString(fmt.Sprintf("  %s  %s\n", dimStyle.Render("Expires in "+countdown), dimStyle.Render("(auto-refreshes)")))
 		}
+
+		// The same link the QR encodes, in text. Scanning is not always an
+		// option — the terminal may be over SSH, the QR may not fit the window
+		// — and the app's manual field accepts this URL verbatim.
+		b.WriteString(dimStyle.Render("  · Or paste this into the app:"))
+		b.WriteString("\n")
+		b.WriteString("  " + urlStyle.Render(m.setupURL))
+		b.WriteString("\n")
 	} else if m.pairingToken == "" {
 		b.WriteString("\n")
 		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
