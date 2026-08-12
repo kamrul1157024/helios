@@ -1,6 +1,7 @@
 import type {
   CommandInfo,
   DeviceInfo,
+  DirectoryInfo,
   FileContent,
   FileEntry,
   FileSearchResult,
@@ -106,7 +107,7 @@ export class HostApi {
   getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {
     return this.call('getSession', id)
   }
-  listDirectories(): Promise<string[]> {
+  listDirectories(): Promise<DirectoryInfo[]> {
     return this.call('listDirectories')
   }
   transcript(id: string, limit?: number, offset?: number): Promise<TranscriptPage> {

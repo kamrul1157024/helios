@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
-import type { ModelInfo, ProviderInfo } from '../../shared/models.ts'
+import type { DirectoryInfo, ModelInfo, ProviderInfo } from '../../shared/models.ts'
 
 export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const [hostId, setHostId] = useState(hosts[0]?.id ?? '')
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
-  const [directories, setDirectories] = useState<string[]>([])
+  const [directories, setDirectories] = useState<DirectoryInfo[]>([])
   const [provider, setProvider] = useState('claude')
   const [model, setModel] = useState('')
   const [cwd, setCwd] = useState('')
@@ -28,7 +28,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Elem
         setDirectories(dirs)
         const first = providerList[0]
         if (first && !providerList.some((p) => p.id === provider)) setProvider(first.id)
-        if (!cwd && dirs[0]) setCwd(dirs[0])
+        if (!cwd && dirs[0]) setCwd(dirs[0].cwd)
       })
       .catch((err: unknown) => store.fail(err))
     return () => {
@@ -119,9 +119,12 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Elem
           spellCheck={false}
           onChange={(event) => setCwd(event.target.value)}
         />
+        {/* The daemon sends objects, not paths: cwd is the value, and the
+            project name is the label that tells two checkouts of the same
+            repository apart. */}
         <datalist id="known-directories">
           {directories.map((dir) => (
-            <option key={dir} value={dir} />
+            <option key={dir.cwd} value={dir.cwd} label={dir.project || undefined} />
           ))}
         </datalist>
       </label>
