@@ -126,7 +126,7 @@ func (s *Store) ResolveSessionNotifications(sourceSession, status, source string
 		sourceSession,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query pending notifications: %w", err)
 	}
 	defer rows.Close()
 
@@ -138,12 +138,20 @@ func (s *Store) ResolveSessionNotifications(sourceSession, status, source string
 		}
 		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan pending notifications: %w", err)
+	}
 
-	if len(ids) > 0 {
-		s.db.Exec(
-			`UPDATE notifications SET status = ?, resolved_at = ?, resolved_source = ? WHERE source_session = ? AND status = 'pending'`,
-			status, now, source, sourceSession,
-		)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// Returning ids for an update that failed would have the caller announce
+	// resolutions that never happened, and clients would drop live approvals.
+	if _, err := s.db.Exec(
+		`UPDATE notifications SET status = ?, resolved_at = ?, resolved_source = ? WHERE source_session = ? AND status = 'pending'`,
+		status, now, source, sourceSession,
+	); err != nil {
+		return nil, fmt.Errorf("resolve pending notifications: %w", err)
 	}
 
 	return ids, nil

@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -17,9 +20,10 @@ type Decision struct {
 }
 
 type Manager struct {
-	db      *store.Store
-	mu      sync.Mutex
-	pending map[string]chan Decision // notification ID -> channel awaiting decision
+	db        *store.Store
+	mu        sync.Mutex
+	pending   map[string]chan Decision                 // notification ID -> channel awaiting decision
+	broadcast func(eventType string, data interface{}) // SSE fan-out; nil until wired
 }
 
 func NewManager(db *store.Store) *Manager {
@@ -27,6 +31,20 @@ func NewManager(db *store.Store) *Manager {
 		db:      db,
 		pending: make(map[string]chan Decision),
 	}
+}
+
+// SetBroadcaster installs the fan-out used to announce resolutions.
+//
+// A notification's status lives here, in the database, and clients are only
+// ever a view of it. That only holds if every resolution announces itself, so
+// the announcement lives with the write rather than at each call site — which
+// is what let the hook timeout path mark a notification resolved and tell
+// nobody, leaving an approval on every phone and tray that nothing would ever
+// take down.
+func (m *Manager) SetBroadcaster(fn func(eventType string, data interface{})) {
+	m.mu.Lock()
+	m.broadcast = fn
+	m.mu.Unlock()
 }
 
 // Register reserves the pending slot for a notification. Call it before the
@@ -65,31 +83,82 @@ func (m *Manager) WaitForDecision(notifID string) (Decision, error) {
 	return decision, nil
 }
 
-// Resolve resolves a notification and unblocks any waiting hook handler.
+// Resolve resolves a notification, unblocks any waiting hook handler, and
+// tells every client it is gone.
+//
+// Returns store.ErrAlreadyResolved when another surface got there first; the
+// row is untouched and nothing is announced twice.
 func (m *Manager) Resolve(notifID string, decision Decision, source string) error {
 	// Store response in the notification record
 	if len(decision.Response) > 0 {
-		m.db.UpdateNotificationResponse(notifID, string(decision.Response))
+		if err := m.db.UpdateNotificationResponse(notifID, string(decision.Response)); err != nil {
+			return fmt.Errorf("store response for %s: %w", notifID, err)
+		}
 	}
 
 	if err := m.db.ResolveNotification(notifID, decision.Status, source); err != nil {
 		return err
 	}
 
+	m.unblock(notifID, decision)
+	m.announce(notifID, decision.Status, source)
+	return nil
+}
+
+// ResolveSession resolves every pending notification for a session, as when
+// the agent answers in its own terminal and the Stop hook fires.
+func (m *Manager) ResolveSession(sessionID, status, source string) ([]string, error) {
+	ids, err := m.db.ResolveSessionNotifications(sessionID, status, source)
+	if err != nil {
+		return nil, fmt.Errorf("resolve notifications for %s: %w", sessionID, err)
+	}
+	m.announceAll(ids, status, source)
+	return ids, nil
+}
+
+// ResolveSessionByType is ResolveSession narrowed to one notification type, so
+// clearing a session's answered question does not also clear a permission
+// request the same session is still waiting on.
+func (m *Manager) ResolveSessionByType(sessionID, nType, status, source string) ([]string, error) {
+	ids, err := m.db.ResolveSessionNotificationsByType(sessionID, nType, status, source)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s notifications for %s: %w", nType, sessionID, err)
+	}
+	m.announceAll(ids, status, source)
+	return ids, nil
+}
+
+func (m *Manager) announceAll(ids []string, status, source string) {
+	for _, id := range ids {
+		m.unblock(id, Decision{Status: status})
+		m.announce(id, status, source)
+	}
+}
+
+// unblock hands a decision to a waiting hook handler, if one is still there.
+// Non-blocking: a repeat resolve for the same notification must not wedge the
+// caller behind the already-buffered decision.
+func (m *Manager) unblock(notifID string, decision Decision) {
 	m.mu.Lock()
 	ch, ok := m.pending[notifID]
 	m.mu.Unlock()
-
-	if ok {
-		// Non-blocking: a repeat resolve for the same notification must not
-		// wedge the caller behind the already-buffered decision.
-		select {
-		case ch <- decision:
-		default:
-		}
+	if !ok {
+		return
 	}
+	select {
+	case ch <- decision:
+	default:
+	}
+}
 
-	return nil
+func (m *Manager) announce(notifID, status, source string) {
+	m.mu.Lock()
+	fn := m.broadcast
+	m.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	fn("notification_resolved", map[string]string{"id": notifID, "action": status, "source": source})
 }
 
 func (m *Manager) CreateNotification(n *store.Notification) error {
@@ -126,21 +195,21 @@ func (m *Manager) CancelPendingFromClaude(notifID string) {
 }
 
 func (m *Manager) cancelPendingWithStatus(notifID, status, source string) {
-	m.mu.Lock()
-	ch, ok := m.pending[notifID]
-	m.mu.Unlock()
-
 	// Hand the waiter a dismissal rather than closing the channel: the slot may
 	// have been registered before the handler blocks on it, and the decision has
 	// to survive that gap. The waiter deletes the slot on its way out.
-	if ok {
-		select {
-		case ch <- Decision{Status: "dismissed"}:
-		default:
-		}
-	}
+	m.unblock(notifID, Decision{Status: "dismissed"})
 
-	m.db.ResolveNotification(notifID, status, source)
+	if err := m.db.ResolveNotification(notifID, status, source); err != nil {
+		// Already resolved is the ordinary race: another surface got there
+		// first and announced it then. Anything else means the row did not
+		// change, so there is nothing to announce either.
+		if !errors.Is(err, store.ErrAlreadyResolved) {
+			log.Printf("notifications: cancel %s: %v", notifID, err)
+		}
+		return
+	}
+	m.announce(notifID, status, source)
 }
 
 // Notification retention — keep only the latest N resolved notifications.
