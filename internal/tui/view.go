@@ -48,6 +48,18 @@ var (
 			Foreground(lipgloss.Color("214"))
 )
 
+// copyableURL renders a URL on a line of its own, flush left and with nothing
+// else on it. The indentation used everywhere else in these views is dropped
+// deliberately: a triple-click or shift-click line selection then yields
+// exactly the URL, with no leading spaces to strip out by hand. Styling is
+// colour and underline only, which terminals do not include in a copy.
+func copyableURL(url string) string {
+	if url == "" {
+		return ""
+	}
+	return urlStyle.Render(url) + "\n"
+}
+
 func (m StartModel) View() string {
 	switch m.screen {
 	case screenLoading:
@@ -229,9 +241,10 @@ func (m StartModel) viewTunnelSelect() string {
 		if m.tunnelMode != "" {
 			name = m.tunnelProv + " " + m.tunnelMode
 		}
-		b.WriteString(fmt.Sprintf("  %s %s\n", dimStyle.Render("Current:"), urlStyle.Render(m.tunnelURL)))
-		b.WriteString(dimStyle.Render("  · via " + name))
-		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("  Current tunnel (" + name + "):"))
+		b.WriteString("\n")
+		b.WriteString(copyableURL(m.tunnelURL))
+		b.WriteString("\n")
 	}
 
 	b.WriteString(subtitleStyle.Render("  How will your phone connect?"))
@@ -451,8 +464,7 @@ func (m StartModel) viewMain() string {
 				b.WriteString("    " + line + "\n")
 			}
 		}
-		b.WriteString("  " + urlStyle.Render(m.tunnelURL))
-		b.WriteString("\n")
+		b.WriteString(copyableURL(m.tunnelURL))
 	}
 
 	// Pairing QR
@@ -486,8 +498,7 @@ func (m StartModel) viewMain() string {
 		// — and the app's manual field accepts this URL verbatim.
 		b.WriteString(dimStyle.Render("  · Or paste this into the app:"))
 		b.WriteString("\n")
-		b.WriteString("  " + urlStyle.Render(m.setupURL))
-		b.WriteString("\n")
+		b.WriteString(copyableURL(m.setupURL))
 	} else if m.pairingToken == "" {
 		b.WriteString("\n")
 		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
