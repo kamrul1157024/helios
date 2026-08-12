@@ -5,6 +5,7 @@ import {
   BUSY_STATUSES,
   canResume,
   hasTerminal,
+  isTerminated,
   needsRecovery,
   sessionLabel,
   shortCwd,
@@ -20,6 +21,13 @@ interface Row {
   pending: number
 }
 
+interface Group {
+  host: HostRecord
+  rows: Row[]
+  /** Terminated sessions withheld from rows, so the host can offer them. */
+  hidden: number
+}
+
 export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void; onAddHost: () => void }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
@@ -29,8 +37,11 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
   const query = useStore((s) => s.query)
   const showArchived = useStore((s) => s.showArchived)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // Per host, not global: a machine kept for finished work and one being
+  // worked in want opposite answers, and the setting is one click away.
+  const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
 
-  const grouped = useMemo(() => {
+  const grouped = useMemo<Group[]>(() => {
     const needle = query.trim().toLowerCase()
     return hosts.map((host) => {
       const pendingByCwd = new Map<string, number>()
@@ -38,7 +49,7 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
         pendingByCwd.set(notif.source_session, (pendingByCwd.get(notif.source_session) ?? 0) + 1)
       }
 
-      const rows: Row[] = (sessions[host.id] ?? [])
+      const visible = (sessions[host.id] ?? [])
         .filter((session) => showArchived || !session.archived)
         .filter((session) => {
           if (!needle) return true
@@ -46,12 +57,19 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
             .toLowerCase()
             .includes(needle)
         })
+
+      // A terminated session the user searched for is a session they asked to
+      // see, so the filter yields to an explicit query.
+      const hideTerminated = !showTerminated[host.id] && !needle
+      const rows: Row[] = visible
+        .filter((session) => !hideTerminated || !isTerminated(session))
         .map((session) => ({ host, session, pending: pendingByCwd.get(session.session_id) ?? 0 }))
         .sort(compareRows)
 
-      return { host, rows }
+      const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
+      return { host, rows, hidden }
     })
-  }, [hosts, sessions, notifications, query, showArchived])
+  }, [hosts, sessions, notifications, query, showArchived, showTerminated])
 
   return (
     <aside className="sidebar">
@@ -73,7 +91,7 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
       </header>
 
       <div className="sidebar-list">
-        {grouped.map(({ host, rows }) => {
+        {grouped.map(({ host, rows, hidden }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
           return (
@@ -101,7 +119,22 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
                   />
                 ))}
 
-              {!isCollapsed && rows.length === 0 && <p className="empty-note">No sessions</p>}
+              {!isCollapsed && rows.length === 0 && hidden === 0 && (
+                <p className="empty-note">No sessions</p>
+              )}
+
+              {!isCollapsed && (hidden > 0 || showTerminated[host.id]) && (
+                <button
+                  className="link show-terminated"
+                  onClick={() =>
+                    setShowTerminated((current) => ({ ...current, [host.id]: !current[host.id] }))
+                  }
+                >
+                  {showTerminated[host.id]
+                    ? 'Hide terminated'
+                    : `Show ${hidden} terminated`}
+                </button>
+              )}
             </section>
           )
         })}

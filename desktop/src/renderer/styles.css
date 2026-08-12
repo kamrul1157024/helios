@@ -245,6 +245,14 @@ small {
   font-size: 13px;
 }
 
+.show-terminated {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 16px 10px;
+  font-size: 12px;
+}
+
 .error-text {
   color: var(--error);
   font-size: 12px;
