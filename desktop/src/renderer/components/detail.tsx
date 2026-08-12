@@ -189,6 +189,7 @@ export function Detail(): JSX.Element {
                     hostId={hostId}
                     cwd={session.cwd}
                     revision={session.last_event_at}
+                    sessionId={session.session_id}
                     active={name === panel}
                   />
                 )}

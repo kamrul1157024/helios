@@ -234,7 +234,14 @@ export class ApiClient {
   gitDiff(
     path: string,
     file: string,
-    at: { from?: string; to?: string; staged?: boolean; untracked?: boolean } = {},
+    at: {
+      from?: string
+      to?: string
+      staged?: boolean
+      untracked?: boolean
+      /** Compare against where the two revisions parted, as a review does. */
+      mergeBase?: boolean
+    } = {},
   ): Promise<GitDiff> {
     return this.request(
       'GET',
@@ -245,6 +252,7 @@ export class ApiClient {
         to: at.to,
         staged: at.staged ? 'true' : undefined,
         untracked: at.untracked ? 'true' : undefined,
+        merge_base: at.mergeBase ? 'true' : undefined,
       })}`,
     )
   }
@@ -262,8 +270,11 @@ export class ApiClient {
     )
   }
 
-  gitChanges(path: string, to: string, from?: string): Promise<GitChanges> {
-    return this.request('GET', `/api/git/changes${queryString({ path, to, from })}`)
+  gitChanges(path: string, to: string, from?: string, mergeBase?: boolean): Promise<GitChanges> {
+    return this.request(
+      'GET',
+      `/api/git/changes${queryString({ path, to, from, merge_base: mergeBase ? 'true' : undefined })}`,
+    )
   }
 
   async gitWorktrees(path: string): Promise<Worktree[]> {

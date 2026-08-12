@@ -18,8 +18,19 @@ export interface CommitScope {
   label: string
 }
 
+/**
+ * Everything this branch changed against the branch it left — the review a
+ * pull request would show, before there is a pull request to show it.
+ */
+export interface ReviewScope {
+  kind: 'review'
+  base: string
+  span: number
+  label: string
+}
+
 /** What the git panel is looking at: the working tree, or some history. */
-export type Scope = { kind: 'working' } | CommitScope
+export type Scope = { kind: 'working' } | CommitScope | ReviewScope
 
 /**
  * The control that chooses what the panel shows. Closed it is a one-line
@@ -244,6 +255,31 @@ function ScopeMenu({
             </span>
           )}
         </button>
+
+        {/* The whole branch, offered before the individual commits: reviewing
+            what an agent did is a question about the branch, and picking the
+            commits one at a time is a worse way to ask it. */}
+        {log?.scope === 'branch' && log.base && commits.length > 0 && (
+          <button
+            className={`scope-row ${scope.kind === 'review' ? 'selected' : ''}`}
+            onClick={() =>
+              onPick(
+                {
+                  kind: 'review',
+                  base: log.base,
+                  span: commits.length,
+                  label: `Review vs ${log.base}`,
+                },
+                true,
+              )
+            }
+          >
+            <span>Review vs {log.base}</span>
+            <span className="scope-row-meta">
+              {commits.length} commit{commits.length === 1 ? '' : 's'}
+            </span>
+          </button>
+        )}
 
         <div className="scope-sep" />
 

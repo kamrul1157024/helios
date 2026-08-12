@@ -32,6 +32,31 @@ func validRevision(rev string) bool {
 	return !strings.HasPrefix(rev, "-") && revPattern.MatchString(rev)
 }
 
+// mergeBaseFrom answers "what has this branch changed", where the plain
+// two-dot form answers "how do these two revisions differ".
+//
+// The two part company as soon as the base branch moves: commits landed on
+// main after the branch was cut appear in a two-dot diff as changes the branch
+// undid — somebody else's work, rendered backwards, in the middle of a review.
+// Callers opt in with merge_base=true.
+//
+// Histories with no common ancestor keep the revision they were given: there
+// is no better answer for unrelated trees, and failing would take the diff
+// away entirely.
+func mergeBaseFrom(root, from, to string, query map[string][]string) string {
+	if from == "" || len(query["merge_base"]) == 0 || query["merge_base"][0] != "true" {
+		return from
+	}
+	out, err := gitCmd(root, "merge-base", from, to)
+	if err != nil {
+		return from
+	}
+	if base := strings.TrimSpace(out); base != "" {
+		return base
+	}
+	return from
+}
+
 type logEntry struct {
 	SHA        string `json:"sha"`
 	Short      string `json:"short"`
@@ -218,7 +243,7 @@ func (s *PublicServer) handleGitChanges(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	files, err := changedFiles(root, from, to)
+	files, err := changedFiles(root, mergeBaseFrom(root, from, to, r.URL.Query()), to)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
