@@ -1,12 +1,13 @@
 import { useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
-import { store, useStore, type RightPanel } from '../store.ts'
+import { store, terminalId, useStore, type RightPanel } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
+import { TerminalPanes } from './terminal.tsx'
 import {
   BUSY_STATUSES,
   canResume,
@@ -17,63 +18,84 @@ import {
   type Session,
 } from '../../shared/models.ts'
 
-const PANELS: RightPanel[] = ['chat', 'approvals', 'git', 'files']
+const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'git', 'files']
 
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
   const sessions = useStore((s) => s.sessions)
   const notifications = useStore((s) => s.notifications)
   const panel = useStore((s) => s.panel)
+  const tabs = useStore((s) => s.tabs)
 
-  if (!selection) {
-    return (
-      <div className="detail empty">
-        <p>Select a session.</p>
-      </div>
-    )
-  }
+  const hostId = selection?.hostId ?? null
+  const session =
+    (selection && sessions[selection.hostId]?.find((s) => s.session_id === selection.sessionId)) ?? null
 
-  const session = sessions[selection.hostId]?.find((s) => s.session_id === selection.sessionId)
-  if (!session) {
-    return (
-      <div className="detail empty">
-        <p>That session is no longer listed.</p>
-      </div>
-    )
-  }
-
-  const pending = (notifications[selection.hostId] ?? []).filter(
-    (n) => n.source_session === session.session_id,
-  ).length
+  const pending = session
+    ? (notifications[hostId ?? ''] ?? []).filter((n) => n.source_session === session.session_id).length
+    : 0
+  const term = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
 
   return (
     <div className="detail">
-      <SessionHeader hostId={selection.hostId} session={session} />
+      {hostId && session && (
+        <>
+          <SessionHeader hostId={hostId} session={session} />
 
-      <nav className="panel-tabs">
-        {PANELS.map((name) => (
-          <button
-            key={name}
-            className={panel === name ? 'active' : ''}
-            onClick={() => store.setPanel(name)}
-          >
-            {name}
-            {name === 'approvals' && pending > 0 && <span className="badge">{pending}</span>}
-          </button>
-        ))}
-      </nav>
+          <nav className="panel-tabs">
+            {PANELS.map((name) => (
+              <button
+                key={name}
+                className={panel === name ? 'active' : ''}
+                onClick={() => (name === 'terminal' ? store.showTerminal(hostId, session) : store.setPanel(name))}
+              >
+                {/* The old tabstrip carried the connection state, and it is
+                    still the one thing about a terminal worth seeing from
+                    another panel. */}
+                {name === 'terminal' && term && <span className={`dot ${term.status.state}`} />}
+                {name}
+                {name === 'approvals' && pending > 0 && <span className="badge">{pending}</span>}
+                {name === 'terminal' && term && (
+                  <span
+                    className="tab-close"
+                    role="button"
+                    aria-label="Close terminal"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      store.closeTab(term.id)
+                    }}
+                  >
+                    ×
+                  </span>
+                )}
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
 
       <div className="panel-body">
-        <PanelBoundary resetKey={`${selection.hostId}:${session.session_id}:${panel}`}>
-          {panel === 'chat' && <ChatPanel hostId={selection.hostId} session={session} />}
-          {panel === 'approvals' && (
-            <ApprovalsPanel hostId={selection.hostId} sessionId={session.session_id} />
-          )}
-          {panel === 'git' && (
-            <GitPanel hostId={selection.hostId} cwd={session.cwd} revision={session.last_event_at} />
-          )}
-          {panel === 'files' && <FilesPanel hostId={selection.hostId} cwd={session.cwd} />}
-        </PanelBoundary>
+        {!session && (
+          <div className="panel-empty">
+            <p>{selection ? 'That session is no longer listed.' : 'Select a session.'}</p>
+          </div>
+        )}
+
+        {hostId && session && panel !== 'terminal' && (
+          <PanelBoundary resetKey={`${hostId}:${session.session_id}:${panel}`}>
+            {panel === 'chat' && <ChatPanel hostId={hostId} session={session} />}
+            {panel === 'approvals' && <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />}
+            {panel === 'git' && (
+              <GitPanel hostId={hostId} cwd={session.cwd} revision={session.last_event_at} />
+            )}
+            {panel === 'files' && <FilesPanel hostId={hostId} cwd={session.cwd} />}
+          </PanelBoundary>
+        )}
+
+        {/* Outside the switch above, and outside the boundary: the panes stay
+            mounted whatever is selected, or every terminal would lose its
+            scrollback the moment the user looked at another panel. */}
+        <TerminalPanes hostId={hostId} session={session} visible={panel === 'terminal' && Boolean(session)} />
       </div>
     </div>
   )

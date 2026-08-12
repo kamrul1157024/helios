@@ -383,10 +383,6 @@ small {
   gap: 8px;
 }
 
-.main.split .detail {
-  flex: 0 0 44%;
-}
-
 .boot {
   display: grid;
   place-items: center;
@@ -696,7 +692,8 @@ small {
   overflow: hidden;
 }
 
-.detail.empty {
+.panel-empty {
+  flex: 1;
   display: grid;
   place-items: center;
   color: var(--on-surface-variant);
@@ -1930,47 +1927,9 @@ small {
 
 /* ─── Terminals ─────────────────────────────────────────────────────────── */
 
-.terminals {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--surface-low);
-  border-radius: var(--r-lg);
-  overflow: hidden;
-}
-
-.tabstrip {
-  display: flex;
-  gap: 4px;
-  padding: 8px 8px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 14px;
-  border-radius: var(--r-sm) var(--r-sm) 0 0;
-  background: transparent;
-  color: var(--on-surface-variant);
-  max-width: 230px;
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.tab:hover {
-  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
-}
-
-.tab.active {
-  background: var(--surface-container);
-  color: var(--on-surface);
-}
-
-.tab .dot {
+/* The connection state and the close affordance the old tabstrip carried, now
+   on the terminal entry in .panel-tabs. */
+.panel-tabs .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -1978,28 +1937,22 @@ small {
   background: var(--s-off);
 }
 
-.tab .dot.live {
+.panel-tabs .dot.live {
   background: var(--s-active);
 }
 
-.tab .dot.connecting,
-.tab .dot.reconnecting {
+.panel-tabs .dot.connecting,
+.panel-tabs .dot.reconnecting {
   background: var(--s-waiting);
 }
 
-.tab .dot.closed {
+.panel-tabs .dot.closed {
   background: var(--error);
 }
 
-.tab-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .tab-close {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border-radius: 50%;
   font-size: 12px;
@@ -2018,6 +1971,26 @@ small {
   position: relative;
   min-height: 0;
   background: var(--surface-container);
+}
+
+/* Still mounted, just out of the layout, so the panes it holds keep their
+   scrollback while the user reads another panel. */
+.panes.hidden {
+  display: none;
+}
+
+.pane-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: var(--on-surface-variant);
+}
+
+.pane-empty p {
+  margin: 0;
 }
 
 /* Hidden rather than unmounted: an unmounted xterm loses its scrollback, and

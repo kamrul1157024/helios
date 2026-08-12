@@ -5,7 +5,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 
 import { bridge } from '../bridge.ts'
-import { store, useStore, type Tab } from '../store.ts'
+import { store, terminalId, useStore, type Tab } from '../store.ts'
+import { canResume, hasTerminal, type Session } from '../../shared/models.ts'
 
 /**
  * Output arrives on one channel for every tab, so it is dispatched here rather
@@ -39,43 +40,65 @@ const THEME = {
   brightWhite: '#ffffff',
 }
 
-export function TerminalTabs(): JSX.Element | null {
+/**
+ * The terminal panel: the selected session's terminal, and every other open one
+ * kept mounted behind it.
+ *
+ * Mounted, not rendered on demand, because an xterm that unmounts loses its
+ * scrollback and neither the daemon nor the main process can replay it — only
+ * the visible pane is `active`, and the rest sit hidden and silent.
+ */
+export function TerminalPanes({
+  hostId,
+  session,
+  visible,
+}: {
+  hostId: string | null
+  session: Session | null
+  visible: boolean
+}): JSX.Element {
   const tabs = useStore((s) => s.tabs)
-  const activeTab = useStore((s) => s.activeTab)
+  const current = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
 
-  if (tabs.length === 0) return null
+  useEffect(() => {
+    if (!visible || current || !hostId || !session) return
+    // Warm sessions attach as soon as the panel is shown: the host is already
+    // running, so opening the tab is the whole of the request. A cold one waits
+    // for the button below, because attaching would start an agent.
+    if (hasTerminal(session)) void store.openTerminal(hostId, session, false)
+  }, [visible, current, hostId, session])
 
   return (
-    <div className="terminals">
-      <div className="tabstrip">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={`tab ${tab.id === activeTab ? 'active' : ''} ${tab.status.state}`}
-            onClick={() => store.setActiveTab(tab.id)}
-          >
-            <span className={`dot ${tab.status.state}`} />
-            <span className="tab-title">{tab.title}</span>
-            <span
-              className="tab-close"
-              role="button"
-              aria-label="Close tab"
-              onClick={(event) => {
-                event.stopPropagation()
-                store.closeTab(tab.id)
-              }}
-            >
-              ×
-            </span>
-          </button>
-        ))}
-      </div>
+    <div className={visible ? 'panes' : 'panes hidden'}>
+      {tabs.map((tab) => (
+        <TerminalPane key={tab.id} tab={tab} active={visible && tab.id === current?.id} />
+      ))}
 
-      <div className="panes">
-        {tabs.map((tab) => (
-          <TerminalPane key={tab.id} tab={tab} active={tab.id === activeTab} />
-        ))}
-      </div>
+      {visible && !current && hostId && session && (
+        <div className="pane-empty">
+          {/* Resume, not wake, for a terminated session: a wake would start the
+              host and attach to a session the daemon still refuses prompts for.
+              Resuming moves it back to idle, and the effect above attaches as
+              soon as the handle lands. */}
+          <p>
+            {canResume(session)
+              ? 'Session terminated — resume to bring the agent back.'
+              : 'No terminal attached to this session.'}
+          </p>
+          {canResume(session) ? (
+            <button className="filled" onClick={() => void store.resumeSession(hostId, session.session_id)}>
+              Resume
+            </button>
+          ) : (
+            <button
+              className="filled"
+              onClick={() => void store.openTerminal(hostId, session, !hasTerminal(session))}
+            >
+              {hasTerminal(session) ? 'Attach' : 'Wake and attach'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
