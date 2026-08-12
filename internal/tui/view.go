@@ -416,6 +416,9 @@ func (m StartModel) viewMain() string {
 			b.WriteString(dimStyle.Render("  · " + exposure))
 			b.WriteString("\n")
 		}
+		if m.tunnelWarn != "" {
+			b.WriteString(cross(m.tunnelWarn))
+		}
 	} else {
 		b.WriteString(cross("No tunnel configured"))
 	}

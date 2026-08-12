@@ -1237,6 +1237,10 @@ var TunnelManager interface {
 // Set by daemon to save tunnel provider to config.yaml.
 var OnTunnelConfigChanged func(provider, customURL, tailscaleMode string)
 
+// PublicBind is the interface the public server is listening on. Set by the
+// daemon at startup; the bind is fixed for the life of the process.
+var PublicBind string
+
 func (s *InternalServer) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
 	if TunnelManager == nil {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
@@ -1280,9 +1284,20 @@ func (s *InternalServer) handleTunnelStart(w http.ResponseWriter, r *http.Reques
 		OnTunnelConfigChanged(req.Provider, req.CustomURL, req.TailscaleMode)
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"public_url": url,
-	})
+	resp := map[string]interface{}{"public_url": url}
+	if restartRequiredForBind(req.Provider, PublicBind) {
+		resp["restart_required"] = true
+		resp["message"] = fmt.Sprintf("public API is bound to %s; restart the daemon so it listens on the LAN", PublicBind)
+	}
+	jsonResponse(w, http.StatusOK, resp)
+}
+
+// restartRequiredForBind reports whether the running listener can serve the URL
+// the provider just handed out. The bind is chosen once at startup from the
+// configured provider, so switching to "local" mid-run yields a LAN URL that
+// nothing is listening on.
+func restartRequiredForBind(provider, bind string) bool {
+	return provider == "local" && (bind == "127.0.0.1" || bind == "localhost" || bind == "::1")
 }
 
 func (s *InternalServer) handleTunnelStop(w http.ResponseWriter, r *http.Request) {

@@ -93,8 +93,9 @@ type statusCheckDone struct {
 }
 
 type tunnelStarted struct {
-	url string
-	err error
+	url  string
+	warn string
+	err  error
 }
 
 // tailscaleDetected carries the result of a readiness probe. Detection failures
@@ -168,6 +169,7 @@ type StartModel struct {
 	tunnelURL     string
 	tunnelProv    string
 	tunnelMode    string // tailscale exposure mode of the running tunnel; empty otherwise
+	tunnelWarn    string // daemon-reported caveat about the tunnel just started
 	deviceCount   int
 	devices       []deviceInfo
 	notifyBin     string // path to terminal-notifier/notify-send, empty if not found
@@ -620,6 +622,7 @@ func (m StartModel) handleTunnelStarted(msg tunnelStarted) (tea.Model, tea.Cmd) 
 	}
 	m.tunnelOK = true
 	m.tunnelURL = msg.url
+	m.tunnelWarn = msg.warn
 	m.tunnelProv = tunnelProviders[m.tunnelCursor].id
 	m.tunnelMode = tunnelProviders[m.tunnelCursor].mode
 
@@ -808,7 +811,14 @@ func startTunnel(c *client, provider, customURL string, localPort int, tailscale
 		if err != nil {
 			return tunnelStarted{err: err}
 		}
-		return tunnelStarted{url: resp.PublicURL}
+		warn := ""
+		if resp.RestartRequired {
+			warn = resp.Message
+			if warn == "" {
+				warn = "restart the daemon for this tunnel to be reachable"
+			}
+		}
+		return tunnelStarted{url: resp.PublicURL, warn: warn}
 	}
 }
 
