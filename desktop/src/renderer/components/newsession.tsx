@@ -28,14 +28,17 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Elem
         setDirectories(dirs)
         const first = providerList[0]
         if (first && !providerList.some((p) => p.id === provider)) setProvider(first.id)
-        if (!cwd && dirs[0]) setCwd(dirs[0].cwd)
+        // Reset rather than preserve: a directory is meaningful only on the
+        // host it came from, and carrying one across a host switch starts the
+        // session in a path that does not exist there.
+        setCwd(dirs[0]?.cwd ?? '')
       })
       .catch((err: unknown) => store.fail(err))
     return () => {
       cancelled = true
     }
-    // provider/cwd are seeded here but owned by the user afterwards, so they
-    // are deliberately not dependencies.
+    // Runs on host change only, so edits the user makes while staying on one
+    // host survive; provider and cwd are deliberately not dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostId])
 

@@ -30,6 +30,7 @@ export function Detail(): JSX.Element {
   const hostId = selection?.hostId ?? null
   const session =
     (selection && sessions[selection.hostId]?.find((s) => s.session_id === selection.sessionId)) ?? null
+  const pendingList = Boolean(selection) && sessions[selection?.hostId ?? ''] === undefined
 
   const pending = session
     ? (notifications[hostId ?? ''] ?? []).filter((n) => n.source_session === session.session_id).length
@@ -75,11 +76,20 @@ export function Detail(): JSX.Element {
       )}
 
       <div className="panel-body">
-        {!session && (
-          <div className="panel-empty">
-            <p>{selection ? 'That session is no longer listed.' : 'Select a session.'}</p>
-          </div>
-        )}
+        {!session &&
+          (pendingList ? (
+            // An unfetched host has no entry at all, an empty one has []. Without
+            // that distinction a selected session reads as deleted for as long as
+            // its host takes to answer.
+            <div className="panel-loading">
+              <span className="spinner" />
+              <span>Loading session…</span>
+            </div>
+          ) : (
+            <div className="panel-empty">
+              <p>{selection ? 'That session is no longer listed.' : 'Select a session.'}</p>
+            </div>
+          ))}
 
         {hostId && session && panel !== 'terminal' && (
           <PanelBoundary resetKey={`${hostId}:${session.session_id}:${panel}`}>
