@@ -26,8 +26,9 @@ protocols:
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.png
-  # Host arch only; a universal or cross-arch build is `--arm64 --x64` and pulls
-  # down a second Electron for the privilege.
+  # Host arch only; both slices are `--mac --arm64 --x64`, which pulls down a
+  # second Electron for the privilege. The platform flag is required — the arch
+  # flags are scoped to one, and on their own they are ignored.
   target:
     - dmg
   # Ad-hoc signing, matching the Go binary: enough for Gatekeeper to run it
