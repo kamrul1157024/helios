@@ -27,7 +27,8 @@ QR code, pair a device.
 | `make apk-release` | Release APK | `~/.helios/helios.apk` |
 
 Pick one tunnel provider so your phone can reach the daemon —
-`brew install cloudflared` (recommended, no account) or `brew install ngrok`.
+`brew install tailscale` (recommended: private to your tailnet, stable hostname)
+or `brew install cloudflared` (public URL, no account).
 
 The full walkthrough, with screenshots of each step, is in the
 [Setup Guide](#setup-guide) below.
@@ -43,7 +44,7 @@ Helios fixes this. It's a daemon that sits between you and your AI coding tools.
 ```mermaid
 graph LR
     Phone["📱 Helios App<br/>sessions · approve<br/>deny · send msgs"]
-    Tunnel["🌐 Tunnel<br/>(Cloudflare)"]
+    Tunnel["🌐 Tunnel<br/>(Tailscale)"]
     Daemon["🖥️ helios daemon<br/>├── sessions<br/>├── hooks<br/>├── notifications<br/>└── terminals<br/>    ├── claude #1<br/>    └── claude #2"]
 
     Phone <-->|HTTPS| Tunnel
@@ -116,8 +117,11 @@ Each connection is fully independent — separate pairing, separate credentials,
 ```bash
 brew install go                     # Go (to build helios)
 
-# Pick ONE tunnel provider — exposes helios to your phone over the internet:
-brew install cloudflared            # Cloudflare Tunnel (recommended, free, no account needed)
+# Pick ONE tunnel provider — this is how your phone reaches helios:
+brew install tailscale              # Tailscale (recommended) — or the Mac app from
+                                    # https://tailscale.com/download
+# or
+brew install cloudflared            # Cloudflare Tunnel (public URL, changes on every restart)
 # or
 brew install ngrok                  # ngrok (free tier, requires signup at ngrok.com)
 ```
@@ -164,22 +168,46 @@ The TUI checks your environment and walks you through setup:
 Your phone needs a way to reach your machine. Pick a tunnel provider:
 
 ```
-┌──────────────────────────────────────────────┐
-│                                              │
-│  helios — Tunnel Setup                       │
-│                                              │
-│    How will your phone connect?              │
-│                                              │
-│    > Cloudflare Tunnel (recommended)         │
-│      ngrok                                   │
-│      Tailscale                               │
-│      Local Network (no HTTPS)                │
-│      Custom URL                              │
-│                                              │
-│    ↑/↓ navigate  enter select  q quit        │
-│                                              │
-└──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                                                            │
+│  helios — Tunnel Setup                                     │
+│                                                            │
+│    How will your phone connect?                            │
+│                                                            │
+│    > Tailscale Serve (recommended)            ready        │
+│        Private to your tailnet. Needs the Tailscale VPN    │
+│        switched ON on your phone.                          │
+│      Tailscale Funnel                         ready        │
+│      Cloudflare Tunnel                        needs setup  │
+│      zrok (open-source, stable URLs)          needs setup  │
+│      ngrok                                    needs setup  │
+│      localtunnel (zero signup)                needs setup  │
+│      localhost.run (no install — uses SSH)    ready        │
+│      localxpose (regional, reserved domains)  needs setup  │
+│      Local Network (no HTTPS)                 ready        │
+│      Custom URL                               ready        │
+│                                                            │
+│    ↑/↓ navigate  enter select  q quit                      │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
 ```
+
+The right-hand column is checked live, so a provider that needs a login or an
+install says so before you pick it.
+
+**Tailscale Serve is the recommendation.** It keeps the daemon inside your
+tailnet — nothing is published to the internet, the hostname never changes
+between restarts, and there is no certificate to manage. The cost is that the
+Tailscale VPN has to be switched on at the phone end.
+
+Pick **Tailscale Funnel** instead if you want a stable URL reachable without
+the VPN. Funnel is public, and it needs HTTPS certificates enabled for the
+tailnet, which publishes this machine's name to public Certificate Transparency
+logs. Serve does not.
+
+Everything else is a public tunnel. Cloudflare is the easiest of them — no
+account — but its URL changes on every restart, so every paired device has to
+be re-pointed.
 
 ### Step 4 — Main dashboard with QR codes
 
@@ -192,7 +220,7 @@ Once the tunnel connects, the dashboard shows two QR codes:
 │                                                          │
 │    ✓ Daemon running                                      │
 │    ✓ Claude hooks installed                              │
-│    ✓ Tunnel: https://abc-xyz.trycloudflare.com           │
+│    ✓ Tunnel: https://macbook.tail4c2f.ts.net             │
 │                                                          │
 │    · No devices connected yet.                           │
 │                                                          │
@@ -206,7 +234,7 @@ Once the tunnel connects, the dashboard shows two QR codes:
 │    │  █▄▄▄▄▄█ ▀▄▀▄ ▀▄  █▄▄▄▄▄▄█    │                   │
 │    │  ▀▀▀▀▀▀▀ ▀ ▀▀ ▀ ▀▀ ▀▀▀▀▀▀▀    │                   │
 │    └─────────────────────────────────┘                   │
-│    https://abc-xyz.trycloudflare.com                     │
+│    https://macbook.tail4c2f.ts.net                       │
 │                                                          │
 │    Pair a new device:                                    │
 │    ┌─────────────────────────────────┐                   │
@@ -334,7 +362,7 @@ The app registers and waits. The terminal asks you to confirm:
 │  └───────────────────┘  │          │    ✓ Daemon running                          │
 │                         │          │    ✓ Claude hooks installed                  │
 └─────────────────────────┘          │    ✓ Shell wrapper (zsh)                     │
-                                     │    ✓ Tunnel: https://abc-xyz.trycloud...     │
+                                     │    ✓ Tunnel: https://macbook.tail4c2f...     │
         Phone                        │                                              │
                                      │    * Android — Helios App  push:on  just now │
                                      │                                              │
