@@ -168,15 +168,15 @@ export class HostApi {
   gitDiff(
     path: string,
     file: string,
-    at?: { from?: string; to?: string; staged?: boolean; untracked?: boolean },
+    at?: { from?: string; to?: string; staged?: boolean; untracked?: boolean; mergeBase?: boolean },
   ): Promise<GitDiff> {
     return this.call('gitDiff', path, file, at)
   }
   gitLog(path: string, opts?: { base?: string; all?: boolean; limit?: number; skip?: number }): Promise<GitLog> {
     return this.call('gitLog', path, opts)
   }
-  gitChanges(path: string, to: string, from?: string): Promise<GitChanges> {
-    return this.call('gitChanges', path, to, from)
+  gitChanges(path: string, to: string, from?: string, mergeBase?: boolean): Promise<GitChanges> {
+    return this.call('gitChanges', path, to, from, mergeBase)
   }
   gitWorktrees(path: string): Promise<Worktree[]> {
     return this.call('gitWorktrees', path)

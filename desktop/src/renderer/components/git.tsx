@@ -5,6 +5,7 @@ import { store } from '../store.ts'
 import { CommitChanges, ScopePicker, type Scope } from './commits.tsx'
 import { DiffView } from './diff-view.tsx'
 import { PathLabel } from './path-label.tsx'
+import { ReviewView } from './review.tsx'
 import { WorktreesView } from './worktrees.tsx'
 import type { GitChange, GitDiff, GitStatus } from '../../shared/models.ts'
 
@@ -25,32 +26,85 @@ export function GitPanel({
   hostId,
   cwd,
   revision,
+  sessionId,
   active = true,
 }: {
   hostId: string
   cwd: string
   revision?: string
+  /** Whose agent a review comment is addressed to. */
+  sessionId?: string
   /** False while another tab is showing: a hidden panel must not poll. */
   active?: boolean
 }): JSX.Element {
   const [worktree, setWorktree] = useState<string | null>(null)
-  const [scope, setScope] = useState<Scope>({ kind: 'working' })
+  // Null until resolved: the default depends on the branch, which takes a
+  // request, and rendering the working tree in the meantime would make the
+  // panel flip scopes under the reader.
+  const [scope, setScope] = useState<Scope | null>(null)
   const [worktrees, setWorktrees] = useState(false)
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const root = worktree ?? cwd
+  const scopeKey = `helios.git.scope.${hostId}.${sessionId ?? root}`
 
   // A different session is a different repository until proven otherwise.
   useEffect(() => {
     setWorktree(null)
   }, [hostId, cwd])
 
-  // A commit picked from one repository means nothing in the next.
+  /**
+   * What the panel opens on. The question the user has when they open git
+   * during a session is "what has the agent done to this branch", so that is
+   * the default — the uncommitted-only view answers a narrower question and
+   * was the wrong one to answer first.
+   *
+   * A choice made afterwards is remembered per session: two sessions on two
+   * branches are two separate reviews, and one's scope means nothing in the
+   * other.
+   */
   useEffect(() => {
-    setScope({ kind: 'working' })
     setWorktrees(false)
     setStatus(null)
-  }, [hostId, root])
+
+    const stored = readScope(scopeKey)
+    if (stored) {
+      setScope(stored)
+      return
+    }
+
+    setScope(null)
+    let cancelled = false
+    api(hostId)
+      .gitLog(root, { limit: SCOPE_PROBE })
+      .then((log) => {
+        if (cancelled) return
+        const reviewable = log.scope === 'branch' && log.base && log.commits.length > 0
+        setScope(
+          reviewable
+            ? {
+                kind: 'review',
+                base: log.base,
+                span: log.commits.length,
+                label: `Review vs ${log.base}`,
+              }
+            : { kind: 'working' },
+        )
+      })
+      .catch(() => {
+        // No history, no base branch, not a repository — the working tree is
+        // the answer that needs nothing to be true.
+        if (!cancelled) setScope({ kind: 'working' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [hostId, root, scopeKey])
+
+  const pickScope = (next: Scope): void => {
+    setScope(next)
+    writeScope(scopeKey, next)
+  }
 
   // Status is fetched here rather than in the changes view because the header
   // shows the branch in every scope — reading a commit is no reason to lose it.
@@ -75,6 +129,15 @@ export function GitPanel({
     // the working tree changes here.
   }, [hostId, root, revision, active])
 
+  if (!scope) {
+    return (
+      <div className="panel-loading">
+        <span className="spinner" />
+        <span>Reading the branch…</span>
+      </div>
+    )
+  }
+
   return (
     <div className="git">
       <header className="git-head">
@@ -84,7 +147,7 @@ export function GitPanel({
           scope={scope}
           status={status}
           onPick={(next) => {
-            setScope(next)
+            pickScope(next)
             setWorktrees(false)
           }}
         />
@@ -126,6 +189,8 @@ export function GitPanel({
         />
       ) : scope.kind === 'working' ? (
         <ChangesView hostId={hostId} root={root} status={status} />
+      ) : scope.kind === 'review' ? (
+        <ReviewView hostId={hostId} root={root} scope={scope} sessionId={sessionId} />
       ) : (
         <CommitChanges hostId={hostId} root={root} scope={scope} />
       )}
@@ -222,6 +287,37 @@ function ChangesView({
       </div>
     </div>
   )
+}
+
+/** How far back to look when deciding whether the branch has anything to review. */
+const SCOPE_PROBE = 50
+
+/**
+ * The scope the user last chose for this session, if it still parses. Stored
+ * rather than derived because it is a preference, and dropped silently when it
+ * is not readable — a bad entry is not worth an error over a panel that has a
+ * perfectly good default.
+ */
+function readScope(key: string): Scope | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Scope
+    if (parsed.kind === 'working') return parsed
+    if (parsed.kind === 'review' && typeof parsed.base === 'string') return parsed
+    if (parsed.kind === 'commit' && typeof parsed.to === 'string') return parsed
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeScope(key: string, scope: Scope): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(scope))
+  } catch {
+    // A full or disabled store costs the preference, nothing else.
+  }
 }
 
 /** The last two segments: the parent directory is what distinguishes them. */

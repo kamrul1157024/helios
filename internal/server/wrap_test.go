@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -254,7 +255,10 @@ func TestCreateSession_RecordsTheModeItLaunchedWith(t *testing.T) {
 	claude.Register()
 	srv, shared, _ := newInternalTestServer(t)
 
-	resp := postJSON(t, srv.URL+"/internal/sessions", `{"provider":"claude","cwd":"/tmp/proj"}`)
+	// A real directory: creating a session resolves its cwd, and a path that
+	// does not exist is refused before anything is launched in it.
+	resp := postJSON(t, srv.URL+"/internal/sessions",
+		fmt.Sprintf(`{"provider":"claude","cwd":%q}`, t.TempDir()))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -274,7 +278,7 @@ func TestCreateSession_RecordsTheRequestedMode(t *testing.T) {
 	srv, shared, _ := newInternalTestServer(t)
 
 	postJSON(t, srv.URL+"/internal/sessions",
-		`{"provider":"claude","cwd":"/tmp/proj","permission_mode":"plan"}`)
+		fmt.Sprintf(`{"provider":"claude","cwd":%q,"permission_mode":"plan"}`, t.TempDir()))
 
 	sessions, err := shared.DB.ListSessions()
 	if err != nil || len(sessions) != 1 {

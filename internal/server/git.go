@@ -156,7 +156,7 @@ func fileDiff(root, file, from, to string, query map[string][]string) (string, e
 	case to != "" && from == "":
 		return gitCmd(root, "show", "--format=", "--no-color", "--find-renames", to, "--", file)
 	case to != "" && from != "":
-		return gitCmd(root, "diff", "--no-color", "--find-renames", from, to, "--", file)
+		return gitCmd(root, "diff", "--no-color", "--find-renames", mergeBaseFrom(root, from, to, query), to, "--", file)
 	case value("staged") == "true":
 		return gitCmd(root, "diff", "--no-color", "--cached", "--", file)
 	default:

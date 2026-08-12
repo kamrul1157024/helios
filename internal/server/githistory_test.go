@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -155,6 +156,92 @@ func TestGitChangesBetweenTwoCommits(t *testing.T) {
 	}
 	if insertions, _ := body["insertions"].(float64); insertions != 3 {
 		t.Fatalf("insertions = %v, want 3", insertions)
+	}
+}
+
+// divergedRepo leaves main one commit ahead of where the feature branch was
+// cut, which is the state every review runs into and the only one where the
+// two comparisons disagree.
+func divergedRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Tester", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=Tester", "GIT_COMMITTER_EMAIL=t@example.com",
+			"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	run("init", "--initial-branch=main")
+	write(t, filepath.Join(root, "shared.txt"), "shared\n")
+	run("add", ".")
+	run("commit", "-m", "first")
+
+	run("checkout", "-b", "feature")
+	write(t, filepath.Join(root, "feature.txt"), "from the agent\n")
+	run("add", ".")
+	run("commit", "-m", "feature work")
+
+	run("checkout", "main")
+	write(t, filepath.Join(root, "elsewhere.txt"), "somebody else\n")
+	run("add", ".")
+	run("commit", "-m", "unrelated work on main")
+
+	run("checkout", "feature")
+	return root
+}
+
+func changedPaths(t *testing.T, body map[string]interface{}) []string {
+	t.Helper()
+	raw, _ := body["files"].([]interface{})
+	paths := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		file, _ := entry.(map[string]interface{})
+		path, _ := file["path"].(string)
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// Without merge_base the reviewer sees main's own commits inverted — work the
+// branch never touched, reported as deletions it made.
+func TestGitChangesTwoDotIncludesTheBaseBranchesOwnWork(t *testing.T) {
+	root := divergedRepo(t)
+	body := gitJSON(t, gitServer(t), "/api/git/changes?path="+root+"&from=main&to=HEAD")
+
+	if got := changedPaths(t, body); !slices.Contains(got, "elsewhere.txt") {
+		t.Fatalf("files = %v, want the two-dot diff to include main's own elsewhere.txt", got)
+	}
+}
+
+func TestGitChangesMergeBaseShowsOnlyTheBranchesWork(t *testing.T) {
+	root := divergedRepo(t)
+	body := gitJSON(t, gitServer(t), "/api/git/changes?path="+root+"&from=main&to=HEAD&merge_base=true")
+
+	got := changedPaths(t, body)
+	if !slices.Equal(got, []string{"feature.txt"}) {
+		t.Fatalf("files = %v, want only feature.txt", got)
+	}
+}
+
+func TestGitDiffMergeBaseIgnoresTheBaseBranchesOwnWork(t *testing.T) {
+	root := divergedRepo(t)
+	res := gitGet(t, gitServer(t), "/api/git/diff?path="+root+"&file=elsewhere.txt&from=main&to=HEAD&merge_base=true")
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", res.Code, res.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if diff, _ := body["diff"].(string); diff != "" {
+		t.Fatalf("diff = %q, want empty: the branch never touched that file", diff)
 	}
 }
 
