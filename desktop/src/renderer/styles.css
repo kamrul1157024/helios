@@ -41,9 +41,11 @@
   --r-lg: 16px;
   --r-xl: 28px;
   --sidebar: 320px;
-  /* Reading width for the transcript and its composer. Wider than this and a
-     reply and the prompt above it end up at opposite edges of the window. */
-  --chat-column: 860px;
+  /* Reading width for the transcript and its composer. It exists to stop a
+     reply and the prompt above it drifting to opposite edges of the window,
+     not to hold prose to a paragraph width — code blocks and diffs want the
+     room. */
+  --chat-column: 1100px;
 
   font-synthesis: none;
   color-scheme: dark;
