@@ -2,6 +2,7 @@ import { signJWT, type DeviceKey } from './keys.ts'
 import type {
   CommandInfo,
   DeviceInfo,
+  DirectoryInfo,
   FileContent,
   FileEntry,
   FileSearchResult,
@@ -123,8 +124,11 @@ export class ApiClient {
     return this.request('GET', `/api/sessions/${encodeURIComponent(id)}`)
   }
 
-  async listDirectories(): Promise<string[]> {
-    const res = await this.request<{ directories?: string[] }>('GET', '/api/sessions/directories')
+  async listDirectories(): Promise<DirectoryInfo[]> {
+    const res = await this.request<{ directories?: DirectoryInfo[] }>(
+      'GET',
+      '/api/sessions/directories',
+    )
     return res.directories ?? []
   }
 

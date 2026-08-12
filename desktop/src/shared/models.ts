@@ -117,6 +117,14 @@ export function shortCwd(cwd: string): string {
   return parts.length <= 2 ? cwd : `…/${parts.slice(-2).join('/')}`
 }
 
+/** internal/store/sessions.go:258 — one directory Helios has seen sessions in. */
+export interface DirectoryInfo {
+  cwd: string
+  project: string
+  session_count: number
+  active_count: number
+}
+
 /** internal/store/notifications.go:8. `type` is provider-scoped, e.g. claude.permission. */
 export interface Notification {
   id: string
