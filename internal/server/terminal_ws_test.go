@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -111,6 +112,8 @@ func newTerminalServer(t *testing.T) (*httptest.Server, *backend.Host, string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/sessions/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/terminals"):
+			ps.handleSessionTerminals(w, r)
 		case strings.HasSuffix(r.URL.Path, "/terminal"):
 			ps.handleSessionTerminal(w, r)
 		case strings.HasSuffix(r.URL.Path, "/wake"):
@@ -119,6 +122,7 @@ func newTerminalServer(t *testing.T) (*httptest.Server, *backend.Host, string) {
 			http.NotFound(w, r)
 		}
 	})
+	mux.HandleFunc("/api/terminals/", ps.handleTerminal)
 	srv := httptest.NewServer(mux)
 
 	t.Cleanup(func() {
@@ -378,5 +382,155 @@ func TestIsDisconnect(t *testing.T) {
 	}
 	if isDisconnect(errors.New("boom")) {
 		t.Fatal("unknown errors should be logged, not swallowed")
+	}
+}
+
+// ==================== Shells beside a session ====================
+
+// A shell is opened through the session and then addressed by its own id: the
+// per-session path names the agent's terminal and nothing else.
+func TestOpenShellRunsBesideTheAgent(t *testing.T) {
+	srv, h, dir := newTerminalServer(t)
+
+	if _, err := h.Start("sh-host", dir, []string{"cat"}); err != nil {
+		t.Fatalf("start agent: %v", err)
+	}
+
+	term := openShell(t, srv, "sh-host")
+	if term.Parent != "sh-host" || term.Kind != "shell" {
+		t.Fatalf("terminal = %+v, want a shell of sh-host", term)
+	}
+	if term.ID != "sh-host:sh1" {
+		t.Errorf("id = %q, want sh-host:sh1", term.ID)
+	}
+
+	// The agent's own host is untouched by any of this.
+	if !h.Alive("sh-host") {
+		t.Error("opening a shell should not disturb the agent")
+	}
+
+	stream, done := dialTerminalByID(t, srv, term.ID)
+	defer done()
+	hello(t, stream, terminal.RoleInteractive)
+
+	if err := terminal.WriteFrame(stream, terminal.FrameInput, []byte("echo shell-marker-two\r")); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	// Twice: the typed line echoes, then the command prints it.
+	readUntilCount(t, stream, "shell-marker-two", 2, 20*time.Second)
+}
+
+func TestListTerminalsReportsAgentAndShells(t *testing.T) {
+	srv, h, dir := newTerminalServer(t)
+	if _, err := h.Start("sh-list", dir, []string{"cat"}); err != nil {
+		t.Fatalf("start agent: %v", err)
+	}
+	openShell(t, srv, "sh-list")
+
+	var body struct {
+		Terminals []terminal.Terminal `json:"terminals"`
+	}
+	res, err := http.Get(srv.URL + "/api/sessions/sh-list/terminals")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	defer res.Body.Close()
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if len(body.Terminals) != 2 {
+		t.Fatalf("terminals = %+v, want the agent and one shell", body.Terminals)
+	}
+	if body.Terminals[0].Kind != "agent" || body.Terminals[1].Kind != "shell" {
+		t.Errorf("kinds = %q, %q", body.Terminals[0].Kind, body.Terminals[1].Kind)
+	}
+}
+
+func TestDeleteShellClosesIt(t *testing.T) {
+	srv, h, dir := newTerminalServer(t)
+	if _, err := h.Start("sh-kill", dir, []string{"cat"}); err != nil {
+		t.Fatalf("start agent: %v", err)
+	}
+	term := openShell(t, srv, "sh-kill")
+
+	if code := deleteTerminal(t, srv, term.ID); code != http.StatusOK {
+		t.Fatalf("delete status = %d", code)
+	}
+	if h.Alive(term.ID) {
+		t.Error("shell should be gone")
+	}
+	if !h.Alive("sh-kill") {
+		t.Error("killing a shell must not touch the agent")
+	}
+}
+
+// The agent's terminal is the session's, and the session has stop, terminate
+// and delete of its own. Closing it from the terminal strip would kill the
+// agent behind the user's back.
+func TestDeleteRefusesTheAgentsTerminal(t *testing.T) {
+	srv, h, dir := newTerminalServer(t)
+	if _, err := h.Start("sh-agent", dir, []string{"cat"}); err != nil {
+		t.Fatalf("start agent: %v", err)
+	}
+
+	if code := deleteTerminal(t, srv, "sh-agent"); code != http.StatusBadRequest {
+		t.Fatalf("delete status = %d, want 400", code)
+	}
+	if !h.Alive("sh-agent") {
+		t.Error("the agent's host should still be running")
+	}
+}
+
+func openShell(t *testing.T, srv *httptest.Server, sessionID string) terminal.Terminal {
+	t.Helper()
+	res, err := http.Post(srv.URL+"/api/sessions/"+sessionID+"/terminals", "application/json", nil)
+	if err != nil {
+		t.Fatalf("open shell: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("open shell: status %d: %s", res.StatusCode, body)
+	}
+	var term terminal.Terminal
+	if err := json.NewDecoder(res.Body).Decode(&term); err != nil {
+		t.Fatalf("decode shell: %v", err)
+	}
+	return term
+}
+
+func deleteTerminal(t *testing.T, srv *httptest.Server, id string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/terminals/"+id, nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	res.Body.Close()
+	return res.StatusCode
+}
+
+func dialTerminalByID(t *testing.T, srv *httptest.Server, id string) (io.ReadWriteCloser, func()) {
+	t.Helper()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/terminals/" + id
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	conn, resp, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		cancel()
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("dial terminal ws (http %d): %v", status, err)
+	}
+	conn.SetReadLimit(-1)
+	stream := websocket.NetConn(context.Background(), conn, websocket.MessageBinary)
+	return stream, func() {
+		conn.Close(websocket.StatusNormalClosure, "")
+		cancel()
 	}
 }

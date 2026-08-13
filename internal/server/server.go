@@ -198,6 +198,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleSessionResume(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/permission-mode"):
 			s.handleSessionPermissionMode(w, r)
+		case (r.Method == "POST" || r.Method == "GET") && strings.HasSuffix(path, "/terminals"):
+			s.handleSessionTerminals(w, r)
 		case r.Method == "GET" && strings.HasSuffix(path, "/terminal"):
 			s.handleSessionTerminal(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/wake"):
@@ -214,6 +216,10 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			http.NotFound(w, r)
 		}
 	})
+
+	// One terminal by id, which is how a session's shells are addressed: the
+	// per-session path above names the agent's and nothing else.
+	protectedMux.HandleFunc("/api/terminals/", s.handleTerminal)
 
 	protectedMux.HandleFunc("/api/auth/devices/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "DELETE" {

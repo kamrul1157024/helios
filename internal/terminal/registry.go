@@ -359,6 +359,12 @@ func (r *Registry) evictForRoom(headroom int) {
 		})
 		victim := ""
 		for _, e := range candidates {
+			// Never a user's shell. An evicted agent comes back with
+			// `claude --resume`; an evicted shell is a lost scrollback and a
+			// job the user was running, with nothing to resume it from.
+			if IsShell(e.sessionID) {
+				continue
+			}
 			if !r.inUse(e.sessionID) {
 				victim = e.sessionID
 				break

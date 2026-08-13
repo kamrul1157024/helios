@@ -218,6 +218,33 @@ func (h *Host) Forget(sessionID string) {
 	h.reg.Forget(sessionID)
 }
 
+// StartShell opens a login shell beside a session, in its directory.
+func (h *Host) StartShell(parent, cwd string) (terminal.Terminal, error) {
+	return h.reg.StartShell(parent, cwd)
+}
+
+// Terminals lists the live hosts a session owns: its agent, then its shells.
+func (h *Host) Terminals(parent string) []terminal.Terminal {
+	return h.reg.Terminals(parent)
+}
+
+// KillTerminal shuts one host down. Used for shells, which the user closes
+// deliberately; an agent's host has its own lifecycle.
+func (h *Host) KillTerminal(id string) error {
+	h.dropMirror(id)
+	return h.reg.Evict(id)
+}
+
+// KillShells reaps every shell a session owns, for when the session is gone.
+func (h *Host) KillShells(parent string) {
+	for _, t := range h.reg.Terminals(parent) {
+		if t.Kind == "shell" {
+			h.dropMirror(t.ID)
+		}
+	}
+	h.reg.KillShells(parent)
+}
+
 func (h *Host) Snapshot() map[string]string {
 	out := make(map[string]string)
 	for _, id := range h.reg.Warm() {
