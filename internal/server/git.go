@@ -201,6 +201,7 @@ type worktreeEntry struct {
 	// to tell several parallel agents apart at a glance.
 	Head     string `json:"head,omitempty"`
 	Subject  string `json:"subject,omitempty"`
+	Date     string `json:"date,omitempty"`
 	Detached bool   `json:"detached"`
 	Locked   bool   `json:"locked"`
 	Ahead    int    `json:"ahead"`
@@ -241,8 +242,10 @@ func (s *PublicServer) handleGitWorktrees(w http.ResponseWriter, r *http.Request
 // describeWorktree fills in branch state. A worktree whose directory has been
 // deleted but not pruned answers nothing, and is left as the porcelain had it.
 func describeWorktree(entry *worktreeEntry) {
-	if out, err := gitCmd(entry.Path, "log", "-1", "--format=%s"); err == nil {
-		entry.Subject = strings.TrimSpace(out)
+	if out, err := gitCmd(entry.Path, "log", "-1", "--format=%cI%n%s"); err == nil {
+		date, subject, _ := strings.Cut(strings.TrimSpace(out), "\n")
+		entry.Date = strings.TrimSpace(date)
+		entry.Subject = strings.TrimSpace(subject)
 	}
 	if out, err := gitCmd(entry.Path, "status", "--porcelain"); err == nil {
 		entry.Dirty = countLines(out)

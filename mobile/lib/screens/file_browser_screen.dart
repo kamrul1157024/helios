@@ -31,6 +31,7 @@ class FileBrowserScreen extends StatefulWidget {
 
 class _FileBrowserScreenState extends State<FileBrowserScreen> {
   late String _currentPath;
+  late String _rootPath;
   final List<String> _history = [];
   FileListing? _listing;
   bool _loading = true;
@@ -40,6 +41,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   void initState() {
     super.initState();
     _currentPath = widget.rootPath;
+    _rootPath = widget.rootPath;
     _load(_currentPath);
   }
 
@@ -91,6 +93,75 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     _load(path);
   }
 
+  /// Re-roots the browser on another worktree of the same repository. History is
+  /// dropped: the paths in it belong to the worktree being left behind.
+  Future<void> _pickRoot() async {
+    final svc = _svc;
+    if (svc == null) return;
+    final worktrees = sortWorktreesByLastTouched(await svc.gitWorktrees(_currentPath));
+    if (!mounted) return;
+    if (worktrees.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No worktrees here'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Root folder',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              ...worktrees.map((wt) {
+                final selected = wt.path == _rootPath;
+                return ListTile(
+                  leading: Icon(
+                    selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    size: 22,
+                    color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                  ),
+                  title: Text(
+                    wt.branch.isEmpty ? '(detached)' : wt.branch,
+                    style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    wt.date.isEmpty ? wt.shortPath : '${wt.shortPath} · ${wt.timeAgo}',
+                    style: const TextStyle(fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () => Navigator.of(ctx).pop(wt.path),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    _history.clear();
+    setState(() => _rootPath = picked);
+    _load(picked);
+  }
+
   bool _onBack() {
     if (_history.isNotEmpty) {
       final prev = _history.removeLast();
@@ -136,6 +207,11 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
           title: const Text('Files'),
           actions: [
             IconButton(
+              icon: const Icon(Icons.account_tree_outlined),
+              tooltip: 'Change root folder',
+              onPressed: _pickRoot,
+            ),
+            IconButton(
               icon: const Icon(Icons.chat_bubble_outline),
               tooltip: 'Back to chat',
               onPressed: () => Navigator.of(context).popUntil(
@@ -155,7 +231,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: Icon(
                     Icons.chevron_right,
-                    size: 16,
+                    size: 20,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -243,6 +319,7 @@ class _EntryTile extends StatelessWidget {
     return ListTile(
       leading: Icon(
         entry.isDir ? Icons.folder : _iconForFile(entry.name),
+        size: 28,
         color: entry.isDir ? Colors.amber.shade700 : theme.colorScheme.onSurfaceVariant,
       ),
       title: Text(
@@ -250,7 +327,7 @@ class _EntryTile extends StatelessWidget {
         style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
       ),
       trailing: entry.isDir
-          ? Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant)
+          ? Icon(Icons.chevron_right, size: 24, color: theme.colorScheme.onSurfaceVariant)
           : Text(
               entry.formattedSize,
               style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
@@ -466,7 +543,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
       ),
       child: Row(
         children: [
-          Icon(Icons.code, size: 16, color: accentColor),
+          Icon(Icons.code, size: 20, color: accentColor),
           const SizedBox(width: 6),
           if (_hasSelection) ...[
             Text(
@@ -476,7 +553,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
             const SizedBox(width: 8),
             GestureDetector(
               onTap: () => setState(() { _selStart = null; _selEnd = null; }),
-              child: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
+              child: Icon(Icons.close, size: 18, color: theme.colorScheme.onSurfaceVariant),
             ),
           ] else
             Text(
@@ -486,7 +563,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
           const Spacer(),
           FilledButton.tonalIcon(
             onPressed: () => _showAskAISheet(theme),
-            icon: const Icon(Icons.auto_awesome, size: 16),
+            icon: const Icon(Icons.auto_awesome, size: 18),
             label: const Text('Ask AI', style: TextStyle(fontSize: 12)),
             style: FilledButton.styleFrom(
               visualDensity: VisualDensity.compact,
@@ -518,7 +595,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.insert_drive_file, size: 16, color: accentColor),
+                      Icon(Icons.insert_drive_file, size: 20, color: accentColor),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
