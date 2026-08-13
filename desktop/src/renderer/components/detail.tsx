@@ -141,18 +141,32 @@ export function Detail(): JSX.Element {
                 {PANEL_LABELS[name]}
                 {name === 'approvals' && pending > 0 && <span className="badge">{pending}</span>}
                 {name === 'terminal' && term && (
-                  <span
-                    className="tab-close"
-                    role="button"
-                    aria-label="Reconnect"
-                    title="Reconnect — the agent keeps running"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      void store.reconnectTab(term.id)
-                    }}
-                  >
-                    ⟳
-                  </span>
+                  <>
+                    <span
+                      className="tab-close reload"
+                      role="button"
+                      aria-label="Reconnect"
+                      title="Reconnect — the agent keeps running"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void store.reconnectTab(term.id)
+                      }}
+                    >
+                      ⟳
+                    </span>
+                    <span
+                      className="tab-close"
+                      role="button"
+                      aria-label="Disconnect"
+                      title="Disconnect — the agent keeps running"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        store.disconnectTab(term.id)
+                      }}
+                    >
+                      ⏻
+                    </span>
+                  </>
                 )}
               </button>
             ))}

@@ -65,14 +65,16 @@ export function TerminalPanes({
   // that does not name one.
   const selected = activeTab ? tabs.find((t) => t.id === activeTab) : undefined
   const current = selected?.sessionId === session?.session_id ? selected : agent
+  const detached = useStore((s) => s.detached)
+  const isDetached = Boolean(hostId && session && detached.includes(terminalId(hostId, session.session_id)))
 
   useEffect(() => {
-    if (!visible || agent || !hostId || !session) return
+    if (!visible || agent || isDetached || !hostId || !session) return
     // Warm sessions attach as soon as the panel is shown: the host is already
     // running, so opening the tab is the whole of the request. A cold one waits
     // for the button below, because attaching would start an agent.
     if (hasTerminal(session)) void store.openTerminal(hostId, session, false)
-  }, [visible, agent, hostId, session])
+  }, [visible, agent, isDetached, hostId, session])
 
   return (
     <div className={visible ? 'panes' : 'panes hidden'}>
@@ -89,7 +91,9 @@ export function TerminalPanes({
           <p>
             {canResume(session)
               ? 'Session terminated — resume to bring the agent back.'
-              : 'No terminal attached to this session.'}
+              : isDetached
+                ? 'Disconnected — the agent kept running.'
+                : 'No terminal attached to this session.'}
           </p>
           {canResume(session) ? (
             <button className="filled" onClick={() => void store.resumeSession(hostId, session.session_id)}>
@@ -208,6 +212,16 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     if (term.cols === hostCols && term.rows === hostRows) return
     term.resize(hostCols, hostRows)
   }, [hostCols, hostRows])
+
+  // The snapshot a host replays on attach can leave the viewport wherever the
+  // scrollback happened to land. What the reader wants after reconnecting is
+  // the live end of the session, so go there once the connection is up.
+  const live = tab.status.state === 'live'
+  useEffect(() => {
+    if (!live) return
+    const timer = setTimeout(() => termRef.current?.scrollToBottom(), 0)
+    return () => clearTimeout(timer)
+  }, [live])
 
   return (
     <div className={`pane ${active ? 'active' : ''}`}>
