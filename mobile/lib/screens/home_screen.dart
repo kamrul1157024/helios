@@ -532,7 +532,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _subscribeToHost(host.id);
         }
 
-        final offlineHosts = hm.offlineHosts;
+        final offlineHosts = hm.visibleOfflineHosts;
 
         final allNotifications = hm.allNotifications;
         final allSessions = hm.allSessions;
