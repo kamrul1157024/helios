@@ -190,6 +190,25 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     return () => observer.disconnect()
   }, [active, tab.id])
 
+  /**
+   * Adopt the size the host settled on, which is not always the one proposed
+   * above: the PTY takes the smallest of its interactive viewers, so a phone
+   * or a second window on the same session shrinks it.
+   *
+   * Rendering wider than the PTY is what makes typing look duplicated. The
+   * shell wraps and redraws its line against its own width, and each of those
+   * cursor moves lands in the wrong cell of a grid that disagrees — the
+   * rewritten characters end up beside the originals instead of over them.
+   */
+  const hostCols = tab.status.cols
+  const hostRows = tab.status.rows
+  useEffect(() => {
+    const term = termRef.current
+    if (!term || !hostCols || !hostRows) return
+    if (term.cols === hostCols && term.rows === hostRows) return
+    term.resize(hostCols, hostRows)
+  }, [hostCols, hostRows])
+
   return (
     <div className={`pane ${active ? 'active' : ''}`}>
       <div className="pane-term" ref={hostRef} />
