@@ -306,14 +306,18 @@ class Store {
     this.set((s) => ({ tabs: [...s.tabs, tab] }))
 
     try {
-      // Geometry is a placeholder; the tab reports its real size once xterm has
-      // measured the container, which cannot happen before it is mounted.
+      // Zero is an abstention, not a guess. The size is unknown until xterm has
+      // measured its container, and a placeholder 80×24 is not neutral: the PTY
+      // adopts the smallest interactive viewer, so attaching would shrink a
+      // 192-column terminal to 80, render its snapshot at that width, and let
+      // the pane stretch it back a moment later. Two reflows per attach, and a
+      // shell left drawing its prompt at coordinates from the wrong geometry.
       await bridge.term.open({
         tabId: tab.id,
         hostId,
         sessionId: session.session_id,
-        cols: 80,
-        rows: 24,
+        cols: 0,
+        rows: 0,
         wake,
       })
     } catch (err) {
@@ -370,7 +374,8 @@ class Store {
     const tab: Tab = { id, hostId, sessionId, termId, kind: 'shell', title, status: { state: 'connecting' } }
     this.set((s) => ({ tabs: [...s.tabs, tab] }))
     try {
-      await bridge.term.open({ tabId: id, hostId, sessionId, cols: 80, rows: 24, terminalId: termId })
+      // Abstain until the pane has measured itself; see openTerminal above.
+      await bridge.term.open({ tabId: id, hostId, sessionId, cols: 0, rows: 0, terminalId: termId })
     } catch (err) {
       this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== id) }))
       throw err
