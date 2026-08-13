@@ -1211,8 +1211,7 @@ small {
 .file-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
+  padding: 2px 4px 2px 8px;
   border-radius: 999px;
   border: 1px solid var(--outline-variant);
   background: transparent;
@@ -1223,9 +1222,41 @@ small {
 }
 
 .file-chip:hover {
-  background: color-mix(in srgb, var(--primary) 14%, transparent);
   border-color: var(--primary);
   color: var(--primary);
+}
+
+.file-chip-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 4px 1px 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.file-chip-act {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.file-chip-open:hover,
+.file-chip-act:hover {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--primary);
+}
+
+.file-chip-open:hover {
+  border-radius: 999px;
+  padding-left: 6px;
+  margin-left: -6px;
 }
 
 .file-chip-icon {
@@ -1753,6 +1784,31 @@ small {
   background: color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
+.md-block.md-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.md-block-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.md-fold {
+  flex: none;
+  width: 16px;
+  padding: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.md-fold:hover {
+  color: var(--primary);
+}
+
 .line-menu {
   position: fixed;
   z-index: 40;
@@ -1853,6 +1909,85 @@ small {
   margin-left: auto;
 }
 
+.ws-root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+
+.ws-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.ws-crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.ws-crumb {
+  flex: none;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.ws-crumb::after {
+  content: '/';
+  margin-left: 4px;
+  color: var(--outline);
+}
+
+.ws-crumb:first-child::after,
+.ws-crumb.here::after {
+  content: '';
+  margin-left: 0;
+}
+
+.ws-crumb.here {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.ws-crumb:hover {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.ws-root-more {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ws-root-more:hover {
+  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  color: var(--primary);
+}
+
+/* The workspace's glyph buttons are the panel's controls, not decorations on a
+   message, so they carry the size the transcript's cannot afford. */
+.ws-side-head .icon-btn.tiny,
+.ws-file-head .icon-btn.tiny {
+  min-width: 30px;
+  height: 30px;
+  font-size: 18px;
+}
+
 .tree {
   flex: 1;
   overflow: auto;
@@ -1882,9 +2017,9 @@ small {
 }
 
 .tree-twist {
-  width: 10px;
+  width: 12px;
   flex: none;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--on-surface-variant);
 }
 
@@ -1924,11 +2059,11 @@ small {
 }
 
 .find-toggle {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border-radius: var(--r-sm);
-  font-size: 11px;
+  font-size: 13px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--on-surface-variant);
 }
@@ -2114,6 +2249,28 @@ small {
   border-radius: 0;
   background: var(--surface-high);
   font-size: 13px;
+}
+
+.root-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 10px;
+}
+
+.root-hint-label {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.root-hints .pill {
+  cursor: pointer;
+}
+
+.root-hints .pill:hover {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--primary);
 }
 
 .quick-list {
@@ -2635,6 +2792,12 @@ hr {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.worktree-search {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
 }
 
 .worktree {

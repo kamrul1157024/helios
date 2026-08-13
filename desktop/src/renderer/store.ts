@@ -45,6 +45,8 @@ export interface FileTarget {
   hostId: string
   path: string
   seq: number
+  /** 'find' searches the panel's root for the name instead of opening the path. */
+  mode: 'open' | 'find'
 }
 
 /**
@@ -268,7 +270,19 @@ class Store {
   openFile(hostId: string, path: string): void {
     this.set((s) => ({
       panel: 'files',
-      fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1 },
+      fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open' },
+    }))
+  }
+
+  /**
+   * Looks a file name up in the Files panel. The transcript's path belongs to
+   * the checkout the agent ran in, which is not always the one being browsed —
+   * searching by name finds it wherever the panel is currently rooted.
+   */
+  findFile(hostId: string, path: string): void {
+    this.set((s) => ({
+      panel: 'files',
+      fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'find' },
     }))
   }
 

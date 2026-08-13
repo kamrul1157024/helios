@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
-import type { FileMatch } from '../../shared/models.ts'
+import { RootSuggestions } from './root-picker.tsx'
+import type { FileMatch, Worktree } from '../../shared/models.ts'
 
 interface Props {
   hostId: string
   root: string
+  /** Seeds the field, for callers that already know part of the name. */
+  initialQuery?: string
+  /** Offered when nothing matches: the file is often in another checkout. */
+  worktrees?: Worktree[]
   onOpen: (path: string) => void
+  onPickRoot?: (path: string) => void
   onClose: () => void
 }
 
@@ -14,8 +20,16 @@ interface Props {
 const DEBOUNCE_MS = 90
 
 /** ⌘P: type part of a file name, press Enter. */
-export function QuickOpen({ hostId, root, onOpen, onClose }: Props): JSX.Element {
-  const [query, setQuery] = useState('')
+export function QuickOpen({
+  hostId,
+  root,
+  initialQuery = '',
+  worktrees = [],
+  onOpen,
+  onPickRoot,
+  onClose,
+}: Props): JSX.Element {
+  const [query, setQuery] = useState(initialQuery)
   const [matches, setMatches] = useState<FileMatch[]>([])
   const [active, setActive] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -95,7 +109,21 @@ export function QuickOpen({ hostId, root, onOpen, onClose }: Props): JSX.Element
               <span className="quick-dir">{dirOf(match.rel)}</span>
             </button>
           ))}
-          {!error && matches.length === 0 && <p className="empty-note">No matching file.</p>}
+          {!error && matches.length === 0 && (
+            <>
+              <p className="empty-note">No matching file under {root}.</p>
+              {onPickRoot && (
+                <RootSuggestions
+                  root={root}
+                  worktrees={worktrees}
+                  onPick={(path) => {
+                    onPickRoot(path)
+                    setActive(0)
+                  }}
+                />
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -1021,6 +1021,8 @@ class _WorktreesTab extends StatefulWidget {
 
 class _WorktreesTabState extends State<_WorktreesTab> {
   List<Worktree>? _worktrees;
+  final _searchController = TextEditingController();
+  String _query = '';
 
   @override
   void initState() {
@@ -1028,11 +1030,17 @@ class _WorktreesTabState extends State<_WorktreesTab> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final svc = context.read<HostManager>().serviceFor(widget.hostId);
-    final worktrees = await svc?.gitWorktrees(widget.root);
+    final worktrees = await svc?.gitWorktrees(widget.root) ?? [];
     if (!mounted) return;
-    setState(() => _worktrees = worktrees ?? []);
+    setState(() => _worktrees = sortWorktreesByLastTouched(worktrees));
   }
 
   @override
@@ -1045,18 +1053,69 @@ class _WorktreesTabState extends State<_WorktreesTab> {
         child: Text('No worktrees', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
       );
     }
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.builder(
-        itemCount: worktrees.length,
-        itemBuilder: (ctx, i) => _WorktreeTile(
-          worktree: worktrees[i],
-          selected: worktrees[i].path == widget.active,
-          onTap: () => widget.onPick(worktrees[i].path),
+    final matches = filterWorktrees(worktrees, _query);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (v) => setState(() => _query = v),
+            style: const TextStyle(fontSize: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Search branch, path or subject',
+              hintStyle: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              prefixIcon: const Icon(Icons.search, size: 18),
+              prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _query = '');
+                      },
+                    ),
+              border: const OutlineInputBorder(),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            ),
+          ),
         ),
-      ),
+        Expanded(
+          child: matches.isEmpty
+              ? Center(
+                  child: Text(
+                    'No worktree matches "$_query"',
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.builder(
+                    itemCount: matches.length,
+                    itemBuilder: (ctx, i) => _WorktreeTile(
+                      worktree: matches[i],
+                      selected: matches[i].path == widget.active,
+                      onTap: () => widget.onPick(matches[i].path),
+                    ),
+                  ),
+                ),
+        ),
+      ],
     );
   }
+}
+
+List<Worktree> filterWorktrees(List<Worktree> worktrees, String query) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return worktrees;
+  return worktrees
+      .where((w) =>
+          w.branch.toLowerCase().contains(needle) ||
+          w.path.toLowerCase().contains(needle) ||
+          w.subject.toLowerCase().contains(needle))
+      .toList();
 }
 
 class _WorktreeTile extends StatelessWidget {
@@ -1122,7 +1181,9 @@ class _WorktreeTile extends StatelessWidget {
             ],
             const SizedBox(height: 2),
             Text(
-              '${worktree.head} ${_shortPath(worktree.path)}',
+              worktree.date.isEmpty
+                  ? '${worktree.head} ${_shortPath(worktree.path)}'
+                  : '${worktree.head} ${_shortPath(worktree.path)} · ${worktree.timeAgo}',
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'monospace',

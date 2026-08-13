@@ -1413,6 +1413,9 @@ class Worktree {
   final bool isMain;
   final String head;
   final String subject;
+
+  /// ISO-8601 date of the last commit — what "last touched" is ordered by.
+  final String date;
   final bool detached;
   final bool locked;
   final int ahead;
@@ -1430,6 +1433,7 @@ class Worktree {
     required this.isMain,
     this.head = '',
     this.subject = '',
+    this.date = '',
     this.detached = false,
     this.locked = false,
     this.ahead = 0,
@@ -1445,6 +1449,7 @@ class Worktree {
       isMain: json['is_main'] as bool? ?? false,
       head: json['head'] as String? ?? '',
       subject: json['subject'] as String? ?? '',
+      date: json['date'] as String? ?? '',
       detached: json['detached'] as bool? ?? false,
       locked: json['locked'] as bool? ?? false,
       ahead: json['ahead'] as int? ?? 0,
@@ -1459,4 +1464,24 @@ class Worktree {
     if (parts.length <= 3) return path;
     return '.../${parts.sublist(parts.length - 2).join('/')}';
   }
+
+  String get timeAgo => _timeAgo(date);
+}
+
+/// Most recently committed first. Worktrees with no date — pruned, or past the
+/// detail cap the daemon enforces — keep their listing order at the end.
+List<Worktree> sortWorktreesByLastTouched(List<Worktree> worktrees) {
+  final order = {for (var i = 0; i < worktrees.length; i++) worktrees[i].path: i};
+  final sorted = [...worktrees];
+  sorted.sort((a, b) {
+    final da = DateTime.tryParse(a.date)?.toUtc();
+    final db = DateTime.tryParse(b.date)?.toUtc();
+    if (da == null || db == null) {
+      if (da == db) return order[a.path]!.compareTo(order[b.path]!);
+      return da == null ? 1 : -1;
+    }
+    final byDate = db.compareTo(da);
+    return byDate != 0 ? byDate : order[a.path]!.compareTo(order[b.path]!);
+  });
+  return sorted;
 }
