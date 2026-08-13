@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
-import { store, terminalId, useStore, type RightPanel } from '../store.ts'
+import { store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
@@ -68,6 +68,18 @@ export function Detail(): JSX.Element {
     ? (notifications[hostId ?? ''] ?? []).filter((n) => n.source_session === session.session_id).length
     : 0
   const term = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
+  const activeTab = useStore((s) => s.activeTab)
+  const shells = tabs.filter(
+    (t) => t.kind === 'shell' && t.hostId === hostId && t.sessionId === session?.session_id,
+  )
+  const onAgentTab = !activeTab || activeTab === term?.id
+
+  // Shells outlive the app, so a restart would leave them running and
+  // invisible. Listing them is also how a second window learns about one.
+  useEffect(() => {
+    if (!hostId || !session) return
+    void store.syncShells(hostId, session.session_id)
+  }, [hostId, session?.session_id])
 
   // When each panel was last on screen, for the idle sweep below.
   const [kept, setKept] = useState<Partial<Record<RightPanel, number>>>({})
@@ -111,11 +123,15 @@ export function Detail(): JSX.Element {
         <>
           <SessionHeader hostId={hostId} session={session} />
 
+          {/* One strip: the panels, the session's own terminal, then the
+              shells opened beside it. Tabs within a tab would be a hierarchy
+              nobody asked for — a shell is a sibling of the transcript, not a
+              mode of the terminal. */}
           <nav className="panel-tabs">
             {PANELS.map((name) => (
               <button
                 key={name}
-                className={panel === name ? 'active' : ''}
+                className={panel === name && (name !== 'terminal' || onAgentTab) ? 'active' : ''}
                 onClick={() => (name === 'terminal' ? store.showTerminal(hostId, session) : store.setPanel(name))}
               >
                 {/* The old tabstrip carried the connection state, and it is
@@ -128,17 +144,31 @@ export function Detail(): JSX.Element {
                   <span
                     className="tab-close"
                     role="button"
-                    aria-label="Close terminal"
+                    aria-label="Reconnect"
+                    title="Reconnect — the agent keeps running"
                     onClick={(event) => {
                       event.stopPropagation()
-                      store.closeTab(term.id)
+                      void store.reconnectTab(term.id)
                     }}
                   >
-                    ×
+                    ⟳
                   </span>
                 )}
               </button>
             ))}
+
+            {shells.map((shell) => (
+              <ShellTab key={shell.id} tab={shell} active={panel === 'terminal' && activeTab === shell.id} />
+            ))}
+
+            <button
+              className="tab-add"
+              title="New shell in this session's directory"
+              aria-label="New shell"
+              onClick={() => void store.openShell(hostId, session.session_id)}
+            >
+              +
+            </button>
           </nav>
         </>
       )}
@@ -206,6 +236,65 @@ export function Detail(): JSX.Element {
         <TerminalPanes hostId={hostId} session={session} visible={panel === 'terminal' && Boolean(session)} />
       </div>
     </div>
+  )
+}
+
+/**
+ * A shell's tab. Closing it kills the process — unlike the agent's terminal,
+ * which is the session's and only ever detaches — so the cross is the real
+ * thing here, and the name is the user's to set.
+ */
+function ShellTab({ tab, active }: { tab: Tab; active: boolean }): JSX.Element {
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(tab.title)
+
+  if (renaming) {
+    return (
+      <input
+        className="tab-rename"
+        autoFocus
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          store.renameTab(tab.id, draft)
+          setRenaming(false)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            setDraft(tab.title)
+            setRenaming(false)
+          }
+        }}
+      />
+    )
+  }
+
+  return (
+    <button
+      className={active ? 'active' : ''}
+      onClick={() => store.selectTab(tab.id)}
+      onDoubleClick={() => {
+        setDraft(tab.title)
+        setRenaming(true)
+      }}
+      title={`${tab.title} — double-click to rename`}
+    >
+      <span className={`dot ${tab.status.state}`} />
+      {tab.title}
+      <span
+        className="tab-close"
+        role="button"
+        aria-label="Close shell"
+        title="Close this shell"
+        onClick={(event) => {
+          event.stopPropagation()
+          void store.killShell(tab.id)
+        }}
+      >
+        ×
+      </span>
+    </button>
   )
 }
 

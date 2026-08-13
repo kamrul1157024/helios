@@ -139,12 +139,14 @@ func TestE2EPtyHostServesViewers(t *testing.T) {
 	}
 	defer c.Close()
 
+	// Raw replay, not a snapshot: the ring still holds everything this host
+	// has written, and the child's own bytes need no geometry from us.
 	f, err := c.Next()
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if f.Type != FrameSnapshot {
-		t.Fatalf("first frame = %s, want snapshot", f.Type)
+	if f.Type != FrameOutput {
+		t.Fatalf("first frame = %s, want raw output", f.Type)
 	}
 
 	if err := c.Send([]byte("echo e2e-roundtrip\r")); err != nil {
@@ -521,7 +523,8 @@ func TestE2EClaudeSnapshotCatchesUpLateViewer(t *testing.T) {
 		t.Fatal("claude never rendered")
 	}
 
-	// Mobile joins late and gets one snapshot, no replay.
+	// Mobile joins late. Its catch-up is the raw stream while the ring holds
+	// it, and the styling has to survive that too.
 	mobile, err := Dial(sock, Hello{Role: RoleObserver, Cols: 100, Rows: 30, Name: "mobile"})
 	if err != nil {
 		t.Fatalf("dial mobile: %v", err)
@@ -532,13 +535,10 @@ func TestE2EClaudeSnapshotCatchesUpLateViewer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mobile Next: %v", err)
 	}
-	if f.Type != FrameSnapshot {
-		t.Fatalf("mobile first frame = %s, want snapshot", f.Type)
+	if f.Type != FrameOutput {
+		t.Fatalf("mobile first frame = %s, want raw output", f.Type)
 	}
-	_, ansi, err := DecodeSnapshot(f.Payload)
-	if err != nil {
-		t.Fatalf("DecodeSnapshot: %v", err)
-	}
+	ansi := f.Payload
 	if !bytes.Contains(ansi, []byte("\x1b[38;2;")) {
 		t.Error("snapshot lost truecolor styling; the UI would render flat")
 	}

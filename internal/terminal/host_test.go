@@ -92,26 +92,52 @@ func TestHostViewerReceivesSnapshotAndLiveOutput(t *testing.T) {
 	}
 	defer c.Close()
 
-	// A late joiner must be caught up via a snapshot containing prior output.
+	// A joiner is caught up with the child's own bytes while the ring still
+	// holds them: a rendered snapshot assumes the viewer's geometry matches
+	// this host's, and a shell's cursor moves are relative to whatever the
+	// replay left on screen.
 	f, err := c.Next()
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if f.Type != FrameSnapshot {
-		t.Fatalf("first frame = %s, want snapshot", f.Type)
+	if f.Type != FrameOutput {
+		t.Fatalf("first frame = %s, want raw output", f.Type)
 	}
-	_, ansi, err := DecodeSnapshot(f.Payload)
-	if err != nil {
-		t.Fatalf("DecodeSnapshot: %v", err)
-	}
-	if !strings.Contains(string(ansi), "first") {
-		t.Errorf("snapshot missing prior output: %q", ansi)
+	if !strings.Contains(string(f.Payload), "first") {
+		t.Errorf("replay missing prior output: %q", f.Payload)
 	}
 
 	// Then live output.
 	h.Write([]byte("echo second\r"), "test")
 	if !waitForFrameContaining(t, c, "second", 5*time.Second) {
 		t.Error("did not receive live output after the snapshot")
+	}
+}
+
+// Once the ring has evicted the beginning, a from-zero replay would start
+// mid-escape-sequence. That is the case a rendered snapshot still exists for.
+func TestHostViewerFallsBackToSnapshotOnceTheRingWraps(t *testing.T) {
+	h, sock := serveHost(t, HostConfig{SessionID: "s3b", Command: "cat"})
+	time.Sleep(300 * time.Millisecond)
+
+	// Overrun the ring so its oldest retained byte is no longer sequence zero.
+	h.ring.Write(make([]byte, DefaultRingSize+1))
+	if h.ring.Start() == 0 {
+		t.Fatal("ring did not wrap")
+	}
+
+	c, err := Dial(sock, Hello{Role: RoleObserver, Cols: 80, Rows: 24, Name: "late"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	f, err := c.Next()
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if f.Type != FrameSnapshot {
+		t.Fatalf("first frame = %s, want snapshot", f.Type)
 	}
 }
 

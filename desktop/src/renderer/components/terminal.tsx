@@ -58,15 +58,21 @@ export function TerminalPanes({
   visible: boolean
 }): JSX.Element {
   const tabs = useStore((s) => s.tabs)
-  const current = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
+  const activeTab = useStore((s) => s.activeTab)
+  const agent = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
+  // The strip decides which of the session's terminals is in front; the
+  // agent's is the one a session starts with and the fallback for everything
+  // that does not name one.
+  const selected = activeTab ? tabs.find((t) => t.id === activeTab) : undefined
+  const current = selected?.sessionId === session?.session_id ? selected : agent
 
   useEffect(() => {
-    if (!visible || current || !hostId || !session) return
+    if (!visible || agent || !hostId || !session) return
     // Warm sessions attach as soon as the panel is shown: the host is already
     // running, so opening the tab is the whole of the request. A cold one waits
     // for the button below, because attaching would start an agent.
     if (hasTerminal(session)) void store.openTerminal(hostId, session, false)
-  }, [visible, current, hostId, session])
+  }, [visible, agent, hostId, session])
 
   return (
     <div className={visible ? 'panes' : 'panes hidden'}>
@@ -183,6 +189,25 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     observer.observe(container)
     return () => observer.disconnect()
   }, [active, tab.id])
+
+  /**
+   * Adopt the size the host settled on, which is not always the one proposed
+   * above: the PTY takes the smallest of its interactive viewers, so a phone
+   * or a second window on the same session shrinks it.
+   *
+   * Rendering wider than the PTY is what makes typing look duplicated. The
+   * shell wraps and redraws its line against its own width, and each of those
+   * cursor moves lands in the wrong cell of a grid that disagrees — the
+   * rewritten characters end up beside the originals instead of over them.
+   */
+  const hostCols = tab.status.cols
+  const hostRows = tab.status.rows
+  useEffect(() => {
+    const term = termRef.current
+    if (!term || !hostCols || !hostRows) return
+    if (term.cols === hostCols && term.rows === hostRows) return
+    term.resize(hostCols, hostRows)
+  }, [hostCols, hostRows])
 
   return (
     <div className={`pane ${active ? 'active' : ''}`}>

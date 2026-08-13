@@ -16,6 +16,7 @@ import type {
   ProviderInfo,
   Session,
   Subagent,
+  TerminalInfo,
   TranscriptPage,
   Worktree,
   WriteResult,
@@ -168,6 +169,25 @@ export class ApiClient {
   /** Warms a cold session's terminal host and returns its socket path. */
   wake(id: string): Promise<{ success: boolean; terminal: string }> {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/wake`)
+  }
+
+  /** Opens a login shell beside the session's agent, in its directory. */
+  openShell(sessionId: string): Promise<TerminalInfo> {
+    return this.request('POST', `/api/sessions/${encodeURIComponent(sessionId)}/terminals`)
+  }
+
+  /** The session's live terminals: its agent first, then its shells. */
+  async terminals(sessionId: string): Promise<TerminalInfo[]> {
+    const res = await this.request<{ terminals?: TerminalInfo[] }>(
+      'GET',
+      `/api/sessions/${encodeURIComponent(sessionId)}/terminals`,
+    )
+    return res.terminals ?? []
+  }
+
+  /** Closes a shell. The daemon refuses this for a session's own agent. */
+  killTerminal(terminalId: string): Promise<unknown> {
+    return this.request('DELETE', `/api/terminals/${encodeURIComponent(terminalId)}`)
   }
 
   setPermissionMode(id: string, mode: string): Promise<unknown> {

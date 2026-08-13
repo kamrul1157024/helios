@@ -22,6 +22,11 @@ export interface OpenTabRequest {
   rows: number
   /** Warm a cold session before attaching. Never implicit: waking costs a process. */
   wake?: boolean
+  /**
+   * Which of the session's terminals to attach to. Absent means its agent,
+   * which is the only one older clients know about.
+   */
+  terminalId?: string
 }
 
 interface Tab {
@@ -117,8 +122,18 @@ export class TerminalManager extends EventEmitter {
    */
   private async resolveEndpoint(req: OpenTabRequest): Promise<Endpoint> {
     const host = this.hosts.require(req.hostId)
+    // A shell is addressed by terminal id; the agent's terminal keeps the
+    // per-session path, which is the only one older daemons serve.
+    const shell = req.terminalId !== undefined && req.terminalId !== req.sessionId
 
     if (host.record.local) {
+      if (shell) {
+        const terminals = await host.api.terminals(req.sessionId)
+        const socket = terminals.find((t) => t.id === req.terminalId)?.socket
+        if (!socket) throw new Error('that terminal is no longer running')
+        return { kind: 'unix', path: socket }
+      }
+
       let socket = (await host.api.getSession(req.sessionId)).session.terminal
       if (!socket) {
         if (!req.wake) throw new Error('session has no live terminal')
@@ -128,11 +143,16 @@ export class TerminalManager extends EventEmitter {
     }
 
     const base = host.record.url.replace(/^http/, 'ws')
+    const token = async (): Promise<string> => host.api.authHeader().slice('Bearer '.length)
+    if (shell) {
+      return { kind: 'ws', url: `${base}/api/terminals/${encodeURIComponent(req.terminalId!)}`, token }
+    }
+
     const query = req.wake ? '?wake=1' : ''
     return {
       kind: 'ws',
       url: `${base}/api/sessions/${encodeURIComponent(req.sessionId)}/terminal${query}`,
-      token: async () => host.api.authHeader().slice('Bearer '.length),
+      token,
     }
   }
 

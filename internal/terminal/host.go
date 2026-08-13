@@ -40,6 +40,11 @@ const SessionEnv = "HELIOS_SESSION_ID"
 // nothing before it.
 const SnapshotScrollbackLines = 1000
 
+// maxRawAttach caps the history a fresh viewer is given verbatim. Past this a
+// rendered snapshot is both smaller and faster to draw, and the phone is the
+// client that would feel the difference.
+const maxRawAttach = 256 << 10
+
 // HostConfig describes the process a Host supervises.
 type HostConfig struct {
 	SessionID string
@@ -515,6 +520,27 @@ func (h *Host) serveConn(conn net.Conn) {
 			}
 			replayed = true
 		}
+	} else if data, _, ok := h.ring.Since(0); ok && len(data) <= maxRawAttach {
+		// Everything the child has written, verbatim, for a viewer joining
+		// from nothing.
+		//
+		// A snapshot is a screen this host rendered: rows padded to its width,
+		// ending in an absolute cursor position computed here. It only lands
+		// correctly on a viewer of exactly these dimensions, and a shell's
+		// line editor then moves relative to a cursor it did not put there.
+		// Raw bytes carry no such assumption — the viewer's own emulator
+		// derives the screen the way it would have had it been attached since
+		// the first byte.
+		//
+		// Since(0) succeeds only while nothing has been evicted, so this is
+		// the recently started session; anything older resyncs from a
+		// snapshot as before.
+		if len(data) > 0 {
+			if err := WriteFrame(conn, FrameOutput, data); err != nil {
+				return
+			}
+		}
+		replayed = true
 	}
 	if !replayed {
 		seq := h.ring.Seq()

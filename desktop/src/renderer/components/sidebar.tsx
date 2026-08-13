@@ -26,6 +26,8 @@ interface Group {
   rows: Row[]
   /** Terminated sessions withheld from rows, so the host can offer them. */
   hidden: number
+  /** The host has not answered yet, which is not the same as having nothing. */
+  loading: boolean
 }
 
 export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void; onAddHost: () => void }): JSX.Element {
@@ -67,7 +69,11 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
         .sort(compareRows)
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
-      return { host, rows, hidden }
+      // An unfetched host has no entry at all, an empty one has []. Without the
+      // distinction a daemon that is slow to answer looks like a daemon with
+      // nothing on it.
+      const loading = sessions[host.id] === undefined
+      return { host, rows, hidden, loading }
     })
   }, [hosts, sessions, notifications, query, showArchived, showTerminated])
 
@@ -91,7 +97,7 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
       </header>
 
       <div className="sidebar-list">
-        {grouped.map(({ host, rows, hidden }) => {
+        {grouped.map(({ host, rows, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
           return (
@@ -102,7 +108,9 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
               >
                 <span className={`dot ${status}`} title={hostStatus[host.id]?.error ?? status} />
                 <span className="host-name">{host.name}</span>
-                <span className="host-count">{rows.length}</span>
+                {/* No count until there is one: a 0 that turns into 12 reads as
+                    an answer, and it was not one. */}
+                {!loading && <span className="host-count">{rows.length}</span>}
                 <span className="chevron">{isCollapsed ? '▸' : '▾'}</span>
               </button>
 
@@ -133,7 +141,38 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
                   />
                 ))}
 
-              {!isCollapsed && rows.length === 0 && hidden === 0 && (
+              {/* Skeletons rather than a spinner: the list is about to be a
+                  list, and showing its shape keeps the sidebar from resizing
+                  under the cursor when the rows arrive.
+
+                  Built from the card's own elements rather than a stack of
+                  bars, so it is the height of a session card by construction
+                  and stays that way when the card changes. */}
+              {!isCollapsed &&
+                loading &&
+                [0, 1, 2].map((index) => (
+                  <div key={index} className="session-card skeleton" aria-hidden="true">
+                    <div className="card-inner">
+                      <div className="card-top">
+                        <span className="skeleton-line chip" />
+                        <span className="grow" />
+                        <span className="skeleton-line time" />
+                      </div>
+                      <div className="card-title">
+                        <span className="skeleton-line" />
+                      </div>
+                      <div className="card-cwd">
+                        <span className="skeleton-line cwd" />
+                      </div>
+                      <div className="card-bottom">
+                        <span className="skeleton-line meta" />
+                        <span className="skeleton-line btn" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+              {!isCollapsed && !loading && rows.length === 0 && hidden === 0 && (
                 <p className="empty-note">No sessions</p>
               )}
             </section>

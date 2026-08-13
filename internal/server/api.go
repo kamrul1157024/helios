@@ -929,6 +929,12 @@ func (s *PublicServer) handleDeleteSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The shells opened beside it have no owner once the session is gone, and
+	// nothing left to list them: they would run until the machine rebooted.
+	if runner, ok := s.shared.shells(); ok {
+		runner.KillShells(id)
+	}
+
 	s.shared.SSE.Broadcast(SSEEvent{
 		Type: "session_deleted",
 		Data: map[string]interface{}{

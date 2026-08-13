@@ -245,8 +245,18 @@ func (r *Registry) Evict(sessionID string) error {
 	if !ok {
 		return nil
 	}
-	if e.pid > 0 {
-		if p, err := os.FindProcess(e.pid); err == nil {
+	// A host adopted before its sidecar landed has no pid on record. Reading it
+	// now is the last chance: RemoveHostFiles below deletes the sidecar, and
+	// without a pid the process is unreachable — no socket to find it by, no
+	// entry to list it from, running until the machine stops.
+	pid := e.pid
+	if pid == 0 {
+		if s, err := ReadSidecar(SidecarPath(r.heliosDir, sessionID)); err == nil {
+			pid = s.PID
+		}
+	}
+	if pid > 0 {
+		if p, err := os.FindProcess(pid); err == nil {
 			p.Signal(syscall.SIGTERM)
 		}
 	}
@@ -257,8 +267,8 @@ func (r *Registry) Evict(sessionID string) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if e.pid > 0 && Probe(e.socket) {
-		if p, err := os.FindProcess(e.pid); err == nil {
+	if pid > 0 && Probe(e.socket) {
+		if p, err := os.FindProcess(pid); err == nil {
 			p.Signal(syscall.SIGKILL)
 		}
 	}
@@ -359,6 +369,12 @@ func (r *Registry) evictForRoom(headroom int) {
 		})
 		victim := ""
 		for _, e := range candidates {
+			// Never a user's shell. An evicted agent comes back with
+			// `claude --resume`; an evicted shell is a lost scrollback and a
+			// job the user was running, with nothing to resume it from.
+			if IsShell(e.sessionID) {
+				continue
+			}
 			if !r.inUse(e.sessionID) {
 				victim = e.sessionID
 				break

@@ -40,7 +40,30 @@ func (s *PublicServer) handleSessionTerminal(w http.ResponseWriter, r *http.Requ
 		writeTerminalError(w, err)
 		return
 	}
+	s.relayToSocket(w, r, id, socket)
+}
 
+// streamTerminal is the same bridge addressed by terminal id, which is how a
+// session's shells are reached. There is no wake: a shell that has exited is
+// gone, and starting a new one in its place would be a different terminal
+// wearing its name.
+//
+// GET /api/terminals/{id}
+func (s *PublicServer) streamTerminal(w http.ResponseWriter, r *http.Request, id string) {
+	viewer, ok := s.shared.Backend.(backend.Viewer)
+	if !ok {
+		jsonError(w, fmt.Sprintf("backend %s cannot stream terminals", s.shared.Backend.Name()), http.StatusNotImplemented)
+		return
+	}
+	socket, live := viewer.Endpoint(id)
+	if !live || !s.shared.Backend.Alive(id) {
+		writeTerminalError(w, errTerminalCold)
+		return
+	}
+	s.relayToSocket(w, r, id, socket)
+}
+
+func (s *PublicServer) relayToSocket(w http.ResponseWriter, r *http.Request, id, socket string) {
 	// Dialled before the upgrade so a cold or wedged host is reported as an
 	// HTTP error the client can read, rather than an immediate WS close.
 	host, err := net.DialTimeout("unix", socket, wsDialTimeout)
