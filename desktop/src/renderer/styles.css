@@ -2764,3 +2764,50 @@ hr {
   justify-content: flex-end;
   gap: 8px;
 }
+
+.spinner.tiny {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+/* A placeholder shaped like the rows it stands in for, so the list does not
+   jump when they arrive. */
+.session-card.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: default;
+  pointer-events: none;
+}
+
+.skeleton-line {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--on-surface) 8%, transparent) 25%,
+    color-mix(in srgb, var(--on-surface) 16%, transparent) 37%,
+    color-mix(in srgb, var(--on-surface) 8%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+
+.skeleton-line.title {
+  width: 68%;
+}
+
+.skeleton-line.meta {
+  width: 40%;
+  height: 8px;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
