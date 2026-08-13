@@ -1,18 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
-import type { GrepMatch } from '../../shared/models.ts'
+import { RootSuggestions } from './root-picker.tsx'
+import type { GrepMatch, Worktree } from '../../shared/models.ts'
 
 interface Props {
   hostId: string
   root: string
   /** Bumped when ⌘⇧F is pressed again, to put the caret back in the field. */
   focusSeq: number
+  /** Offered when nothing matches: the text is often in another checkout. */
+  worktrees?: Worktree[]
   onOpen: (path: string, line: number, column: number) => void
+  onPickRoot?: (path: string) => void
 }
 
 /** ⌘⇧F: search file contents under the session's directory. */
-export function FindInFiles({ hostId, root, focusSeq, onOpen }: Props): JSX.Element {
+export function FindInFiles({
+  hostId,
+  root,
+  focusSeq,
+  worktrees = [],
+  onOpen,
+  onPickRoot,
+}: Props): JSX.Element {
   const [query, setQuery] = useState('')
   const [caseSensitive, setCaseSensitive] = useState(false)
   const [regex, setRegex] = useState(false)
@@ -29,24 +40,36 @@ export function FindInFiles({ hostId, root, focusSeq, onOpen }: Props): JSX.Elem
 
   // Content search is run on demand rather than per keystroke: it walks the
   // whole tree, and a half-typed word is rarely what was meant.
-  const run = async (): Promise<void> => {
-    if (!query) {
-      setMatches(null)
-      return
-    }
-    setSearching(true)
-    setError(null)
-    try {
-      const result = await api(hostId).grepFiles(root, query, { regex, caseSensitive, limit: 300 })
-      setMatches(result.matches)
-      setTruncated(result.truncated)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setMatches([])
-    } finally {
-      setSearching(false)
-    }
-  }
+  const run = useCallback(
+    async (where: string): Promise<void> => {
+      if (!query) {
+        setMatches(null)
+        return
+      }
+      setSearching(true)
+      setError(null)
+      try {
+        const result = await api(hostId).grepFiles(where, query, { regex, caseSensitive, limit: 300 })
+        setMatches(result.matches)
+        setTruncated(result.truncated)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+        setMatches([])
+      } finally {
+        setSearching(false)
+      }
+    },
+    [hostId, query, regex, caseSensitive],
+  )
+
+  // Taking a suggestion moves the root under a search that has already been
+  // typed, and the answer the user wanted is the same search run again there.
+  const searched = useRef(root)
+  useEffect(() => {
+    if (searched.current === root) return
+    searched.current = root
+    if (matches !== null) void run(root)
+  }, [root, matches, run])
 
   const groups = groupByFile(matches ?? [])
 
@@ -61,7 +84,7 @@ export function FindInFiles({ hostId, root, focusSeq, onOpen }: Props): JSX.Elem
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') void run()
+            if (event.key === 'Enter') void run(root)
           }}
         />
         <button
@@ -84,7 +107,10 @@ export function FindInFiles({ hostId, root, focusSeq, onOpen }: Props): JSX.Elem
         {searching && <p className="empty-note">Searching…</p>}
         {error && <p className="empty-note">{error}</p>}
         {!searching && !error && matches !== null && matches.length === 0 && (
-          <p className="empty-note">No results.</p>
+          <>
+            <p className="empty-note">No results under {root}.</p>
+            {onPickRoot && <RootSuggestions root={root} worktrees={worktrees} onPick={onPickRoot} />}
+          </>
         )}
         {!searching &&
           groups.map(([rel, hits]) => (

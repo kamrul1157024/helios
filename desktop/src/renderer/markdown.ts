@@ -199,6 +199,8 @@ export interface MarkdownBlock {
   /** 1-based and inclusive, so a block reads as `L12-18` of the file. */
   startLine: number
   endLine: number
+  /** Heading level, which is what a document folds along. */
+  depth?: number
 }
 
 /**
@@ -217,7 +219,12 @@ export function renderMarkdownBlocks(source: string): MarkdownBlock[] {
     // Blank lines between blocks belong to neither, and have nothing to render.
     if (token.type === 'space') continue
     const html = DOMPurify.sanitize(marked.parser([token], { async: false }), { ADD_ATTR: ['target'] })
-    blocks.push({ html, startLine, endLine: Math.max(startLine, startLine + newlines - 1) })
+    blocks.push({
+      html,
+      startLine,
+      endLine: Math.max(startLine, startLine + newlines - 1),
+      ...(token.type === 'heading' ? { depth: token.depth } : {}),
+    })
   }
   return blocks
 }

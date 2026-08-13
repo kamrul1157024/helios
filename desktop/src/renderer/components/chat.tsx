@@ -313,14 +313,31 @@ function FileChip({
   const name = label ?? path.split('/').filter(Boolean).pop() ?? path
   const isDir = !name.includes('.')
   return (
-    <button
-      className="file-chip"
-      title={`Open ${resolved}`}
-      onClick={() => store.openFile(hostId, resolved)}
-    >
-      <span className="file-chip-icon">{isDir ? '▸' : '⌸'}</span>
-      {name}
-    </button>
+    <span className="file-chip">
+      {/* Search, not open: the transcript's path is the checkout the agent ran
+          in, and the Files panel is often rooted somewhere else by then. */}
+      <button
+        className="file-chip-open"
+        title={`Find ${name} in the Files panel`}
+        onClick={() => store.findFile(hostId, resolved)}
+      >
+        <span className="file-chip-icon">{isDir ? '▸' : '⌕'}</span>
+        {name}
+      </button>
+      <button className="file-chip-act" title={`Open ${resolved}`} onClick={() => store.openFile(hostId, resolved)}>
+        ↗
+      </button>
+      <button
+        className="file-chip-act"
+        title="Copy path"
+        onClick={() => {
+          void navigator.clipboard.writeText(resolved)
+          store.notify('Copied path')
+        }}
+      >
+        ⧉
+      </button>
+    </span>
   )
 }
 

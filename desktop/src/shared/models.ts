@@ -239,6 +239,8 @@ export interface Worktree {
   is_main: boolean
   head?: string
   subject?: string
+  /** ISO-8601 date of the last commit — what "last touched" orders by. */
+  date?: string
   detached: boolean
   locked: boolean
   ahead: number
@@ -247,6 +249,36 @@ export interface Worktree {
   dirty: number
   /** What ahead and behind were measured against. */
   base?: string
+}
+
+/**
+ * Most recently committed first. Worktrees with no date — pruned, or past the
+ * detail cap the daemon enforces — keep their listing order at the end.
+ */
+export function byLastTouched(worktrees: Worktree[]): Worktree[] {
+  return worktrees
+    .map((worktree, index) => ({ worktree, index }))
+    .sort((a, b) => {
+      const da = Date.parse(a.worktree.date ?? '')
+      const db = Date.parse(b.worktree.date ?? '')
+      if (Number.isNaN(da) || Number.isNaN(db)) {
+        if (Number.isNaN(da) && Number.isNaN(db)) return a.index - b.index
+        return Number.isNaN(da) ? 1 : -1
+      }
+      return db - da || a.index - b.index
+    })
+    .map((entry) => entry.worktree)
+}
+
+/** Matches a worktree on branch, path or last commit subject. */
+export function matchesWorktree(worktree: Worktree, query: string): boolean {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  return (
+    worktree.branch.toLowerCase().includes(needle) ||
+    worktree.path.toLowerCase().includes(needle) ||
+    (worktree.subject ?? '').toLowerCase().includes(needle)
+  )
 }
 
 /** internal/server/githistory.go:35 */
