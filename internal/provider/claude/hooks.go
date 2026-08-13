@@ -75,6 +75,13 @@ func allowTool(w http.ResponseWriter) {
 	writePermResponse(w, resp)
 }
 
+// askUser leaves the decision to the CLI's own prompt.
+func askUser(w http.ResponseWriter) {
+	resp := newPermResponse()
+	resp.HookSpecificOutput.Decision.Behavior = "ask"
+	writePermResponse(w, resp)
+}
+
 func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
 	var input hookInput
 	if err := json.Unmarshal(raw, &input); err != nil {
@@ -84,12 +91,13 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 	// AskUserQuestion is not an approval, and it already has a surface: the
 	// PreToolUse hook raises claude.question for it. Raising a second,
-	// blocking notification here put two cards on the phone for one question —
-	// and because this hook blocks the tool, the CLI never rendered the
-	// question UI that answering the other card drives, so neither card could
-	// be answered correctly. Let the tool run; claude.question owns it.
+	// blocking notification here put two cards on the phone for one question.
+	// Stay silent instead — but with "ask", not "allow": for this tool the
+	// permission prompt is the question picker itself, so allowing it skips
+	// the picker and the tool returns an empty answer set. "ask" renders it,
+	// which is also the UI a phone answer drives.
 	if input.ToolName == askUserQuestionTool {
-		allowTool(w)
+		askUser(w)
 		return
 	}
 

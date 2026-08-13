@@ -1101,13 +1101,15 @@ func TestPermission_AskUserQuestionRaisesNoSecondApproval(t *testing.T) {
 			"claude.question is the only surface for a question", len(notifs))
 	}
 
-	// The tool has to be allowed through, or the question is never asked at all.
+	// "ask", not "allow": allow skips the interactive prompt, and for this tool
+	// that prompt is the question picker, so the tool returns no answers at all.
 	var resp permResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response %q: %v", w.Body.String(), err)
 	}
-	if got := resp.HookSpecificOutput.Decision.Behavior; got != "allow" {
-		t.Errorf("decision behavior = %q, want allow", got)
+	if got := resp.HookSpecificOutput.Decision.Behavior; got != "ask" {
+		t.Errorf("decision behavior = %q, want ask — allow would skip the picker "+
+			"and answer the question with nothing", got)
 	}
 	if got := resp.HookSpecificOutput.HookEventName; got != "PermissionRequest" {
 		t.Errorf("hookEventName = %q, want PermissionRequest", got)
