@@ -21,6 +21,14 @@ export interface Cursor {
   seq: number
 }
 
+/** Where the pointer was, and the lines it was pointing at. */
+export interface ContextTarget {
+  x: number
+  y: number
+  startLine: number
+  endLine: number
+}
+
 interface Props {
   /** The buffer's starting text. Mount one editor per file — key by path. */
   doc: string
@@ -29,6 +37,7 @@ interface Props {
   onChange: (text: string) => void
   onSave: () => void
   cursor?: Cursor | null
+  onContextMenu?: (target: ContextTarget) => void
 }
 
 /**
@@ -39,12 +48,20 @@ interface Props {
  * each character typed. The parent hears about edits through onChange and keeps
  * the draft in a ref.
  */
-export function CodeEditor({ doc, path, readOnly, onChange, onSave, cursor }: Props): JSX.Element {
+export function CodeEditor({
+  doc,
+  path,
+  readOnly,
+  onChange,
+  onSave,
+  cursor,
+  onContextMenu,
+}: Props): JSX.Element {
   const host = useRef<HTMLDivElement | null>(null)
   const view = useRef<EditorView | null>(null)
   // Held in refs so a new callback identity does not tear down the editor.
-  const handlers = useRef({ onChange, onSave })
-  handlers.current = { onChange, onSave }
+  const handlers = useRef({ onChange, onSave, onContextMenu })
+  handlers.current = { onChange, onSave, onContextMenu }
 
   useEffect(() => {
     if (!host.current) return
@@ -70,6 +87,27 @@ export function CodeEditor({ doc, path, readOnly, onChange, onSave, cursor }: Pr
         EditorView.editable.of(!readOnly),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) handlers.current.onChange(update.state.doc.toString())
+        }),
+        EditorView.domEventHandlers({
+          contextmenu: (event, editor) => {
+            const handle = handlers.current.onContextMenu
+            if (!handle) return false
+            const { main } = editor.state.selection
+            // Right-clicking outside the selection asks about the line under
+            // the pointer, which is what the click just pointed at.
+            const at = editor.posAtCoords({ x: event.clientX, y: event.clientY })
+            const inside = at !== null && at >= main.from && at <= main.to
+            const from = inside || at === null ? main.from : at
+            const to = inside || at === null ? main.to : at
+            event.preventDefault()
+            handle({
+              x: event.clientX,
+              y: event.clientY,
+              startLine: editor.state.doc.lineAt(from).number,
+              endLine: editor.state.doc.lineAt(to).number,
+            })
+            return true
+          },
         }),
       ],
     })

@@ -193,6 +193,35 @@ export function renderMarkdown(source: string): string {
   return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] })
 }
 
+/** A rendered top-level block and the source lines it came from. */
+export interface MarkdownBlock {
+  html: string
+  /** 1-based and inclusive, so a block reads as `L12-18` of the file. */
+  startLine: number
+  endLine: number
+}
+
+/**
+ * Markdown to HTML one top-level block at a time, each tagged with its source
+ * line range. Rendering per block is what lets the reader point at a paragraph
+ * and get the lines behind it; `raw` is the only line information marked keeps,
+ * so the ranges are counted from it as the tokens go past.
+ */
+export function renderMarkdownBlocks(source: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = []
+  let line = 1
+  for (const token of marked.lexer(source)) {
+    const startLine = line
+    const newlines = (token.raw.match(/\n/g) ?? []).length
+    line += newlines
+    // Blank lines between blocks belong to neither, and have nothing to render.
+    if (token.type === 'space') continue
+    const html = DOMPurify.sanitize(marked.parser([token], { async: false }), { ADD_ATTR: ['target'] })
+    blocks.push({ html, startLine, endLine: Math.max(startLine, startLine + newlines - 1) })
+  }
+  return blocks
+}
+
 /**
  * Paths mentioned in prose: `~/a/b`, `/a/b`, or a relative path with at least
  * three segments. Same expression as the mobile app, which errs towards missing

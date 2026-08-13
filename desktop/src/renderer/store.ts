@@ -47,6 +47,18 @@ export interface FileTarget {
   seq: number
 }
 
+/**
+ * Text on its way to a session's composer from a selection elsewhere in the
+ * app. Counted like FileTarget: sending the same lines twice has to arrive
+ * twice.
+ */
+export interface PromptDraft {
+  hostId: string
+  sessionId: string
+  text: string
+  seq: number
+}
+
 export interface State {
   hosts: HostRecord[]
   hostStatus: Record<string, HostStatus>
@@ -63,6 +75,7 @@ export interface State {
    */
   activeTab: string | null
   fileTarget: FileTarget | null
+  promptDraft: PromptDraft | null
   /** Sidebar filter, matched against title, project and cwd. */
   query: string
   showArchived: boolean
@@ -81,6 +94,7 @@ const initial: State = {
   panel: 'chat',
   activeTab: null,
   fileTarget: null,
+  promptDraft: null,
   query: '',
   showArchived: false,
   loading: true,
@@ -265,6 +279,19 @@ class Store {
    */
   clearFileTarget(): void {
     this.set({ fileTarget: null })
+  }
+
+  /** Puts text in the session's composer and shows it, without sending. */
+  appendPrompt(hostId: string, sessionId: string, text: string): void {
+    this.set((s) => ({
+      panel: 'chat',
+      promptDraft: { hostId, sessionId, text, seq: (s.promptDraft?.seq ?? 0) + 1 },
+    }))
+  }
+
+  /** Called by the composer once the text is in the box. */
+  clearPromptDraft(): void {
+    this.set({ promptDraft: null })
   }
 
   setQuery(query: string): void {
