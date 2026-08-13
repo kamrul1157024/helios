@@ -219,6 +219,20 @@ export interface GitDiff {
   stat: string
 }
 
+/**
+ * One live terminal host. A session's agent runs in the one whose id is the
+ * session id; shells the user opens beside it carry that id with an index
+ * appended, which is how the daemon tells them apart without a second table.
+ */
+export interface TerminalInfo {
+  id: string
+  parent: string
+  kind: 'agent' | 'shell'
+  socket: string
+  cwd: string
+  pid: number
+}
+
 export interface Worktree {
   path: string
   branch: string

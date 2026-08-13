@@ -19,6 +19,7 @@ import type {
   SSEEvent,
   Subagent,
   TabStatus,
+  TerminalInfo,
   TranscriptPage,
   Worktree,
   WriteResult,
@@ -57,6 +58,8 @@ interface RawBridge {
       cols: number
       rows: number
       wake?: boolean
+      /** Which of the session's terminals; absent means its agent. */
+      terminalId?: string
     }): Promise<void>
     input(tabId: string, data: Uint8Array): Promise<void>
     resize(tabId: string, cols: number, rows: number): Promise<void>
@@ -130,6 +133,15 @@ export class HostApi {
   }
   wake(id: string): Promise<{ success: boolean; terminal: string }> {
     return this.call('wake', id)
+  }
+  openShell(sessionId: string): Promise<TerminalInfo> {
+    return this.call('openShell', sessionId)
+  }
+  terminals(sessionId: string): Promise<TerminalInfo[]> {
+    return this.call('terminals', sessionId)
+  }
+  killTerminal(terminalId: string): Promise<unknown> {
+    return this.call('killTerminal', terminalId)
   }
   setPermissionMode(id: string, mode: string): Promise<unknown> {
     return this.call('setPermissionMode', id, mode)

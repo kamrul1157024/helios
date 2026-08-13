@@ -58,15 +58,21 @@ export function TerminalPanes({
   visible: boolean
 }): JSX.Element {
   const tabs = useStore((s) => s.tabs)
-  const current = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
+  const activeTab = useStore((s) => s.activeTab)
+  const agent = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
+  // The strip decides which of the session's terminals is in front; the
+  // agent's is the one a session starts with and the fallback for everything
+  // that does not name one.
+  const selected = activeTab ? tabs.find((t) => t.id === activeTab) : undefined
+  const current = selected?.sessionId === session?.session_id ? selected : agent
 
   useEffect(() => {
-    if (!visible || current || !hostId || !session) return
+    if (!visible || agent || !hostId || !session) return
     // Warm sessions attach as soon as the panel is shown: the host is already
     // running, so opening the tab is the whole of the request. A cold one waits
     // for the button below, because attaching would start an agent.
     if (hasTerminal(session)) void store.openTerminal(hostId, session, false)
-  }, [visible, current, hostId, session])
+  }, [visible, agent, hostId, session])
 
   return (
     <div className={visible ? 'panes' : 'panes hidden'}>

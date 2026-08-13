@@ -8,13 +8,25 @@ export interface Tab {
   id: string
   hostId: string
   sessionId: string
+  /** The daemon's terminal id: the session id for its agent, `id:shN` for a shell. */
+  termId: string
+  kind: 'agent' | 'shell'
   title: string
   status: TabStatus
 }
 
-/** One terminal per session, so the session it belongs to is its identity. */
-export function terminalId(hostId: string, sessionId: string): string {
-  return `${hostId}:${sessionId}`
+/**
+ * A tab's identity is the daemon terminal it shows. A session's agent uses the
+ * session id, so the key of an agent tab is what it always was.
+ */
+export function terminalId(hostId: string, termId: string): string {
+  return `${hostId}:${termId}`
+}
+
+/** `sess-1:sh2` reads as "sh 2", which is what the tab is called. */
+function shellLabel(termId: string): string {
+  const index = termId.slice(termId.lastIndexOf(':sh') + 3)
+  return index ? `sh ${index}` : 'shell'
 }
 
 export interface Selection {
@@ -44,6 +56,12 @@ export interface State {
   tabs: Tab[]
   selection: Selection | null
   panel: RightPanel
+  /**
+   * Which terminal the panel shows, as a tab id. A session has several once
+   * the user opens shells beside its agent, and the strip needs to know which
+   * one is in front.
+   */
+  activeTab: string | null
   fileTarget: FileTarget | null
   /** Sidebar filter, matched against title, project and cwd. */
   query: string
@@ -61,6 +79,7 @@ const initial: State = {
   tabs: [],
   selection: null,
   panel: 'chat',
+  activeTab: null,
   fileTarget: null,
   query: '',
   showArchived: false,
@@ -270,15 +289,17 @@ class Store {
   async openTerminal(hostId: string, session: Session, wake: boolean): Promise<void> {
     // The panel belongs to whichever session is selected, so showing one
     // session's terminal means selecting it.
-    this.set({ selection: { hostId, sessionId: session.session_id }, panel: 'terminal' })
-
     const id = terminalId(hostId, session.session_id)
+    this.set({ selection: { hostId, sessionId: session.session_id }, panel: 'terminal', activeTab: id })
+
     if (this.state.tabs.some((t) => t.id === id)) return
 
     const tab: Tab = {
       id,
       hostId,
       sessionId: session.session_id,
+      termId: session.session_id,
+      kind: 'agent',
       title: session.title ?? session.project ?? session.session_id.slice(0, 8),
       status: { state: 'connecting' },
     }
@@ -299,6 +320,98 @@ class Store {
       this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== tab.id) }))
       this.fail(err)
     }
+  }
+
+  /**
+   * Opens a login shell beside the session's agent. Not a session of its own:
+   * it runs no agent and appears nowhere but this session's terminal strip.
+   */
+  async openShell(hostId: string, sessionId: string): Promise<void> {
+    this.set({ selection: { hostId, sessionId }, panel: 'terminal' })
+    try {
+      const info = await api(hostId).openShell(sessionId)
+      await this.attachTerminal(hostId, sessionId, info.id, shellLabel(info.id))
+      this.set({ activeTab: terminalId(hostId, info.id) })
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Re-lists a session's shells and attaches to any this client is not showing.
+   * The processes outlive the app, so without this a restart leaves them
+   * running and invisible.
+   */
+  async syncShells(hostId: string, sessionId: string): Promise<void> {
+    let terminals
+    try {
+      terminals = await api(hostId).terminals(sessionId)
+    } catch {
+      // An older daemon has no such endpoint, and a session with no shells is
+      // the overwhelmingly common case. Neither is worth an error.
+      return
+    }
+    for (const info of terminals) {
+      if (info.kind !== 'shell') continue
+      if (this.state.tabs.some((t) => t.id === terminalId(hostId, info.id))) continue
+      await this.attachTerminal(hostId, sessionId, info.id, shellLabel(info.id))
+    }
+  }
+
+  private async attachTerminal(
+    hostId: string,
+    sessionId: string,
+    termId: string,
+    title: string,
+  ): Promise<void> {
+    const id = terminalId(hostId, termId)
+    if (this.state.tabs.some((t) => t.id === id)) return
+
+    const tab: Tab = { id, hostId, sessionId, termId, kind: 'shell', title, status: { state: 'connecting' } }
+    this.set((s) => ({ tabs: [...s.tabs, tab] }))
+    try {
+      await bridge.term.open({ tabId: id, hostId, sessionId, cols: 80, rows: 24, terminalId: termId })
+    } catch (err) {
+      this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== id) }))
+      throw err
+    }
+  }
+
+  /** Closes a shell for good: the process is killed, not just detached. */
+  async killShell(tabId: string): Promise<void> {
+    const tab = this.state.tabs.find((t) => t.id === tabId)
+    if (!tab || tab.kind !== 'shell') return
+    this.closeTab(tabId)
+    try {
+      await api(tab.hostId).killTerminal(tab.termId)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Drops the connection and dials again. The host keeps running and replays
+   * its scrollback, which is what makes this safe for an agent's terminal:
+   * nothing about the session changes.
+   */
+  async reconnectTab(tabId: string): Promise<void> {
+    const tab = this.state.tabs.find((t) => t.id === tabId)
+    if (!tab) return
+    this.closeTab(tabId)
+    if (tab.kind === 'shell') {
+      await this.attachTerminal(tab.hostId, tab.sessionId, tab.termId, tab.title).catch((err: unknown) =>
+        this.fail(err),
+      )
+      return
+    }
+    const session = this.state.sessions[tab.hostId]?.find((s) => s.session_id === tab.sessionId)
+    if (session) await this.openTerminal(tab.hostId, session, false)
+  }
+
+  renameTab(tabId: string, title: string): void {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    this.set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, title: trimmed } : t)) }))
   }
 
   /**
@@ -326,14 +439,22 @@ class Store {
    * not start an agent process — and the panel offers the wake instead.
    */
   showTerminal(hostId: string, session: Session): void {
-    this.set({ panel: 'terminal' })
+    this.set({ panel: 'terminal', activeTab: terminalId(hostId, session.session_id) })
     if (this.state.tabs.some((t) => t.id === terminalId(hostId, session.session_id))) return
     if (hasTerminal(session)) void this.openTerminal(hostId, session, false)
   }
 
   closeTab(tabId: string): void {
     void bridge.term.close(tabId)
-    this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== tabId) }))
+    this.set((s) => ({
+      tabs: s.tabs.filter((t) => t.id !== tabId),
+      activeTab: s.activeTab === tabId ? null : s.activeTab,
+    }))
+  }
+
+  /** Brings one of a session's terminals to the front. */
+  selectTab(tabId: string): void {
+    this.set({ panel: 'terminal', activeTab: tabId })
   }
 
   // ─── Feedback ──────────────────────────────────────────────────────────
