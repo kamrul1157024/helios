@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"os/exec"
 	"slices"
 	"testing"
 	"time"
@@ -112,6 +113,45 @@ func TestKillShellsLeavesTheAgent(t *testing.T) {
 	}
 	if warm[ShellID("sess-1", 1)] || warm[ShellID("sess-1", 2)] {
 		t.Errorf("warm = %v, want no shells", warm)
+	}
+}
+
+// A host adopted before its sidecar landed has pid 0 on record. Evict has to
+// go back to the sidecar for it, because it is about to delete that file:
+// without the pid the process survives with no socket to reach it by and no
+// entry to list it from, which is how closing a shell tab leaves a shell
+// running until the machine stops.
+func TestEvictFindsThePidInTheSidecar(t *testing.T) {
+	e := newRegistryEnv(t)
+	id := ShellID("sess-1", 1)
+	e.add(id, 0)
+
+	// A sleeping process stands in for the host, so the test can tell whether
+	// Evict actually found a pid to signal.
+	victim := exec.Command("sleep", "30")
+	if err := victim.Start(); err != nil {
+		t.Fatalf("start victim: %v", err)
+	}
+	t.Cleanup(func() { victim.Process.Kill() })
+
+	sidecar := Sidecar{SessionID: id, PID: victim.Process.Pid, Socket: SocketPath(e.dir, id)}
+	if err := WriteSidecar(e.dir, sidecar); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	e.reg.mu.Lock()
+	e.reg.entries[id].pid = 0 // what adopting before the sidecar leaves behind
+	e.reg.mu.Unlock()
+
+	if err := e.reg.Evict(id); err != nil {
+		t.Fatalf("evict: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- victim.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("the process outlived its eviction: Evict never found its pid")
 	}
 }
 

@@ -14,6 +14,23 @@ import (
 // bound its socket by then is not coming up.
 const hostStartTimeout = 15 * time.Second
 
+// sidecarTimeout covers the gap between a host binding its socket and writing
+// the file that names its pid. Short: the two happen in consecutive statements.
+const sidecarTimeout = 2 * time.Second
+
+// waitForSidecar blocks until a host's sidecar names a pid, or the timeout
+// passes. A miss is not fatal — Evict re-reads the sidecar before giving up —
+// so the caller has nothing to decide on the result.
+func waitForSidecar(heliosDir, id string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if s, err := ReadSidecar(SidecarPath(heliosDir, id)); err == nil && s.PID > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // shellMarker separates a session from the shell it owns. A terminal id is
 // either a session id, naming that session's agent, or a session id followed
 // by this and an index, naming one of the shells the user opened beside it.
@@ -100,6 +117,11 @@ func (r *Registry) StartShell(parent, cwd string) (Terminal, error) {
 	if !WaitForSocket(sock, hostStartTimeout) {
 		return Terminal{}, fmt.Errorf("shell for %s did not come up", parent)
 	}
+	// The host binds its socket before it writes its sidecar, and the sidecar
+	// is the only record of its pid. Adopting in that gap stores pid 0, and a
+	// host with no pid is one that closing the tab cannot kill: the shell runs
+	// on with no socket to reach it by and no entry to list it from.
+	waitForSidecar(r.heliosDir, id, sidecarTimeout)
 	r.adopt(id, sock, cwd)
 
 	return Terminal{ID: id, Parent: parent, Kind: "shell", Socket: sock, Cwd: cwd, PID: r.pidOf(id)}, nil
