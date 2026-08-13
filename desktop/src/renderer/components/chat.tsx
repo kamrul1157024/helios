@@ -10,7 +10,7 @@ import {
   renderMarkdown,
   resolveFilePath,
 } from '../markdown.ts'
-import { store } from '../store.ts'
+import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
   canResume,
@@ -41,7 +41,9 @@ export function ChatPanel({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const scroller = useRef<HTMLDivElement | null>(null)
+  const composer = useRef<HTMLTextAreaElement | null>(null)
   const pinnedToBottom = useRef(true)
+  const promptDraft = useStore((s) => s.promptDraft)
 
   const status = session.status
   const busy = BUSY_STATUSES.has(status)
@@ -73,6 +75,18 @@ export function ChatPanel({
     // Reloads as the agent works: last_event_at moves on every hook, and the
     // transcript is a file the daemon re-reads rather than a stream.
   }, [hostId, session.session_id, session.last_event_at, status, active])
+
+  // Lines picked in the Files panel arrive here rather than being sent: what to
+  // ask about them is still to be typed.
+  useEffect(() => {
+    if (!promptDraft || promptDraft.hostId !== hostId || promptDraft.sessionId !== session.session_id) {
+      return
+    }
+    setDraft((current) => (current ? `${current}\n${promptDraft.text}` : promptDraft.text))
+    store.clearPromptDraft()
+    composer.current?.focus()
+    // seq, not text: sending the same lines twice has to append twice.
+  }, [promptDraft?.seq])
 
   useEffect(() => {
     if (pinnedToBottom.current && scroller.current) {
@@ -172,6 +186,7 @@ export function ChatPanel({
         <div className="composer">
           <div className="composer-input">
             <textarea
+              ref={composer}
               value={draft}
               rows={3}
               placeholder={

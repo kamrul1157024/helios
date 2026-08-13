@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
 import { store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
@@ -224,7 +224,12 @@ export function Detail(): JSX.Element {
                   />
                 )}
                 {name === 'files' && (
-                  <FilesPanel hostId={hostId} cwd={session.cwd} visible={name === panel} />
+                  <FilesPanel
+                    hostId={hostId}
+                    sessionId={session.session_id}
+                    cwd={session.cwd}
+                    visible={name === panel}
+                  />
                 )}
               </PanelBoundary>
             </div>
@@ -301,10 +306,31 @@ function ShellTab({ tab, active }: { tab: Tab; active: boolean }): JSX.Element {
 function SessionHeader({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(session.title ?? '')
+  const overflow = useRef<HTMLDetailsElement | null>(null)
   const live = hasTerminal(session)
   const busy = BUSY_STATUSES.has(session.status)
   const terminated = canResume(session)
   const cold = needsRecovery(session)
+
+  // <details> only closes on its own summary, so a menu left open stays open
+  // over whatever the user clicks next.
+  useEffect(() => {
+    const close = (event: Event): void => {
+      const element = overflow.current
+      if (!element?.open) return
+      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
+      if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
+      element.open = false
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [])
 
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
@@ -380,9 +406,14 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
 
         {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
 
-        <details className="menu">
+        <details className="menu" ref={overflow}>
           <summary>⋯</summary>
-          <div className="menu-body">
+          <div
+            className="menu-body"
+            onClick={() => {
+              if (overflow.current) overflow.current.open = false
+            }}
+          >
             <button onClick={() => void run(() => api(hostId).generateTitle(session.session_id))}>
               Regenerate title
             </button>

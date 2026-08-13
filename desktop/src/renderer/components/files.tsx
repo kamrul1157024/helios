@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
-import { isMarkdownPath, renderMarkdown } from '../markdown.ts'
+import { isMarkdownPath, languageForPath, renderMarkdownBlocks } from '../markdown.ts'
 import { store, useStore } from '../store.ts'
 import { CodeEditor, type Cursor } from './editor.tsx'
 import { FileTree } from './file-tree.tsx'
@@ -36,10 +36,12 @@ interface OpenFile {
  */
 export function FilesPanel({
   hostId,
+  sessionId,
   cwd,
   visible = true,
 }: {
   hostId: string
+  sessionId: string
   cwd: string
   /** False while another tab is showing. */
   visible?: boolean
@@ -294,6 +296,8 @@ export function FilesPanel({
           <FileView
             file={active}
             root={root}
+            hostId={hostId}
+            sessionId={sessionId}
             text={drafts.current[active.path] ?? active.saved}
             onChange={(text) => edited(active.path, text)}
             onSave={() => void save(active.path)}
@@ -324,6 +328,8 @@ export function FilesPanel({
 function FileView({
   file,
   root,
+  hostId,
+  sessionId,
   text,
   onChange,
   onSave,
@@ -332,6 +338,8 @@ function FileView({
 }: {
   file: OpenFile
   root: string
+  hostId: string
+  sessionId: string
   text: string
   onChange: (text: string) => void
   onSave: () => void
@@ -340,7 +348,25 @@ function FileView({
 }): JSX.Element {
   const markdown = isMarkdownPath(file.path)
   const rendered = markdown && file.mode === 'preview'
-  const html = useMemo(() => (rendered ? renderMarkdown(text) : null), [rendered, text])
+  const blocks = useMemo(() => (rendered ? renderMarkdownBlocks(text) : null), [rendered, text])
+  const [picked, setPicked] = useState<LineRange | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; range: LineRange } | null>(null)
+
+  // A selection is a range of the file that was open when it was made.
+  useEffect(() => {
+    setPicked(null)
+    setMenu(null)
+  }, [file.path, rendered])
+
+  const act = (action: 'copy' | 'prompt', range: LineRange): void => {
+    const lines = text.split('\n').slice(range.start - 1, range.end)
+    if (action === 'copy') {
+      void navigator.clipboard.writeText(lines.join('\n'))
+      store.notify(`Copied ${label(range)}`)
+      return
+    }
+    store.appendPrompt(hostId, sessionId, promptFor(file.path, range, lines))
+  }
 
   return (
     <div className="ws-editor">
@@ -377,8 +403,40 @@ function FileView({
 
       {file.binary ? (
         <p className="empty-note">Binary file — not shown.</p>
-      ) : html !== null ? (
-        <div className="md preview-md" dangerouslySetInnerHTML={{ __html: html }} />
+      ) : blocks !== null ? (
+        <div className="md preview-md">
+          {blocks.map((block) => {
+            const range = { start: block.startLine, end: block.endLine }
+            const on = picked !== null && block.startLine <= picked.end && block.endLine >= picked.start
+            return (
+              <div
+                key={block.startLine}
+                className={on ? 'md-block on' : 'md-block'}
+                title={`${label(range)} — click to select, right-click for actions`}
+                dangerouslySetInnerHTML={{ __html: block.html }}
+                onClick={(event) =>
+                  setPicked((current) =>
+                    // Shift builds a range out of two clicks, the way a line
+                    // gutter does; a plain click starts again from one block.
+                    event.shiftKey && current
+                      ? { start: Math.min(current.start, range.start), end: Math.max(current.end, range.end) }
+                      : current && current.start === range.start && current.end === range.end
+                        ? null
+                        : range,
+                  )
+                }
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  const covered =
+                    picked !== null && block.startLine >= picked.start && block.endLine <= picked.end
+                  const target = covered ? picked : range
+                  setPicked(target)
+                  setMenu({ x: event.clientX, y: event.clientY, range: target })
+                }}
+              />
+            )
+          })}
+        </div>
       ) : file.readOnly ? (
         <pre className="ws-plain">{text}</pre>
       ) : (
@@ -389,8 +447,80 @@ function FileView({
           onChange={onChange}
           onSave={onSave}
           cursor={file.cursor}
+          onContextMenu={(at) => setMenu({ x: at.x, y: at.y, range: { start: at.startLine, end: at.endLine } })}
         />
       )}
+
+      {menu && (
+        <LineMenu
+          x={menu.x}
+          y={menu.y}
+          range={menu.range}
+          onClose={() => setMenu(null)}
+          onAct={(action) => act(action, menu.range)}
+        />
+      )}
+    </div>
+  )
+}
+
+/** A range of file lines, 1-based and inclusive. */
+interface LineRange {
+  start: number
+  end: number
+}
+
+function label(range: LineRange): string {
+  return range.start === range.end ? `L${range.start}` : `L${range.start}-${range.end}`
+}
+
+/**
+ * Past this the lines go to the agent as a reference instead of a quote: it can
+ * read the file itself, and a prompt is a worse place to put it than the disk.
+ */
+const INLINE_LINE_LIMIT = 40
+
+function promptFor(path: string, range: LineRange, lines: string[]): string {
+  const header = `\`${path}\` ${label(range)}`
+  if (lines.length > INLINE_LINE_LIMIT) return `${header}\n`
+  return `${header}:\n\`\`\`${languageForPath(path) ?? ''}\n${lines.join('\n')}\n\`\`\`\n`
+}
+
+function LineMenu({
+  x,
+  y,
+  range,
+  onClose,
+  onAct,
+}: {
+  x: number
+  y: number
+  range: LineRange
+  onClose: () => void
+  onAct: (action: 'copy' | 'prompt') => void
+}): JSX.Element {
+  useEffect(() => {
+    const dismiss = (event: Event): void => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return
+      onClose()
+    }
+    window.addEventListener('mousedown', dismiss)
+    window.addEventListener('keydown', dismiss)
+    return () => {
+      window.removeEventListener('mousedown', dismiss)
+      window.removeEventListener('keydown', dismiss)
+    }
+  }, [onClose])
+
+  const run = (action: 'copy' | 'prompt'): void => {
+    onAct(action)
+    onClose()
+  }
+
+  return (
+    <div className="line-menu" style={{ left: x, top: y }}>
+      <button onClick={() => run('copy')}>Copy {label(range)}</button>
+      <button onClick={() => run('prompt')}>Send {label(range)} as prompt</button>
     </div>
   )
 }
