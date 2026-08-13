@@ -2354,6 +2354,13 @@ small {
   background: color-mix(in srgb, var(--on-surface) 12%, transparent);
 }
 
+/* ⟳ draws smaller than the power glyph beside it at the same point size. */
+.tab-close.reload {
+  width: 26px;
+  height: 26px;
+  font-size: 22px;
+}
+
 .panes {
   flex: 1;
   position: relative;

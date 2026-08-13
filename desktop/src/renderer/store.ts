@@ -76,6 +76,12 @@ export interface State {
    * one is in front.
    */
   activeTab: string | null
+  /**
+   * Terminals the user disconnected on purpose, by tab id. Without this the
+   * panel would attach again the moment it is shown, and a disconnect would
+   * last exactly as long as the user stayed on another tab.
+   */
+  detached: string[]
   fileTarget: FileTarget | null
   promptDraft: PromptDraft | null
   /** Sidebar filter, matched against title, project and cwd. */
@@ -95,6 +101,7 @@ const initial: State = {
   selection: null,
   panel: 'chat',
   activeTab: null,
+  detached: [],
   fileTarget: null,
   promptDraft: null,
   query: '',
@@ -331,7 +338,12 @@ class Store {
     // The panel belongs to whichever session is selected, so showing one
     // session's terminal means selecting it.
     const id = terminalId(hostId, session.session_id)
-    this.set({ selection: { hostId, sessionId: session.session_id }, panel: 'terminal', activeTab: id })
+    this.set((s) => ({
+      selection: { hostId, sessionId: session.session_id },
+      panel: 'terminal',
+      activeTab: id,
+      detached: s.detached.filter((tabId) => tabId !== id),
+    }))
 
     if (this.state.tabs.some((t) => t.id === id)) return
 
@@ -413,7 +425,10 @@ class Store {
     if (this.state.tabs.some((t) => t.id === id)) return
 
     const tab: Tab = { id, hostId, sessionId, termId, kind: 'shell', title, status: { state: 'connecting' } }
-    this.set((s) => ({ tabs: [...s.tabs, tab] }))
+    this.set((s) => ({
+      tabs: [...s.tabs, tab],
+      detached: s.detached.filter((tabId) => tabId !== id),
+    }))
     try {
       // Abstain until the pane has measured itself; see openTerminal above.
       await bridge.term.open({ tabId: id, hostId, sessionId, cols: 0, rows: 0, terminalId: termId })
@@ -433,6 +448,17 @@ class Store {
     } catch (err) {
       this.fail(err)
     }
+  }
+
+  /**
+   * Lets go of the terminal without touching what is running in it. The host
+   * keeps the PTY and its scrollback, so attaching again picks the session up
+   * where it was — this frees the viewer, not the agent.
+   */
+  disconnectTab(tabId: string): void {
+    if (!this.state.tabs.some((t) => t.id === tabId)) return
+    this.closeTab(tabId)
+    this.set((s) => ({ detached: s.detached.includes(tabId) ? s.detached : [...s.detached, tabId] }))
   }
 
   /**
@@ -485,8 +511,12 @@ class Store {
    * not start an agent process — and the panel offers the wake instead.
    */
   showTerminal(hostId: string, session: Session): void {
-    this.set({ panel: 'terminal', activeTab: terminalId(hostId, session.session_id) })
-    if (this.state.tabs.some((t) => t.id === terminalId(hostId, session.session_id))) return
+    const id = terminalId(hostId, session.session_id)
+    this.set({ panel: 'terminal', activeTab: id })
+    if (this.state.tabs.some((t) => t.id === id)) return
+    // Looking at a terminal that was disconnected on purpose is not a request
+    // to attach again: the panel offers the button for that.
+    if (this.state.detached.includes(id)) return
     if (hasTerminal(session)) void this.openTerminal(hostId, session, false)
   }
 
