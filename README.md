@@ -1,6 +1,25 @@
 # helios
 
-**A platform that orchestrates AI coding agents on your machine.**
+**A head for headless coding harnesses.**
+
+Claude Code, Codex and Aider are headless harnesses: they run in a terminal, on
+your machine, with no UI of their own beyond the one terminal you started them
+in. Helios is the head on top of them. It runs each harness in a terminal host
+it owns, keeps the output in memory, and serves it to three surfaces:
+
+- **Desktop app** — sidebar of every session on every machine, live terminal,
+  chat transcript, git diffs, approvals, file tree
+- **Mobile app** — the same sessions in your pocket, notified and approvable
+  the moment a harness blocks on a permission
+- **Tunnel** — nine providers, one keypress, so the phone reaches the daemon
+  from anywhere without you configuring a network
+
+The harness stays headless and stays local. Helios is the part you look at.
+
+Claude Code is the harness wired up today, through its native hooks. Attaching
+any other harness is a plugin: the provider registry in `internal/provider` is
+the seam, and going forward every harness — Codex, Aider, Gemini CLI, your own
+— plugs in there rather than being special-cased in the daemon.
 
 ## Install
 
@@ -37,7 +56,7 @@ The full walkthrough, with screenshots of each step, is in the
 
 You run 5 Claude sessions across 3 projects. One needs permission to run a test. Another finished refactoring and is waiting for your next instruction. A third hit a rate limit 20 minutes ago. You don't know any of this because you're in a different terminal tab.
 
-Helios fixes this. It's a daemon that sits between you and your AI coding tools. It runs each session in a terminal of its own, watches for events via hooks, and notifies you the moment any session needs attention — on your desktop, your phone, your browser, wherever you are. It also narrates what your agents are doing in real time via voice reporting, so you can stay informed hands-free without watching the screen.
+Helios fixes this. It's a daemon that sits between you and your coding harness. It runs each session in a terminal of its own, watches for events via hooks, and notifies you the moment any session needs attention — in the TUI, on the desktop app, on your phone, wherever you are. It also narrates what your agents are doing in real time via voice reporting, so you can stay informed hands-free without watching the screen.
 
 **The killer feature:** Full session management and notifications from your phone — see all sessions across multiple machines, approve or deny permissions, send follow-up messages, create new tasks, and get push notifications the moment any session needs attention. No terminal required.
 
@@ -443,13 +462,15 @@ repository, with a diff for whichever file you pick. **Approvals** and
 
 ## What is this?
 
-Helios is a **platform**, not a tool. It orchestrates AI coding agents on your local machine without requiring a remote environment. Everything runs on your hardware. Everything except the AI itself is free.
+Helios is the **head** for headless agent harnesses. The agents keep running on
+your hardware in terminals; Helios owns those terminals and puts a UI in front
+of them. Everything except the AI itself is free.
 
-- **Daemon** — a background process that manages terminal-hosted sessions, handles AI hooks, serves an HTTP API with SSE for real-time events, and routes notifications to channels
-- **Clients** — TUI, browser, CLI, Telegram, Slack — all stateless, all interchangeable, all talking to the same daemon over HTTP. Use one, use all, use none
-- **Providers** — Claude Code is the first-class provider with native hook integration. But any AI tool that runs in a terminal (Aider, Codex, Gemini CLI) can be a provider plugin
-- **Channels** — notification delivery plugins. ntfy for instant mobile push. Telegram for approve/deny from chat. Slack for team visibility. Or build your own
-- **Desktop notifications** — native OS alerts (macOS via `terminal-notifier`, Linux via `notify-send`) with click-to-session support, sound control, and per-type alert settings
+- **Daemon** — a background process that manages terminal-hosted sessions, handles AI hooks, serves an HTTP API with SSE for real-time events, and routes notifications
+- **Clients** — desktop app, mobile app, TUI and CLI, all stateless, all interchangeable, all talking to the same daemon over HTTP. Use one, use all, use none
+- **Harness plugins** — Claude Code is the implemented provider, with native hook integration. Any other terminal-run harness attaches through the same registry (`internal/provider`): hooks, actions, commands, models and capabilities are all registered, not hard-coded
+- **Tunnel** — nine providers behind one picker: Tailscale Serve and Funnel, Cloudflare, zrok, ngrok, localtunnel, localhost.run, localxpose, plus plain LAN and a custom URL
+- **Notifications** — native OS alerts from the TUI (macOS via `terminal-notifier`, Linux via `notify-send`) with click-to-session support, and on-device notifications on the phone driven off the SSE stream — no push service, no third-party relay
 - **Voice reporting** — Helios narrates what your agents are doing in real time: tool calls, permission requests, completions, and errors — spoken aloud so you can stay informed without watching the screen. Narration is AI-generated on the backend and streamed to your phone via SSE. You control what you hear and how you hear it: choose any system TTS voice, set speech rate and pitch, and pick a persona that styles the narration (Default, Butler, Casual, GenZ, or Sarcastic). This is session activity reporting — not AI responses read back to you
 
 ## Why?
@@ -520,7 +541,11 @@ graph TB
 
 ## Status
 
-**Spec phase** — see `docs/specs/` for design documents.
+Shipping — latest tag is `v1.5.5`, with binaries, DMGs, AppImage, `.deb` and
+APK attached to each
+[release](https://github.com/kamrul1157024/helios/releases/latest). Design
+documents live in `docs/specs/`; they lead the code, so read them for intent
+rather than as a description of what is merged.
 
 ## Spec Documents
 
@@ -547,39 +572,53 @@ graph TB
 | [19-flow-diagrams.md](docs/specs/19-flow-diagrams.md) | 13 detailed flow diagrams for all major operations |
 | [20-remote-access-and-auth.md](docs/specs/20-remote-access-and-auth.md) | Remote access, JWT auth, QR setup, web frontend |
 | [21-channel-protocol.md](docs/specs/21-channel-protocol.md) | Channel HTTP protocol, registration, proxy routing, SQLite state |
+| [22-session-management-and-remote-control.md](docs/specs/22-session-management-and-remote-control.md) | Remote session lifecycle and control surface |
+| [22-setup-and-security.md](docs/specs/22-setup-and-security.md) | Setup flow and the security model behind pairing |
+| [23-rich-approval-hitl.md](docs/specs/23-rich-approval-hitl.md) | Rich human-in-the-loop approval cards |
+| [24-session-management-tmux.md](docs/specs/24-session-management-tmux.md) | Superseded by spec 29 |
+| [25-device-generated-keys.md](docs/specs/25-device-generated-keys.md) | Device-side Ed25519 keygen, no key ever leaves the phone |
+| [26-session-status-fixes.md](docs/specs/26-session-status-fixes.md) | Session status derivation fixes |
+| [27-bearer-auth-remove-cookies.md](docs/specs/27-bearer-auth-remove-cookies.md) | Bearer-token auth, cookies dropped |
+| [28-managed-session-recovery.md](docs/specs/28-managed-session-recovery.md) | Managed sessions and auto-recovery after a crash |
+| [29-terminal-host-replacing-tmux.md](docs/specs/29-terminal-host-replacing-tmux.md) | `helios ptyhost` replacing tmux as the session backend |
+| [30-tailscale-transport.md](docs/specs/30-tailscale-transport.md) | Tailscale Serve/Funnel as the recommended transport |
+| [31-desktop-app.md](docs/specs/31-desktop-app.md) | Electron desktop client: sidebar, tabs, multi-host |
+| [32-mobile-notification-lifecycle.md](docs/specs/32-mobile-notification-lifecycle.md) | Notification lifecycle on the phone |
+| [33-session-error-retry.md](docs/specs/33-session-error-retry.md) | Error states and retry behaviour |
+| [34-askuserquestion-dual-answer.md](docs/specs/34-askuserquestion-dual-answer.md) | Handling `AskUserQuestion` from two surfaces at once |
+| [35-git-history-and-worktrees.md](docs/specs/35-git-history-and-worktrees.md) | Git history, worktrees and branch review |
 
-## Quick Start (planned)
+Topic specs, not numbered: [multi-host](docs/specs/multi-host-spec.md),
+[voice mode](docs/specs/voice-mode.md), [AI narration](docs/specs/ai-narration.md),
+[reporter](docs/specs/reporter.md),
+[desktop notifications](docs/specs/desktop-notification-service.md),
+[alert settings](docs/specs/notification-alert-settings.md),
+[session search](docs/specs/session-search-and-group-by-directory.md),
+[tunnel decoupling](docs/specs/spec-tunnel-decoupling.md) and one spec per
+tunnel provider.
+
+## CLI
 
 ```bash
-# Install
-go install github.com/kamrul1157024/helios@latest
-
-# Start daemon
-helios daemon start -d
-
-# Create a session
-helios new "refactor auth"
-
-# List sessions
-helios ls
-
-# Open browser — see all sessions, approve permissions, send messages
-open http://localhost:7654
-
-# Or use CLI
-helios send 3 "add unit tests"
-helios suspend 1
-helios resume 1
+helios start                    # TUI: status, tunnel picker, pairing QR codes
+helios new "refactor auth"      # create a session
+helios sessions                 # list sessions
+helios attach a3f1c2e8          # attach to a session's terminal
+helios devices                  # list / approve / revoke paired devices
+helios tunnel                   # start, stop or inspect the tunnel
+helios logs                     # tail the daemon log
+helios stop                     # stop the daemon
 ```
 
 ## Tech Stack
 
-- **Daemon**: Go
-- **Mobile/Desktop**: Flutter
+- **Daemon / CLI / TUI**: Go
+- **Mobile**: Flutter (Android, iOS)
+- **Desktop**: Electron + TypeScript, packaged with electron-builder (DMG, AppImage, deb)
 - **Session backend**: Helios terminal hosts (`helios ptyhost`)
 - **Real-time**: SSE
 - **Auth**: Asymmetric JWT (Ed25519), QR code device pairing
-- **AI integration**: Claude Code hooks (native), pane scraping (others)
+- **Harness integration**: Claude Code hooks (native); other harnesses via the provider plugin registry
 - **Desktop notifications**: `terminal-notifier` (macOS), `notify-send` (Linux)
 - **Voice reporting**: AI-generated narration streamed from backend (SSE), Flutter TTS with configurable voice, rate, pitch, and persona
 - **Everything runs locally. No cloud. No subscriptions. No accounts.**
@@ -587,8 +626,9 @@ helios resume 1
 ## Requirements
 
 - Go 1.26+ (the version in go.mod)
-- At least one AI CLI tool (claude, aider, codex, etc.)
-- Flutter 3.32+ (only if building the mobile/desktop app from source)
+- A headless coding harness — Claude Code today
+- Node 20+ (only to build the desktop app from source)
+- Flutter 3.32+ (only to build the mobile app from source)
 
 ## License
 
