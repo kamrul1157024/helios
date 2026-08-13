@@ -143,13 +143,32 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
 
               {/* Skeletons rather than a spinner: the list is about to be a
                   list, and showing its shape keeps the sidebar from resizing
-                  under the cursor when the rows arrive. */}
+                  under the cursor when the rows arrive.
+
+                  Built from the card's own elements rather than a stack of
+                  bars, so it is the height of a session card by construction
+                  and stays that way when the card changes. */}
               {!isCollapsed &&
                 loading &&
                 [0, 1, 2].map((index) => (
                   <div key={index} className="session-card skeleton" aria-hidden="true">
-                    <span className="skeleton-line title" />
-                    <span className="skeleton-line meta" />
+                    <div className="card-inner">
+                      <div className="card-top">
+                        <span className="skeleton-line chip" />
+                        <span className="grow" />
+                        <span className="skeleton-line time" />
+                      </div>
+                      <div className="card-title">
+                        <span className="skeleton-line" />
+                      </div>
+                      <div className="card-cwd">
+                        <span className="skeleton-line cwd" />
+                      </div>
+                      <div className="card-bottom">
+                        <span className="skeleton-line meta" />
+                        <span className="skeleton-line btn" />
+                      </div>
+                    </div>
                   </div>
                 ))}
 

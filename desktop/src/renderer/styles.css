@@ -2772,17 +2772,21 @@ hr {
 }
 
 /* A placeholder shaped like the rows it stands in for, so the list does not
-   jump when they arrive. */
+   jump when they arrive. Its height comes from the card's own elements —
+   card-top, card-title, card-cwd, card-bottom — and follows them if they
+   change; only the bars inside are drawn here. */
 .session-card.skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   cursor: default;
   pointer-events: none;
 }
 
+.session-card.skeleton::before {
+  opacity: 0.15;
+}
+
 .skeleton-line {
-  height: 10px;
+  display: block;
+  height: 1em;
   border-radius: 999px;
   background: linear-gradient(
     90deg,
@@ -2794,13 +2798,34 @@ hr {
   animation: shimmer 1.4s ease infinite;
 }
 
-.skeleton-line.title {
-  width: 68%;
+.card-title .skeleton-line {
+  width: 72%;
+  height: 1.35em;
+}
+
+.skeleton-line.chip {
+  width: 66px;
+  height: 22px;
+}
+
+.skeleton-line.time {
+  width: 36px;
+  height: 11px;
+}
+
+.skeleton-line.cwd {
+  width: 48%;
+  height: 17px;
 }
 
 .skeleton-line.meta {
-  width: 40%;
-  height: 8px;
+  width: 92px;
+  height: 12px;
+}
+
+.skeleton-line.btn {
+  width: 64px;
+  height: 24px;
 }
 
 @keyframes shimmer {
@@ -2810,4 +2835,5 @@ hr {
   to {
     background-position: 0 0;
   }
+}
 }
