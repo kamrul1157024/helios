@@ -112,6 +112,8 @@ interface RawBridge {
     onRetract(fn: (key: string) => void): Unsubscribe
   }
   app: {
+    /** Quits for real; closing the window only hides it behind the tray. */
+    quit(): Promise<void>
     onActivateNotification(
       fn: (payload: { hostId: string; sessionId: string; notificationId: string; command?: string }) => void,
     ): Unsubscribe

@@ -63,12 +63,15 @@ async function start(): Promise<void> {
   themes = new ThemeRegistry(path.join(distDir, 'themes'))
   themes.load()
   hud = new Hud(rendererDir, path.join(distDir, 'preload', 'preload.js'), activateNotification)
-  notifier = new Notifier(hosts, hud, prefs, activateNotification, openSettings, () => {
+  // Shared with the tray and the sidebar menu: closing the window leaves the
+  // app resident, so quitting has to be something the user asks for by name.
+  const quit = (): void => {
     quitting = true
     app.quit()
-  })
+  }
+  notifier = new Notifier(hosts, hud, prefs, activateNotification, openSettings, quit)
 
-  registerIpc({ hosts, terminals, notifier, prefs, themes, window: () => window })
+  registerIpc({ hosts, terminals, notifier, prefs, themes, quit, window: () => window })
 
   // The HUD is shown without focus, so nothing reaches its keyboard handlers
   // until the user asks for it.
