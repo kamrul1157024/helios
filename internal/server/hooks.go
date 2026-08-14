@@ -67,6 +67,7 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		DB:       s.shared.DB,
 		Mgr:      s.shared.Mgr,
 		Terminal: s.shared.Backend,
+		HITL:     s.shared.HITL,
 		Notify: func(eventType string, data interface{}) {
 			if eventType == "notification" {
 				data = enrichNotification(s.shared, data)

@@ -20,9 +20,10 @@ import (
 type Host struct {
 	reg *terminal.Registry
 
-	mu       sync.Mutex
-	mirrors  map[string]*terminal.Mirror
-	onUpdate func(sessionID string)
+	mu             sync.Mutex
+	mirrors        map[string]*terminal.Mirror
+	onUpdate       func(sessionID string)
+	onOverlayInput func(sessionID string, keys []byte)
 
 	// touched holds the last time each session's activity reached the
 	// registry, as unix nanos. See markActive.
@@ -108,6 +109,44 @@ func (h *Host) bind(m *terminal.Mirror) {
 			fn(id)
 		}
 	})
+	m.OnOverlayInput(func(keys []byte) {
+		h.mu.Lock()
+		fn := h.onOverlayInput
+		h.mu.Unlock()
+		if fn != nil {
+			fn(id, keys)
+		}
+	})
+}
+
+// OnOverlayInput registers a callback for keystrokes a session's overlay
+// captured from a viewer. Like OnUpdate it is set once and covers every
+// session, existing and future: the dispatcher installed by bind reads the
+// callback each time rather than capturing it.
+func (h *Host) OnOverlayInput(fn func(sessionID string, keys []byte)) {
+	h.mu.Lock()
+	h.onOverlayInput = fn
+	h.mu.Unlock()
+}
+
+// SetOverlay paints helios's own modal over a session's terminal, on every
+// viewer at once. It does not wake a cold session: there is nobody watching one
+// to show a prompt to.
+func (h *Host) SetOverlay(sessionID string, o terminal.Overlay) error {
+	m, err := h.Mirror(sessionID)
+	if err != nil {
+		return err
+	}
+	return m.SetOverlay(o)
+}
+
+// ClearOverlay takes the modal down and hands the keyboard back to the agent.
+func (h *Host) ClearOverlay(sessionID string) error {
+	m, err := h.Mirror(sessionID)
+	if err != nil {
+		return err
+	}
+	return m.ClearOverlay()
 }
 
 // Mirror returns the daemon's live screen for a session, connecting on first

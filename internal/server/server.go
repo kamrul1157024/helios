@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -28,6 +29,16 @@ type Shared struct {
 	// through a hook.
 	Signals  *SessionSignals
 	Reporter *reporter.Reporter
+	// HITL renders helios's own prompts over session terminals. See
+	// docs/specs/36-helios-owned-hitl.md.
+	HITL *hitl.Controller
+}
+
+// overlayNotifier is implemented by backends that can report the keystrokes an
+// overlay captured. Checked at runtime for the same reason screenNotifier is:
+// only the host backend can paint over a session at all.
+type overlayNotifier interface {
+	OnOverlayInput(fn func(sessionID string, keys []byte))
 }
 
 // InternalServer handles hooks (Claude) and admin API (CLI).
@@ -68,6 +79,14 @@ func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) 
 	mgr.SetBroadcaster(func(eventType string, data interface{}) {
 		sh.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
 	})
+
+	// A backend that cannot paint over a session gets a controller with nothing
+	// to paint on, and every prompt falls back to the phone.
+	overlays, _ := be.(hitl.Overlays)
+	sh.HITL = hitl.NewController(overlays)
+	if n, ok := be.(overlayNotifier); ok {
+		n.OnOverlayInput(sh.HITL.HandleInput)
+	}
 	return sh
 }
 
