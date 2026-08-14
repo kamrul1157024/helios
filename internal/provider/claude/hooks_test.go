@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/terminal"
 )
 
 // ==================== Test infrastructure ====================
@@ -1482,4 +1484,427 @@ func TestLifecycle_ManagedSession_WithStopFailure(t *testing.T) {
 
 	callHook(handleSessionEnd, ctx, hookInput{SessionID: "sess-L4", CWD: "/tmp/proj"})
 	assertStatus(t, db, "sess-L4", "terminated")
+}
+
+// ==================== Approving from the terminal ====================
+
+// paintedOverlays stands in for a session's terminal, recording what helios
+// drew over it. Painting happens on the hook's goroutine while the test drives
+// keys from its own, so both directions travel by channel.
+type paintedOverlays struct {
+	painted chan terminal.Overlay
+	cleared chan string
+}
+
+func (p *paintedOverlays) SetOverlay(sessionID string, o terminal.Overlay) error {
+	p.painted <- o
+	return nil
+}
+
+func (p *paintedOverlays) ClearOverlay(sessionID string) error {
+	p.cleared <- sessionID
+	return nil
+}
+
+// withTerminal gives a context a terminal that can be painted on, as a live
+// session has, and returns what lands on it.
+func withTerminal(ctx *provider.HookContext) (*paintedOverlays, *hitl.Controller) {
+	p := &paintedOverlays{
+		painted: make(chan terminal.Overlay, 8),
+		cleared: make(chan string, 8),
+	}
+	ctx.HITL = hitl.NewController(p)
+	return p, ctx.HITL
+}
+
+func awaitOverlay(t *testing.T, p *paintedOverlays) terminal.Overlay {
+	t.Helper()
+	select {
+	case o := <-p.painted:
+		return o
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing was painted on the terminal")
+		return terminal.Overlay{}
+	}
+}
+
+func awaitCleared(t *testing.T, p *paintedOverlays) {
+	t.Helper()
+	select {
+	case <-p.cleared:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the prompt was never taken down")
+	}
+}
+
+// askPermission fires the hook on its own goroutine and returns the response
+// channel plus the overlay it painted.
+func askPermission(t *testing.T, ctx *provider.HookContext, p *paintedOverlays,
+	input hookInput) (<-chan *httptest.ResponseRecorder, terminal.Overlay) {
+	t.Helper()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- callHook(handlePermission, ctx, input) }()
+	return done, awaitOverlay(t, p)
+}
+
+func permDecision(t *testing.T, w *httptest.ResponseRecorder) permResponse {
+	t.Helper()
+	var resp permResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response %q: %v", w.Body.String(), err)
+	}
+	return resp
+}
+
+func awaitResponse(t *testing.T, done <-chan *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	select {
+	case w := <-done:
+		return w
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hook never answered the CLI")
+		return nil
+	}
+}
+
+// The suggestion the CLI offers when it would write a rule; the shape matters
+// only in that it comes back verbatim in updatedPermissions.
+var bashSuggestion = json.RawMessage(`[{"type":"addRules","rules":[{"toolName":"Bash"}]}]`)
+
+func TestPermission_PaintsTheApprovalOnTheTerminal(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, _ := withTerminal(ctx)
+	notifIDs := captureNotifIDs(ctx)
+
+	done, o := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		ToolInput: json.RawMessage(`{"command":"rm -rf build/"}`),
+	})
+
+	if o.Title != "Bash" {
+		t.Errorf("title = %q, want the tool name", o.Title)
+	}
+	if len(o.Body) == 0 || !strings.Contains(o.Body[0], "rm -rf build/") {
+		t.Errorf("body = %v, want the command being approved", o.Body)
+	}
+	// Without a suggestion there is no rule to write, so there is nothing for
+	// "don't ask again" to mean.
+	want := []string{allowOnce, denyChoice}
+	if len(o.Options) != len(want) || o.Options[0] != want[0] || o.Options[1] != want[1] {
+		t.Errorf("options = %v, want %v", o.Options, want)
+	}
+
+	ctx.Mgr.Resolve(awaitNotifID(t, notifIDs), notifications.Decision{Status: "approved"}, "mobile")
+	awaitResponse(t, done)
+}
+
+func TestPermission_OffersDontAskAgainOnlyWithASuggestion(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, _ := withTerminal(ctx)
+	notifIDs := captureNotifIDs(ctx)
+
+	done, o := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		ToolInput:             json.RawMessage(`{"command":"ls"}`),
+		PermissionSuggestions: bashSuggestion,
+	})
+
+	want := []string{allowOnce, allowAlways, denyChoice}
+	if len(o.Options) != len(want) {
+		t.Fatalf("options = %v, want %v", o.Options, want)
+	}
+	for i := range want {
+		if o.Options[i] != want[i] {
+			t.Errorf("option %d = %q, want %q", i, o.Options[i], want[i])
+		}
+	}
+
+	ctx.Mgr.Resolve(awaitNotifID(t, notifIDs), notifications.Decision{Status: "approved"}, "mobile")
+	awaitResponse(t, done)
+}
+
+// The hole this closes: before the overlay, a person sitting at the terminal
+// could not approve anything, because the blocking hook left the CLI no UI.
+func TestPermission_TerminalApproves(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+	notifIDs := captureNotifIDs(ctx)
+
+	done, _ := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		ToolInput: json.RawMessage(`{"command":"ls"}`),
+	})
+	notifID := awaitNotifID(t, notifIDs)
+
+	hitlCtl.HandleInput("sess-1", []byte("\r")) // "Allow once" is preselected
+
+	w := awaitResponse(t, done)
+	if got := permDecision(t, w).HookSpecificOutput.Decision.Behavior; got != "allow" {
+		t.Errorf("behavior = %q, want allow", got)
+	}
+	assertStatus(t, db, "sess-1", "active")
+
+	// One notification, resolved once, and the record says who did it.
+	got, err := db.GetNotification(notifID)
+	if err != nil || got == nil {
+		t.Fatalf("GetNotification: %v", err)
+	}
+	if got.Status != "approved" {
+		t.Errorf("notification status = %q, want approved", got.Status)
+	}
+	if got.ResolvedSource == nil || *got.ResolvedSource != "terminal" {
+		t.Errorf("resolved source = %v, want terminal", got.ResolvedSource)
+	}
+	awaitCleared(t, overlays)
+}
+
+func TestPermission_TerminalDenies(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+
+	done, o := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		ToolInput: json.RawMessage(`{"command":"ls"}`),
+	})
+
+	// Walk down to "Deny" and confirm, the way a person would.
+	hitlCtl.HandleInput("sess-1", []byte("\x1b[B"))
+	if moved := awaitOverlay(t, overlays); moved.Selected != len(o.Options)-1 {
+		t.Fatalf("selected = %d, want the last option", moved.Selected)
+	}
+	hitlCtl.HandleInput("sess-1", []byte("\r"))
+
+	w := awaitResponse(t, done)
+	if got := permDecision(t, w).HookSpecificOutput.Decision.Behavior; got != "deny" {
+		t.Errorf("behavior = %q, want deny", got)
+	}
+	awaitCleared(t, overlays)
+}
+
+// Escape is a deny, not a hang: the tool call has to be answered either way.
+func TestPermission_EscapeDenies(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+
+	done, _ := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+	})
+	hitlCtl.HandleInput("sess-1", []byte("\x1b"))
+
+	w := awaitResponse(t, done)
+	if got := permDecision(t, w).HookSpecificOutput.Decision.Behavior; got != "deny" {
+		t.Errorf("behavior = %q, want deny", got)
+	}
+}
+
+func TestPermission_TerminalAllowAlwaysAppliesTheSuggestion(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+
+	done, _ := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		ToolInput:             json.RawMessage(`{"command":"ls"}`),
+		PermissionSuggestions: bashSuggestion,
+	})
+
+	hitlCtl.HandleInput("sess-1", []byte("2\r")) // "Allow, and don't ask again"
+
+	decision := permDecision(t, awaitResponse(t, done)).HookSpecificOutput.Decision
+	if decision.Behavior != "allow" {
+		t.Fatalf("behavior = %q, want allow", decision.Behavior)
+	}
+	// The rule the CLI offered has to come back, or "don't ask again" asks again.
+	if !strings.Contains(string(decision.UpdatedPermissions), `"addRules"`) {
+		t.Errorf("updatedPermissions = %s, want the suggested rule", decision.UpdatedPermissions)
+	}
+}
+
+// Whichever surface answers, the other one stops showing the question.
+func TestPermission_ThePhonesAnswerTakesThePromptDown(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+	notifIDs := captureNotifIDs(ctx)
+
+	done, _ := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+	})
+	notifID := awaitNotifID(t, notifIDs)
+
+	ctx.Mgr.Resolve(notifID, notifications.Decision{Status: "approved"}, "mobile")
+	awaitResponse(t, done)
+	awaitCleared(t, overlays)
+
+	// A keystroke that lands after the phone won belongs to the agent again.
+	hitlCtl.HandleInput("sess-1", []byte("\r"))
+	got, _ := db.GetNotification(notifID)
+	if got.ResolvedSource == nil || *got.ResolvedSource != "mobile" {
+		t.Errorf("resolved source = %v, want the phone that answered first", got.ResolvedSource)
+	}
+}
+
+// A cold session has no terminal to paint on. That used to be the only case,
+// and it still has to work.
+func TestPermission_WithoutATerminalTheHookStillWaitsForThePhone(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	ctx.HITL = hitl.NewController(nil)
+	notifIDs := captureNotifIDs(ctx)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- callHook(handlePermission, ctx, hookInput{
+			SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		})
+	}()
+
+	ctx.Mgr.Resolve(awaitNotifID(t, notifIDs), notifications.Decision{Status: "approved"}, "mobile")
+	w := awaitResponse(t, done)
+	if got := permDecision(t, w).HookSpecificOutput.Decision.Behavior; got != "allow" {
+		t.Errorf("behavior = %q, want allow", got)
+	}
+}
+
+// Hooks run with whatever context the daemon built; a provider that never wired
+// HITL must not take the permission path down with it.
+func TestPermission_NoHITLControllerIsNotFatal(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	ctx.HITL = nil
+	notifIDs := captureNotifIDs(ctx)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- callHook(handlePermission, ctx, hookInput{
+			SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		})
+	}()
+
+	ctx.Mgr.Resolve(awaitNotifID(t, notifIDs), notifications.Decision{Status: "approved"}, "mobile")
+	awaitResponse(t, done)
+}
+
+// ==================== Answering an elicitation from the terminal ====================
+
+// elicitResponse is handleElicitation's reply to the CLI. The handler declares
+// it inline, so the test declares its own view of the same wire shape.
+type elicitResponse struct {
+	HookSpecificOutput struct {
+		HookEventName string                 `json:"hookEventName"`
+		Action        string                 `json:"action"`
+		Content       map[string]interface{} `json:"content,omitempty"`
+	} `json:"hookSpecificOutput"`
+}
+
+func askElicitation(t *testing.T, ctx *provider.HookContext, p *paintedOverlays,
+	input hookInput) (<-chan *httptest.ResponseRecorder, terminal.Overlay) {
+	t.Helper()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- callHook(handleElicitation, ctx, input) }()
+	return done, awaitOverlay(t, p)
+}
+
+func elicitDecision(t *testing.T, w *httptest.ResponseRecorder) elicitResponse {
+	t.Helper()
+	var resp elicitResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response %q: %v", w.Body.String(), err)
+	}
+	return resp
+}
+
+// A url elicitation carries no content, so the terminal can answer it in full.
+func TestElicitation_URLModeIsAnswerableFromTheTerminal(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+
+	done, o := askElicitation(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj",
+		MCPServerName: "linear", Mode: "url",
+		Message: "Authorise helios", URL: "https://linear.app/oauth/abc",
+	})
+
+	if !strings.Contains(o.Title, "linear") {
+		t.Errorf("title = %q, want the server that asked", o.Title)
+	}
+	// The address has to be on the screen or there is nothing to act on.
+	if !strings.Contains(strings.Join(o.Body, "\n"), "https://linear.app/oauth/abc") {
+		t.Errorf("body = %v, want the url", o.Body)
+	}
+	want := []string{elicitContinue, elicitDecline}
+	if len(o.Options) != len(want) || o.Options[0] != want[0] || o.Options[1] != want[1] {
+		t.Fatalf("options = %v, want %v", o.Options, want)
+	}
+
+	hitlCtl.HandleInput("sess-1", []byte("\r"))
+
+	if got := elicitDecision(t, awaitResponse(t, done)).HookSpecificOutput.Action; got != "accept" {
+		t.Errorf("action = %q, want accept", got)
+	}
+	awaitCleared(t, overlays)
+}
+
+// A form's schema is arbitrary and an overlay is a list of choices, so the
+// terminal gets the one answer it can give. Offering "Continue" here would
+// accept with no content and break the server that asked.
+func TestElicitation_FormModeOnlyOffersDecline(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+
+	done, o := askElicitation(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj",
+		MCPServerName: "linear", Mode: "form",
+		Message:         "Which team?",
+		RequestedSchema: json.RawMessage(`{"type":"object","properties":{"team":{"type":"string"}}}`),
+	})
+
+	if len(o.Options) != 1 || o.Options[0] != elicitDecline {
+		t.Fatalf("options = %v, want only %q", o.Options, elicitDecline)
+	}
+	if !strings.Contains(strings.Join(o.Body, "\n"), formHint) {
+		t.Errorf("body = %v, want it to say where the form can be answered", o.Body)
+	}
+
+	hitlCtl.HandleInput("sess-1", []byte("\r"))
+
+	if got := elicitDecision(t, awaitResponse(t, done)).HookSpecificOutput.Action; got != "decline" {
+		t.Errorf("action = %q, want decline", got)
+	}
+}
+
+// The overlay is an addition, not a replacement: the phone still answers the
+// form, and doing so takes the terminal's copy down.
+func TestElicitation_ThePhoneStillFillsInTheForm(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, _ := withTerminal(ctx)
+	notifIDs := captureNotifIDs(ctx)
+
+	done, _ := askElicitation(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj",
+		MCPServerName: "linear", Mode: "form", Message: "Which team?",
+	})
+
+	ctx.Mgr.Resolve(awaitNotifID(t, notifIDs), notifications.Decision{
+		Status:   "answered",
+		Response: json.RawMessage(`{"action":"accept","content":{"team":"infra"}}`),
+	}, "mobile")
+
+	out := elicitDecision(t, awaitResponse(t, done)).HookSpecificOutput
+	if out.Action != "accept" {
+		t.Errorf("action = %q, want accept", out.Action)
+	}
+	if out.Content["team"] != "infra" {
+		t.Errorf("content = %v, want the answered form", out.Content)
+	}
+	awaitCleared(t, overlays)
+	assertStatus(t, db, "sess-1", "waiting_permission")
 }

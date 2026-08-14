@@ -2,13 +2,16 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
@@ -90,12 +93,15 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	}
 
 	// AskUserQuestion is not an approval, and it already has a surface: the
-	// PreToolUse hook raises claude.question for it. Raising a second,
-	// blocking notification here put two cards on the phone for one question.
-	// Stay silent instead — but with "ask", not "allow": for this tool the
-	// permission prompt is the question picker itself, so allowing it skips
-	// the picker and the tool returns an empty answer set. "ask" renders it,
-	// which is also the UI a phone answer drives.
+	// PreToolUse hook raises claude.question for it and answers it there.
+	// Because that hook denies the tool, this one should never see the event at
+	// all — but ordering between the two is the CLI's to decide, and an approval
+	// box asking whether Claude may ask a question is nonsense on any surface.
+	//
+	// Silent, and with "ask" rather than "allow": for this tool the permission
+	// prompt is the question picker itself, so allowing it skips the picker and
+	// the tool returns an empty answer set. "ask" leaves a human able to answer
+	// at the keyboard if this hook ever does run alone.
 	if input.ToolName == askUserQuestionTool {
 		askUser(w)
 		return
@@ -151,6 +157,11 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		})
 	}
 
+	// Painted after the notification is published, so the phone and the terminal
+	// race from the same starting line, and taken down once the decision is
+	// settled no matter which of them settled it.
+	defer showPermissionPrompt(ctx, &input, notifID)()
+
 	decision := waitForDecision(ctx, notifID, r)
 	if decision == nil {
 		return
@@ -197,6 +208,74 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	}
 
 	writePermResponse(w, resp)
+}
+
+// The approval choices helios draws over the terminal. They are compared by
+// value when the answer comes back, so the label and its meaning cannot drift
+// apart the way an index and a list can.
+const (
+	allowOnce   = "Allow once"
+	allowAlways = "Allow, and don't ask again"
+	denyChoice  = "Deny"
+)
+
+// showPermissionPrompt paints the approval over the session's terminal so the
+// person sitting at it can answer, and returns the function that takes it down.
+func showPermissionPrompt(ctx *provider.HookContext, input *hookInput, notifID string) func() {
+	choices := []string{allowOnce, denyChoice}
+	// "Don't ask again" is only offerable when the CLI told us what rule it
+	// would write; there is nothing to apply otherwise.
+	if len(input.PermissionSuggestions) > 0 {
+		choices = []string{allowOnce, allowAlways, denyChoice}
+	}
+
+	return showPrompt(ctx, input.SessionID, hitl.Prompt{
+		Title:   input.ToolName,
+		Body:    []string{summarizeToolInput(input.ToolInput)},
+		Choices: choices,
+	}, func(a hitl.Answer) {
+		resolvePermissionFromTerminal(ctx, notifID, choices, a)
+	})
+}
+
+// showPrompt paints a helios modal over a session's terminal and returns the
+// function that takes it down.
+//
+// A session with no terminal to paint on is not a failure: the notification is
+// already on the phone, which until now was the only surface that could answer
+// anything at all. Every caller defers the returned function, so it is always
+// safe to call.
+func showPrompt(ctx *provider.HookContext, sessionID string, p hitl.Prompt, onAnswer func(hitl.Answer)) func() {
+	release, err := ctx.HITL.Ask(sessionID, p, onAnswer)
+	if err != nil {
+		if !errors.Is(err, hitl.ErrNoTerminal) {
+			log.Printf("hook: show %q prompt for %s: %v", p.Title, sessionID, err)
+		}
+		return func() {}
+	}
+	return release
+}
+
+// resolvePermissionFromTerminal turns a terminal answer into the Decision the
+// phone would have produced and resolves it through the manager, so which
+// surface won is decided in exactly one place.
+func resolvePermissionFromTerminal(ctx *provider.HookContext, notifID string, choices []string, a hitl.Answer) {
+	decision := notifications.Decision{Status: "denied"}
+	if !a.Cancelled() && a.Index < len(choices) {
+		switch choices[a.Index] {
+		case allowOnce:
+			decision.Status = "approved"
+		case allowAlways:
+			decision.Status = "approved"
+			// The suggestions are a list, and the CLI puts the one it would
+			// apply first. Same index the phone's "don't ask again" sends.
+			decision.Response = json.RawMessage(`{"apply_permission":0}`)
+		}
+	}
+	if err := ctx.Mgr.Resolve(notifID, decision, "terminal"); err != nil &&
+		!errors.Is(err, store.ErrAlreadyResolved) {
+		log.Printf("hook: resolve permission %s from the terminal: %v", notifID, err)
+	}
 }
 
 // ==================== AskUserQuestion Hook ====================
@@ -345,6 +424,8 @@ func handleElicitation(ctx *provider.HookContext, w http.ResponseWriter, r *http
 
 	ctx.Notify("notification", notif)
 
+	defer showElicitationPrompt(ctx, &input, notifID)()
+
 	decision := waitForDecision(ctx, notifID, r)
 	if decision == nil {
 		return
@@ -378,6 +459,74 @@ func handleElicitation(ctx *provider.HookContext, w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// The elicitation choices helios draws over the terminal.
+const (
+	elicitContinue = "Continue"
+	elicitDecline  = "Decline"
+)
+
+// formHint is what the terminal is told about a form elicitation, which it
+// cannot fill in.
+const formHint = "Answer this from the helios app."
+
+// showElicitationPrompt paints an MCP server's request over the session's
+// terminal.
+//
+// A url elicitation is answerable there: the address is on the screen and
+// accepting carries no content. A form is not — its schema is arbitrary and an
+// overlay is a list of choices — so the terminal gets the one answer it can
+// give, declining, and the form itself stays on the phone. Either way the
+// person at the terminal can see why the agent stopped, which is new.
+func showElicitationPrompt(ctx *provider.HookContext, input *hookInput, notifID string) func() {
+	choices := []string{elicitDecline}
+	body := []string{input.Message, formHint}
+	if input.Mode == "url" {
+		choices = []string{elicitContinue, elicitDecline}
+		body = []string{input.Message, input.URL}
+	}
+
+	return showPrompt(ctx, input.SessionID, hitl.Prompt{
+		Title:   fmt.Sprintf("%s needs input", input.MCPServerName),
+		Body:    nonEmpty(body),
+		Choices: choices,
+	}, func(a hitl.Answer) {
+		resolveElicitationFromTerminal(ctx, notifID, choices, a)
+	})
+}
+
+// resolveElicitationFromTerminal turns a terminal answer into the same Decision
+// the phone's accept/decline action produces, so both surfaces resolve the one
+// notification and the first answer wins.
+func resolveElicitationFromTerminal(ctx *provider.HookContext, notifID string, choices []string, a hitl.Answer) {
+	action := "decline"
+	status := "denied"
+	if !a.Cancelled() && a.Index < len(choices) && choices[a.Index] == elicitContinue {
+		action, status = "accept", "answered"
+	}
+	response, err := json.Marshal(map[string]string{"action": action})
+	if err != nil {
+		log.Printf("hook: encode elicitation answer for %s: %v", notifID, err)
+		return
+	}
+	decision := notifications.Decision{Status: status, Response: response}
+	if err := ctx.Mgr.Resolve(notifID, decision, "terminal"); err != nil &&
+		!errors.Is(err, store.ErrAlreadyResolved) {
+		log.Printf("hook: resolve elicitation %s from the terminal: %v", notifID, err)
+	}
+}
+
+// nonEmpty drops blank lines, so an absent message or url does not draw an
+// empty row in the box.
+func nonEmpty(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // ==================== Status Hooks ====================
@@ -664,8 +813,19 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 // ==================== Helpers ====================
 
+// decisionTimeout is how long a blocking hook waits for a human to answer on
+// some surface. Every blocking hook uses it, and the CLI's own hook timeout is
+// derived from it below.
+const decisionTimeout = 5 * time.Minute
+
+// HookTimeoutSeconds is what the CLI is told to wait for a blocking hook. It
+// clears decisionTimeout by a margin on purpose: helios has to be the one that
+// gives up first, or the CLI abandons a hook that is still holding a prompt on
+// screen and the two race to decide what happened.
+const HookTimeoutSeconds = int((decisionTimeout + 30*time.Second) / time.Second)
+
 func waitForDecision(ctx *provider.HookContext, notifID string, r *http.Request) *notifications.Decision {
-	timer := time.NewTimer(5 * time.Minute)
+	timer := time.NewTimer(decisionTimeout)
 	defer timer.Stop()
 
 	decisionCh := make(chan notifications.Decision, 1)
