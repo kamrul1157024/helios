@@ -66,7 +66,11 @@ export function App(): JSX.Element {
     <div className="app">
       <div className="titlebar" />
       <div className="body">
-        <Sidebar onNewSession={() => setDialog('new')} onAddHost={() => setDialog('hosts')} />
+        <Sidebar
+          onNewSession={() => setDialog('new')}
+          onAddHost={() => setDialog('hosts')}
+          onSettings={() => setDialog('settings')}
+        />
         <main className="main">
           <Detail />
         </main>

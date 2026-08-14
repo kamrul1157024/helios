@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -30,7 +31,15 @@ interface Group {
   loading: boolean
 }
 
-export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void; onAddHost: () => void }): JSX.Element {
+export function Sidebar({
+  onNewSession,
+  onAddHost,
+  onSettings,
+}: {
+  onNewSession: () => void
+  onAddHost: () => void
+  onSettings: () => void
+}): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
   const sessions = useStore((s) => s.sessions)
@@ -202,8 +211,57 @@ export function Sidebar({ onNewSession, onAddHost }: { onNewSession: () => void;
         <button className="link" onClick={onAddHost}>
           Add host
         </button>
+        <AppMenu onSettings={onSettings} />
       </footer>
     </aside>
+  )
+}
+
+/**
+ * Settings and Quit, which otherwise live only on the tray and the app menu —
+ * neither of which is where the eye goes, and the app menu is not somewhere a
+ * user looks on the platforms where the window is the whole of the app.
+ */
+function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
+  const menu = useRef<HTMLDetailsElement | null>(null)
+
+  // <details> only closes on its own summary, so a menu left open stays open
+  // over whatever the user clicks next.
+  useEffect(() => {
+    const close = (event: Event): void => {
+      const element = menu.current
+      if (!element?.open) return
+      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
+      if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
+      element.open = false
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [])
+
+  return (
+    <details className="menu drop-up" ref={menu}>
+      <summary title="More">⋯</summary>
+      <div
+        className="menu-body"
+        onClick={() => {
+          if (menu.current) menu.current.open = false
+        }}
+      >
+        <button onClick={onSettings}>Settings…</button>
+        {/* Closing the window leaves the app on the tray so approvals keep
+            arriving; this is the one control that actually ends it. */}
+        <button className="danger" onClick={() => void bridge.app.quit()}>
+          Quit Helios
+        </button>
+      </div>
+    </details>
   )
 }
 

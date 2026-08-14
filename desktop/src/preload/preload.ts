@@ -123,6 +123,7 @@ const helios = {
     onRetract: (fn: (payload: unknown) => void) => on('hud:retract', fn),
   },
   app: {
+    quit: () => call<void>('app:quit'),
     onActivateNotification: (fn: (payload: unknown) => void) => on('app:activate-notification', fn),
     onOpenPairing: (fn: (payload: unknown) => void) => on('app:open-pairing', fn),
     onOpenSettings: (fn: () => void) => on('app:open-settings', () => fn()),

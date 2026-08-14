@@ -531,12 +531,24 @@ small {
 
 .sidebar-foot {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 16px;
   color: var(--on-surface-variant);
   font-size: 12px;
+}
+
+/* The checkbox takes the slack so the link and the menu stay together on the
+   right, rather than each drifting to its own third of the bar. */
+.sidebar-foot .check {
+  margin-right: auto;
+}
+
+/* Smaller than the one in the session header: this bar is 12px text, and a
+   36px target would set the height of the whole footer. */
+.sidebar-foot .menu summary {
+  width: 28px;
+  height: 28px;
 }
 
 .host-group {
@@ -882,6 +894,14 @@ small {
   border-radius: var(--r-md);
   padding: 8px;
   box-shadow: 0 8px 24px var(--shadow-soft);
+}
+
+/* Anchored to the bottom of the sidebar, where a menu dropping downwards would
+   open off the window. */
+.menu.drop-up .menu-body {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 6px;
 }
 
 .menu-body button {

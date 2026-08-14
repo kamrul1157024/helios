@@ -62,6 +62,7 @@ export interface IpcDeps {
   notifier: Notifier
   prefs: PrefsStore
   themes: ThemeRegistry
+  quit: () => void
   window: () => BrowserWindow | null
 }
 
@@ -74,7 +75,7 @@ export interface IpcDeps {
  * string otherwise.
  */
 export function registerIpc(deps: IpcDeps): void {
-  const { hosts, terminals, notifier, prefs, themes } = deps
+  const { hosts, terminals, notifier, prefs, themes, quit } = deps
 
   const send = (channel: string, payload: unknown): void => {
     const window = deps.window()
@@ -136,6 +137,10 @@ export function registerIpc(deps: IpcDeps): void {
   handle('prefs:setSound', async (_e, enabled: boolean) => prefs.setSound(enabled))
   handle('prefs:setAlert', async (_e, type: string, enabled: boolean) => prefs.setAlert(type, enabled))
   handle('prefs:reset', async () => prefs.reset())
+
+  // Quitting for real, as opposed to closing the window, which leaves the app
+  // on the tray waiting for approvals.
+  handle('app:quit', async () => quit())
 
   // ─── Appearance ────────────────────────────────────────────────────────
 
