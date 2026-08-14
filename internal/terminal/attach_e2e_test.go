@@ -180,3 +180,67 @@ func TestE2EAttachResizesThePty(t *testing.T) {
 		}
 	}
 }
+
+// TestE2EOverlayOnAnAttachedTerminal is step one of
+// docs/specs/36-helios-owned-hitl.md against real processes: helios paints its
+// own modal over a session the user is attached to, the keys that follow go to
+// the daemon rather than to the application blocked behind it, and clearing
+// hands the terminal back.
+func TestE2EOverlayOnAnAttachedTerminal(t *testing.T) {
+	e := newE2E(t)
+	const sid = "e2e-overlay"
+	e.spawnHost(t, sid, "sh")
+
+	sock := e.socket(sid)
+	if !WaitForSocket(sock, 20*time.Second) {
+		t.Fatal("ptyhost socket never appeared")
+	}
+
+	ut := newUserTerminal(t, 90, 30)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go Attach(ctx, AttachConfig{
+		Socket: sock, Name: "e2e-overlay", In: ut.slave, Out: ut.slave,
+	})
+
+	ut.typeKeys(t, "echo before-overlay\r")
+	if !ut.waitForText("before-overlay", 10*time.Second) {
+		t.Fatal("the attach never reached the shell")
+	}
+
+	ctl, err := Dial(sock, Hello{Role: RoleControl, Cols: 200, Rows: 60, Name: "daemon"})
+	if err != nil {
+		t.Fatalf("dial control: %v", err)
+	}
+	defer ctl.Close()
+
+	if err := ctl.SetOverlay(Overlay{
+		Title:   "Permission",
+		Body:    []string{"Claude wants to run `ls`."},
+		Options: []string{"Allow once", "Deny"},
+		Footer:  "↑↓ select · enter confirm",
+	}); err != nil {
+		t.Fatalf("SetOverlay: %v", err)
+	}
+	if !ut.waitForText("Allow once", 10*time.Second) {
+		t.Fatal("the overlay never reached the attached terminal")
+	}
+
+	ut.typeKeys(t, "\x1b[B")
+	f, ok := nextFrameMatching(t, ctl, 10*time.Second, isType(FrameOverlayInput))
+	if !ok {
+		t.Fatal("the arrow key never came back to the control connection")
+	}
+	if got := string(f.Payload); got != "\x1b[B" {
+		t.Errorf("overlay input = %q, want a down arrow", got)
+	}
+
+	if err := ctl.ClearOverlay(); err != nil {
+		t.Fatalf("ClearOverlay: %v", err)
+	}
+	// Proof the keyboard went back to the shell, not just that the box left.
+	ut.typeKeys(t, "echo after-overlay\r")
+	if !ut.waitForText("after-overlay", 10*time.Second) {
+		t.Error("input never returned to the child after the overlay cleared")
+	}
+}

@@ -31,12 +31,13 @@ type Mirror struct {
 	screen *Screen
 	client *Client
 
-	mu          sync.Mutex
-	onUpdate    func()
-	lastState   State
-	lastViewers int
-	exitCode    int
-	exited      bool
+	mu             sync.Mutex
+	onUpdate       func()
+	onOverlayInput func([]byte)
+	lastState      State
+	lastViewers    int
+	exitCode       int
+	exited         bool
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -45,9 +46,10 @@ type Mirror struct {
 // NewMirror connects to a host socket and starts mirroring its screen.
 func NewMirror(sessionID, socket string) (*Mirror, error) {
 	client, err := Dial(socket, Hello{
-		// Observer, not interactive: the daemon must never shrink a PTY the
-		// user is looking at.
-		Role: RoleObserver,
+		// Control, which is observer plus the right to drive overlays: the
+		// daemon must never shrink a PTY the user is looking at, and it is the
+		// one connection allowed to paint helios's own HITL over the session.
+		Role: RoleControl,
 		Cols: mirrorCols,
 		Rows: mirrorRows,
 		Name: "daemon",
@@ -92,6 +94,13 @@ func (m *Mirror) pump() {
 				m.screen.Write(ansi)
 				m.notify()
 			}
+		case FrameOverlayInput:
+			m.mu.Lock()
+			fn := m.onOverlayInput
+			m.mu.Unlock()
+			if fn != nil {
+				fn(f.Payload)
+			}
 		case FrameStatus:
 			if st, err := ParseStatus(f.Payload); err == nil {
 				m.mu.Lock()
@@ -133,6 +142,21 @@ func (m *Mirror) OnUpdate(fn func()) {
 	m.onUpdate = fn
 	m.mu.Unlock()
 }
+
+// OnOverlayInput registers a callback for keystrokes an overlay captured from
+// an attached terminal. It runs on the mirror's read goroutine, so it must not
+// block.
+func (m *Mirror) OnOverlayInput(fn func([]byte)) {
+	m.mu.Lock()
+	m.onOverlayInput = fn
+	m.mu.Unlock()
+}
+
+// SetOverlay paints a modal over this session on every viewer.
+func (m *Mirror) SetOverlay(o Overlay) error { return m.client.SetOverlay(o) }
+
+// ClearOverlay takes the modal down and hands input back to the PTY.
+func (m *Mirror) ClearOverlay() error { return m.client.ClearOverlay() }
 
 // SessionID returns the session this mirror follows.
 func (m *Mirror) SessionID() string { return m.sessionID }
