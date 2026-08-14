@@ -296,16 +296,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     final sse = _sse;
 
     // Upload first. A prompt naming a path the daemon never stored sends the
-    // agent looking for a file that is not there.
+    // agent looking for a file that is not there. Only what has not been
+    // stored yet: the send below may have failed once already, and uploading
+    // the same bytes again would leave a numbered copy behind per attempt.
     var message = text;
-    if (_attachments.isNotEmpty) {
+    final pending = _attachments.where((f) => f.storedPath == null).toList();
+    if (pending.isNotEmpty) {
       final paths = sse == null
           ? null
-          : await sse.uploadSessionFiles(
-              widget.session.sessionId,
-              _attachments,
-            );
-      if (paths == null) {
+          : await sse.uploadSessionFiles(widget.session.sessionId, pending);
+      if (paths == null || paths.length != pending.length) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Could not upload the attachments')),
@@ -314,7 +314,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         }
         return;
       }
-      message = [...paths.map((p) => 'Attached: $p'), '', text].join('\n').trim();
+      // Recorded before the send, which is the call that fails.
+      for (var i = 0; i < pending.length; i++) {
+        pending[i].storedPath = paths[i];
+      }
+    }
+    if (_attachments.isNotEmpty) {
+      message = [
+        ..._attachments.map((f) => 'Attached: ${f.storedPath}'),
+        '',
+        text,
+      ].join('\n').trim();
     }
 
     final error = sse == null

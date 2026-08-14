@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
+import {
+  needingUpload,
+  promptWithAttachments,
+  withStoredPaths,
+  type Attachment,
+} from '../attachments.ts'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
@@ -124,6 +130,7 @@ export function ChatPanel({
         size: file.size,
         bytes: new Uint8Array(await file.arrayBuffer()),
         preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+        path: null,
       })),
     )
     setAttachments((current) => [...current, ...read])
@@ -140,15 +147,21 @@ export function ChatPanel({
     setSending(true)
     try {
       // Upload first: a prompt naming a path the daemon never stored is worse
-      // than no prompt, and the agent would go looking for it.
-      let message = text
-      if (attachments.length > 0) {
+      // than no prompt, and the agent would go looking for it. Only what has
+      // not been stored yet — the send below may have failed once already, and
+      // uploading the same bytes again would leave a numbered copy per try.
+      let ready = attachments
+      const pending = needingUpload(attachments)
+      if (pending.length > 0) {
         const stored = await api(hostId).uploadFiles(
           session.session_id,
-          attachments.map(({ name, type, bytes }) => ({ name, type, bytes })),
+          pending.map(({ name, type, bytes }) => ({ name, type, bytes })),
         )
-        message = [...stored.map((file) => `Attached: ${file.path}`), '', text].join('\n').trim()
+        ready = withStoredPaths(attachments, pending, stored.map((file) => file.path))
+        // Recorded before the send, which is the call that fails.
+        setAttachments(ready)
       }
+      const message = promptWithAttachments(ready, text)
 
       const result = await api(hostId).sendPrompt(session.session_id, message)
       setDraft('')
@@ -365,17 +378,6 @@ export function ChatPanel({
       )}
     </div>
   )
-}
-
-/** A file held in the composer, read into memory and not yet uploaded. */
-interface Attachment {
-  id: number
-  name: string
-  type: string
-  size: number
-  bytes: Uint8Array
-  /** Object URL for images, so the chip shows what was pasted. */
-  preview: string | null
 }
 
 /** A pasted image has no name of its own, and the name becomes the path. */
