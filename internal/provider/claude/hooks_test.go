@@ -44,7 +44,6 @@ type fakeBackend struct {
 	kills   []string
 	keys    []string // "sessionID:key"
 	texts   []string // "sessionID:text"
-	screen  string   // what Capture returns
 }
 
 func newFakeBackend() *fakeBackend {
@@ -101,13 +100,6 @@ func (f *fakeBackend) SendKey(sessionID string, k backend.Key) error {
 	return nil
 }
 
-// setScreen sets what Capture reports, standing in for the rendered CLI.
-func (f *fakeBackend) setScreen(s string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.screen = s
-}
-
 // sentKeys returns a copy of the recorded keystrokes.
 func (f *fakeBackend) sentKeys() []string {
 	f.mu.Lock()
@@ -123,11 +115,9 @@ func (f *fakeBackend) Kill(sessionID string) error {
 	return nil
 }
 
-func (f *fakeBackend) Capture(sessionID string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.screen, nil
-}
+// Capture reports an empty screen: nothing in this package reads a session's
+// screen any more.
+func (f *fakeBackend) Capture(sessionID string) (string, error) { return "", nil }
 
 func (f *fakeBackend) Rename(sessionID, name string) error {
 	f.renames = append(f.renames, sessionID+":"+name)
@@ -1035,41 +1025,196 @@ func onlyQuestionNotif(t *testing.T, db *store.Store) *store.Notification {
 	return &notifs[0]
 }
 
-// The direct regression guard for the five-minute block: the hook used to wait
-// for a mobile answer, which is why the CLI never rendered its own question UI
-// and the terminal had nothing to answer.
-func TestQuestion_ReturnsImmediatelyWithoutBlocking(t *testing.T) {
+// startQuestion fires the question hook on its own goroutine and waits for its
+// notification, which is the point from which any surface can answer.
+func startQuestion(t *testing.T, ctx *provider.HookContext,
+	input hookInput) (<-chan *httptest.ResponseRecorder, string) {
+	t.Helper()
+	ids := captureNotifIDs(ctx)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- callHook(handleQuestion, ctx, input) }()
+	return done, awaitNotifID(t, ids)
+}
+
+// questionOutput is handleQuestion's reply to the CLI.
+type questionOutput struct {
+	HookEventName            string `json:"hookEventName"`
+	PermissionDecision       string `json:"permissionDecision"`
+	PermissionDecisionReason string `json:"permissionDecisionReason"`
+}
+
+func questionAnswerOf(t *testing.T, w *httptest.ResponseRecorder) questionOutput {
+	t.Helper()
+	var resp struct {
+		HookSpecificOutput questionOutput `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response %q: %v", w.Body.String(), err)
+	}
+	return resp.HookSpecificOutput
+}
+
+// The hook blocks again: the answer travels back in its response, so returning
+// early would hand Claude nothing and let it render a UI helios cannot answer.
+func TestQuestion_BlocksUntilSomeoneAnswers(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	done, notifID := startQuestion(t, ctx, hookInput{
+		SessionID: "sess-1",
+		CWD:       "/tmp/proj",
+		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
+	})
+
+	select {
+	case <-done:
+		t.Fatal("handleQuestion returned before anyone answered")
+	case <-time.After(200 * time.Millisecond):
+	}
+	assertStatus(t, db, "sess-1", "waiting_permission")
+	// Without a reserved slot an immediate answer arrives with nobody waiting.
+	if !ctx.Mgr.HasPending(notifID) {
+		t.Error("question reserved no decision slot")
+	}
+
+	ctx.Mgr.Resolve(notifID, notifications.Decision{
+		Status:   "answered",
+		Response: json.RawMessage(`{"selections":[{"question_index":0,"option_index":1}]}`),
+	}, "mobile")
+
+	out := questionAnswerOf(t, awaitResponse(t, done))
+	if out.HookEventName != "PreToolUse" {
+		t.Errorf("hookEventName = %q, want PreToolUse", out.HookEventName)
+	}
+	// PreToolUse has no "here is the tool's result", so the answer rides back on
+	// a deny. See docs/specs/36-helios-owned-hitl.md.
+	if out.PermissionDecision != "deny" {
+		t.Errorf("permissionDecision = %q, want deny", out.PermissionDecision)
+	}
+	if !strings.Contains(out.PermissionDecisionReason, `"No"`) {
+		t.Errorf("reason = %q, want the chosen option in it", out.PermissionDecisionReason)
+	}
+	assertStatus(t, db, "sess-1", "active")
+}
+
+// Nobody answered before the hook's budget ran out. Claude still has to be told
+// something, or the turn ends on a bare denial.
+func TestQuestion_UnansweredSaysSo(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+
+	done, notifID := startQuestion(t, ctx, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj",
+		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
+	})
+	// What waitForDecision does when its timer fires.
+	ctx.Mgr.Resolve(notifID, notifications.Decision{Status: "denied"}, "mobile")
+
+	out := questionAnswerOf(t, awaitResponse(t, done))
+	if out.PermissionDecisionReason != unansweredReason {
+		t.Errorf("reason = %q, want the unanswered wording", out.PermissionDecisionReason)
+	}
+}
+
+// The whole point of the overlay: the person at the terminal answers, one
+// question at a time, and the phone's card goes away.
+func TestQuestion_AnsweredFromTheTerminal(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
+
+	ids := captureNotifIDs(ctx)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- callHook(handleQuestion, ctx, hookInput{
+			SessionID: "sess-1", CWD: "/tmp/proj",
+			ToolInput: questionInput(t,
+				oneQuestion("Which scope?", "Banner scope", "Every host", "Only the active host"),
+				oneQuestion("How should it wake?", "Wake strategy", "Poll", "Heartbeat watchdog")),
+		})
+	}()
+	notifID := awaitNotifID(t, ids)
+
+	first := awaitOverlay(t, overlays)
+	if !strings.Contains(first.Title, "Banner scope") || !strings.Contains(first.Title, "1/2") {
+		t.Errorf("title = %q, want the first question's header and its place in the set", first.Title)
+	}
+	hitlCtl.HandleInput("sess-1", []byte("2\r"))
+
+	second := awaitOverlay(t, overlays)
+	for second.Title == first.Title {
+		second = awaitOverlay(t, overlays) // the highlight redraw for question one
+	}
+	if !strings.Contains(second.Title, "Wake strategy") {
+		t.Errorf("title = %q, want the second question", second.Title)
+	}
+	hitlCtl.HandleInput("sess-1", []byte("2\r"))
+
+	reason := questionAnswerOf(t, awaitResponse(t, done)).PermissionDecisionReason
+	for _, want := range []string{"Only the active host", "Heartbeat watchdog"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason = %q, want %q in it", reason, want)
+		}
+	}
+
+	got, err := db.GetNotification(notifID)
+	if err != nil || got == nil {
+		t.Fatalf("GetNotification: %v", err)
+	}
+	if got.ResolvedSource == nil || *got.ResolvedSource != "terminal" {
+		t.Errorf("resolved source = %v, want terminal", got.ResolvedSource)
+	}
+	awaitCleared(t, overlays)
+}
+
+// Escape out of a question and Claude is told it went unanswered, rather than
+// being left to wait out the hook's budget.
+func TestQuestion_SkippedFromTheTerminal(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, hitlCtl := withTerminal(ctx)
 
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- callHook(handleQuestion, ctx, hookInput{
-			SessionID: "sess-1",
-			CWD:       "/tmp/proj",
+			SessionID: "sess-1", CWD: "/tmp/proj",
 			ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
 		})
 	}()
+	awaitOverlay(t, overlays)
 
-	var w *httptest.ResponseRecorder
+	hitlCtl.HandleInput("sess-1", []byte("\x1b"))
+
+	if got := questionAnswerOf(t, awaitResponse(t, done)).PermissionDecisionReason; got != skippedReason {
+		t.Errorf("reason = %q, want the skipped wording", got)
+	}
+}
+
+// A free-text question has no options to list, so the overlay stays away and
+// the phone keeps it. Painting a choice-less box would block the terminal on a
+// prompt it cannot answer.
+func TestQuestion_FreeTextIsLeftToThePhone(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, _ := withTerminal(ctx)
+
+	done, notifID := startQuestion(t, ctx, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj",
+		ToolInput: questionInput(t, oneQuestion("What should it be called?", "Name")),
+	})
+
 	select {
-	case w = <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handleQuestion blocked; it must return so the CLI can render its own UI")
+	case o := <-overlays.painted:
+		t.Fatalf("painted %+v, want nothing the terminal cannot answer", o)
+	case <-time.After(200 * time.Millisecond):
 	}
 
-	if got := strings.TrimSpace(w.Body.String()); got != "{}" {
-		t.Errorf("body = %q, want {}", got)
-	}
-	assertStatus(t, db, "sess-1", "waiting_permission")
-
-	notif := onlyQuestionNotif(t, db)
-	if notif.Status != "pending" {
-		t.Errorf("notification status = %q, want pending", notif.Status)
-	}
-	// Nothing waits on a decision channel any more, so no slot is reserved.
-	if ctx.Mgr.HasPending(notif.ID) {
-		t.Error("question registered a decision slot; nothing waits on one")
+	ctx.Mgr.Resolve(notifID, notifications.Decision{
+		Status:   "answered",
+		Response: json.RawMessage(`{"text":"helios"}`),
+	}, "mobile")
+	if got := questionAnswerOf(t, awaitResponse(t, done)).PermissionDecisionReason; !strings.Contains(got, "helios") {
+		t.Errorf("reason = %q, want the typed answer in it", got)
 	}
 }
 
@@ -1147,11 +1292,15 @@ func TestQuestion_PayloadKeepsQuestionsAtTopLevel(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	callHook(handleQuestion, ctx, hookInput{
+	done, notifID := startQuestion(t, ctx, hookInput{
 		SessionID: "sess-1",
 		CWD:       "/tmp/proj",
 		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
 	})
+	defer func() {
+		ctx.Mgr.Resolve(notifID, notifications.Decision{Status: "denied"}, "mobile")
+		awaitResponse(t, done)
+	}()
 
 	payload := decodePayload(t, onlyQuestionNotif(t, db))
 	questions, ok := payload["questions"].([]interface{})
@@ -1195,13 +1344,13 @@ func TestToolPre_StillMarksOtherToolsActive(t *testing.T) {
 	assertStatus(t, db, "sess-1", "active")
 }
 
-// The tool completed, so whoever answered — terminal or phone — the question is
-// gone and the other surface must stop offering it.
+// The backstop for the escape path: the tool completed, so the question is gone
+// and every surface has to stop offering it.
 func TestToolPost_ResolvesQuestionButNotPermission(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	callHook(handleQuestion, ctx, hookInput{
+	done, _ := startQuestion(t, ctx, hookInput{
 		SessionID: "sess-1",
 		CWD:       "/tmp/proj",
 		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
@@ -1223,6 +1372,7 @@ func TestToolPost_ResolvesQuestionButNotPermission(t *testing.T) {
 		CWD:       "/tmp/proj",
 		ToolName:  "AskUserQuestion",
 	})
+	awaitResponse(t, done) // resolving the question releases the blocked hook
 
 	if got := onlyQuestionNotif(t, db).Status; got != "resolved" {
 		t.Errorf("question status = %q, want resolved", got)
@@ -1335,7 +1485,7 @@ func TestIdlePrompt_ResolvesPendingQuestion(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 
-	callHook(handleQuestion, ctx, hookInput{
+	done, _ := startQuestion(t, ctx, hookInput{
 		SessionID: "sess-1",
 		CWD:       "/tmp/proj",
 		ToolInput: questionInput(t, oneQuestion("Proceed?", "Plan", "Yes", "No")),
@@ -1346,6 +1496,7 @@ func TestIdlePrompt_ResolvesPendingQuestion(t *testing.T) {
 		CWD:           "/tmp/proj",
 		HookEventName: "idle_prompt",
 	})
+	awaitResponse(t, done)
 
 	if got := onlyQuestionNotif(t, db).Status; got != "resolved" {
 		t.Errorf("question status = %q, want resolved", got)
