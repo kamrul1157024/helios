@@ -123,6 +123,9 @@ const initial: State = {
 
 type Listener = () => void
 
+/** Matches the mobile app's coalescing window (daemon_api_service.dart:348). */
+const REFRESH_DEBOUNCE = 500
+
 /**
  * A single mutable store with manual subscription.
  *
@@ -134,6 +137,7 @@ class Store {
   private state: State = initial
   private listeners = new Set<Listener>()
   private toastTimer: ReturnType<typeof setTimeout> | null = null
+  private refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   getSnapshot = (): State => this.state
 
@@ -233,9 +237,10 @@ class Store {
   }
 
   /**
-   * Applies a server event in place where the payload allows it, and falls back
-   * to a refetch where it does not. Refetching everything on every event is
-   * what makes a busy agent feel laggy.
+   * Applies a server event in place where the payload allows it, and refetches
+   * behind it. The patch is what paints immediately; the refetch is what makes
+   * the rest of the record true, and it is debounced so a busy turn costs one
+   * round trip rather than one per event.
    */
   private onServerEvent(hostId: string, event: SSEEvent): void {
     switch (event.type) {
@@ -249,6 +254,10 @@ class Store {
         // so an absent handle is no evidence the host went away.
         const terminal = str(event.data.terminal)
         this.patchSession(hostId, id, (terminal ? { status, terminal } : { status }) as Partial<Session>)
+        // The payload carries a status and little else, but the record behind
+        // it moved with it — last_event_at above all, which is the only thing
+        // telling the transcript there is more of it to read.
+        this.scheduleRefresh(hostId)
         return
       }
       case 'session_updated':
@@ -258,10 +267,30 @@ class Store {
       case 'notification':
       case 'notification_resolved':
         void this.refreshNotifications(hostId)
+        // A permission request writes waiting_permission to the session and
+        // then announces only the notification (claude/hooks.go:104,142), so
+        // refetching the list is the one way the sidebar hears about it.
+        this.scheduleRefresh(hostId)
         return
       default:
         return
     }
+  }
+
+  /**
+   * Refetches a host's sessions once the events stop arriving. An agent mid-turn
+   * fires several in a row, and one list per event is what makes it feel laggy.
+   */
+  private scheduleRefresh(hostId: string): void {
+    const pending = this.refreshTimers.get(hostId)
+    if (pending) clearTimeout(pending)
+    this.refreshTimers.set(
+      hostId,
+      setTimeout(() => {
+        this.refreshTimers.delete(hostId)
+        void this.refreshSessions(hostId)
+      }, REFRESH_DEBOUNCE),
+    )
   }
 
   private patchSession(hostId: string, sessionId: string, patch: Partial<Session>): void {
