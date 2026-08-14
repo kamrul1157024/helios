@@ -208,63 +208,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildOfflineHostBanner(HostConnection host) {
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    final fg = theme.colorScheme.onErrorContainer;
+    return Material(
       color: theme.colorScheme.errorContainer,
-      child: Row(
-        children: [
-          Icon(Icons.cloud_off, size: 16, color: theme.colorScheme.onErrorContainer),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '"${host.label}" is offline',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              _hm.serviceFor(host.id)?.reconnect();
-            },
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-            ),
-            child: Text('Retry', style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer)),
-          ),
-          TextButton(
-            onPressed: () async {
-              final confirmed = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Remove host?'),
-                  content: Text('Remove "${host.label}"? You can re-pair later.'),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
-                      child: const Text('Remove'),
-                    ),
-                  ],
+      child: InkWell(
+        onTap: () => _hm.serviceFor(host.id)?.reconnect(),
+        onLongPress: () => _confirmRemoveHost(host),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+          child: Row(
+            children: [
+              Icon(Icons.cloud_off, size: 13, color: fg),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${host.label} offline',
+                  style: TextStyle(fontSize: 11, color: fg),
+                  overflow: TextOverflow.ellipsis,
                 ),
-              );
-              if (confirmed == true && mounted) {
-                await _hm.removeHost(host.id);
-              }
-            },
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              Text(
+                'Retry',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemoveHost(HostConnection host) async {
+    final theme = Theme.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove host?'),
+        content: Text('Remove "${host.label}"? You can re-pair later.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: theme.colorScheme.error,
             ),
-            child: Text('Remove', style: TextStyle(fontSize: 12, color: theme.colorScheme.error)),
+            child: const Text('Remove'),
           ),
         ],
       ),
     );
+    if (confirmed == true && mounted) {
+      await _hm.removeHost(host.id);
+    }
   }
 
   void _toggleGlobalVoice() async {
@@ -532,7 +535,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _subscribeToHost(host.id);
         }
 
-        final offlineHosts = hm.offlineHosts;
+        final offlineHosts = hm.visibleOfflineHosts;
 
         final allNotifications = hm.allNotifications;
         final allSessions = hm.allSessions;

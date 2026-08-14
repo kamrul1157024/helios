@@ -11,6 +11,21 @@ import '../models/session.dart';
 import 'api_client.dart';
 import 'daemon_api_service.dart';
 
+/// Narrows the offline hosts to the ones the current filter is showing.
+///
+/// Checked out to a single host, the sessions and notifications on screen are
+/// already filtered to it, so a banner about a different host is a red bar —
+/// with a Remove button — about content that is not there. The dimmed dot in
+/// the app bar carries that host's state instead. Pure so the rule can be
+/// tested without standing up services.
+List<HostConnection> offlineHostsForFilter(
+  List<HostConnection> offline,
+  String? activeHostId,
+) {
+  if (activeHostId == null) return offline;
+  return offline.where((h) => h.id == activeHostId).toList();
+}
+
 class HostManager extends ChangeNotifier {
   static const _hostsKey = 'helios_hosts';
   static const _activeHostKey = 'helios_active_host_id';
@@ -65,6 +80,10 @@ class HostManager extends ChangeNotifier {
       return service != null && service.isOffline;
     }).toList();
   }
+
+  /// The offline hosts worth a banner under the current filter.
+  List<HostConnection> get visibleOfflineHosts =>
+      offlineHostsForFilter(offlineHosts, _activeHostId);
 
   /// All sessions from all hosts, merged.
   List<Session> get allSessions =>
@@ -448,12 +467,9 @@ class HostManager extends ChangeNotifier {
       // the ones most likely to have been answered elsewhere while the app was
       // suspended, and the reconcile sweep only runs on fetch.
       service.fetchNotifications();
-      if (host.id == _activeHostId) {
-        service.fetchSessions();
-        await service.startActive();
-      } else {
-        await service.startBackground();
-      }
+      final isActive = host.id == _activeHostId;
+      if (isActive) service.fetchSessions();
+      await service.resume(asActiveHost: isActive);
     }
   }
 

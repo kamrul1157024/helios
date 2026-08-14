@@ -14,6 +14,21 @@ import 'notification_service.dart';
 /// Callback fired when an SSE event arrives on this host.
 typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
 
+/// How long a connected stream may stay silent before it is presumed dead.
+/// The daemon heartbeats every 30s, so this is two missed beats plus slack.
+const streamSilenceThreshold = Duration(seconds: 75);
+
+/// Whether a stream that still reports itself connected has gone silent for
+/// long enough to be presumed dead.
+///
+/// A phone that sleeps through a network change is left holding a half-open
+/// socket: the read never errors, so nothing else notices the stream is gone.
+/// Silence measured against the daemon's heartbeat is the only signal there is.
+bool isStreamStale(DateTime? lastBytesAt, DateTime now) {
+  if (lastBytesAt == null) return false;
+  return now.difference(lastBytesAt) > streamSilenceThreshold;
+}
+
 class DaemonAPIService extends ChangeNotifier {
   final String hostId;
   final String serverUrl;
@@ -24,11 +39,19 @@ class DaemonAPIService extends ChangeNotifier {
   Timer? _pollTimer;
   Timer? _sessionDebounce;
   Timer? _notificationDebounce;
+  Timer? _watchdogTimer;
   bool _running = false;
   bool _connected = false;
   bool _isActiveHost = false;
   int _consecutiveFailures = 0;
   static const _offlineThreshold = 2;
+  static const _watchdogInterval = Duration(seconds: 30);
+
+  /// When the stream last delivered bytes, heartbeats included.
+  DateTime? _lastBytesAt;
+
+  /// Bumped per connect attempt so a superseded one cannot clobber the live one.
+  int _connectGeneration = 0;
 
   List<HeliosNotification> _notifications = [];
   List<HeliosNotification> get notifications => _notifications;
@@ -36,6 +59,10 @@ class DaemonAPIService extends ChangeNotifier {
   List<Session> get sessions => _sessions;
   bool get connected => _connected;
   bool get isOffline => _consecutiveFailures >= _offlineThreshold;
+
+  /// Connected in name only: the socket is open but the daemon has gone quiet
+  /// past the heartbeat window.
+  bool get stale => _connected && isStreamStale(_lastBytesAt, DateTime.now());
 
   bool _notificationsLoaded = false;
   bool get notificationsLoaded => _notificationsLoaded;
@@ -84,6 +111,7 @@ class DaemonAPIService extends ChangeNotifier {
     if (_running) return;
     _running = true;
     _isActiveHost = true;
+    _startWatchdog();
     await _loadSessionCache();
     _connect(); // fire-and-forget — SSE runs in background
   }
@@ -93,7 +121,45 @@ class DaemonAPIService extends ChangeNotifier {
     if (_running) return;
     _running = true;
     _isActiveHost = false;
+    _startWatchdog();
     _connect(); // fire-and-forget — SSE runs in background
+  }
+
+  /// Re-establish the event stream after the app was suspended.
+  ///
+  /// [startActive] and [startBackground] cannot do this: both return early
+  /// while `_running` is set, and it stays set across a pause because the
+  /// stream is deliberately kept alive for background notifications. So resume
+  /// used to be a no-op on the connection — exactly when the socket is most
+  /// likely to have died unnoticed.
+  Future<void> resume({required bool asActiveHost}) async {
+    if (!_running) {
+      await (asActiveHost ? startActive() : startBackground());
+      return;
+    }
+
+    _isActiveHost = asActiveHost;
+    if (asActiveHost) await _loadSessionCache();
+
+    // Timers do not fire while the process is suspended, so the watchdog and
+    // any pending backoff came back late or not at all.
+    _startWatchdog();
+
+    // A brief screen-off leaves a healthy stream; rebuilding it would cost a
+    // reconnect and a refetch for nothing.
+    if (_connected && !stale) return;
+
+    reconnect();
+  }
+
+  /// Catches a stream that died without ever erroring.
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(_watchdogInterval, (_) {
+      if (!_running || !stale) return;
+      debugPrint('[$hostId] stream silent past the heartbeat window');
+      reconnect();
+    });
   }
 
   /// Promote from background to active (fetch data, start polling if SSE is down).
@@ -128,12 +194,15 @@ class DaemonAPIService extends ChangeNotifier {
     _connected = false;
     _isActiveHost = false;
     _consecutiveFailures = 0;
+    _lastBytesAt = null;
     _client?.close();
     _client = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _pollTimer?.cancel();
     _pollTimer = null;
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
     _sessionDebounce?.cancel();
     _sessionDebounce = null;
     _notificationDebounce?.cancel();
@@ -182,8 +251,15 @@ class DaemonAPIService extends ChangeNotifier {
   Future<void> _connect() async {
     if (!_running) return;
 
+    // Every attempt supersedes the one before it. A superseded attempt unwinds
+    // once its client is closed, and without this guard its tail would mark the
+    // live connection dead and queue a second, racing reconnect.
+    final generation = ++_connectGeneration;
+    bool superseded() => !_running || generation != _connectGeneration;
+
     _client?.close();
-    _client = http.Client();
+    final client = http.Client();
+    _client = client;
 
     try {
       final request = http.Request('GET', Uri.parse('$serverUrl/api/events'));
@@ -193,7 +269,8 @@ class DaemonAPIService extends ChangeNotifier {
         'Cache-Control': 'no-cache',
       });
 
-      final response = await _client!.send(request);
+      final response = await client.send(request);
+      if (superseded()) return;
 
       if (response.statusCode == 401) {
         debugPrint('[$hostId] SSE auth failed — refreshing token');
@@ -211,6 +288,7 @@ class DaemonAPIService extends ChangeNotifier {
 
       _consecutiveFailures = 0;
       _connected = true;
+      _lastBytesAt = DateTime.now();
       // SSE is healthy — stop fallback polling
       _pollTimer?.cancel();
       _pollTimer = null;
@@ -224,7 +302,10 @@ class DaemonAPIService extends ChangeNotifier {
       String currentEvent = '';
 
       await for (final chunk in response.stream.transform(utf8.decoder)) {
-        if (!_running) break;
+        if (superseded()) return;
+        // Heartbeats count. The daemon sends ": heartbeat" every 30s, and on a
+        // stream carrying no events it is the only proof the socket is alive.
+        _lastBytesAt = DateTime.now();
 
         buffer += chunk;
         final lines = buffer.split('\n');
@@ -243,11 +324,12 @@ class DaemonAPIService extends ChangeNotifier {
         }
       }
     } catch (e) {
-      if (!_running) return;
+      if (superseded()) return;
       debugPrint('[$hostId] SSE error: $e');
       _consecutiveFailures++;
     }
 
+    if (superseded()) return;
     _connected = false;
     // SSE dropped — start fallback polling if this is the active host
     if (_isActiveHost && _pollTimer == null) _startPolling();
