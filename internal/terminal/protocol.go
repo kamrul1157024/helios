@@ -25,6 +25,13 @@ const (
 	FrameExit     FrameType = 0x07
 	FramePing     FrameType = 0x08
 	FramePong     FrameType = 0x09
+
+	// FrameOverlaySet and FrameOverlayClear travel from the control viewer to
+	// the host; FrameOverlayInput carries keystrokes back while an overlay is
+	// up. See docs/specs/36-helios-owned-hitl.md.
+	FrameOverlaySet   FrameType = 0x0a
+	FrameOverlayClear FrameType = 0x0b
+	FrameOverlayInput FrameType = 0x0c
 )
 
 // MaxFrameSize bounds a single frame so a corrupt or hostile length prefix
@@ -54,6 +61,12 @@ func (t FrameType) String() string {
 		return "ping"
 	case FramePong:
 		return "pong"
+	case FrameOverlaySet:
+		return "overlay-set"
+	case FrameOverlayClear:
+		return "overlay-clear"
+	case FrameOverlayInput:
+		return "overlay-input"
 	default:
 		return fmt.Sprintf("unknown(0x%02x)", uint8(t))
 	}
@@ -66,6 +79,10 @@ type Role string
 const (
 	RoleInteractive Role = "interactive"
 	RoleObserver    Role = "observer"
+	// RoleControl is the daemon. It has observer semantics — it never votes on
+	// the PTY size — plus the right to set overlays and receive the keystrokes
+	// they capture. Exactly one control viewer is honoured at a time.
+	RoleControl Role = "control"
 )
 
 // Hello is the first frame a viewer sends.

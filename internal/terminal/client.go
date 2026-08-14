@@ -82,6 +82,21 @@ func (c *Client) Resize(cols, rows int) error {
 	return WriteFrame(c.conn, FrameResize, EncodeResize(cols, rows))
 }
 
+// SetOverlay paints a modal over the session on every viewer. Honoured only
+// for the control connection.
+func (c *Client) SetOverlay(o Overlay) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return WriteJSONFrame(c.conn, FrameOverlaySet, o)
+}
+
+// ClearOverlay takes the modal down and hands input back to the PTY.
+func (c *Client) ClearOverlay() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return WriteFrame(c.conn, FrameOverlayClear, nil)
+}
+
 // Ping asks the host for a Pong.
 func (c *Client) Ping() error {
 	c.mu.Lock()
