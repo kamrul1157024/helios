@@ -26,6 +26,22 @@ import type {
 const TOKEN_LIFETIME = 3600
 const TOKEN_REFRESH_MARGIN = 300
 const REQUEST_TIMEOUT = 15_000
+/** An upload carries megabytes over a tunnel; the shared timeout is for JSON. */
+const UPLOAD_TIMEOUT = 120_000
+
+/** One file on its way up: the bytes, and what to call them at the far end. */
+export interface UploadPart {
+  name: string
+  type: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
+/** Where the daemon put it. The path is what goes on to the agent. */
+export interface UploadedFile {
+  name: string
+  path: string
+  size: number
+}
 
 export class ApiError extends Error {
   constructor(
@@ -152,6 +168,51 @@ export class ApiClient {
    */
   sendPrompt(id: string, message: string): Promise<{ success: boolean; queued?: boolean }> {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/send`, { message })
+  }
+
+  /**
+   * Stores files beside the session and answers with the path of each.
+   *
+   * The bytes stop here. What reaches the agent is a path, which it opens with
+   * its own tools — so an attachment costs the model nothing until it looks.
+   */
+  async uploadFiles(id: string, files: UploadPart[]): Promise<UploadedFile[]> {
+    const path = `/api/sessions/${encodeURIComponent(id)}/files`
+    let response = await this.sendForm(path, files)
+    if (response.status === 401) {
+      this.invalidate()
+      response = await this.sendForm(path, files)
+    }
+
+    const text = await response.text()
+    const parsed = (text ? safeParse(text) : undefined) as
+      | { files?: UploadedFile[]; error?: string; message?: string }
+      | undefined
+
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        parsed?.message ?? parsed?.error ?? `upload failed with ${response.status}`,
+        parsed?.error,
+      )
+    }
+    return parsed?.files ?? []
+  }
+
+  /** A form is rebuilt per attempt: a consumed body cannot be sent twice. */
+  private sendForm(path: string, files: UploadPart[]): Promise<Response> {
+    const form = new FormData()
+    for (const file of files) {
+      const blob = new Blob([file.bytes], { type: file.type || 'application/octet-stream' })
+      form.append('file', blob, file.name)
+    }
+    // No Content-Type of ours: fetch writes it with the multipart boundary.
+    return fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { Authorization: this.authHeader() },
+      body: form,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT),
+    })
   }
 
   stop(id: string): Promise<unknown> {
