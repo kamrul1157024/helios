@@ -7,10 +7,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 )
 
 func hookConfig(port int) map[string]interface{} {
 	base := fmt.Sprintf("http://localhost:%d/hooks/claude", port)
+	// Every hook that blocks on a human gets the same budget, derived from the
+	// one the daemon itself waits: helios has to give up first, or the CLI walks
+	// away from a prompt that is still on screen.
+	blocking := claude.HookTimeoutSeconds
 	return map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"PermissionRequest": []interface{}{
@@ -20,7 +26,7 @@ func hookConfig(port int) map[string]interface{} {
 						map[string]interface{}{
 							"type":    "http",
 							"url":     base + "/permission",
-							"timeout": 300,
+							"timeout": blocking,
 						},
 					},
 				},
@@ -85,7 +91,7 @@ func hookConfig(port int) map[string]interface{} {
 						map[string]interface{}{
 							"type":    "http",
 							"url":     base + "/elicitation",
-							"timeout": 300,
+							"timeout": blocking,
 						},
 					},
 				},
