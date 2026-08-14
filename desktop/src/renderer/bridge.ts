@@ -14,6 +14,7 @@ import type {
   HostStatus,
   ModelInfo,
   Notification,
+  NotificationPrefs,
   ProviderInfo,
   Session,
   SSEEvent,
@@ -70,11 +71,26 @@ interface RawBridge {
     onExited(fn: (payload: { tabId: string; code: number }) => void): Unsubscribe
     onClosed(fn: (payload: { tabId: string; reason: string }) => void): Unsubscribe
   }
+  prefs: {
+    get(): Promise<NotificationPrefs>
+    setSound(enabled: boolean): Promise<NotificationPrefs>
+    setAlert(type: string, enabled: boolean): Promise<NotificationPrefs>
+    reset(): Promise<NotificationPrefs>
+  }
+  hud: {
+    resize(height: number): void
+    dismiss(): void
+    activate(target: { hostId: string; notificationId: string; sessionId: string }): void
+    resolved(key: string): void
+    onPresent(fn: (card: { hostId: string; hostName?: string; notification: Notification }) => void): Unsubscribe
+    onRetract(fn: (key: string) => void): Unsubscribe
+  }
   app: {
     onActivateNotification(
       fn: (payload: { hostId: string; sessionId: string; notificationId: string; command?: string }) => void,
     ): Unsubscribe
     onOpenPairing(fn: (url: string) => void): Unsubscribe
+    onOpenSettings(fn: () => void): Unsubscribe
   }
 }
 

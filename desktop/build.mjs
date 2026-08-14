@@ -57,11 +57,24 @@ const configs = [
     target: 'chrome128',
     loader: { '.css': 'css' },
   },
+  {
+    // The approval HUD: its own window, its own bundle, same preload. Sharing
+    // the renderer bundle would drag xterm and the whole app shell into a
+    // window that shows two buttons.
+    ...common,
+    entryPoints: [resolve(root, 'src/renderer/hud.tsx')],
+    outfile: resolve(out, 'renderer/hud.js'),
+    platform: 'browser',
+    format: 'iife',
+    target: 'chrome128',
+    loader: { '.css': 'css' },
+  },
 ]
 
 await rm(out, { recursive: true, force: true })
 await mkdir(resolve(out, 'renderer'), { recursive: true })
 await cp(resolve(root, 'src/renderer/index.html'), resolve(out, 'renderer/index.html'))
+await cp(resolve(root, 'src/renderer/hud.html'), resolve(out, 'renderer/hud.html'))
 await cp(resolve(root, 'node_modules/@xterm/xterm/css/xterm.css'), resolve(out, 'renderer/xterm.css'))
 await cp(resolve(root, 'assets'), resolve(out, 'assets'), { recursive: true })
 

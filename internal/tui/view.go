@@ -2,8 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -82,8 +80,6 @@ func (m StartModel) View() string {
 		return m.viewMain()
 	case screenConfirmDevice:
 		return m.viewConfirmDevice()
-	case screenNotificationSettings:
-		return m.viewNotificationSettings()
 	case screenSettings:
 		return m.viewGeneralSettings()
 	case screenError:
@@ -125,20 +121,6 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(check(fmt.Sprintf("Tunnel active (%s)", m.tunnelProv)))
 		} else {
 			b.WriteString(cross("No tunnel configured"))
-		}
-
-		if m.notifyBin != "" {
-			b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))
-			if runtime.GOOS == "darwin" {
-				b.WriteString(dimStyle.Render("  · If notifications don't appear, enable in System Settings → Notifications → terminal-notifier"))
-				b.WriteString("\n")
-			}
-		} else {
-			b.WriteString(cross(desktopNotifyInstallHint()))
-			if runtime.GOOS == "darwin" {
-				b.WriteString(dimStyle.Render("  · After installing, enable in System Settings → Notifications → terminal-notifier"))
-				b.WriteString("\n")
-			}
 		}
 
 		if m.deviceCount > 0 {
@@ -422,11 +404,6 @@ func (m StartModel) viewMain() string {
 	} else {
 		b.WriteString(cross("No tunnel configured"))
 	}
-	if m.notifyBin != "" {
-		b.WriteString(check(fmt.Sprintf("Desktop notifications (%s)", filepath.Base(m.notifyBin))))
-	} else {
-		b.WriteString(cross(desktopNotifyInstallHint()))
-	}
 	// Devices
 	b.WriteString("\n")
 	activeDevices := 0
@@ -557,15 +534,4 @@ func check(msg string) string {
 
 func cross(msg string) string {
 	return fmt.Sprintf("  %s %s\n", crossStyle.Render("✗"), msg)
-}
-
-func desktopNotifyInstallHint() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "Desktop notifications — brew install terminal-notifier"
-	case "linux":
-		return "Desktop notifications — sudo apt install libnotify-bin"
-	default:
-		return "Desktop notifications — not supported on this platform"
-	}
 }

@@ -51,8 +51,6 @@ func main() {
 		handleAuth(os.Args[2:])
 	case "attach":
 		handleAttach(os.Args[2:])
-	case "notify":
-		handleNotify()
 	case "ptyhost":
 		handlePtyHost(os.Args[2:])
 	case "wrap":
@@ -263,14 +261,9 @@ func handleStart() {
 		os.Exit(1)
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Spawn desktop notifier as a detached background process.
-	spawnNotifier(exe, cfg.Server.InternalPort)
+	// Notifications belong to the desktop app now; a notifier left running by
+	// an older install would fire alongside it.
+	reapLegacyNotifier()
 
 	// The TUI runs in this terminal. Sessions live in their own terminal hosts,
 	// so there is no multiplexer to open a window in or attach to.
@@ -278,59 +271,6 @@ func handleStart() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-// spawnNotifier starts helios notify as a detached background process if one
-// is not already running. The PID is written to ~/.helios/notify.pid.
-func spawnNotifier(exe string, internalPort int) {
-	pidPath := filepath.Join(daemon.HeliosDir(), "notify.pid")
-
-	// Check if already running.
-	if data, err := os.ReadFile(pidPath); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			if proc, err := os.FindProcess(pid); err == nil {
-				if proc.Signal(syscall.Signal(0)) == nil {
-					return // already running
-				}
-			}
-		}
-		os.Remove(pidPath)
-	}
-
-	logPath := filepath.Join(daemon.HeliosDir(), "logs", "desktop-notif.log")
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		logFile = nil
-	}
-
-	portStr := strconv.Itoa(internalPort)
-	cmd := exec.Command(exe, "notify", "--port", portStr)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Stdin = nil
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		return
-	}
-	if logFile != nil {
-		logFile.Close()
-	}
-
-	os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0644)
-	cmd.Process.Release()
-}
-
-// handleNotify runs the desktop notification subscriber (internal command).
-func handleNotify() {
-	port := 7654 // default
-	for i, arg := range os.Args[2:] {
-		if arg == "--port" && i+1 < len(os.Args[2:]) {
-			if p, err := strconv.Atoi(os.Args[i+3]); err == nil {
-				port = p
-			}
-		}
-	}
-	tui.RunNotifier(port)
 }
 
 func handleDevices() {
@@ -342,9 +282,6 @@ func handleDevices() {
 }
 
 func handleStop() {
-	// Kill notifier if running.
-	stopNotifier()
-
 	// Stop daemon (or supervisor if running). Tunnel is left alive.
 	if err := daemon.StopSupervisor(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -352,7 +289,13 @@ func handleStop() {
 	}
 }
 
-func stopNotifier() {
+// reapLegacyNotifier stops the `helios notify` process older installs spawned.
+//
+// The desktop app raises notifications now, and nothing left running from a
+// previous version will ever be stopped otherwise — it would keep firing
+// duplicates forever. Best-effort: a missing or stale pid file is the normal
+// case after the first run.
+func reapLegacyNotifier() {
 	pidPath := filepath.Join(daemon.HeliosDir(), "notify.pid")
 	data, err := os.ReadFile(pidPath)
 	if err != nil {

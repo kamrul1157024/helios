@@ -1,0 +1,86 @@
+/* The window is transparent; the cards are the only thing drawn. */
+html,
+body {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* The scroll lives here, not on the stack: the stack has to stay free to take
+   its natural height, because that height is what the window is sized from.
+   Constraining it to the window would be circular — it would measure the size
+   it had just been given, and collapse. */
+#root {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.hud-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.hud-card {
+  border-radius: 12px;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+  overflow: hidden;
+}
+
+.hud-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.hud-host {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.hud-open {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  background: transparent;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.hud-close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--on-surface-variant);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.hud-close:hover {
+  background: var(--surface-high);
+  color: var(--on-surface);
+}
+
+.hud-card .card {
+  border: 0;
+  background: transparent;
+  margin: 0;
+}
+
+.hud-error {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 12px;
+  color: var(--error);
+}

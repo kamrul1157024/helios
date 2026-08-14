@@ -1,8 +1,10 @@
-import { app, BrowserWindow, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, globalShortcut, Menu, session, shell } from 'electron'
 import path from 'node:path'
 
 import { HostRegistry } from './hosts.ts'
+import { Hud } from './hud.ts'
 import { Notifier, type NotifyTarget } from './notify.ts'
+import { PrefsStore } from './prefs.ts'
 import { TerminalManager } from './terminals.ts'
 import { registerIpc } from './ipc.ts'
 
@@ -16,7 +18,12 @@ let window: BrowserWindow | null = null
 let hosts: HostRegistry | null = null
 let terminals: TerminalManager | null = null
 let notifier: Notifier | null = null
+let hud: Hud | null = null
+let prefs: PrefsStore | null = null
 let quitting = false
+
+/** Brings the HUD forward and gives it the keyboard, since it opens unfocused. */
+const ANSWER_SHORTCUT = 'CommandOrControl+Shift+A'
 
 /**
  * One window at a time. A second launch — or a `helios://` link handed to the
@@ -49,12 +56,19 @@ async function start(): Promise<void> {
 
   hosts = new HostRegistry()
   terminals = new TerminalManager(hosts)
-  notifier = new Notifier(hosts, activateNotification, () => {
+  prefs = new PrefsStore()
+  prefs.load()
+  hud = new Hud(rendererDir, path.join(distDir, 'preload', 'preload.js'), activateNotification)
+  notifier = new Notifier(hosts, hud, prefs, activateNotification, () => {
     quitting = true
     app.quit()
   })
 
-  registerIpc({ hosts, terminals, notifier, window: () => window })
+  registerIpc({ hosts, terminals, notifier, prefs, window: () => window })
+
+  // The HUD is shown without focus, so nothing reaches its keyboard handlers
+  // until the user asks for it.
+  globalShortcut.register(ANSWER_SHORTCUT, () => hud?.focus())
   hosts.load()
   // Packaged macOS builds take the icon from the bundle; an unpackaged run
   // would otherwise sit in the dock as a generic Electron diamond.
@@ -79,6 +93,8 @@ async function start(): Promise<void> {
     quitting = true
     terminals?.closeAll()
     notifier?.destroy()
+    hud?.destroy()
+    globalShortcut.unregisterAll()
   })
   // The tray is the point of staying resident: closing the window should not
   // stop approvals from arriving.
@@ -164,7 +180,33 @@ function activateNotification(target: NotifyTarget): void {
 function buildMenu(): Menu {
   const isMac = process.platform === 'darwin'
   return Menu.buildFromTemplate([
-    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    ...(isMac
+      ? [
+          {
+            role: 'appMenu' as const,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              {
+                label: 'Settings…',
+                accelerator: 'CmdOrCtrl+,',
+                click: () => {
+                  focusWindow()
+                  window?.webContents.send('app:open-settings')
+                },
+              },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const },
+            ],
+          },
+        ]
+      : []),
     {
       label: 'File',
       submenu: [
@@ -173,7 +215,19 @@ function buildMenu(): Menu {
           accelerator: 'CmdOrCtrl+N',
           click: () => window?.webContents.send('app:activate-notification', { command: 'new-session' }),
         },
-        { type: 'separator' },
+        ...(isMac
+          ? []
+          : [
+              {
+                label: 'Settings…',
+                accelerator: 'CmdOrCtrl+,',
+                click: () => {
+                  focusWindow()
+                  window?.webContents.send('app:open-settings')
+                },
+              },
+            ]),
+        { type: 'separator' as const },
         isMac ? { role: 'close' as const } : { role: 'quit' as const },
       ],
     },

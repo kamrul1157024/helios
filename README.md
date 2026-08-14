@@ -470,7 +470,7 @@ of them. Everything except the AI itself is free.
 - **Clients** — desktop app, mobile app, TUI and CLI, all stateless, all interchangeable, all talking to the same daemon over HTTP. Use one, use all, use none
 - **Harness plugins** — Claude Code is the implemented provider, with native hook integration. Any other terminal-run harness attaches through the same registry (`internal/provider`): hooks, actions, commands, models and capabilities are all registered, not hard-coded
 - **Tunnel** — nine providers behind one picker: Tailscale Serve and Funnel, Cloudflare, zrok, ngrok, localtunnel, localhost.run, localxpose, plus plain LAN and a custom URL
-- **Notifications** — native OS alerts from the TUI (macOS via `terminal-notifier`, Linux via `notify-send`) with click-to-session support, and on-device notifications on the phone driven off the SSE stream — no push service, no third-party relay
+- **Notifications** — the desktop app raises native alerts and answers them in place: an approval opens a HUD with the tool call and the same controls the phone has. On-device notifications on the phone are driven off the same SSE stream — no push service, no third-party relay
 - **Voice reporting** — Helios narrates what your agents are doing in real time: tool calls, permission requests, completions, and errors — spoken aloud so you can stay informed without watching the screen. Narration is AI-generated on the backend and streamed to your phone via SSE. You control what you hear and how you hear it: choose any system TTS voice, set speech rate and pitch, and pick a persona that styles the narration (Default, Butler, Casual, GenZ, or Sarcastic). This is session activity reporting — not AI responses read back to you
 
 ## Why?
@@ -619,7 +619,7 @@ helios stop                     # stop the daemon
 - **Real-time**: SSE
 - **Auth**: Asymmetric JWT (Ed25519), QR code device pairing
 - **Harness integration**: Claude Code hooks (native); other harnesses via the provider plugin registry
-- **Desktop notifications**: `terminal-notifier` (macOS), `notify-send` (Linux)
+- **Desktop notifications**: the desktop app (Electron), no external binaries
 - **Voice reporting**: AI-generated narration streamed from backend (SSE), Flutter TTS with configurable voice, rate, pitch, and persona
 - **Everything runs locally. No cloud. No subscriptions. No accounts.**
 
