@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 
+import { bridge } from './bridge.ts'
 import { store, terminalId, useStore } from './store.ts'
 import { Detail } from './components/detail.tsx'
 import { HostsDialog } from './components/hosts.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
+import { SettingsDialog } from './components/settings.tsx'
 import { Sidebar } from './components/sidebar.tsx'
 
 export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
   const toast = useStore((s) => s.toast)
   const pairingLink = useStore((s) => s.pairingLink)
-  const [dialog, setDialog] = useState<'new' | 'hosts' | null>(null)
+  const [dialog, setDialog] = useState<'new' | 'hosts' | 'settings' | null>(null)
 
   useEffect(() => {
     void store.init()
@@ -20,6 +22,9 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (pairingLink) setDialog('hosts')
   }, [pairingLink])
+
+  // The Settings item in the app menu lives in the main process.
+  useEffect(() => bridge.app.onOpenSettings(() => setDialog('settings')), [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -69,6 +74,7 @@ export function App(): JSX.Element {
 
       {dialog === 'new' && <NewSessionDialog onClose={() => setDialog(null)} />}
       {dialog === 'hosts' && <HostsDialog onClose={() => setDialog(null)} />}
+      {dialog === 'settings' && <SettingsDialog onClose={() => setDialog(null)} />}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>

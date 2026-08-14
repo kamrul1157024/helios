@@ -62,9 +62,24 @@ const helios = {
     onExited: (fn: (payload: unknown) => void) => on('term:exited', fn),
     onClosed: (fn: (payload: unknown) => void) => on('term:closed', fn),
   },
+  prefs: {
+    get: () => call('prefs:get'),
+    setSound: (enabled: boolean) => call('prefs:setSound', enabled),
+    setAlert: (type: string, enabled: boolean) => call('prefs:setAlert', type, enabled),
+    reset: () => call('prefs:reset'),
+  },
+  hud: {
+    resize: (height: number) => ipcRenderer.send('hud:resize', height),
+    dismiss: () => ipcRenderer.send('hud:dismiss'),
+    activate: (target: unknown) => ipcRenderer.send('hud:activate', target),
+    resolved: (key: string) => ipcRenderer.send('hud:resolved', key),
+    onPresent: (fn: (payload: unknown) => void) => on('hud:present', fn),
+    onRetract: (fn: (payload: unknown) => void) => on('hud:retract', fn),
+  },
   app: {
     onActivateNotification: (fn: (payload: unknown) => void) => on('app:activate-notification', fn),
     onOpenPairing: (fn: (payload: unknown) => void) => on('app:open-pairing', fn),
+    onOpenSettings: (fn: () => void) => on('app:open-settings', () => fn()),
   },
 }
 

@@ -3,6 +3,7 @@ import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { ApiError, type ApiClient } from './api.ts'
 import type { HostRegistry } from './hosts.ts'
 import type { Notifier } from './notify.ts'
+import type { PrefsStore } from './prefs.ts'
 import type { TerminalManager } from './terminals.ts'
 
 /**
@@ -56,6 +57,7 @@ export interface IpcDeps {
   hosts: HostRegistry
   terminals: TerminalManager
   notifier: Notifier
+  prefs: PrefsStore
   window: () => BrowserWindow | null
 }
 
@@ -68,7 +70,7 @@ export interface IpcDeps {
  * string otherwise.
  */
 export function registerIpc(deps: IpcDeps): void {
-  const { hosts, terminals, notifier } = deps
+  const { hosts, terminals, notifier, prefs } = deps
 
   const send = (channel: string, payload: unknown): void => {
     const window = deps.window()
@@ -123,6 +125,13 @@ export function registerIpc(deps: IpcDeps): void {
     const fn = api[method as keyof ApiClient] as (...a: unknown[]) => Promise<unknown>
     return fn.apply(api, args ?? [])
   })
+
+  // ─── Notification preferences ──────────────────────────────────────────
+
+  handle('prefs:get', async () => prefs.get())
+  handle('prefs:setSound', async (_e, enabled: boolean) => prefs.setSound(enabled))
+  handle('prefs:setAlert', async (_e, type: string, enabled: boolean) => prefs.setAlert(type, enabled))
+  handle('prefs:reset', async () => prefs.reset())
 
   // ─── Terminals ─────────────────────────────────────────────────────────
 

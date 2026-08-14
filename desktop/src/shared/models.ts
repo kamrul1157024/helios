@@ -450,3 +450,12 @@ export interface SSEEvent {
   type: string
   data: Record<string, unknown>
 }
+
+/**
+ * Per-machine notification preferences. Alerting only: a silenced type still
+ * raises its HUD card and its tray entry, it just makes no sound.
+ */
+export interface NotificationPrefs {
+  sound: boolean
+  alerts: Record<string, boolean>
+}

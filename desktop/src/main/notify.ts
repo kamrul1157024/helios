@@ -2,12 +2,11 @@ import { Notification as ElectronNotification, nativeImage, Tray, Menu, app } fr
 import path from 'node:path'
 
 import type { HostRegistry } from './hosts.ts'
+import { isBlocking } from '../shared/notifications.ts'
+import type { Hud } from './hud.ts'
+import type { PrefsStore } from './prefs.ts'
 import type { Notification } from '../shared/models.ts'
 
-/**
- * A notification the daemon has already resolved should not pop up. The SSE
- * event and a poll can both deliver the same one, so ids are remembered.
- */
 const SEEN_LIMIT = 500
 
 export interface NotifyTarget {
@@ -32,6 +31,8 @@ export class Notifier {
 
   constructor(
     private readonly hosts: HostRegistry,
+    private readonly hud: Hud,
+    private readonly prefs: PrefsStore,
     private readonly onActivate: (target: NotifyTarget) => void,
     private readonly onQuit: () => void,
   ) {}
@@ -90,16 +91,24 @@ export class Notifier {
     this.pending.set(key, target)
     this.refreshTray()
 
+    const hostName = this.hosts.get(hostId)?.record.name
+
+    // Anything that blocks an agent goes to the HUD, which can answer it. A
+    // banner for the same request would offer nothing the tray does not.
+    if (isBlocking(notif.type)) {
+      this.hud.present({ hostId, hostName, notification: notif })
+      return
+    }
+
     if (!ElectronNotification.isSupported()) return
 
-    const hostName = this.hosts.get(hostId)?.record.name
     const suffix = hostName && !this.isOnlyHost() ? ` · ${hostName}` : ''
     const notification = new ElectronNotification({
       title: (notif.title ?? titleFor(notif.type)) + suffix,
       body: notif.detail ?? projectOf(notif.cwd),
-      // Approvals block the agent until answered, so they should stay on screen
-      // rather than slide away after a few seconds.
-      timeoutType: notif.type.endsWith('permission') ? 'never' : 'default',
+      // Silencing a type buys quiet, not invisibility: the notification still
+      // appears, and the tray still counts it.
+      silent: !this.prefs.shouldSound(notif.type),
     })
     notification.on('click', () => this.onActivate(target))
     notification.on('close', () => this.shown.delete(key))
@@ -119,6 +128,7 @@ export class Notifier {
   private retract(key: string): boolean {
     this.shown.get(key)?.close()
     this.shown.delete(key)
+    this.hud.retract(key)
     return this.pending.delete(key)
   }
 
