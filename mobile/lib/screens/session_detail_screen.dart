@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
@@ -8,6 +10,7 @@ import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/claude/notification_ext.dart';
 import '../providers/claude/verbs.dart';
+import '../services/api_client.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
@@ -35,6 +38,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       <String, _SubRoute>{}; // sessionId → last sub-screen
 
   final _promptController = TextEditingController();
+  final List<UploadFile> _attachments = [];
   final _scrollController = ScrollController();
   List<Message> _messages = [];
   bool _loading = true;
@@ -208,17 +212,117 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     }
   }
 
+  /// Picks attachments, from the gallery, the camera, or the file browser.
+  Future<void> _attach(_AttachSource source) async {
+    try {
+      final picked = <UploadFile>[];
+      if (source == _AttachSource.files) {
+        final result = await FilePicker.pickFiles(
+          allowMultiple: true,
+          withData: true,
+        );
+        for (final file in result?.files ?? <PlatformFile>[]) {
+          if (file.bytes != null) {
+            picked.add(UploadFile(name: file.name, bytes: file.bytes!));
+          }
+        }
+      } else {
+        final image = await ImagePicker().pickImage(
+          source: source == _AttachSource.camera
+              ? ImageSource.camera
+              : ImageSource.gallery,
+        );
+        if (image != null) {
+          picked.add(
+            UploadFile(name: image.name, bytes: await image.readAsBytes()),
+          );
+        }
+      }
+      if (picked.isNotEmpty && mounted) {
+        setState(() => _attachments.addAll(picked));
+      }
+    } catch (e) {
+      debugPrint('[attach] $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not read that file')),
+        );
+      }
+    }
+  }
+
+  void _showAttachSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Photo library'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _attach(_AttachSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Camera'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _attach(_AttachSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.attach_file),
+              title: const Text('File'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _attach(_AttachSource.files);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _sendPrompt() async {
     final text = _promptController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && _attachments.isEmpty) return;
 
     setState(() => _sending = true);
     final sse = _sse;
+
+    // Upload first. A prompt naming a path the daemon never stored sends the
+    // agent looking for a file that is not there.
+    var message = text;
+    if (_attachments.isNotEmpty) {
+      final paths = sse == null
+          ? null
+          : await sse.uploadSessionFiles(
+              widget.session.sessionId,
+              _attachments,
+            );
+      if (paths == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not upload the attachments')),
+          );
+          setState(() => _sending = false);
+        }
+        return;
+      }
+      message = [...paths.map((p) => 'Attached: $p'), '', text].join('\n').trim();
+    }
+
     final error = sse == null
         ? 'Not connected'
-        : await sse.sendSessionPrompt(widget.session.sessionId, text);
+        : await sse.sendSessionPrompt(widget.session.sessionId, message);
     if (error == null && mounted) {
       _promptController.clear();
+      setState(() => _attachments.clear());
       await Future.delayed(const Duration(milliseconds: 500));
       await _loadTranscript();
     } else if (mounted) {
@@ -1306,6 +1410,24 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 );
               },
             ),
+          if (_attachments.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _attachments
+                    .map(
+                      (file) => _AttachmentChip(
+                        file: file,
+                        onRemove: _sending
+                            ? null
+                            : () => setState(() => _attachments.remove(file)),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
           Row(
             children: [
               if (hasCommands)
@@ -1317,6 +1439,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   ),
                   tooltip: 'Commands',
                 ),
+              IconButton(
+                onPressed: canSend && !_sending ? _showAttachSheet : null,
+                icon: const Icon(Icons.add_photo_alternate_outlined, size: 22),
+                tooltip: 'Attach a photo or file',
+              ),
               Expanded(
                 child: AnimatedBuilder(
                   animation: _breathController,
@@ -1700,4 +1827,80 @@ enum _SubRouteType { gitStatus, fileBrowser }
 class _SubRoute {
   final _SubRouteType type;
   _SubRoute(this.type);
+}
+
+enum _AttachSource { gallery, camera, files }
+
+/// One pending attachment. A thumbnail for images, because the point of
+/// sending a screenshot is knowing which screenshot went.
+class _AttachmentChip extends StatelessWidget {
+  final UploadFile file;
+  final VoidCallback? onRemove;
+
+  const _AttachmentChip({required this.file, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.only(left: 6, right: 2, top: 3, bottom: 3),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (file.isImage)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.memory(
+                file.bytes,
+                width: 20,
+                height: 20,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
+            )
+          else
+            Icon(
+              Icons.insert_drive_file_outlined,
+              size: 16,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              file.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _size(file.size),
+            style: TextStyle(
+              fontSize: 11,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            icon: const Icon(Icons.close, size: 14),
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: EdgeInsets.zero,
+            tooltip: 'Remove',
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _size(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).round()} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 }

@@ -607,6 +607,32 @@ class DaemonAPIService extends ChangeNotifier {
     return [];
   }
 
+  /// Uploads attachments and returns the path the daemon stored each under.
+  ///
+  /// The bytes stop at the daemon: the prompt carries the paths, and the agent
+  /// opens them with its own tools. Returns null when the upload failed, which
+  /// the caller reports rather than sending a prompt naming files that are not
+  /// there.
+  Future<List<String>?> uploadSessionFiles(
+    String sessionId,
+    List<UploadFile> files,
+  ) async {
+    if (files.isEmpty) return const [];
+    try {
+      final resp = await _api.postFiles('/api/sessions/$sessionId/files', files);
+      if (resp.statusCode != 200) {
+        debugPrint('[$hostId] uploadSessionFiles: ${resp.statusCode} ${resp.body}');
+        return null;
+      }
+      final data = jsonDecode(resp.body);
+      final list = (data['files'] as List?) ?? [];
+      return list.map((f) => f['path'] as String).toList();
+    } catch (e) {
+      debugPrint('[$hostId] Failed to upload files: $e');
+      return null;
+    }
+  }
+
   /// Sends a prompt and waits for the agent to accept it.
   ///
   /// Returns null when it did. Anything else is the reason it did not, worth

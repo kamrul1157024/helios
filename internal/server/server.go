@@ -209,6 +209,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleSessionTranscript(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/send"):
 			s.handleSessionSend(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/files"):
+			s.handleSessionUpload(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/stop"):
 			s.handleSessionStop(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/terminate"):

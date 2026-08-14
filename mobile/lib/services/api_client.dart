@@ -135,6 +135,31 @@ class ApiClient {
     return resp;
   }
 
+  /// Posts files as multipart/form-data, each under the field `file`.
+  ///
+  /// A [http.MultipartRequest] is spent once sent, so the retry after a 401
+  /// builds a second one rather than replaying the first.
+  Future<http.Response> postFiles(String path, List<UploadFile> files) async {
+    Future<http.Response> attempt() async {
+      final request = http.MultipartRequest('POST', Uri.parse('$serverUrl$path'));
+      request.headers.addAll(await _authHeaders());
+      for (final file in files) {
+        request.files.add(
+          http.MultipartFile.fromBytes('file', file.bytes, filename: file.name),
+        );
+      }
+      return http.Response.fromStream(await request.send());
+    }
+
+    final resp = await attempt();
+    if (resp.statusCode == 401) {
+      debugPrint('[ApiClient] 401 on POST $path — refreshing token');
+      invalidateToken();
+      return attempt();
+    }
+    return resp;
+  }
+
   Future<http.Response> delete(String path) async {
     final resp = await http.delete(
       Uri.parse('$serverUrl$path'),
@@ -149,5 +174,26 @@ class ApiClient {
       );
     }
     return resp;
+  }
+}
+
+/// A file picked on the device, held in memory until it is uploaded.
+class UploadFile {
+  final String name;
+  final Uint8List bytes;
+
+  const UploadFile({required this.name, required this.bytes});
+
+  int get size => bytes.length;
+
+  /// True for the kinds the composer shows a thumbnail for.
+  bool get isImage {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.heic');
   }
 }

@@ -41,6 +41,10 @@ export function ChatPanel({
   const [total, setTotal] = useState(0)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [dropping, setDropping] = useState(false)
+  const picker = useRef<HTMLInputElement | null>(null)
+  const nextAttachment = useRef(0)
   const scroller = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
   const pinnedToBottom = useRef(true)
@@ -106,13 +110,52 @@ export function ChatPanel({
     }
   }
 
+  /** Reads the files into memory now: a dropped File is not valid for long. */
+  const attach = async (files: FileList | File[] | null): Promise<void> => {
+    const chosen = [...(files ?? [])]
+    if (chosen.length === 0) return
+    const read = await Promise.all(
+      chosen.map(async (file) => ({
+        id: ++nextAttachment.current,
+        // A pasted screenshot arrives unnamed, and the name becomes the
+        // filename on disk and the path in the prompt.
+        name: file.name || pastedName(file.type),
+        type: file.type,
+        size: file.size,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+      })),
+    )
+    setAttachments((current) => [...current, ...read])
+  }
+
+  const drop = (attachment: Attachment): void => {
+    if (attachment.preview) URL.revokeObjectURL(attachment.preview)
+    setAttachments((current) => current.filter((a) => a.id !== attachment.id))
+  }
+
   const send = async (): Promise<void> => {
     const text = draft.trim()
-    if (!text || sending) return
+    if ((!text && attachments.length === 0) || sending) return
     setSending(true)
     try {
-      const result = await api(hostId).sendPrompt(session.session_id, text)
+      // Upload first: a prompt naming a path the daemon never stored is worse
+      // than no prompt, and the agent would go looking for it.
+      let message = text
+      if (attachments.length > 0) {
+        const stored = await api(hostId).uploadFiles(
+          session.session_id,
+          attachments.map(({ name, type, bytes }) => ({ name, type, bytes })),
+        )
+        message = [...stored.map((file) => `Attached: ${file.path}`), '', text].join('\n').trim()
+      }
+
+      const result = await api(hostId).sendPrompt(session.session_id, message)
       setDraft('')
+      for (const attachment of attachments) {
+        if (attachment.preview) URL.revokeObjectURL(attachment.preview)
+      }
+      setAttachments([])
       if (result.queued) store.notify('Queued — the agent is mid-turn')
       void store.refreshSessions(hostId)
     } catch (err) {
@@ -209,8 +252,71 @@ export function ChatPanel({
           </button>
         </div>
       ) : (
-        <div className="composer">
+        <div
+          className={dropping ? 'composer dropping' : 'composer'}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes('Files')) return
+            event.preventDefault()
+            setDropping(true)
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+            setDropping(false)
+          }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes('Files')) return
+            event.preventDefault()
+            setDropping(false)
+            void attach(event.dataTransfer.files)
+          }}
+        >
+          {attachments.length > 0 && (
+            <div className="attachments">
+              {attachments.map((attachment) => (
+                <span key={attachment.id} className="attachment">
+                  {attachment.preview ? (
+                    <img className="attachment-thumb" src={attachment.preview} alt="" />
+                  ) : (
+                    <span className="attachment-icon">◫</span>
+                  )}
+                  <span className="attachment-name" title={attachment.name}>
+                    {attachment.name}
+                  </span>
+                  <span className="attachment-size">{fileSize(attachment.size)}</span>
+                  <button
+                    className="attachment-drop"
+                    aria-label={`Remove ${attachment.name}`}
+                    title="Remove"
+                    onClick={() => drop(attachment)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           <div className="composer-input">
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                void attach(event.target.files)
+                // Cleared so picking the same file twice fires onChange twice.
+                event.target.value = ''
+              }}
+            />
+            <button
+              className="icon-btn attach-btn"
+              title="Attach files — or paste and drop them here"
+              aria-label="Attach files"
+              disabled={sending}
+              onClick={() => picker.current?.click()}
+            >
+              ⊕
+            </button>
             <textarea
               ref={composer}
               value={draft}
@@ -221,6 +327,13 @@ export function ChatPanel({
                   : 'Send a prompt (↵ to send, ⇧↵ for a new line)'
               }
               onChange={(event) => setDraft(event.target.value)}
+              onPaste={(event) => {
+                // A screenshot on the clipboard comes through as a file. Let
+                // the default run when there is none, or pasted text is lost.
+                if (event.clipboardData.files.length === 0) return
+                event.preventDefault()
+                void attach(event.clipboardData.files)
+              }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') return
                 // An IME uses Enter to accept a candidate; sending there would
@@ -233,7 +346,7 @@ export function ChatPanel({
             />
             <button
               className="filled send-btn"
-              disabled={!draft.trim() || sending}
+              disabled={(!draft.trim() && attachments.length === 0) || sending}
               title={cold ? 'Wake and send' : 'Send (↵)'}
               aria-label={cold ? 'Wake and send' : 'Send'}
               onClick={() => void send()}
@@ -252,6 +365,30 @@ export function ChatPanel({
       )}
     </div>
   )
+}
+
+/** A file held in the composer, read into memory and not yet uploaded. */
+interface Attachment {
+  id: number
+  name: string
+  type: string
+  size: number
+  bytes: Uint8Array
+  /** Object URL for images, so the chip shows what was pasted. */
+  preview: string | null
+}
+
+/** A pasted image has no name of its own, and the name becomes the path. */
+function pastedName(type: string): string {
+  const ext = type.split('/')[1]?.split('+')[0] ?? 'bin'
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
+  return `pasted-${stamp}.${ext}`
+}
+
+function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 /** Quoted, so the composer keeps the lines apart from what is typed about them. */
