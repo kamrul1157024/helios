@@ -1776,27 +1776,31 @@ small {
   max-width: 100%;
 }
 
-/* Sits just outside the column's right edge; the drag moves both edges, since
-   the column is centred. */
+/* Sits on the column's right edge; the drag moves both, since the column is
+   centred. Drawn faintly at rest rather than on hover alone — a handle nobody
+   can see is a column that does not resize. */
 .md-grip {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -14px;
-  width: 10px;
+  right: -16px;
+  width: 16px;
   cursor: col-resize;
 }
 
 .md-grip::after {
   content: '';
   position: absolute;
-  inset: 0 4px;
+  inset: 0 7px;
   border-radius: 2px;
-  background: transparent;
+  background: var(--outline-variant);
+  opacity: 0.5;
 }
 
 .md-grip:hover::after {
-  background: var(--outline-variant);
+  inset: 0 6px;
+  background: var(--primary);
+  opacity: 1;
 }
 
 /* Rendered prose still has lines underneath it, and what the reader highlights
