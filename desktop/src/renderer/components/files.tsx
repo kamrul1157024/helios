@@ -556,16 +556,18 @@ function FileView({
 
   // Dragging the right edge moves both: the column stays centred, so it grows
   // by twice what the pointer travelled. The drag starts from the width on
-  // screen, not the one in state — a column asked to be wider than the panel
-  // is drawn at the panel's width, and dragging back from anywhere else would
-  // move nothing until it had caught up.
+  // screen rather than from state, so the first pixel of a drag always moves
+  // the edge, and stops at the room the panel has — a column wider than that
+  // is a number the reader cannot see the effect of.
   const resize = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
     const fromX = event.clientX
-    const fromWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? width
+    const doc = event.currentTarget.parentElement
+    const fromWidth = doc?.getBoundingClientRect().width ?? MIN_WIDTH
+    const room = roomFor(doc)
     let latest = fromWidth
     const move = (moved: PointerEvent): void => {
-      latest = clampWidth(fromWidth + (moved.clientX - fromX) * 2)
+      latest = clampWidth(fromWidth + (moved.clientX - fromX) * 2, room)
       setWidth(latest)
     }
     const done = (): void => {
@@ -614,7 +616,7 @@ function FileView({
         <p className="empty-note">Binary file — not shown.</p>
       ) : blocks !== null ? (
         <div className="md preview-md" ref={preview}>
-          <div className="md-doc" style={{ width }}>
+          <div className="md-doc" style={{ width: width ?? '100%' }}>
             {blocks.map((block) => {
               if (hidden.has(block.startLine)) return null
               const range = { start: block.startLine, end: block.endLine }
@@ -656,11 +658,11 @@ function FileView({
             })}
             <div
               className="md-grip"
-              title="Drag to set the reading width — double-click to reset"
+              title="Drag to narrow the text — double-click to fill the panel"
               onPointerDown={resize}
               onDoubleClick={() => {
-                setWidth(DEFAULT_WIDTH)
-                writeReadingWidth(DEFAULT_WIDTH)
+                setWidth(null)
+                writeReadingWidth(null)
               }}
             />
           </div>
@@ -734,29 +736,40 @@ function blockLines(node: Node): LineRange | null {
   return { start: Number(block.dataset.lineStart), end: Number(block.dataset.lineEnd) }
 }
 
-/** How wide the rendered column is, in pixels — a reading preference, not a
- *  property of any one file, so every preview shares it. */
-const DEFAULT_WIDTH = 780
+/**
+ * How wide the rendered column is, in pixels. A reading preference rather than
+ * a property of any one file, so every preview shares it — and null until the
+ * reader says otherwise, which means the whole panel. A document that arrives
+ * pre-narrowed just looks like a panel that will not fill.
+ */
 const MIN_WIDTH = 420
-const MAX_WIDTH = 1400
 const WIDTH_KEY = 'helios.md-width'
 
-function clampWidth(width: number): number {
-  return Math.round(Math.min(Math.max(width, MIN_WIDTH), MAX_WIDTH))
+function clampWidth(width: number, room: number): number {
+  return Math.round(Math.min(Math.max(width, MIN_WIDTH), Math.max(room, MIN_WIDTH)))
 }
 
-function readReadingWidth(): number {
+/** What the scroller has to give, inside its padding. */
+function roomFor(doc: Element | null): number {
+  const scroller = doc?.closest('.preview-md')
+  if (!scroller) return Number.POSITIVE_INFINITY
+  const style = getComputedStyle(scroller)
+  return scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+}
+
+function readReadingWidth(): number | null {
   try {
     const saved = Number(localStorage.getItem(WIDTH_KEY))
-    return saved > 0 ? clampWidth(saved) : DEFAULT_WIDTH
+    return saved > 0 ? Math.max(saved, MIN_WIDTH) : null
   } catch {
-    return DEFAULT_WIDTH
+    return null
   }
 }
 
-function writeReadingWidth(width: number): void {
+function writeReadingWidth(width: number | null): void {
   try {
-    localStorage.setItem(WIDTH_KEY, String(width))
+    if (width === null) localStorage.removeItem(WIDTH_KEY)
+    else localStorage.setItem(WIDTH_KEY, String(width))
   } catch {
     // A full or unavailable store costs the preference, not the panel.
   }
