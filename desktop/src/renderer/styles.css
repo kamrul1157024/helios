@@ -21,11 +21,43 @@
 
   --error: #ffb4ab;
   --error-container: #93000a;
+  --on-error-container: #ffdad6;
   /* atom-one-dark's own background, so highlighted code sits on the colour the
      theme was drawn for — the same theme the mobile transcript uses. */
   --code-bg: #282c34;
   --inverse-surface: #e2e2e6;
   --inverse-on-surface: #2e3036;
+
+  /* Lifted overlays and the sheets they dim. Carried as whole colours rather
+     than an alpha a rule multiplies, because a light theme wants a different
+     black here and the rule using it should not have to know which theme it is
+     under. */
+  --shadow-soft: rgb(0 0 0 / 45%);
+  --shadow-strong: rgb(0 0 0 / 65%);
+  --scrim: rgb(0 0 0 / 40%);
+  --scrim-strong: rgb(0 0 0 / 60%);
+
+  /* Syntax roles. Named for what a token means rather than what colour it is,
+     so one set feeds highlight.js in the transcript and CodeMirror in the
+     editor. The defaults below are atom-one-dark's, which is what both used
+     before themes existed. */
+  --syn-fg: #abb2bf;
+  --syn-comment: #5c6370;
+  --syn-keyword: #c678dd;
+  --syn-tag: #e06c75;
+  --syn-literal: #56b6c2;
+  --syn-constant: #56b6c2;
+  --syn-string: #98c379;
+  --syn-regexp: #98c379;
+  --syn-attribute: #98c379;
+  --syn-number: #d19a66;
+  --syn-variable: #d19a66;
+  --syn-property: #d19a66;
+  --syn-function: #61aeee;
+  --syn-meta: #61aeee;
+  --syn-type: #e6c07b;
+  --syn-operator: #abb2bf;
+  --syn-punctuation: #abb2bf;
 
   /* Session status, matching _statusColor in the mobile sessions screen. */
   --s-starting: #4db6ac;
@@ -48,7 +80,10 @@
   --chat-column: 1100px;
 
   font-synthesis: none;
-  color-scheme: dark;
+  /* Indirected through a variable so a theme sets one value and the form
+     controls, scrollbars and caret follow it along with everything else. */
+  --color-scheme: dark;
+  color-scheme: var(--color-scheme);
 }
 
 * {
@@ -360,7 +395,7 @@ small {
   place-items: center;
   border-radius: 999px;
   background: var(--error-container);
-  color: #ffdad6;
+  color: var(--on-error-container);
   font-size: 11px;
   font-weight: 700;
 }
@@ -846,7 +881,7 @@ small {
   background: var(--surface-high);
   border-radius: var(--r-md);
   padding: 8px;
-  box-shadow: 0 8px 24px #0009;
+  box-shadow: 0 8px 24px var(--shadow-soft);
 }
 
 .menu-body button {
@@ -1462,12 +1497,103 @@ small {
   /* Inline-block by default, and auto margins do not centre one. */
   display: block;
   width: 100%;
-  /* Room for the send button, so a long line does not run under it. */
+  /* Room for the buttons on either side, so a long line runs under neither. */
   padding-right: 48px;
+  padding-left: 42px;
   resize: vertical;
   min-height: 60px;
   border-radius: var(--r-md);
   line-height: 1.5;
+}
+
+/* Attachments: the bytes go to the daemon, and the prompt carries the path. */
+
+.attach-btn {
+  position: absolute;
+  left: 8px;
+  bottom: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 15px;
+  color: var(--on-surface-variant);
+}
+
+.attach-btn:hover:not(:disabled) {
+  color: var(--primary);
+}
+
+/* A file dropped anywhere over the composer counts, so the whole of it lights
+   up rather than some target the pointer has to find. */
+.composer.dropping .composer-input::after {
+  content: 'Drop to attach';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--primary);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  font-size: 12px;
+  color: var(--primary);
+  pointer-events: none;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 3px 4px 3px 6px;
+  border-radius: 999px;
+  background: var(--surface-highest);
+  font-size: 12px;
+}
+
+.attachment-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.attachment-icon {
+  color: var(--on-surface-variant);
+}
+
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-size {
+  flex: none;
+  color: var(--on-surface-variant);
+}
+
+.attachment-drop {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.attachment-drop:hover {
+  background: var(--surface-low);
+  color: var(--error);
 }
 
 .composer-actions {
@@ -1848,7 +1974,7 @@ small {
   padding: 4px;
   border-radius: 10px;
   background: var(--surface-high);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  box-shadow: 0 8px 24px var(--shadow-soft);
 }
 
 /* Anchored to a selection rather than to a pointer: centred over it, and clear
@@ -2269,7 +2395,7 @@ small {
   display: flex;
   justify-content: center;
   padding-top: 72px;
-  background: color-mix(in srgb, #000 40%, transparent);
+  background: var(--scrim);
 }
 
 .quick {
@@ -2279,7 +2405,7 @@ small {
   flex-direction: column;
   background: var(--surface-container);
   border-radius: var(--r-md);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+  box-shadow: 0 18px 48px var(--shadow-soft);
   overflow: hidden;
 }
 
@@ -2461,7 +2587,7 @@ small {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: #0009;
+  background: var(--scrim-strong);
   display: grid;
   place-items: center;
   z-index: 100;
@@ -2475,7 +2601,7 @@ small {
   flex-direction: column;
   background: var(--surface-high);
   border-radius: var(--r-xl);
-  box-shadow: 0 24px 64px #000b;
+  box-shadow: 0 24px 64px var(--shadow-strong);
 }
 
 .modal-head {
@@ -2585,13 +2711,13 @@ hr {
   padding: 12px 18px;
   font-size: 13px;
   z-index: 200;
-  box-shadow: 0 6px 20px #0009;
+  box-shadow: 0 6px 20px var(--shadow-soft);
   animation: rise 160ms ease;
 }
 
 .toast.error {
   background: var(--error-container);
-  color: #ffdad6;
+  color: var(--on-error-container);
 }
 
 @keyframes rise {
@@ -2660,7 +2786,7 @@ hr {
   padding: 6px;
   border-radius: var(--r-md);
   background: var(--surface-high);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+  box-shadow: 0 12px 32px var(--shadow-soft);
 }
 
 .scope-row {
@@ -3145,6 +3271,91 @@ hr {
 
 .settings-group .check small {
   color: var(--on-surface-variant);
+}
+
+/* ─── Theme picker ──────────────────────────────────────────────────────── */
+
+.mode-row {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.mode-row .check {
+  margin-top: 0;
+  align-items: center;
+}
+
+.theme-picker {
+  margin-top: 14px;
+}
+
+.theme-picker-label {
+  display: block;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  margin-bottom: 6px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px;
+}
+
+.theme-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-sm);
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.theme-chip:hover {
+  background: var(--surface-high);
+}
+
+.theme-chip.selected {
+  border-color: var(--primary);
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+/* A slice of the theme itself — a name alone does not distinguish two
+   variants of the same palette. */
+.theme-swatch {
+  display: flex;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 16px;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+}
+
+.theme-swatch i {
+  flex: 1;
+}
+
+.theme-picker + .ghost {
+  margin-top: 14px;
+}
+
+.theme-swatch.inherit {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-high) 0 4px,
+    var(--surface-highest) 4px 8px
+  );
 }
 
 .modal-note {

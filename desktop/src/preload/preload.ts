@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+import { applyTheme } from '../shared/theme/apply.ts'
+import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
+
+interface ThemeBoot {
+  theme: HeliosTheme
+  terminal: XtermTheme
+}
+
 /**
  * The only surface the renderer gets.
  *
@@ -35,6 +43,31 @@ function on(channel: string, listener: (payload: unknown) => void): () => void {
   return () => ipcRenderer.removeListener(channel, wrapped)
 }
 
+/**
+ * Painted here, in the preload, rather than by the app.
+ *
+ * This script runs before any of the page's own scripts, so the variables are
+ * on <html> before the first frame is composited — React then mounts into an
+ * already-themed document. Doing it after mount means one frame of whatever the
+ * stylesheet's defaults happen to be, which is a visible flash on every launch.
+ */
+const boot = ipcRenderer.sendSync('theme:boot') as ThemeBoot
+
+if (document.documentElement) {
+  applyTheme(document.documentElement, boot.theme)
+} else {
+  // Usually this branch: a preload runs before the parser has built <html>, so
+  // there is nothing to write to yet. Waiting for DOMContentLoaded would be too
+  // late — the stylesheet is parsed by then and its defaults get a frame. The
+  // observer fires the moment <html> appears, which is still before <head>.
+  const observer = new MutationObserver(() => {
+    if (!document.documentElement) return
+    applyTheme(document.documentElement, boot.theme)
+    observer.disconnect()
+  })
+  observer.observe(document, { childList: true })
+}
+
 const helios = {
   hosts: {
     list: () => call('hosts:list'),
@@ -67,6 +100,19 @@ const helios = {
     setSound: (enabled: boolean) => call('prefs:setSound', enabled),
     setAlert: (type: string, enabled: boolean) => call('prefs:setAlert', type, enabled),
     reset: () => call('prefs:reset'),
+  },
+  theme: {
+    /**
+     * The theme already painted onto <html> by the time the page runs. Returned
+     * rather than re-fetched so the renderer starts from exactly what is on
+     * screen instead of asking again and risking a second, different answer.
+     */
+    boot: () => boot,
+    list: () => call('theme:list'),
+    prefs: () => call('theme:prefs'),
+    set: (next: unknown) => call('theme:set', next),
+    reload: () => call('theme:reload'),
+    onChanged: (fn: (payload: unknown) => void) => on('theme:changed', fn),
   },
   hud: {
     resize: (height: number) => ipcRenderer.send('hud:resize', height),

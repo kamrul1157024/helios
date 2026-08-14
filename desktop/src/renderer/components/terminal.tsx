@@ -18,28 +18,6 @@ bridge.term.onOutput(({ tabId, data }) => sinks.get(tabId)?.(data))
 
 const encoder = new TextEncoder()
 
-const THEME = {
-  background: '#101014',
-  foreground: '#d8d8e0',
-  cursor: '#ffb03a',
-  selectionBackground: '#33334a',
-  black: '#1c1c24',
-  red: '#ff6b6b',
-  green: '#7ddc8a',
-  yellow: '#ffb03a',
-  blue: '#6aa9ff',
-  magenta: '#c58cff',
-  cyan: '#5fd7d7',
-  white: '#d8d8e0',
-  brightBlack: '#5a5a68',
-  brightRed: '#ff8f8f',
-  brightGreen: '#a4eaad',
-  brightYellow: '#ffca70',
-  brightBlue: '#9cc5ff',
-  brightMagenta: '#dcb4ff',
-  brightWhite: '#ffffff',
-}
-
 /**
  * The terminal panel: the selected session's terminal, and every other open one
  * kept mounted behind it.
@@ -116,6 +94,15 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const theme = useStore((s) => s.terminalTheme)
+
+  // Assigned rather than passed on construction: rebuilding the terminal to
+  // recolour it would throw away the scrollback, which the host cannot replay
+  // a second time.
+  useEffect(() => {
+    const term = termRef.current
+    if (term) term.options.theme = theme
+  }, [theme])
 
   useEffect(() => {
     const container = hostRef.current
@@ -129,7 +116,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
       // The host replays its own scrollback on attach, so a deep local buffer
       // only duplicates what a snapshot already delivered.
       scrollback: 5000,
-      theme: THEME,
+      theme,
       macOptionIsMeta: true,
     })
     const fit = new FitAddon()

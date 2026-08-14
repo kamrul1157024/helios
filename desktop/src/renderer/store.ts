@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from 'react'
 
 import { api, bridge, statusOf } from './bridge.ts'
+import { applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type { HostRecord, HostStatus, Notification, Session, SSEEvent, TabStatus } from '../shared/models.ts'
+import type { XtermTheme } from '../shared/theme/resolve.ts'
 
 export interface Tab {
   id: string
@@ -100,6 +102,8 @@ export interface State {
   loading: boolean
   toast: { text: string; kind: 'info' | 'error' } | null
   pairingLink: string | null
+  /** The palette xterm draws with; the CSS side is set on <html>, not here. */
+  terminalTheme: XtermTheme
 }
 
 const initial: State = {
@@ -117,6 +121,7 @@ const initial: State = {
   query: '',
   showArchived: false,
   loading: true,
+  terminalTheme: bridge.theme.boot().terminal,
   toast: null,
   pairingLink: null,
 }
@@ -155,6 +160,14 @@ class Store {
   // ─── Lifecycle ─────────────────────────────────────────────────────────
 
   async init(): Promise<void> {
+    // The preload painted the boot theme already; this keeps up with changes
+    // made afterwards, whether from the settings dialog or the OS switching
+    // between light and dark underneath us.
+    bridge.theme.onChanged(({ theme, terminal }) => {
+      applyTheme(document.documentElement, theme)
+      this.set({ terminalTheme: terminal })
+    })
+
     bridge.hosts.onChanged((hosts) => {
       this.set({ hosts })
       for (const host of hosts) void this.refreshHost(host.id)

@@ -27,7 +27,7 @@ body {
   border-radius: 12px;
   border: 1px solid var(--outline-variant);
   background: var(--surface);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+  box-shadow: 0 12px 32px var(--shadow-soft);
   overflow: hidden;
 }
 

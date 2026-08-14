@@ -459,3 +459,24 @@ export interface NotificationPrefs {
   sound: boolean
   alerts: Record<string, boolean>
 }
+
+/**
+ * Per-machine appearance. Two theme slots rather than one so that following the
+ * OS has both a light and a dark answer to give; `mode` decides which slot is
+ * read, and 'system' hands that decision to the OS.
+ */
+export interface AppearancePrefs {
+  mode: 'system' | 'light' | 'dark'
+  lightTheme: string
+  darkTheme: string
+  /** A theme id, or 'match' to follow whichever UI theme is active. */
+  terminalTheme: string
+}
+
+/** A theme as the picker lists it; `swatch` is a handful of representative colours. */
+export interface ThemeSummary {
+  id: string
+  name: string
+  mode: 'dark' | 'light'
+  swatch: string[]
+}

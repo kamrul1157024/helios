@@ -9,10 +9,11 @@ import { rust } from '@codemirror/lang-rust'
 import { yaml } from '@codemirror/lang-yaml'
 import { indentUnit } from '@codemirror/language'
 import { EditorState, type Extension } from '@codemirror/state'
-import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView, keymap } from '@codemirror/view'
 import { basicSetup } from 'codemirror'
 import { useEffect, useRef } from 'react'
+
+import { heliosEditorTheme } from '../codemirror-theme.ts'
 
 /** A place to put the cursor, re-sent with a new seq to jump there again. */
 export interface Cursor {
@@ -70,7 +71,7 @@ export function CodeEditor({
       doc,
       extensions: [
         basicSetup,
-        oneDark,
+        heliosEditorTheme,
         indentUnit.of('  '),
         ...(language ? [language] : []),
         keymap.of([

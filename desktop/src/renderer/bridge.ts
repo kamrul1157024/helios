@@ -1,4 +1,6 @@
+import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 import type {
+  AppearancePrefs,
   CommandInfo,
   DeviceInfo,
   DirectoryInfo,
@@ -17,6 +19,7 @@ import type {
   NotificationPrefs,
   ProviderInfo,
   Session,
+  ThemeSummary,
   SSEEvent,
   Subagent,
   TabStatus,
@@ -35,6 +38,20 @@ import type {
  */
 
 type Unsubscribe = () => void
+
+/** One file on its way up: the bytes, and what to call them at the far end. */
+export interface UploadPart {
+  name: string
+  type: string
+  bytes: Uint8Array
+}
+
+/** Where the daemon put it. The path is what goes on to the agent. */
+export interface UploadedFile {
+  name: string
+  path: string
+  size: number
+}
 
 interface RawBridge {
   hosts: {
@@ -76,6 +93,15 @@ interface RawBridge {
     setSound(enabled: boolean): Promise<NotificationPrefs>
     setAlert(type: string, enabled: boolean): Promise<NotificationPrefs>
     reset(): Promise<NotificationPrefs>
+  }
+  theme: {
+    /** The theme the preload already painted, before this code ran. */
+    boot(): { theme: HeliosTheme; terminal: XtermTheme }
+    list(): Promise<ThemeSummary[]>
+    prefs(): Promise<AppearancePrefs>
+    set(next: Partial<AppearancePrefs>): Promise<{ theme: HeliosTheme; terminal: XtermTheme }>
+    reload(): Promise<ThemeSummary[]>
+    onChanged(fn: (payload: { theme: HeliosTheme; terminal: XtermTheme }) => void): Unsubscribe
   }
   hud: {
     resize(height: number): void
@@ -137,6 +163,10 @@ export class HostApi {
   }
   sendPrompt(id: string, message: string): Promise<{ success: boolean; queued?: boolean }> {
     return this.call('sendPrompt', id, message)
+  }
+  /** The bytes cross to the main process, which does the multipart POST. */
+  uploadFiles(id: string, files: UploadPart[]): Promise<UploadedFile[]> {
+    return this.call('uploadFiles', id, files)
   }
   stop(id: string): Promise<unknown> {
     return this.call('stop', id)
