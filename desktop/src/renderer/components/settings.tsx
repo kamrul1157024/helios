@@ -4,7 +4,7 @@ import { bridge } from '../bridge.ts'
 import { store } from '../store.ts'
 import { Modal } from './newsession.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
-import type { NotificationPrefs } from '../../shared/models.ts'
+import type { AppearancePrefs, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
 
 /**
  * Which types can be silenced, in the order the phone lists them. Keeping the
@@ -49,12 +49,44 @@ const GROUPS: { heading: string; note: string; types: { type: string; label: str
 const LISTED = GROUPS.flatMap((group) => group.types.map((t) => t.type))
 const MISSING = ALERT_TYPES.filter((type) => !LISTED.includes(type))
 
+const MODES: { value: AppearancePrefs['mode']; label: string; detail: string }[] = [
+  { value: 'system', label: 'System', detail: 'Follow the OS, switching as it does.' },
+  { value: 'light', label: 'Light', detail: 'Always the light theme below.' },
+  { value: 'dark', label: 'Dark', detail: 'Always the dark theme below.' },
+]
+
 export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null)
+  const [appearance, setAppearance] = useState<AppearancePrefs | null>(null)
+  const [themes, setThemes] = useState<ThemeSummary[]>([])
 
   useEffect(() => {
     void bridge.prefs.get().then(setPrefs)
+    void bridge.theme.prefs().then(setAppearance)
+    void bridge.theme.list().then(setThemes)
   }, [])
+
+  const setTheme = async (next: Partial<AppearancePrefs>): Promise<void> => {
+    if (!appearance) return
+    // Set locally first: the main process is the source of truth but it
+    // answers with the resolved theme, not the preference, and a picker that
+    // waits for a round trip feels like it ignored the click.
+    setAppearance({ ...appearance, ...next })
+    try {
+      await bridge.theme.set(next)
+    } catch (err) {
+      store.fail(err)
+      setAppearance(await bridge.theme.prefs())
+    }
+  }
+
+  const reloadThemes = async (): Promise<void> => {
+    try {
+      setThemes(await bridge.theme.reload())
+    } catch (err) {
+      store.fail(err)
+    }
+  }
 
   const apply = async (change: Promise<NotificationPrefs>): Promise<void> => {
     try {
@@ -66,6 +98,57 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
 
   return (
     <Modal title="Settings" onClose={onClose}>
+      <section className="settings-group">
+        <h3>Appearance</h3>
+        <p className="modal-note">
+          Themes are VS Code colour themes. Drop any theme JSON into <code>~/.helios/themes</code> to add your
+          own.
+        </p>
+
+        <div className="mode-row">
+          {MODES.map((mode) => (
+            <label key={mode.value} className="check" title={mode.detail}>
+              <input
+                type="radio"
+                name="theme-mode"
+                checked={appearance?.mode === mode.value}
+                disabled={!appearance}
+                onChange={() => void setTheme({ mode: mode.value })}
+              />
+              {mode.label}
+            </label>
+          ))}
+        </div>
+
+        {/* Both slots stay visible on a pinned mode: they are what 'System'
+            will switch between, and hiding the other one makes it look as
+            though the choice was lost. */}
+        <ThemePicker
+          label="Dark theme"
+          themes={themes.filter((theme) => theme.mode === 'dark')}
+          value={appearance?.darkTheme}
+          onPick={(id) => void setTheme({ darkTheme: id })}
+        />
+        <ThemePicker
+          label="Light theme"
+          themes={themes.filter((theme) => theme.mode === 'light')}
+          value={appearance?.lightTheme}
+          onPick={(id) => void setTheme({ lightTheme: id })}
+        />
+        <ThemePicker
+          label="Terminal"
+          themes={themes}
+          value={appearance?.terminalTheme}
+          match="Match UI theme"
+          onPick={(id) => void setTheme({ terminalTheme: id })}
+        />
+
+        <button className="ghost" onClick={() => void reloadThemes()}>
+          Reload themes
+        </button>
+      </section>
+
+      <h3>Notifications</h3>
       <p className="modal-note">
         Requests always appear — on screen and on the tray. These toggles decide whether they also make a sound.
       </p>
@@ -109,5 +192,57 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         </button>
       </div>
     </Modal>
+  )
+}
+
+/**
+ * A theme list with a swatch each, because a name is not much to choose from —
+ * "Gruvbox Dark Medium" and "Gruvbox Dark Hard" are the same words and quite
+ * different rooms to sit in.
+ */
+function ThemePicker({
+  label,
+  themes,
+  value,
+  match,
+  onPick,
+}: {
+  label: string
+  themes: ThemeSummary[]
+  value: string | undefined
+  /** Present on the terminal picker, whose first option is to follow the UI. */
+  match?: string
+  onPick: (id: string) => void
+}): JSX.Element {
+  return (
+    <div className="theme-picker">
+      <span className="theme-picker-label">{label}</span>
+      <div className="theme-grid">
+        {match && (
+          <button
+            className={value === 'match' ? 'theme-chip selected' : 'theme-chip'}
+            onClick={() => onPick('match')}
+          >
+            <span className="theme-swatch inherit" />
+            {match}
+          </button>
+        )}
+        {themes.map((theme) => (
+          <button
+            key={theme.id}
+            className={value === theme.id ? 'theme-chip selected' : 'theme-chip'}
+            onClick={() => onPick(theme.id)}
+            title={theme.id}
+          >
+            <span className="theme-swatch">
+              {theme.swatch.map((colour, index) => (
+                <i key={index} style={{ background: colour }} />
+              ))}
+            </span>
+            {theme.name}
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }

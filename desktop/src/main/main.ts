@@ -6,6 +6,7 @@ import { Hud } from './hud.ts'
 import { Notifier, type NotifyTarget } from './notify.ts'
 import { PrefsStore } from './prefs.ts'
 import { TerminalManager } from './terminals.ts'
+import { ThemeRegistry } from './themes.ts'
 import { registerIpc } from './ipc.ts'
 
 /** dist/main → dist. The main bundle is CommonJS, so __dirname is the real thing. */
@@ -20,6 +21,7 @@ let terminals: TerminalManager | null = null
 let notifier: Notifier | null = null
 let hud: Hud | null = null
 let prefs: PrefsStore | null = null
+let themes: ThemeRegistry | null = null
 let quitting = false
 
 /** Brings the HUD forward and gives it the keyboard, since it opens unfocused. */
@@ -58,13 +60,15 @@ async function start(): Promise<void> {
   terminals = new TerminalManager(hosts)
   prefs = new PrefsStore()
   prefs.load()
+  themes = new ThemeRegistry(path.join(distDir, 'themes'))
+  themes.load()
   hud = new Hud(rendererDir, path.join(distDir, 'preload', 'preload.js'), activateNotification)
   notifier = new Notifier(hosts, hud, prefs, activateNotification, openSettings, () => {
     quitting = true
     app.quit()
   })
 
-  registerIpc({ hosts, terminals, notifier, prefs, window: () => window })
+  registerIpc({ hosts, terminals, notifier, prefs, themes, window: () => window })
 
   // The HUD is shown without focus, so nothing reaches its keyboard handlers
   // until the user asks for it.
@@ -111,7 +115,9 @@ function createWindow(): void {
     minHeight: 560,
     show: false,
     icon: appIcon,
-    backgroundColor: '#101014',
+    // The frame is painted before the renderer runs, so it has to come from the
+    // theme too or the window flashes the old dark grey on every open.
+    backgroundColor: themes?.active().vars['--surface'] ?? '#101014',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(distDir, 'preload', 'preload.js'),

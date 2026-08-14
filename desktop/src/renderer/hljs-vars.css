@@ -1,0 +1,105 @@
+/* highlight.js token colours, in terms of the syntax roles a theme defines.
+   This replaces the packaged stylesheets, which hardcode one palette and so
+   cannot follow the theme. Only colour is set here — every highlighted block is
+   a `pre.code-block`, which owns its own background, padding and font. */
+
+.hljs {
+  color: var(--syn-fg);
+  background: var(--code-bg);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-doctag,
+.hljs-formula {
+  color: var(--syn-keyword);
+}
+
+/* Deletions ride with tags because a removed line reads as the same warning
+   colour in every theme this maps from. */
+.hljs-name,
+.hljs-section,
+.hljs-selector-tag,
+.hljs-subst,
+.hljs-deletion {
+  color: var(--syn-tag);
+}
+
+.hljs-literal {
+  color: var(--syn-literal);
+}
+
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--syn-constant);
+}
+
+.hljs-string,
+.hljs-addition,
+.hljs-meta .hljs-string {
+  color: var(--syn-string);
+}
+
+.hljs-regexp {
+  color: var(--syn-regexp);
+}
+
+.hljs-attribute {
+  color: var(--syn-attribute);
+}
+
+.hljs-number {
+  color: var(--syn-number);
+}
+
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--syn-variable);
+}
+
+.hljs-attr,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--syn-property);
+}
+
+.hljs-title,
+.hljs-title.function_ {
+  color: var(--syn-function);
+}
+
+.hljs-type,
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: var(--syn-type);
+}
+
+.hljs-meta,
+.hljs-selector-id,
+.hljs-link {
+  color: var(--syn-meta);
+}
+
+.hljs-operator,
+.hljs-punctuation {
+  color: var(--syn-operator);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
+
+.hljs-link {
+  text-decoration: underline;
+}

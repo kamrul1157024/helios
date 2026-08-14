@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 
 import { App } from './app.tsx'
 // The code theme first: the app's own sheet overrides pieces of it.
-import 'highlight.js/styles/atom-one-dark.css'
+import './hljs-vars.css'
 import './styles.css'
 
 const container = document.getElementById('root')

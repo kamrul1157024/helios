@@ -1,10 +1,12 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { ApiError, type ApiClient } from './api.ts'
 import type { HostRegistry } from './hosts.ts'
 import type { Notifier } from './notify.ts'
 import type { PrefsStore } from './prefs.ts'
 import type { TerminalManager } from './terminals.ts'
+import type { ThemeRegistry } from './themes.ts'
+import type { AppearancePrefs } from '../shared/models.ts'
 
 /**
  * REST calls the renderer may make. An allow-list rather than a reflective
@@ -19,6 +21,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'transcript',
   'subagents',
   'sendPrompt',
+  'uploadFiles',
   'stop',
   'terminate',
   'resume',
@@ -58,6 +61,7 @@ export interface IpcDeps {
   terminals: TerminalManager
   notifier: Notifier
   prefs: PrefsStore
+  themes: ThemeRegistry
   window: () => BrowserWindow | null
 }
 
@@ -70,7 +74,7 @@ export interface IpcDeps {
  * string otherwise.
  */
 export function registerIpc(deps: IpcDeps): void {
-  const { hosts, terminals, notifier, prefs } = deps
+  const { hosts, terminals, notifier, prefs, themes } = deps
 
   const send = (channel: string, payload: unknown): void => {
     const window = deps.window()
@@ -132,6 +136,41 @@ export function registerIpc(deps: IpcDeps): void {
   handle('prefs:setSound', async (_e, enabled: boolean) => prefs.setSound(enabled))
   handle('prefs:setAlert', async (_e, type: string, enabled: boolean) => prefs.setAlert(type, enabled))
   handle('prefs:reset', async () => prefs.reset())
+
+  // ─── Appearance ────────────────────────────────────────────────────────
+
+  // Every window, not just the main one: the HUD draws its cards from the same
+  // variables and would otherwise keep the old theme until it next opened.
+  const broadcastTheme = (): { theme: unknown; terminal: unknown } => {
+    const payload = { theme: themes.active(), terminal: themes.activeTerminal() }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('theme:changed', payload)
+    }
+    return payload
+  }
+
+  themes.onSystemChange(broadcastTheme)
+
+  // Synchronous, and the only channel that is: the preload script reads it
+  // before the page has scripts of its own so it can paint the theme onto
+  // <html> ahead of the first frame. Going through invoke would put a promise
+  // between the document opening and its colours arriving, which is the flash
+  // this avoids.
+  ipcMain.on('theme:boot', (event) => {
+    event.returnValue = { theme: themes.active(), terminal: themes.activeTerminal() }
+  })
+
+  handle('theme:list', async () => themes.list())
+  handle('theme:prefs', async () => themes.getPrefs())
+  handle('theme:set', async (_e, next: Partial<AppearancePrefs>) => {
+    themes.setPrefs(next)
+    return broadcastTheme()
+  })
+  handle('theme:reload', async () => {
+    themes.reload()
+    broadcastTheme()
+    return themes.list()
+  })
 
   // ─── Terminals ─────────────────────────────────────────────────────────
 

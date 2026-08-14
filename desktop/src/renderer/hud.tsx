@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { NotificationCard } from './components/notification-card.tsx'
+import { applyTheme } from '../shared/theme/apply.ts'
 import type { Notification } from '../shared/models.ts'
 
 import './styles.css'
@@ -34,9 +35,13 @@ function Hud(): JSX.Element {
     const offRetract = bridge.hud.onRetract((key) => {
       setCards((current) => current.filter((c) => keyOf(c.hostId, c.notification.id) !== key))
     })
+    // The preload painted the boot theme; this window outlives most theme
+    // changes, so it has to follow them like the main one does.
+    const offTheme = bridge.theme.onChanged(({ theme }) => applyTheme(document.documentElement, theme))
     return () => {
       offPresent()
       offRetract()
+      offTheme()
     }
   }, [])
 
