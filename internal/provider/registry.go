@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/store"
 )
@@ -29,7 +30,11 @@ type HookContext struct {
 	DB       *store.Store
 	Mgr      *notifications.Manager
 	Terminal backend.Backend
-	Notify   func(eventType string, data interface{}) // SSE broadcast
+	// HITL paints helios's own prompt over a session's terminal so the person
+	// sitting at it can answer. Nil in contexts built for a single non-blocking
+	// call, and on backends that cannot draw over a session.
+	HITL   *hitl.Controller
+	Notify func(eventType string, data interface{}) // SSE broadcast
 	// SessionStarted marks a session as having reported in, which stops the
 	// trust-dialog watcher for it and releases anything waiting for the agent
 	// to finish booting.
