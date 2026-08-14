@@ -59,7 +59,7 @@ async function start(): Promise<void> {
   prefs = new PrefsStore()
   prefs.load()
   hud = new Hud(rendererDir, path.join(distDir, 'preload', 'preload.js'), activateNotification)
-  notifier = new Notifier(hosts, hud, prefs, activateNotification, () => {
+  notifier = new Notifier(hosts, hud, prefs, activateNotification, openSettings, () => {
     quitting = true
     app.quit()
   })
@@ -172,6 +172,11 @@ function focusWindow(): void {
   window.focus()
 }
 
+function openSettings(): void {
+  focusWindow()
+  window?.webContents.send('app:open-settings')
+}
+
 function activateNotification(target: NotifyTarget): void {
   focusWindow()
   if (target.sessionId) window?.webContents.send('app:activate-notification', target)
@@ -190,10 +195,7 @@ function buildMenu(): Menu {
               {
                 label: 'Settings…',
                 accelerator: 'CmdOrCtrl+,',
-                click: () => {
-                  focusWindow()
-                  window?.webContents.send('app:open-settings')
-                },
+                click: openSettings,
               },
               { type: 'separator' as const },
               { role: 'services' as const },
@@ -218,14 +220,7 @@ function buildMenu(): Menu {
         ...(isMac
           ? []
           : [
-              {
-                label: 'Settings…',
-                accelerator: 'CmdOrCtrl+,',
-                click: () => {
-                  focusWindow()
-                  window?.webContents.send('app:open-settings')
-                },
-              },
+              { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: openSettings },
             ]),
         { type: 'separator' as const },
         isMac ? { role: 'close' as const } : { role: 'quit' as const },
