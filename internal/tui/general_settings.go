@@ -5,7 +5,14 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+var toggleOnStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("42"))
+
+var toggleOffStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("196"))
 
 var generalSettingsKeys = []struct {
 	key     string

@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
@@ -24,19 +22,18 @@ import (
 type screen int
 
 const (
-	screenLoading              screen = iota // checking daemon, starting if needed
-	screenHooksInstall                       // prompt to install Claude hooks
-	screenHooksUpdate                        // prompt to update outdated hooks
-	screenShellSetup                         // prompt to install shell wrapper
-	screenTunnelSelect                       // first time only: pick tunnel provider
-	screenBinaryMissing                      // tunnel binary not found
-	screenTunnelStarting                     // starting tunnel...
-	screenCustomURL                          // custom URL input
-	screenMain                               // main dashboard: status + devices + QRs
-	screenConfirmDevice                      // "Allow this device? y/n"
-	screenNotificationSettings               // desktop notification alert settings
-	screenSettings                           // general settings (auto title, etc.)
-	screenError                              // error
+	screenLoading        screen = iota // checking daemon, starting if needed
+	screenHooksInstall                 // prompt to install Claude hooks
+	screenHooksUpdate                  // prompt to update outdated hooks
+	screenShellSetup                   // prompt to install shell wrapper
+	screenTunnelSelect                 // first time only: pick tunnel provider
+	screenBinaryMissing                // tunnel binary not found
+	screenTunnelStarting               // starting tunnel...
+	screenCustomURL                    // custom URL input
+	screenMain                         // main dashboard: status + devices + QRs
+	screenConfirmDevice                // "Allow this device? y/n"
+	screenSettings                     // general settings (auto title, etc.)
+	screenError                        // error
 )
 
 // Tunnel provider options.
@@ -88,7 +85,6 @@ type statusCheckDone struct {
 	tunnelProv     string
 	deviceCount    int
 	devices        []deviceInfo
-	notifyBin      string // path to terminal-notifier/notify-send, empty if not found
 	err            error
 }
 
@@ -135,15 +131,6 @@ type shellSetupDone struct {
 type tickMsg time.Time
 type tokenTickMsg time.Time
 
-type notifSettingsLoaded struct {
-	values map[string]bool
-	err    error
-}
-
-type notifSettingSaved struct {
-	err error
-}
-
 type generalSettingsLoaded struct {
 	values map[string]bool
 	err    error
@@ -172,11 +159,6 @@ type StartModel struct {
 	tunnelWarn    string // daemon-reported caveat about the tunnel just started
 	deviceCount   int
 	devices       []deviceInfo
-	notifyBin     string // path to terminal-notifier/notify-send, empty if not found
-
-	// Notification settings screen
-	notifSettingsCursor int
-	notifSettingsValues map[string]bool
 
 	// General settings screen
 	settingsCursor int
@@ -319,16 +301,6 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return tokenTickMsg(t)
 		})
 
-	case notifSettingsLoaded:
-		if msg.err == nil && msg.values != nil {
-			m.notifSettingsValues = msg.values
-		}
-		return m, nil
-
-	case notifSettingSaved:
-		// Ignore save errors silently — settings are best-effort.
-		return m, nil
-
 	case generalSettingsLoaded:
 		if msg.err == nil && msg.values != nil {
 			m.settingsValues = msg.values
@@ -365,7 +337,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenError:
 			return m, tea.Quit
-		case screenNotificationSettings, screenSettings:
+		case screenSettings:
 			m.screen = screenMain
 			return m, nil
 		}
@@ -374,11 +346,6 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenTunnelSelect {
 			if m.tunnelCursor > 0 {
 				m.tunnelCursor--
-			}
-		}
-		if m.screen == screenNotificationSettings {
-			if m.notifSettingsCursor > 0 {
-				m.notifSettingsCursor--
 			}
 		}
 		if m.screen == screenSettings {
@@ -393,11 +360,6 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.tunnelCursor++
 			}
 		}
-		if m.screen == screenNotificationSettings {
-			if m.notifSettingsCursor < len(notifSettingsKeys)-1 {
-				m.notifSettingsCursor++
-			}
-		}
 		if m.screen == screenSettings {
 			if m.settingsCursor < len(generalSettingsKeys)-1 {
 				m.settingsCursor++
@@ -405,26 +367,17 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case " ":
-		if m.screen == screenNotificationSettings {
-			return m.toggleNotifSetting()
-		}
 		if m.screen == screenSettings {
 			return m.toggleGeneralSetting()
 		}
 
 	case "enter":
-		if m.screen == screenNotificationSettings {
-			return m.toggleNotifSetting()
-		}
 		if m.screen == screenSettings {
 			return m.toggleGeneralSetting()
 		}
 		return m.handleEnter()
 
 	case "r":
-		if m.screen == screenNotificationSettings {
-			return m.resetNotifSettings()
-		}
 		if m.screen == screenSettings {
 			return m.resetGeneralSettings()
 		}
@@ -446,13 +399,6 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "t":
 		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
 			return m.enterTunnelSelect()
-		}
-
-	case "N":
-		if m.screen == screenMain {
-			m.screen = screenNotificationSettings
-			m.notifSettingsCursor = 0
-			return m, loadNotifSettings(m.client)
 		}
 
 	case "s":
@@ -597,7 +543,6 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.tunnelProv = msg.tunnelProv
 	m.deviceCount = msg.deviceCount
 	m.devices = msg.devices
-	m.notifyBin = msg.notifyBin
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -784,8 +729,6 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 				}
 			}
 		}
-
-		result.notifyBin, _ = findNotifyBinary()
 
 		return result
 	}
@@ -1000,21 +943,4 @@ func RunStart(internalPort, publicPort int) error {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
-}
-
-// RunNotifier runs the desktop notification subscriber loop. It blocks until
-// ctx is cancelled or the process is signalled. Intended to be run as a
-// long-lived background process (helios notify).
-func RunNotifier(internalPort int) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		<-sig
-		cancel()
-	}()
-
-	subscribeDesktopNotifications(ctx, internalPort)
 }
