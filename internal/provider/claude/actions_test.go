@@ -3,7 +3,6 @@ package claude
 import (
 	"encoding/json"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/kamrul1157024/helios/internal/store"
@@ -131,7 +130,7 @@ func TestErrorAction_MissingSessionID(t *testing.T) {
 	}
 }
 
-// ==================== Question injection ====================
+// ==================== Answering a question from the phone ====================
 
 // questionNotif builds the notification handleQuestion stores: the tool input
 // with session_id spliced in at the top level.
@@ -149,24 +148,11 @@ func questionNotif(sessionID string, questions string) *store.Notification {
 
 const twoOptions = `[{"question":"Which approach?","header":"Approach","options":[{"label":"Rewrite"},{"label":"Patch"},{"label":"Leave it"}]}]`
 
-// The rendered CLI wraps the question inside a box, so the text never appears
-// contiguously — the screen check has to survive that.
-const questionScreen = `
-╭──────────────────────────────────────╮
-│ Approach                             │
-│ Which approach should we take for    │
-│ the migration?                       │
-│                                      │
-│ ❯ 1. Rewrite                         │
-│   2. Patch                           │
-│   3. Leave it                        │
-╰──────────────────────────────────────╯
-`
-
-func TestQuestionAction_SelectsOptionByIndex(t *testing.T) {
+// The phone answers by resolving the notification the blocked hook is waiting
+// on. It types nothing into the terminal: that is what this replaced.
+func TestQuestionAction_CarriesTheSelections(t *testing.T) {
 	fb := withBackend(t, newFakeBackend())
 	fb.live("sess-1")
-	fb.setScreen(questionScreen)
 
 	dec, err := handleQuestionAction(
 		questionNotif("sess-1", twoOptions),
@@ -178,52 +164,17 @@ func TestQuestionAction_SelectsOptionByIndex(t *testing.T) {
 	if dec.Status != "answered" {
 		t.Errorf("status = %q, want answered", dec.Status)
 	}
-	// Option 2 is two moves down from the highlighted first option.
-	want := []string{"sess-1:down", "sess-1:down", "sess-1:enter"}
-	if got := fb.sentKeys(); !equalStrings(got, want) {
-		t.Errorf("keys = %v, want %v", got, want)
-	}
-}
-
-func TestQuestionAction_FirstOptionSendsOnlyEnter(t *testing.T) {
-	fb := withBackend(t, newFakeBackend())
-	fb.live("sess-1")
-	fb.setScreen(questionScreen)
-
-	if _, err := handleQuestionAction(
-		questionNotif("sess-1", twoOptions),
-		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":0}]}`),
-	); err != nil {
-		t.Fatalf("handleQuestionAction: %v", err)
-	}
-	if got := fb.sentKeys(); !equalStrings(got, []string{"sess-1:enter"}) {
-		t.Errorf("keys = %v, want [sess-1:enter]", got)
-	}
-}
-
-// The single most important safety property: a stray Enter into a session that
-// has moved on is a real action the user did not ask for.
-func TestQuestionAction_AbortsWhenScreenDoesNotShowQuestion(t *testing.T) {
-	fb := withBackend(t, newFakeBackend())
-	fb.live("sess-1")
-	fb.setScreen("$ git status\nnothing to commit\n")
-
-	_, err := handleQuestionAction(
-		questionNotif("sess-1", twoOptions),
-		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":1}]}`),
-	)
-	if err == nil {
-		t.Fatal("want an error when the question is not on screen")
+	if !strings.Contains(string(dec.Response), `"option_index":2`) {
+		t.Errorf("response = %s, want the chosen option in it", dec.Response)
 	}
 	if got := fb.sentKeys(); len(got) != 0 {
-		t.Errorf("keys = %v, want none sent", got)
+		t.Errorf("keys = %v, want nothing typed into the session", got)
 	}
 }
 
-func TestQuestionAction_SkipSendsEscape(t *testing.T) {
+func TestQuestionAction_Skip(t *testing.T) {
 	fb := withBackend(t, newFakeBackend())
 	fb.live("sess-1")
-	fb.setScreen(questionScreen)
 
 	dec, err := handleQuestionAction(
 		questionNotif("sess-1", twoOptions),
@@ -235,48 +186,12 @@ func TestQuestionAction_SkipSendsEscape(t *testing.T) {
 	if dec.Status != "denied" {
 		t.Errorf("status = %q, want denied", dec.Status)
 	}
-	if got := fb.sentKeys(); !equalStrings(got, []string{"sess-1:escape"}) {
-		t.Errorf("keys = %v, want [sess-1:escape]", got)
-	}
-}
-
-func TestQuestionAction_DeadTerminalErrors(t *testing.T) {
-	fb := withBackend(t, newFakeBackend())
-	fb.setScreen(questionScreen)
-
-	_, err := handleQuestionAction(
-		questionNotif("sess-1", twoOptions),
-		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":0}]}`),
-	)
-	if err == nil {
-		t.Fatal("want an error for a session with no live terminal")
-	}
-	if !strings.Contains(err.Error(), "no live terminal") {
-		t.Errorf("error = %v, want it to mention the missing terminal", err)
-	}
-}
-
-func TestQuestionAction_OptionIndexOutOfRange(t *testing.T) {
-	fb := withBackend(t, newFakeBackend())
-	fb.live("sess-1")
-	fb.setScreen(questionScreen)
-
-	if _, err := handleQuestionAction(
-		questionNotif("sess-1", twoOptions),
-		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":7}]}`),
-	); err == nil {
-		t.Fatal("want an error for an out-of-range option")
-	}
 	if got := fb.sentKeys(); len(got) != 0 {
-		t.Errorf("keys = %v, want none sent", got)
+		t.Errorf("keys = %v, want nothing typed into the session", got)
 	}
 }
 
-func TestQuestionAction_FreeTextIsSubmittedAsAPrompt(t *testing.T) {
-	fb := withBackend(t, newFakeBackend())
-	fb.live("sess-1")
-	fb.setScreen(questionScreen)
-
+func TestQuestionAction_FreeText(t *testing.T) {
 	dec, err := handleQuestionAction(
 		questionNotif("sess-1", twoOptions),
 		json.RawMessage(`{"action":"answer","text":"something else"}`),
@@ -284,52 +199,38 @@ func TestQuestionAction_FreeTextIsSubmittedAsAPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleQuestionAction: %v", err)
 	}
-	if dec.Status != "answered" {
-		t.Errorf("status = %q, want answered", dec.Status)
-	}
-	if len(fb.texts) != 1 || fb.texts[0] != "sess-1:something else" {
-		t.Errorf("texts = %v, want [sess-1:something else]", fb.texts)
+	if !strings.Contains(string(dec.Response), "something else") {
+		t.Errorf("response = %s, want the typed answer in it", dec.Response)
 	}
 }
 
-// Two devices answering at once must not interleave keystrokes into the same
-// dialog: each answer's Downs have to stay contiguous with its own Enter.
-func TestQuestionAction_ConcurrentAnswersDoNotInterleave(t *testing.T) {
-	fb := withBackend(t, newFakeBackend())
-	fb.live("sess-1")
-	fb.setScreen(questionScreen)
+// A dead terminal used to be fatal, because answering meant typing. It is not
+// any more: the hook holding the question is in the daemon, not the session.
+func TestQuestionAction_NeedsNoTerminal(t *testing.T) {
+	withBackend(t, newFakeBackend())
 
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			handleQuestionAction(
-				questionNotif("sess-1", twoOptions),
-				json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":2}]}`),
-			)
-		}()
-	}
-	wg.Wait()
-
-	got := fb.sentKeys()
-	want := []string{
-		"sess-1:down", "sess-1:down", "sess-1:enter",
-		"sess-1:down", "sess-1:down", "sess-1:enter",
-	}
-	if !equalStrings(got, want) {
-		t.Errorf("keys = %v, want two uninterleaved runs %v", got, want)
+	if _, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer","selections":[{"question_index":0,"option_index":0}]}`),
+	); err != nil {
+		t.Errorf("handleQuestionAction with no live terminal: %v", err)
 	}
 }
 
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+func TestQuestionAction_RejectsAnEmptyAnswer(t *testing.T) {
+	if _, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"answer"}`),
+	); err == nil {
+		t.Fatal("want an error for an answer with nothing in it")
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+}
+
+func TestQuestionAction_RejectsAnUnknownAction(t *testing.T) {
+	if _, err := handleQuestionAction(
+		questionNotif("sess-1", twoOptions),
+		json.RawMessage(`{"action":"maybe"}`),
+	); err == nil {
+		t.Fatal("want an error for an unknown action")
 	}
-	return true
 }

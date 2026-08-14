@@ -47,8 +47,9 @@ func hookConfig(port int) map[string]interface{} {
 					"matcher": "AskUserQuestion",
 					"hooks": []interface{}{
 						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/question",
+							"type":    "http",
+							"url":     base + "/question",
+							"timeout": blocking,
 						},
 					},
 				},

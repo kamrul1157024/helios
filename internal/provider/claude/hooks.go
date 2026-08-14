@@ -332,9 +332,9 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// No Register: nothing waits on a decision channel for questions any more.
-	// Resolution comes from handleQuestionAction via Mgr.Resolve, or from the
-	// PostToolUse / idle_prompt paths, neither of which needs a reserved slot.
+	// Reserve the decision slot before publishing, so a client that answers
+	// immediately cannot beat this handler to WaitForDecision.
+	ctx.Mgr.Register(notifID)
 
 	ctx.Notify("notification", notif)
 
@@ -357,12 +357,44 @@ func handleQuestion(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 		})
 	}
 
-	// Deliberately no decision and no block. Returning an empty object lets the
-	// CLI run AskUserQuestion and render its own UI, which is the only way the
-	// terminal user can answer at all. The phone answers by driving that same
-	// UI — see handleQuestionAction.
+	questions := parseQuestions(input.ToolInput)
+	defer showQuestionPrompt(ctx, input.SessionID, notifID, questions)()
+
+	decision := waitForDecision(ctx, notifID, r)
+	if decision == nil {
+		return
+	}
+
+	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "QuestionAnswered")
+	renameSessionWindow(ctx, input.SessionID, "active", input.CWD)
+
+	writeQuestionAnswer(w, questions, decision)
+}
+
+// writeQuestionAnswer hands the answer back to the CLI.
+//
+// PreToolUse can only allow, deny or ask — there is no "here is the tool's
+// result, skip running it" — so the answer rides back as a deny whose reason is
+// the answer. Claude reads it and continues in the same turn; see
+// docs/specs/36-helios-owned-hitl.md for the measurement.
+func writeQuestionAnswer(w http.ResponseWriter, questions []questionSpec, decision *notifications.Decision) {
+	type questionResponse struct {
+		HookSpecificOutput struct {
+			HookEventName            string `json:"hookEventName"`
+			PermissionDecision       string `json:"permissionDecision"`
+			PermissionDecisionReason string `json:"permissionDecisionReason"`
+		} `json:"hookSpecificOutput"`
+	}
+
+	resp := questionResponse{}
+	resp.HookSpecificOutput.HookEventName = "PreToolUse"
+	resp.HookSpecificOutput.PermissionDecision = "deny"
+	resp.HookSpecificOutput.PermissionDecisionReason = questionReason(questions, decision)
+
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{}`)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("hook: write question answer: %v", err)
+	}
 }
 
 // ==================== Elicitation Hook ====================

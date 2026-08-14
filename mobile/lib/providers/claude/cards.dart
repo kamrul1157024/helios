@@ -308,8 +308,8 @@ class ClaudeQuestionCard extends StatefulWidget {
 
 class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
   /// Question index → chosen option index. Indices rather than labels: the
-  /// daemon answers by moving the CLI's own highlight, so position is what it
-  /// needs, and two options can share a label.
+  /// daemon resolves them against the question it raised, and two options can
+  /// share a label.
   final Map<int, int> _selections = {};
   bool _submitting = false;
 
@@ -423,13 +423,12 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
                         ),
                       );
                     }),
-                    // Answering drives the CLI's own list, which takes one
-                    // highlighted option per question. Picking several needs
-                    // the terminal.
+                    // Helios answers with one choice per question on every
+                    // surface, the terminal overlay included.
                     if (multiSelect) ...[
                       const SizedBox(height: 4),
                       Text(
-                        'Pick one here, or answer in the terminal to choose several.',
+                        'Claude will take several answers here, but helios sends one.',
                         style: TextStyle(
                           fontSize: 11,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -466,8 +465,8 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                // Every question, not just one: the daemon walks the CLI
-                // through them in order and a gap would leave it stranded.
+                // Every question, not just one: a gap comes back to Claude as
+                // a question nobody answered.
                 onPressed: _submitting || _selections.length != questions.length
                     ? null
                     : _submit,
