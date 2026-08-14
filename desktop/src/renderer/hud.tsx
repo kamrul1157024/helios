@@ -63,30 +63,35 @@ function Hud(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Taken off screen here rather than waiting for the main process to echo the
+  // retract back: the card should go the moment it is dealt with.
+  const remove = (key: string): void => {
+    setCards((current) => current.filter((c) => keyOf(c.hostId, c.notification.id) !== key))
+    bridge.hud.resolved(key)
+  }
+
   return (
     <div className="hud-stack" ref={stack}>
       {cards.map((card) => (
-        <HudCard key={keyOf(card.hostId, card.notification.id)} card={card} />
+        <HudCard key={keyOf(card.hostId, card.notification.id)} card={card} onDone={remove} />
       ))}
     </div>
   )
 }
 
-function HudCard({ card }: { card: Card }): JSX.Element {
+function HudCard({ card, onDone }: { card: Card; onDone: (key: string) => void }): JSX.Element {
   const { hostId, notification } = card
+  const key = keyOf(hostId, notification.id)
   const [error, setError] = useState<string | null>(null)
 
   const act = async (body: Record<string, unknown>): Promise<void> => {
     try {
       await bridge.api.call(hostId, 'notificationAction', [notification.id, body])
-      // The daemon's resolved event retracts this normally; doing it here too
-      // means the card does not sit there looking unanswered while the event
-      // makes its way back.
-      bridge.hud.resolved(keyOf(hostId, notification.id))
+      onDone(key)
     } catch (err) {
       const status = (err as { status?: number }).status
-      // 410: the terminal or the phone got there first.
-      if (status === 410) bridge.hud.resolved(keyOf(hostId, notification.id))
+      // 410: the terminal or the phone got there first, so it is dealt with.
+      if (status === 410) onDone(key)
       else setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -107,12 +112,13 @@ function HudCard({ card }: { card: Card }): JSX.Element {
         >
           Open session
         </button>
+        {/* Hiding a card is not answering it: the request stays pending, on the
+            tray and on the phone, and comes back if the app reconciles. */}
+        <button className="hud-close" title="Hide — the request stays pending" onClick={() => onDone(key)}>
+          ×
+        </button>
       </div>
-      <NotificationCard
-        notif={notification}
-        onAct={act}
-        onDismiss={() => bridge.hud.resolved(keyOf(hostId, notification.id))}
-      />
+      <NotificationCard notif={notification} onAct={act} onDismiss={() => onDone(key)} />
       {error && <p className="hud-error">{error}</p>}
     </div>
   )

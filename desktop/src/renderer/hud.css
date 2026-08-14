@@ -54,6 +54,24 @@ body {
   cursor: pointer;
 }
 
+.hud-close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--on-surface-variant);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.hud-close:hover {
+  background: var(--surface-high);
+  color: var(--on-surface);
+}
+
 .hud-card .card {
   border: 0;
   background: transparent;
