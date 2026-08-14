@@ -182,7 +182,16 @@ class UploadFile {
   final String name;
   final Uint8List bytes;
 
-  const UploadFile({required this.name, required this.bytes});
+  /// Where the daemon put it, once it has.
+  ///
+  /// Set means uploaded, and a retry leaves it alone. The send after an upload
+  /// can fail — a cold session that never acknowledges the prompt is the common
+  /// one — and the composer keeps its chips so the user can try again; without
+  /// this the retry would upload the same bytes and the daemon, which will not
+  /// overwrite a name it already holds, would leave a copy behind per attempt.
+  String? storedPath;
+
+  UploadFile({required this.name, required this.bytes});
 
   int get size => bytes.length;
 
