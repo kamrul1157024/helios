@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, statusOf } from '../bridge.ts'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
+import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
   extractFilePaths,
   highlightCode,
@@ -44,6 +45,7 @@ export function ChatPanel({
   const composer = useRef<HTMLTextAreaElement | null>(null)
   const pinnedToBottom = useRef(true)
   const promptDraft = useStore((s) => s.promptDraft)
+  const [selection, clearSelection] = useTextSelection(scroller)
 
   const status = session.status
   const busy = BUSY_STATUSES.has(status)
@@ -170,6 +172,30 @@ export function ChatPanel({
         )}
       </div>
 
+      {/* The transcript has no file behind it to point at, so a selection
+          travels as the text itself. */}
+      {selection && (
+        <SelectionMenu
+          anchor="above"
+          x={selection.x}
+          y={selection.y}
+          actions={[
+            {
+              label: 'Copy',
+              run: () => {
+                void navigator.clipboard.writeText(selection.text)
+                store.notify('Copied selection')
+              },
+            },
+            {
+              label: 'Send as prompt',
+              run: () => store.appendPrompt(hostId, session.session_id, quote(selection.text)),
+            },
+          ]}
+          onClose={clearSelection}
+        />
+      )}
+
       {/* No composer for a terminated session: the daemon refuses its prompts,
           so offering the box only trades a typed prompt for a 409. */}
       {terminated ? (
@@ -226,6 +252,15 @@ export function ChatPanel({
       )}
     </div>
   )
+}
+
+/** Quoted, so the composer keeps the lines apart from what is typed about them. */
+function quote(text: string): string {
+  return `${text
+    .trim()
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n')}\n`
 }
 
 interface MessageProps {

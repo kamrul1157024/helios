@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
-import { store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
+import { currentPanel, currentTab, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
@@ -56,7 +56,7 @@ export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
   const sessions = useStore((s) => s.sessions)
   const notifications = useStore((s) => s.notifications)
-  const panel = useStore((s) => s.panel)
+  const panel = useStore(currentPanel)
   const tabs = useStore((s) => s.tabs)
 
   const hostId = selection?.hostId ?? null
@@ -68,7 +68,7 @@ export function Detail(): JSX.Element {
     ? (notifications[hostId ?? ''] ?? []).filter((n) => n.source_session === session.session_id).length
     : 0
   const term = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
-  const activeTab = useStore((s) => s.activeTab)
+  const activeTab = useStore(currentTab)
   const shells = tabs.filter(
     (t) => t.kind === 'shell' && t.hostId === hostId && t.sessionId === session?.session_id,
   )
@@ -420,6 +420,22 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
 
         {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
 
+        {/* Out of the overflow menu: ending a session is a thing done often
+            enough to be one click, and the confirm is what guards it. */}
+        {!terminated && (
+          <button
+            className="ghost danger"
+            title="End the agent — only Resume brings it back"
+            onClick={() => {
+              if (confirm('Terminate this session? The agent stops, and only Resume brings it back.')) {
+                void run(() => api(hostId).terminate(session.session_id))
+              }
+            }}
+          >
+            Terminate
+          </button>
+        )}
+
         <details className="menu" ref={overflow}>
           <summary>⋯</summary>
           <div
@@ -446,9 +462,6 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
               }
             >
               {session.archived ? 'Unarchive' : 'Archive'}
-            </button>
-            <button onClick={() => void run(() => api(hostId).terminate(session.session_id))}>
-              Terminate
             </button>
             <button
               className="danger"

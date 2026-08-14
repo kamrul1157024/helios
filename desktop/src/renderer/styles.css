@@ -1757,31 +1757,54 @@ small {
 }
 
 /* Rendered markdown gets the reading width and padding a document wants,
-   rather than the edge-to-edge layout of a code listing. */
+   rather than the edge-to-edge layout of a code listing. The scroller fills the
+   panel and the column sits centred in it, so the width is the reader's to set
+   without stranding the rest of the panel behind a hard cap. */
 .preview-md {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  display: flex;
+  justify-content: center;
   padding: 16px 20px;
-  max-width: 780px;
+  cursor: text;
 }
 
-/* Rendered prose still has lines underneath it, and a block is what the reader
-   points at to talk about them. */
+.md-doc {
+  position: relative;
+  flex: none;
+  max-width: 100%;
+}
+
+/* Sits just outside the column's right edge; the drag moves both edges, since
+   the column is centred. */
+.md-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -14px;
+  width: 10px;
+  cursor: col-resize;
+}
+
+.md-grip::after {
+  content: '';
+  position: absolute;
+  inset: 0 4px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.md-grip:hover::after {
+  background: var(--outline-variant);
+}
+
+/* Rendered prose still has lines underneath it, and what the reader highlights
+   is what names them. */
 .md-block {
   border-radius: 6px;
   padding: 2px 6px;
   margin: 0 -6px;
-  cursor: pointer;
-}
-
-.md-block:hover {
-  background: var(--surface-low);
-}
-
-.md-block.on,
-.md-block.on:hover {
-  background: color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
 .md-block.md-heading {
@@ -1819,6 +1842,14 @@ small {
   border-radius: 10px;
   background: var(--surface-high);
   box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+/* Anchored to a selection rather than to a pointer: centred over it, and clear
+   of the text it is about. */
+.line-menu.floating {
+  flex-direction: row;
+  min-width: 0;
+  transform: translate(-50%, calc(-100% - 8px));
 }
 
 .line-menu button {

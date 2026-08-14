@@ -10,6 +10,7 @@ import { FindInFiles } from './find-in-files.tsx'
 import { PathLabel } from './path-label.tsx'
 import { QuickOpen } from './quick-open.tsx'
 import { RootPicker } from './root-picker.tsx'
+import { SelectionMenu, useTextSelection, type MenuAction } from './selection-menu.tsx'
 
 /** Past this the editor is read-only: CodeMirror is not a log viewer. */
 const MAX_EDIT_BYTES = 1_000_000
@@ -501,10 +502,16 @@ function FileView({
   const markdown = isMarkdownPath(file.path)
   const rendered = markdown && file.mode === 'preview'
   const blocks = useMemo(() => (rendered ? renderMarkdownBlocks(text) : null), [rendered, text])
-  const [picked, setPicked] = useState<LineRange | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; range: LineRange } | null>(null)
   /** Headings whose section is folded away, by the heading's start line. */
   const [folds, setFolds] = useState<Set<number>>(new Set())
+  const preview = useRef<HTMLDivElement | null>(null)
+  const [selection, clearSelection] = useTextSelection(preview)
+  const [width, setWidth] = useState(readReadingWidth)
+
+  // The rendered prose still has lines underneath it, and what the reader
+  // highlighted names them: the blocks its two ends fall in.
+  const picked = useMemo(() => (selection ? linesOf(selection.range) : null), [selection])
 
   // Everything under a folded heading, down to the next heading that is not
   // deeper than it — folding "## Build" takes its subsections with it.
@@ -523,9 +530,9 @@ function FileView({
     return out
   }, [blocks, folds])
 
-  // A selection is a range of the file that was open when it was made.
+  // A menu names lines, and a fold names a heading, of the file that was open
+  // when they were made.
   useEffect(() => {
-    setPicked(null)
     setMenu(null)
     setFolds(new Set())
   }, [file.path, rendered])
@@ -538,6 +545,36 @@ function FileView({
       return
     }
     store.appendPrompt(hostId, sessionId, promptFor(file.path, range, lines))
+  }
+
+  // Whole lines either way, as the editor's own menu does: the source is what
+  // the agent will be asked about, not the prose it renders as.
+  const actions = (range: LineRange): MenuAction[] => [
+    { label: `Copy ${label(range)}`, run: () => act('copy', range) },
+    { label: `Send ${label(range)} as prompt`, run: () => act('prompt', range) },
+  ]
+
+  // Dragging the right edge moves both: the column stays centred, so it grows
+  // by twice what the pointer travelled. The drag starts from the width on
+  // screen, not the one in state — a column asked to be wider than the panel
+  // is drawn at the panel's width, and dragging back from anywhere else would
+  // move nothing until it had caught up.
+  const resize = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    const fromX = event.clientX
+    const fromWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? width
+    let latest = fromWidth
+    const move = (moved: PointerEvent): void => {
+      latest = clampWidth(fromWidth + (moved.clientX - fromX) * 2)
+      setWidth(latest)
+    }
+    const done = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', done)
+      writeReadingWidth(latest)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', done)
   }
 
   return (
@@ -576,57 +613,57 @@ function FileView({
       {file.binary ? (
         <p className="empty-note">Binary file — not shown.</p>
       ) : blocks !== null ? (
-        <div className="md preview-md">
-          {blocks.map((block) => {
-            if (hidden.has(block.startLine)) return null
-            const range = { start: block.startLine, end: block.endLine }
-            const on = picked !== null && block.startLine <= picked.end && block.endLine >= picked.start
-            const folded = folds.has(block.startLine)
-            return (
-              <div
-                key={block.startLine}
-                className={`md-block${on ? ' on' : ''}${block.depth ? ' md-heading' : ''}`}
-                title={`${label(range)} — click to select, right-click for actions`}
-                onClick={(event) =>
-                  setPicked((current) =>
-                    // Shift builds a range out of two clicks, the way a line
-                    // gutter does; a plain click starts again from one block.
-                    event.shiftKey && current
-                      ? { start: Math.min(current.start, range.start), end: Math.max(current.end, range.end) }
-                      : current && current.start === range.start && current.end === range.end
-                        ? null
-                        : range,
-                  )
-                }
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  const covered =
-                    picked !== null && block.startLine >= picked.start && block.endLine <= picked.end
-                  const target = covered ? picked : range
-                  setPicked(target)
-                  setMenu({ x: event.clientX, y: event.clientY, range: target })
-                }}
-              >
-                {block.depth !== undefined && (
-                  <button
-                    className="md-fold"
-                    title={folded ? 'Expand section' : 'Collapse section'}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setFolds((current) => {
-                        const next = new Set(current)
-                        if (!next.delete(block.startLine)) next.add(block.startLine)
-                        return next
-                      })
-                    }}
-                  >
-                    {folded ? '▸' : '▾'}
-                  </button>
-                )}
-                <div className="md-block-body" dangerouslySetInnerHTML={{ __html: block.html }} />
-              </div>
-            )
-          })}
+        <div className="md preview-md" ref={preview}>
+          <div className="md-doc" style={{ width }}>
+            {blocks.map((block) => {
+              if (hidden.has(block.startLine)) return null
+              const range = { start: block.startLine, end: block.endLine }
+              const folded = folds.has(block.startLine)
+              return (
+                <div
+                  key={block.startLine}
+                  className={`md-block${block.depth ? ' md-heading' : ''}`}
+                  data-line-start={block.startLine}
+                  data-line-end={block.endLine}
+                  title={label(range)}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    // Right-clicking outside the selection asks about the block
+                    // under the pointer, which is what the click pointed at.
+                    const covered =
+                      picked !== null && block.startLine >= picked.start && block.endLine <= picked.end
+                    setMenu({ x: event.clientX, y: event.clientY, range: covered ? picked : range })
+                  }}
+                >
+                  {block.depth !== undefined && (
+                    <button
+                      className="md-fold"
+                      title={folded ? 'Expand section' : 'Collapse section'}
+                      onClick={() =>
+                        setFolds((current) => {
+                          const next = new Set(current)
+                          if (!next.delete(block.startLine)) next.add(block.startLine)
+                          return next
+                        })
+                      }
+                    >
+                      {folded ? '▸' : '▾'}
+                    </button>
+                  )}
+                  <div className="md-block-body" dangerouslySetInnerHTML={{ __html: block.html }} />
+                </div>
+              )
+            })}
+            <div
+              className="md-grip"
+              title="Drag to set the reading width — double-click to reset"
+              onPointerDown={resize}
+              onDoubleClick={() => {
+                setWidth(DEFAULT_WIDTH)
+                writeReadingWidth(DEFAULT_WIDTH)
+              }}
+            />
+          </div>
         </div>
       ) : file.readOnly ? (
         <pre className="ws-plain">{text}</pre>
@@ -642,14 +679,19 @@ function FileView({
         />
       )}
 
-      {menu && (
-        <LineMenu
-          x={menu.x}
-          y={menu.y}
-          range={menu.range}
-          onClose={() => setMenu(null)}
-          onAct={(action) => act(action, menu.range)}
-        />
+      {menu ? (
+        <SelectionMenu x={menu.x} y={menu.y} actions={actions(menu.range)} onClose={() => setMenu(null)} />
+      ) : (
+        selection &&
+        picked && (
+          <SelectionMenu
+            anchor="above"
+            x={selection.x}
+            y={selection.y}
+            actions={actions(picked)}
+            onClose={clearSelection}
+          />
+        )
       )}
     </div>
   )
@@ -677,43 +719,47 @@ function promptFor(path: string, range: LineRange, lines: string[]): string {
   return `${header}:\n\`\`\`${languageForPath(path) ?? ''}\n${lines.join('\n')}\n\`\`\`\n`
 }
 
-function LineMenu({
-  x,
-  y,
-  range,
-  onClose,
-  onAct,
-}: {
-  x: number
-  y: number
-  range: LineRange
-  onClose: () => void
-  onAct: (action: 'copy' | 'prompt') => void
-}): JSX.Element {
-  useEffect(() => {
-    const dismiss = (event: Event): void => {
-      if (event instanceof KeyboardEvent && event.key !== 'Escape') return
-      onClose()
-    }
-    window.addEventListener('mousedown', dismiss)
-    window.addEventListener('keydown', dismiss)
-    return () => {
-      window.removeEventListener('mousedown', dismiss)
-      window.removeEventListener('keydown', dismiss)
-    }
-  }, [onClose])
+/** The file lines a selection covers, from the blocks its two ends fall in. */
+function linesOf(range: Range): LineRange | null {
+  const from = blockLines(range.startContainer)
+  const to = blockLines(range.endContainer)
+  if (!from || !to) return null
+  return { start: Math.min(from.start, to.start), end: Math.max(from.end, to.end) }
+}
 
-  const run = (action: 'copy' | 'prompt'): void => {
-    onAct(action)
-    onClose()
+function blockLines(node: Node): LineRange | null {
+  const element = node instanceof Element ? node : node.parentElement
+  const block = element?.closest<HTMLElement>('[data-line-start]')
+  if (!block) return null
+  return { start: Number(block.dataset.lineStart), end: Number(block.dataset.lineEnd) }
+}
+
+/** How wide the rendered column is, in pixels — a reading preference, not a
+ *  property of any one file, so every preview shares it. */
+const DEFAULT_WIDTH = 780
+const MIN_WIDTH = 420
+const MAX_WIDTH = 1400
+const WIDTH_KEY = 'helios.md-width'
+
+function clampWidth(width: number): number {
+  return Math.round(Math.min(Math.max(width, MIN_WIDTH), MAX_WIDTH))
+}
+
+function readReadingWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(WIDTH_KEY))
+    return saved > 0 ? clampWidth(saved) : DEFAULT_WIDTH
+  } catch {
+    return DEFAULT_WIDTH
   }
+}
 
-  return (
-    <div className="line-menu" style={{ left: x, top: y }}>
-      <button onClick={() => run('copy')}>Copy {label(range)}</button>
-      <button onClick={() => run('prompt')}>Send {label(range)} as prompt</button>
-    </div>
-  )
+function writeReadingWidth(width: number): void {
+  try {
+    localStorage.setItem(WIDTH_KEY, String(width))
+  } catch {
+    // A full or unavailable store costs the preference, not the panel.
+  }
 }
 
 function basename(path: string): string {

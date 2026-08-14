@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 
 import { bridge } from '../bridge.ts'
-import { store, terminalId, useStore, type Tab } from '../store.ts'
+import { currentTab, store, terminalId, useStore, type Tab } from '../store.ts'
 import { canResume, hasTerminal, type Session } from '../../shared/models.ts'
 
 /**
@@ -58,13 +58,12 @@ export function TerminalPanes({
   visible: boolean
 }): JSX.Element {
   const tabs = useStore((s) => s.tabs)
-  const activeTab = useStore((s) => s.activeTab)
+  const activeTab = useStore(currentTab)
   const agent = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
   // The strip decides which of the session's terminals is in front; the
   // agent's is the one a session starts with and the fallback for everything
   // that does not name one.
-  const selected = activeTab ? tabs.find((t) => t.id === activeTab) : undefined
-  const current = selected?.sessionId === session?.session_id ? selected : agent
+  const current = (activeTab ? tabs.find((t) => t.id === activeTab) : undefined) ?? agent
   const detached = useStore((s) => s.detached)
   const isDetached = Boolean(hostId && session && detached.includes(terminalId(hostId, session.session_id)))
 

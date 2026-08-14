@@ -34,6 +34,15 @@ export interface Selection {
   sessionId: string
 }
 
+/**
+ * What a session's own state is keyed by. Which panel is in front, and which of
+ * its terminals, belong to the session being looked at rather than to the
+ * window: coming back to a session should find it as it was left.
+ */
+export function sessionKey(hostId: string, sessionId: string): string {
+  return `${hostId}:${sessionId}`
+}
+
 export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
 
 /**
@@ -69,13 +78,14 @@ export interface State {
   /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
   selection: Selection | null
-  panel: RightPanel
+  /** The panel each session was last reading, by `sessionKey`. */
+  panels: Record<string, RightPanel>
   /**
-   * Which terminal the panel shows, as a tab id. A session has several once
-   * the user opens shells beside its agent, and the strip needs to know which
-   * one is in front.
+   * Which terminal a session's panel shows, as a tab id, by `sessionKey`. A
+   * session has several once the user opens shells beside its agent, and the
+   * strip needs to know which one is in front.
    */
-  activeTab: string | null
+  activeTabs: Record<string, string>
   /**
    * Terminals the user disconnected on purpose, by tab id. Without this the
    * panel would attach again the moment it is shown, and a disconnect would
@@ -99,8 +109,8 @@ const initial: State = {
   notifications: {},
   tabs: [],
   selection: null,
-  panel: 'chat',
-  activeTab: null,
+  panels: {},
+  activeTabs: {},
   detached: [],
   fileTarget: null,
   promptDraft: null,
@@ -165,7 +175,7 @@ class Store {
     bridge.app.onActivateNotification((target) => {
       if (!target.sessionId) return
       this.select(target.hostId, target.sessionId)
-      this.set({ panel: 'approvals' })
+      this.setPanel('approvals')
     })
 
     const hosts = await bridge.hosts.list()
@@ -201,7 +211,13 @@ class Store {
   async refreshSessions(hostId: string): Promise<void> {
     try {
       const sessions = await api(hostId).listSessions()
+      const before = this.state.sessions[hostId]
       this.set((s) => ({ sessions: { ...s.sessions, [hostId]: sessions } }))
+      for (const session of sessions) {
+        if (session.status !== 'terminated') continue
+        const was = before?.find((s) => s.session_id === session.session_id)
+        if (was && was.status !== 'terminated') this.onTerminated(hostId, session.session_id)
+      }
     } catch (err) {
       this.fail(err)
     }
@@ -249,6 +265,7 @@ class Store {
   }
 
   private patchSession(hostId: string, sessionId: string, patch: Partial<Session>): void {
+    const was = this.state.sessions[hostId]?.find((s) => s.session_id === sessionId)
     this.set((s) => {
       const list = s.sessions[hostId]
       if (!list) return {}
@@ -261,6 +278,26 @@ class Store {
         },
       }
     })
+    if (patch.status === 'terminated' && was && was.status !== 'terminated') {
+      this.onTerminated(hostId, sessionId)
+    }
+  }
+
+  /**
+   * A session that has just ended has nothing left to watch: its terminals go,
+   * and it lets go of the detail pane if it was the one on screen. Driven by
+   * the status rather than by the click, so a terminate from the TUI, from
+   * mobile, or from the agent exiting on its own lands the same way.
+   *
+   * Only on the transition. Selecting a session that ended long ago is a
+   * request to read its transcript, not something to undo.
+   */
+  private onTerminated(hostId: string, sessionId: string): void {
+    for (const tab of this.state.tabs.filter((t) => t.hostId === hostId && t.sessionId === sessionId)) {
+      this.closeTab(tab.id)
+    }
+    const { selection } = this.state
+    if (selection?.hostId === hostId && selection.sessionId === sessionId) this.set({ selection: null })
   }
 
   // ─── Selection and panels ──────────────────────────────────────────────
@@ -270,13 +307,13 @@ class Store {
   }
 
   setPanel(panel: RightPanel): void {
-    this.set({ panel })
+    this.set((s) => ({ panels: showPanel(s, s.selection, panel) }))
   }
 
   /** Shows a file in the Files panel, switching to it. */
   openFile(hostId: string, path: string): void {
     this.set((s) => ({
-      panel: 'files',
+      panels: showPanel(s, s.selection, 'files'),
       fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open' },
     }))
   }
@@ -288,7 +325,7 @@ class Store {
    */
   findFile(hostId: string, path: string): void {
     this.set((s) => ({
-      panel: 'files',
+      panels: showPanel(s, s.selection, 'files'),
       fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'find' },
     }))
   }
@@ -305,7 +342,7 @@ class Store {
   /** Puts text in the session's composer and shows it, without sending. */
   appendPrompt(hostId: string, sessionId: string, text: string): void {
     this.set((s) => ({
-      panel: 'chat',
+      panels: showPanel(s, { hostId, sessionId }, 'chat'),
       promptDraft: { hostId, sessionId, text, seq: (s.promptDraft?.seq ?? 0) + 1 },
     }))
   }
@@ -338,10 +375,11 @@ class Store {
     // The panel belongs to whichever session is selected, so showing one
     // session's terminal means selecting it.
     const id = terminalId(hostId, session.session_id)
+    const target = { hostId, sessionId: session.session_id }
     this.set((s) => ({
-      selection: { hostId, sessionId: session.session_id },
-      panel: 'terminal',
-      activeTab: id,
+      selection: target,
+      panels: showPanel(s, target, 'terminal'),
+      activeTabs: showTab(s, target, id),
       detached: s.detached.filter((tabId) => tabId !== id),
     }))
 
@@ -384,11 +422,12 @@ class Store {
    * it runs no agent and appears nowhere but this session's terminal strip.
    */
   async openShell(hostId: string, sessionId: string): Promise<void> {
-    this.set({ selection: { hostId, sessionId }, panel: 'terminal' })
+    const target = { hostId, sessionId }
+    this.set((s) => ({ selection: target, panels: showPanel(s, target, 'terminal') }))
     try {
       const info = await api(hostId).openShell(sessionId)
       await this.attachTerminal(hostId, sessionId, info.id, shellLabel(info.id))
-      this.set({ activeTab: terminalId(hostId, info.id) })
+      this.set((s) => ({ activeTabs: showTab(s, target, terminalId(hostId, info.id)) }))
     } catch (err) {
       this.fail(err)
     }
@@ -512,7 +551,8 @@ class Store {
    */
   showTerminal(hostId: string, session: Session): void {
     const id = terminalId(hostId, session.session_id)
-    this.set({ panel: 'terminal', activeTab: id })
+    const target = { hostId, sessionId: session.session_id }
+    this.set((s) => ({ panels: showPanel(s, target, 'terminal'), activeTabs: showTab(s, target, id) }))
     if (this.state.tabs.some((t) => t.id === id)) return
     // Looking at a terminal that was disconnected on purpose is not a request
     // to attach again: the panel offers the button for that.
@@ -524,13 +564,16 @@ class Store {
     void bridge.term.close(tabId)
     this.set((s) => ({
       tabs: s.tabs.filter((t) => t.id !== tabId),
-      activeTab: s.activeTab === tabId ? null : s.activeTab,
+      activeTabs: Object.fromEntries(Object.entries(s.activeTabs).filter(([, id]) => id !== tabId)),
     }))
   }
 
   /** Brings one of a session's terminals to the front. */
   selectTab(tabId: string): void {
-    this.set({ panel: 'terminal', activeTab: tabId })
+    const tab = this.state.tabs.find((t) => t.id === tabId)
+    if (!tab) return
+    const target = { hostId: tab.hostId, sessionId: tab.sessionId }
+    this.set((s) => ({ panels: showPanel(s, target, 'terminal'), activeTabs: showTab(s, target, tabId) }))
   }
 
   // ─── Feedback ──────────────────────────────────────────────────────────
@@ -550,6 +593,27 @@ export const store = new Store()
 
 export function useStore<T>(select: (state: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(store.getSnapshot()))
+}
+
+/** The panel the selected session is reading. */
+export function currentPanel(state: State): RightPanel {
+  if (!state.selection) return 'chat'
+  return state.panels[sessionKey(state.selection.hostId, state.selection.sessionId)] ?? 'chat'
+}
+
+/** The terminal the selected session has in front, if it has named one. */
+export function currentTab(state: State): string | null {
+  if (!state.selection) return null
+  return state.activeTabs[sessionKey(state.selection.hostId, state.selection.sessionId)] ?? null
+}
+
+function showPanel(state: State, target: Selection | null, panel: RightPanel): Record<string, RightPanel> {
+  if (!target) return state.panels
+  return { ...state.panels, [sessionKey(target.hostId, target.sessionId)]: panel }
+}
+
+function showTab(state: State, target: Selection, tabId: string): Record<string, string> {
+  return { ...state.activeTabs, [sessionKey(target.hostId, target.sessionId)]: tabId }
 }
 
 function str(value: unknown): string {
