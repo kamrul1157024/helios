@@ -582,7 +582,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           body: Column(
             children: [
               if (_notifPermissionDenied) _buildNotifPermissionBanner(),
-              ...offlineHosts.map((h) => _buildOfflineHostBanner(h)),
               Expanded(
                 child: IndexedStack(
                   index: _currentIndex,
@@ -592,6 +591,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+              ...offlineHosts.map((h) => _buildOfflineHostBanner(h)),
             ],
           ),
           floatingActionButton: _currentIndex == 0
