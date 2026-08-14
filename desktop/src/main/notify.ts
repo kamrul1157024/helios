@@ -34,6 +34,7 @@ export class Notifier {
     private readonly hud: Hud,
     private readonly prefs: PrefsStore,
     private readonly onActivate: (target: NotifyTarget) => void,
+    private readonly onSettings: () => void,
     private readonly onQuit: () => void,
   ) {}
 
@@ -184,6 +185,10 @@ export class Notifier {
         ...(items.length ? [{ type: 'separator' as const }, ...items] : []),
         { type: 'separator' },
         { label: 'Open Helios', click: () => this.onActivate({ hostId: '', notificationId: '', sessionId: '' }) },
+        // Also in the app menu, but the menu bar belongs to whichever app is
+        // frontmost — and an app with its window closed may not have one at
+        // all. The tray is the surface that is always there.
+        { label: 'Settings…', click: () => this.onSettings() },
         { label: 'Quit', click: () => this.onQuit() },
       ]),
     )
