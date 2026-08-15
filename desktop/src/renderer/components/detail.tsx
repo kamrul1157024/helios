@@ -385,7 +385,7 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
 
       <div className="detail-actions">
         <span className={`chip ${session.status}`}>
-          <span className={busy ? 'dot pulse' : 'dot'} />
+          <span className="dot" />
           {statusLabel(session.status)}
         </span>
 

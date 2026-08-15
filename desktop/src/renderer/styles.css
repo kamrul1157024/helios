@@ -393,20 +393,6 @@ small {
   background: color-mix(in srgb, var(--s-error) 14%, transparent);
 }
 
-.pulse {
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
 .spinner {
   width: 20px;
   height: 20px;
@@ -419,6 +405,21 @@ small {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* A running animation makes the compositor submit a frame every vsync, and
+   macOS recomposites the whole window for each one — 120Hz on a ProMotion
+   display, whether or not anyone is looking. Nothing hidden is worth that. */
+:root.at-rest .spinner,
+:root.at-rest .skeleton-line {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .skeleton-line {
+    animation-play-state: paused;
   }
 }
 
