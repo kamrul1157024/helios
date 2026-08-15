@@ -573,7 +573,11 @@ function FileView({
     const done = (): void => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', done)
-      writeReadingWidth(latest)
+      // Widened to the edge means "fill the panel", not "999 pixels": a number
+      // taken from today's window would leave gutters in a wider one.
+      const filled = latest >= room
+      if (filled) setWidth(null)
+      writeReadingWidth(filled ? null : latest)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', done)
