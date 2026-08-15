@@ -2,9 +2,9 @@
   "name": "Liquid Glass",
   "type": "dark",
   "helios.glass": {
-    "sidebar": 0.52,
-    "panel": 0.62,
-    "terminal": 0.55
+    "sidebar": 0.34,
+    "panel": 0.42,
+    "terminal": 0.34
   },
   "colors": {
     "checkbox.border": "#3C3C3C",

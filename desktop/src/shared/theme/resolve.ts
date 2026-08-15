@@ -22,6 +22,7 @@ import {
   composite,
   contrast,
   toRgba,
+  toHexAlpha,
   ensureContrast,
   luminance,
   mix,
@@ -212,9 +213,9 @@ export function resolveTheme(
 
   const terminalBg = colour('terminal.background') ?? bg
   const ansiTheme = {
-    // xterm takes a CSS colour, so the translucent form goes straight in; the
-    // renderer turns on allowTransparency when the theme is a glass one.
-    background: glass ? toRgba(terminalBg, glass.terminal) : toHex(terminalBg),
+    // Eight-digit hex rather than rgb(): xterm parses this itself, and does
+    // not accept the slash form.
+    background: glass ? toHexAlpha(terminalBg, glass.terminal) : toHex(terminalBg),
     foreground: toHex(colour('terminal.foreground') ?? fg),
     cursor: toHex(colour('terminalCursor.foreground') ?? colour('editorCursor.foreground') ?? fg),
     selectionBackground: toHex(

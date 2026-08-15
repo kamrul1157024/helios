@@ -2,9 +2,9 @@
   "name": "Liquid Glass Light",
   "type": "light",
   "helios.glass": {
-    "sidebar": 0.66,
-    "panel": 0.74,
-    "terminal": 0.7
+    "sidebar": 0.5,
+    "panel": 0.58,
+    "terminal": 0.5
   },
   "colors": {
     "checkbox.border": "#CECECE",

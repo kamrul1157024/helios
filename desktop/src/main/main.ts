@@ -148,7 +148,7 @@ function applyWindowMaterial(): void {
   nativeTheme.themeSource = themes.getPrefs().mode
   if (!window || window.isDestroyed()) return
   const on = glassOn()
-  if (GLASS_SUPPORTED) window.setVibrancy(on ? 'sidebar' : null)
+  if (GLASS_SUPPORTED) window.setVibrancy(on ? 'under-window' : null)
   // An opaque background sits in front of the material and hides it, so the
   // window has to stop painting one for the backdrop to be visible at all.
   window.setBackgroundColor(on ? '#00000000' : (themes.active().vars['--surface'] ?? '#101014'))
@@ -165,7 +165,7 @@ function createWindow(): void {
     // The frame is painted before the renderer runs, so it has to come from the
     // theme too or the window flashes the old dark grey on every open.
     backgroundColor: glassOn() ? '#00000000' : (themes?.active().vars['--surface'] ?? '#101014'),
-    ...(glassOn() ? { vibrancy: 'sidebar' as const } : {}),
+    ...(glassOn() ? { vibrancy: 'under-window' as const } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(distDir, 'preload', 'preload.js'),

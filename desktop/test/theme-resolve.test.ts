@@ -257,7 +257,9 @@ test('a glass theme emits translucent surfaces beside the opaque ones', () => {
   // The opaque ladder survives: it is the fallback wherever no backdrop exists.
   assert.match(theme.vars['--surface'] as string, /^#[0-9a-f]{6}$/)
   assert.match(theme.vars['--glass-sidebar'] as string, /^rgb\(.* \/ 50%\)$/)
-  assert.match(theme.ansi.background, /^rgb\(.* \/ 55%\)$/)
+  // Eight-digit hex, not rgb(): xterm parses this one itself, and 0.55 of 255
+  // is 140 — 0x8c.
+  assert.match(theme.ansi.background, /^#[0-9a-f]{6}8c$/)
 })
 
 test('glass opacities are clamped away from invisible', () => {

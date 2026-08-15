@@ -197,6 +197,17 @@ export function toHex(c: Rgb): string {
   return `#${pair(c.r)}${pair(c.g)}${pair(c.b)}`
 }
 
+/**
+ * Eight-digit hex, for consumers that parse colours themselves rather than
+ * handing them to CSS. xterm is the one that matters here: it does not
+ * understand the modern `rgb(r g b / a)` form and silently falls back to black,
+ * which is how a translucent terminal ends up an opaque one.
+ */
+export function toHexAlpha(c: Rgb, alpha: number): string {
+  const pair = (n: number): string => clamp(n).toString(16).padStart(2, '0')
+  return `${toHex(c)}${pair(Math.round(alpha * 255))}`
+}
+
 export function toRgba(c: Rgb, alpha: number): string {
   return `rgb(${clamp(c.r)} ${clamp(c.g)} ${clamp(c.b)} / ${Math.round(alpha * 100)}%)`
 }
