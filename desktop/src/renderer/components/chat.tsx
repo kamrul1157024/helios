@@ -46,6 +46,8 @@ export function ChatPanel({
   // show the previous transcript until the new one arrives, and "No transcript
   // yet." for a session whose transcript is merely still loading.
   const [loadedFor, setLoadedFor] = useState('')
+  // Bumped to re-read a transcript that has not moved by any other measure.
+  const [reload, setReload] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [total, setTotal] = useState(0)
   const [draft, setDraft] = useState('')
@@ -55,6 +57,7 @@ export function ChatPanel({
   const [pasted, setPasted] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
   const picker = useRef<HTMLInputElement | null>(null)
+  const retries = useRef<ReturnType<typeof setTimeout>[]>([])
   const nextAttachment = useRef(0)
   const scroller = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
@@ -91,7 +94,7 @@ export function ChatPanel({
     }
     // Reloads as the agent works: last_event_at moves on every hook, and the
     // transcript is a file the daemon re-reads rather than a stream.
-  }, [hostId, session.session_id, session.last_event_at, status, active])
+  }, [hostId, session.session_id, session.last_event_at, status, active, reload])
 
   // Lines picked in the Files panel arrive here rather than being sent: what to
   // ask about them is still to be typed.
@@ -110,6 +113,8 @@ export function ChatPanel({
       scroller.current.scrollTop = scroller.current.scrollHeight
     }
   }, [messages])
+
+  useEffect(() => () => retries.current.forEach(clearTimeout), [])
 
   const loadOlder = async (): Promise<void> => {
     try {
@@ -185,6 +190,15 @@ export function ChatPanel({
       setAttachments([])
       if (result.queued) store.notify('Queued — the agent is mid-turn')
       void store.refreshSessions(hostId)
+      // The agent writes the prompt to its transcript a moment after accepting
+      // it, and the reads triggered by the status change land before that. A
+      // turn that then does nothing hook-worthy moves last_event_at no further,
+      // so without these the message the user just sent stays invisible until
+      // the panel is reopened.
+      retries.current.forEach(clearTimeout)
+      retries.current = [5_000, 10_000].map((delay) =>
+        setTimeout(() => setReload((n) => n + 1), delay),
+      )
     } catch (err) {
       // 409 is an answer, not a fault: the session is busy without a queue, or
       // it ended between this render and the click. Refreshing swaps the

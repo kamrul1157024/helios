@@ -53,6 +53,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   String _currentVerb = randomClaudeVerb();
   Timer? _verbTimer;
   Timer? _transcriptDebounce;
+  List<Timer> _resendReads = [];
   late final AnimationController _breathController;
   bool _breathingActive = false;
   bool _isRecording = false;
@@ -119,6 +120,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _eventSub?.cancel();
     _verbTimer?.cancel();
     _transcriptDebounce?.cancel();
+    for (final timer in _resendReads) {
+      timer.cancel();
+    }
     if (_isRecording) VoiceService.instance.stopListening();
     if (_isVoiceActive) {
       VoiceService.instance.setActiveSession(null);
@@ -370,6 +374,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       });
       await Future.delayed(const Duration(milliseconds: 500));
       await _loadTranscript();
+      // The agent writes the prompt to its transcript a moment after accepting
+      // it, so the read above can land before the line exists — and a turn
+      // that does nothing hook-worthy afterwards never prompts another.
+      for (final timer in _resendReads) {
+        timer.cancel();
+      }
+      _resendReads = [5, 10]
+          .map((seconds) => Timer(Duration(seconds: seconds), () {
+                if (mounted) _loadTranscript();
+              }))
+          .toList();
     } else if (mounted) {
       // The prompt stays in the box: it never reached the session, so the
       // user should not have to retype it.
