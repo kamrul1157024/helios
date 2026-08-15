@@ -413,9 +413,16 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
             Resume
           </button>
         ) : (
-          <button className="filled" onClick={() => void store.openTerminal(hostId, session, !live)}>
-            {live ? 'Terminal' : 'Wake'}
-          </button>
+          // Only while the host is cold. Waking one is not something the tab
+          // strip does — showTerminal refuses to start a host on its own — so
+          // this is the one-click way in. Once it is live the tab is the way
+          // back to the terminal, and a second control beside it that does the
+          // same thing is just another thing to read.
+          !live && (
+            <button className="filled" onClick={() => void store.openTerminal(hostId, session, true)}>
+              Wake
+            </button>
+          )
         )}
 
         {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
