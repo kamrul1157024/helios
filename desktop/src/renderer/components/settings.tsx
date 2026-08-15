@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
-import { bridge } from '../bridge.ts'
-import { store } from '../store.ts'
+import { api, bridge } from '../bridge.ts'
+import { store, useStore } from '../store.ts'
 import { Modal } from './newsession.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
 import type { AppearancePrefs, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
@@ -55,7 +55,23 @@ const MODES: { value: AppearancePrefs['mode']; label: string; detail: string }[]
   { value: 'dark', label: 'Dark', detail: 'Always the dark theme below.' },
 ]
 
+/**
+ * One pane at a time, chosen from the left.
+ *
+ * The dialog had grown to a single column a screen and a half long, where the
+ * theme pickers pushed the notification toggles out of sight — and the two have
+ * nothing to do with each other.
+ */
+type SectionId = 'appearance' | 'titles' | 'notifications'
+
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'titles', label: 'Session titles' },
+  { id: 'notifications', label: 'Notifications' },
+]
+
 export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
+  const [section, setSection] = useState<SectionId>('appearance')
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null)
   const [appearance, setAppearance] = useState<AppearancePrefs | null>(null)
   const [themes, setThemes] = useState<ThemeSummary[]>([])
@@ -98,6 +114,22 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
 
   return (
     <Modal title="Settings" onClose={onClose}>
+      <div className="settings-shell">
+        <nav className="settings-nav">
+          {SECTIONS.map((entry) => (
+            <button
+              key={entry.id}
+              className={section === entry.id ? 'active' : ''}
+              onClick={() => setSection(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings-panel">
+          {section === 'appearance' && (
+            <>
       <section className="settings-group">
         <h3>Appearance</h3>
         <p className="modal-note">
@@ -147,7 +179,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           Reload themes
         </button>
       </section>
+            </>
+          )}
 
+          {section === 'titles' && <SessionTitles />}
+
+          {section === 'notifications' && (
+            <>
       <h3>Notifications</h3>
       <p className="modal-note">
         Requests always appear — on screen and on the tray. These toggles decide whether they also make a sound.
@@ -191,7 +229,119 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           Reset to defaults
         </button>
       </div>
+            </>
+          )}
+        </div>
+      </div>
     </Modal>
+  )
+}
+
+/** What the daemon knows about titling, which is not this window's to keep. */
+interface TitlePrefs {
+  enabled: boolean
+  emoji: boolean
+}
+
+/**
+ * Auto-generated session titles.
+ *
+ * A daemon setting rather than a window one: it is the daemon that names the
+ * session, and every client on that host sees the result. So it is read and
+ * written per host, and a host that cannot be reached is left out rather than
+ * shown a toggle that would fail to save.
+ */
+function SessionTitles(): JSX.Element {
+  const hosts = useStore((s) => s.hosts)
+  const [prefs, setPrefs] = useState<Record<string, TitlePrefs>>({})
+
+  useEffect(() => {
+    for (const host of hosts) {
+      void api(host.id)
+        .settings()
+        .then((body) => {
+          const values = (body as { settings?: Record<string, string> }).settings ?? {}
+          setPrefs((current) => ({
+            ...current,
+            [host.id]: {
+              enabled: values['autotitle.enabled'] === 'true',
+              // Only an explicit false turns the emoji off, which is how the
+              // daemon reads it (claude/autotitle.go:104).
+              emoji: values['autotitle.emoji'] !== 'false',
+            },
+          }))
+        })
+        .catch(() => {
+          // Offline. Nothing to show for it, and nowhere to save to.
+        })
+    }
+  }, [hosts])
+
+  const change = async (hostId: string, next: Partial<TitlePrefs>): Promise<void> => {
+    const before = prefs[hostId]
+    if (!before) return
+    const after = { ...before, ...next }
+    setPrefs((all) => ({ ...all, [hostId]: after }))
+    try {
+      await api(hostId).updateSettings({
+        'autotitle.enabled': String(after.enabled),
+        'autotitle.emoji': String(after.emoji),
+      })
+    } catch (err) {
+      setPrefs((all) => ({ ...all, [hostId]: before }))
+      store.fail(err)
+    }
+  }
+
+  const reachable = hosts.filter((host) => prefs[host.id])
+
+  return (
+    <section className="settings-group">
+      <h3>Session titles</h3>
+      <p className="modal-note">
+        The daemon names a session from its first exchange, using Haiku. It leaves greetings and test messages
+        alone, and never renames a session you have titled yourself.
+      </p>
+
+      {reachable.length === 0 ? (
+        <p className="modal-note">No host reachable to read this from.</p>
+      ) : (
+        reachable.map((host) => {
+          const value = prefs[host.id] as TitlePrefs
+          return (
+            <div key={host.id} className="settings-host">
+              {/* Named only when there is a choice of host to be confused about. */}
+              {reachable.length > 1 && <span className="theme-picker-label">{host.name}</span>}
+
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={value.enabled}
+                  onChange={(event) => void change(host.id, { enabled: event.target.checked })}
+                />
+                <span>
+                  Generate titles automatically
+                  <small>Off by default. Costs a Haiku call per session, about a tenth of a cent.</small>
+                </span>
+              </label>
+
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={value.emoji}
+                  disabled={!value.enabled}
+                  onChange={(event) => void change(host.id, { emoji: event.target.checked })}
+                />
+                <span>
+                  Emoji prefix
+                  <small>🐛 [FIX] rather than [FIX].</small>
+                </span>
+              </label>
+            </div>
+          )
+        })
+      )}
+    </section>
   )
 }
 
