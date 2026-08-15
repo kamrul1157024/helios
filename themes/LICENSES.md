@@ -26,6 +26,25 @@ All of the below are MIT licensed.
 | `github-light.json` | GitHub Light | [primer/github-vscode-theme](https://github.com/primer/github-vscode-theme) |
 | `gruvbox-dark.json` | Gruvbox Dark Medium | [jdinhlife/gruvbox](https://github.com/jdinhlife/gruvbox) |
 | `gruvbox-light.json` | Gruvbox Light Medium | [jdinhlife/gruvbox](https://github.com/jdinhlife/gruvbox) |
+| `liquid-glass.json` | Liquid Glass | Helios, deepened from Dark Modern and carrying its token colours |
+| `liquid-glass-light.json` | Liquid Glass Light | Helios, from Light Modern and carrying its token colours |
+
+## Translucency
+
+A theme may ask the window to let the desktop through by carrying a
+`helios.glass` block, which VS Code ignores:
+
+```json
+"helios.glass": { "sidebar": 0.52, "panel": 0.62, "terminal": 0.55 }
+```
+
+Each value is the opacity that surface keeps, so 1 is solid and lower is more
+desktop. They are clamped to 0.25 at the low end — below that the text on a
+surface stops being readable whatever is behind it. Only macOS has the system
+material to show; elsewhere a glass theme falls back to its opaque colours.
+
+The two Liquid Glass themes are the bundled examples, and are the only files
+here that are not vendored unmodified.
 
 ## Adding your own
 

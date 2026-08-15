@@ -21,12 +21,14 @@ import {
 import {
   composite,
   contrast,
+  toRgba,
   ensureContrast,
   luminance,
   mix,
   parseColor,
   rgb,
   toHex,
+  type GlassSpec,
   type Rgb,
   type VSCodeTheme,
 } from './vscode.ts'
@@ -47,6 +49,11 @@ export interface HeliosTheme {
   /** CSS custom properties, including the leading `--`. */
   vars: Record<string, string>
   ansi: XtermTheme
+  /**
+   * Set only by a theme that asks to be translucent. Null is the ordinary case
+   * and means every surface stays opaque.
+   */
+  glass: GlassSpec | null
 }
 
 const FALLBACK_BG: Record<ThemeMode, Rgb> = { dark: rgb(0x11, 0x13, 0x18), light: rgb(0xff, 0xff, 0xff) }
@@ -67,6 +74,10 @@ function declaredMode(theme: VSCodeTheme, hint: string | undefined): ThemeMode |
   if (type === 'dark' || type === 'hc' || type === 'hc-black') return 'dark'
   if (type === 'light' || type === 'hclight' || type === 'hc-light') return 'light'
   return modeFromUiTheme(hint)
+}
+
+function clampAlpha(value: number): number {
+  return Number.isFinite(value) ? Math.max(0.25, Math.min(1, value)) : 1
 }
 
 /** A theme rule's scope may be a list, a comma-separated string, or both. */
@@ -179,9 +190,31 @@ export function resolveTheme(
   Object.assign(vars, overlayVars(mode === 'dark'))
   vars['--color-scheme'] = mode
 
+  // Opacities the theme asked for, clamped: a surface at zero is a pane of
+  // nothing, and text on it is unreadable however good the wallpaper.
+  const declared = theme['helios.glass']
+  const glass: GlassSpec | null = declared
+    ? {
+        sidebar: clampAlpha(declared.sidebar ?? 0.6),
+        panel: clampAlpha(declared.panel ?? 0.7),
+        terminal: clampAlpha(declared.terminal ?? 0.7),
+      }
+    : null
+
+  if (glass) {
+    // Emitted beside the opaque values rather than replacing them. The opaque
+    // ones stay the fallback for a platform with no backdrop to show, and for
+    // the surfaces that stay solid whatever the theme says.
+    vars['--glass-sidebar'] = toRgba(resolved.get('surface-low') ?? bg, glass.sidebar)
+    vars['--glass-panel'] = toRgba(resolved.get('surface-low') ?? bg, glass.panel)
+    vars['--glass-container'] = toRgba(resolved.get('surface-container') ?? bg, glass.panel)
+  }
+
   const terminalBg = colour('terminal.background') ?? bg
   const ansiTheme = {
-    background: toHex(terminalBg),
+    // xterm takes a CSS colour, so the translucent form goes straight in; the
+    // renderer turns on allowTransparency when the theme is a glass one.
+    background: glass ? toRgba(terminalBg, glass.terminal) : toHex(terminalBg),
     foreground: toHex(colour('terminal.foreground') ?? fg),
     cursor: toHex(colour('terminalCursor.foreground') ?? colour('editorCursor.foreground') ?? fg),
     selectionBackground: toHex(
@@ -190,7 +223,7 @@ export function resolveTheme(
   } as XtermTheme
   for (const name of ANSI_NAMES) ansiTheme[name] = toHex(ansi[name])
 
-  return { id, name: options.name ?? theme.name ?? id, mode, vars, ansi: ansiTheme }
+  return { id, name: options.name ?? theme.name ?? id, mode, vars, ansi: ansiTheme, glass }
 }
 
 /**
@@ -201,6 +234,7 @@ export function mergeThemes(parent: VSCodeTheme, child: VSCodeTheme): VSCodeThem
   return {
     name: child.name ?? parent.name,
     type: child.type ?? parent.type,
+    'helios.glass': child['helios.glass'] ?? parent['helios.glass'],
     colors: { ...(parent.colors ?? {}), ...(child.colors ?? {}) },
     tokenColors: [...(parent.tokenColors ?? []), ...(child.tokenColors ?? [])],
   }

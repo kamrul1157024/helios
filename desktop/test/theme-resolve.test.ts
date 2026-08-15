@@ -241,6 +241,50 @@ test('an empty theme resolves rather than throwing', () => {
   assert.match(theme.ansi.brightWhite, /^#[0-9a-f]{6}$/)
 })
 
+test('a theme with no glass block stays wholly opaque', () => {
+  const theme = resolveTheme('solid', { colors: { 'editor.background': '#101014' } })
+  assert.equal(theme.glass, null)
+  assert.match(theme.ansi.background, /^#[0-9a-f]{6}$/)
+  assert.equal(theme.vars['--glass-sidebar'], undefined)
+})
+
+test('a glass theme emits translucent surfaces beside the opaque ones', () => {
+  const theme = resolveTheme('glassy', {
+    'helios.glass': { sidebar: 0.5, panel: 0.6, terminal: 0.55 },
+    colors: { 'editor.background': '#0d0f13', 'editor.foreground': '#e8eaed' },
+  })
+  assert.deepEqual(theme.glass, { sidebar: 0.5, panel: 0.6, terminal: 0.55 })
+  // The opaque ladder survives: it is the fallback wherever no backdrop exists.
+  assert.match(theme.vars['--surface'] as string, /^#[0-9a-f]{6}$/)
+  assert.match(theme.vars['--glass-sidebar'] as string, /^rgb\(.* \/ 50%\)$/)
+  assert.match(theme.ansi.background, /^rgb\(.* \/ 55%\)$/)
+})
+
+test('glass opacities are clamped away from invisible', () => {
+  const theme = resolveTheme('clear', {
+    'helios.glass': { sidebar: 0, panel: -1, terminal: 5 },
+    colors: { 'editor.background': '#0d0f13' },
+  })
+  assert.equal(theme.glass?.sidebar, 0.25)
+  assert.equal(theme.glass?.panel, 0.25)
+  assert.equal(theme.glass?.terminal, 1)
+})
+
+test('an omitted surface in the glass block gets a default rather than nothing', () => {
+  const theme = resolveTheme('partial', {
+    'helios.glass': { sidebar: 0.4 },
+    colors: { 'editor.background': '#0d0f13' },
+  })
+  assert.equal(theme.glass?.sidebar, 0.4)
+  assert.ok((theme.glass?.panel ?? 0) > 0)
+  assert.ok((theme.glass?.terminal ?? 0) > 0)
+})
+
+test('the glass block survives an include chain', () => {
+  const merged = mergeThemes({ 'helios.glass': { sidebar: 0.5 }, colors: {} }, { name: 'Child', colors: {} })
+  assert.equal(merged['helios.glass']?.sidebar, 0.5)
+})
+
 test('mergeThemes layers a child over what its include supplied', () => {
   const merged = mergeThemes(
     { colors: { 'editor.background': '#000000', 'editor.foreground': '#ffffff' }, tokenColors: [{ scope: 'keyword', settings: { foreground: '#111111' } }] },

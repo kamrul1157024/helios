@@ -14,8 +14,23 @@ export interface TokenColor {
   settings?: { foreground?: string; fontStyle?: string }
 }
 
+/**
+ * Helios' own addition to the format: how far the window lets the desktop
+ * through, per surface. Values are the opacity the surface keeps, so 1 is
+ * solid and 0 is clear.
+ *
+ * Carried inside the theme file under a namespaced key, which VS Code ignores,
+ * so a glass theme is still a theme anyone can drop into VS Code.
+ */
+export interface GlassSpec {
+  sidebar: number
+  panel: number
+  terminal: number
+}
+
 export interface VSCodeTheme {
   name?: string
+  'helios.glass'?: Partial<GlassSpec>
   /** Absent more often than not; the resolver falls back to luminance. */
   type?: string
   /** A sibling theme file this one layers on top of. */

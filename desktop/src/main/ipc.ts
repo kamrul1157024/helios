@@ -63,6 +63,10 @@ export interface IpcDeps {
   prefs: PrefsStore
   themes: ThemeRegistry
   quit: () => void
+  /** Whether this platform can show the OS backdrop at all. */
+  glassSupported: boolean
+  /** Re-applies the window material after the preference changes. */
+  onAppearanceChange: () => void
   window: () => BrowserWindow | null
 }
 
@@ -75,7 +79,7 @@ export interface IpcDeps {
  * string otherwise.
  */
 export function registerIpc(deps: IpcDeps): void {
-  const { hosts, terminals, notifier, prefs, themes, quit } = deps
+  const { hosts, terminals, notifier, prefs, themes, quit, glassSupported, onAppearanceChange } = deps
 
   const send = (channel: string, payload: unknown): void => {
     const window = deps.window()
@@ -146,8 +150,18 @@ export function registerIpc(deps: IpcDeps): void {
 
   // Every window, not just the main one: the HUD draws its cards from the same
   // variables and would otherwise keep the old theme until it next opened.
-  const broadcastTheme = (): { theme: unknown; terminal: unknown } => {
-    const payload = { theme: themes.active(), terminal: themes.activeTerminal() }
+  const themePayload = (): { theme: unknown; terminal: unknown; glass: boolean; glassSupported: boolean } => ({
+    theme: themes.active(),
+    terminal: themes.activeTerminal(),
+    // A property of the chosen theme, not a setting of its own: picking a
+    // glass theme is the whole of the request. Gated on the platform, because
+    // a preference to show a backdrop that does not exist is not showing one.
+    glass: glassSupported && themes.active().glass !== null,
+    glassSupported,
+  })
+
+  const broadcastTheme = (): ReturnType<typeof themePayload> => {
+    const payload = themePayload()
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('theme:changed', payload)
     }
@@ -162,13 +176,14 @@ export function registerIpc(deps: IpcDeps): void {
   // between the document opening and its colours arriving, which is the flash
   // this avoids.
   ipcMain.on('theme:boot', (event) => {
-    event.returnValue = { theme: themes.active(), terminal: themes.activeTerminal() }
+    event.returnValue = themePayload()
   })
 
   handle('theme:list', async () => themes.list())
   handle('theme:prefs', async () => themes.getPrefs())
   handle('theme:set', async (_e, next: Partial<AppearancePrefs>) => {
     themes.setPrefs(next)
+    onAppearanceChange()
     return broadcastTheme()
   })
   handle('theme:reload', async () => {

@@ -110,6 +110,10 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
 
     const term = new Terminal({
       allowProposedApi: true,
+      // Costs a little blending performance, and is the only way a translucent
+      // terminal background reaches the window behind it. The WebGL renderer
+      // honours it, so this does not fall back to the slower canvas one.
+      allowTransparency: true,
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
       fontSize: 13,
