@@ -113,6 +113,14 @@ func handleDaemon(args []string) {
 				}
 			}
 		}
+		// Before forking, not after: a background start would otherwise report a
+		// pid that is already on its way out, and the failure would only appear
+		// in a log the user has no reason to open.
+		if pid, running := daemon.AlreadyRunning(cfg); running {
+			fmt.Fprintln(os.Stderr, daemon.RunningError(pid, cfg))
+			os.Exit(1)
+		}
+
 		if background {
 			exe, _ := os.Executable()
 			// Rebuild args without -d/--daemonize

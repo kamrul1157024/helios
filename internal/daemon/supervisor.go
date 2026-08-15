@@ -32,6 +32,12 @@ func NewSupervisor(cfg *Config) *Supervisor {
 // It restarts the daemon on panic/error with exponential backoff.
 // It exits when receiving SIGTERM/SIGINT or when max restarts are exceeded.
 func (s *Supervisor) Run() error {
+	// A supervisor that starts beside a running daemon restarts its own copy
+	// against a bound port for as long as it is left alone. Refuse instead.
+	if pid, running := AlreadyRunning(s.cfg); running {
+		return RunningError(pid, s.cfg)
+	}
+
 	// Write supervisor PID file
 	pidPath := filepath.Join(HeliosDir(), "supervisor.pid")
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
