@@ -408,6 +408,14 @@ small {
   }
 }
 
+/* The dot marks a session mid-turn. It steps between two opacities from a
+   timer rather than animating: a CSS animation ticks the compositor every
+   vsync whatever its duration, and the whole window is recomposited for each
+   tick, so a 1.4s fade and a 120th-of-a-second one cost the same. */
+:root.dim-pulse .pulse {
+  opacity: 0.35;
+}
+
 /* A running animation makes the compositor submit a frame every vsync, and
    macOS recomposites the whole window for each one — 120Hz on a ProMotion
    display, whether or not anyone is looking. Nothing hidden is worth that. */

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
 import {
+  BUSY_STATUSES,
   canResume,
   hasTerminal,
   isTerminated,
@@ -276,6 +277,7 @@ function SessionRow({
   selected: boolean
 }): JSX.Element {
   const live = hasTerminal(session)
+  const busy = BUSY_STATUSES.has(session.status)
   const terminated = canResume(session)
   const cold = needsRecovery(session)
   return (
@@ -293,7 +295,7 @@ function SessionRow({
       <div className="card-inner">
         <div className="card-top">
           <span className={`chip ${session.status}`}>
-            <span className="dot" />
+            <span className={busy ? 'dot pulse' : 'dot'} />
             {statusLabel(session.status)}
           </span>
           {cold && (

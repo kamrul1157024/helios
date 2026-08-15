@@ -18,6 +18,15 @@ const markAtRest = (): void => {
 markAtRest()
 document.addEventListener('visibilitychange', markAtRest)
 
+// Half a hertz, and only while a dot is actually on screen: each toggle
+// damages the window once, where an animation damages it every frame.
+const BLINK_INTERVAL = 1_000
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return
+  if (!document.querySelector('.pulse')) return
+  document.documentElement.classList.toggle('dim-pulse')
+}, BLINK_INTERVAL)
+
 // No StrictMode double-invoke in production, but in development it is what
 // catches an effect that leaks a terminal connection on remount.
 createRoot(container).render(
