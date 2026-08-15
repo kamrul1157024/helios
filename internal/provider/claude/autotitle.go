@@ -41,36 +41,7 @@ var categoryGlyphs = map[string]string{
 	"FEAT":     "", // star
 }
 
-// glyphList renders the pairs for the prompt, in the order of `categories` so
-// the list reads the same way on every call.
-func glyphList() string {
-	var sb strings.Builder
-	for _, category := range categories {
-		sb.WriteString(fmt.Sprintf("\n  %s %s", categoryGlyphs[category], category))
-	}
-	return sb.String()
-}
-
 func autoTitleSystemPrompt(forceTitle bool) string {
-	skipLine := ""
-	if !forceTitle {
-		skipLine = `- If the session is a greeting, test message, or non-substantive (e.g. "hi", "hello", "thanks", "test"), respond with exactly: SKIP` + "\n"
-	}
-
-	return fmt.Sprintf(`You are a session title generator for a coding assistant.
-
-Given a session context (project, user message, assistant response), generate a concise title.
-
-Rules:
-%s- Pick the one category that fits, and use the glyph written beside it:%s
-- Copy the glyph exactly. Do not replace it with an emoji or a description.
-- Keep the title 5-8 words.
-- Format: GLYPH [CATEGORY] Short title here
-- Reply with the title and nothing before it. No reasoning, no analysis, no
-  preamble, no quotes — the first thing you write is the title itself.`, skipLine, glyphList())
-}
-
-func autoTitleSystemPromptNoEmoji(forceTitle bool) string {
 	categoryList := strings.Join(categories, ", ")
 	skipLine := ""
 	if !forceTitle {
@@ -92,9 +63,11 @@ Rules:
 // Longest a title may be before it is treated as prose rather than a title.
 const maxTitleChars = 120
 
-// A title carries its category in brackets, which is what marks the answer out
-// from any commentary around it.
-var titleLine = regexp.MustCompile(`\[[A-Z]+\]`)
+// A title carries a category we know. Matching any bracketed word instead
+// picked up the model echoing the placeholder back — asked for a title with
+// too little to go on, it replies "…following the format [CATEGORY] Short
+// title", and that sentence looked exactly like an answer.
+var titleLine = regexp.MustCompile(`\[?\b(` + strings.Join(categories, "|") + `)\b\]?`)
 
 // cleanTitle finds the title in whatever the model sent back.
 //
@@ -133,8 +106,9 @@ func cleanTitle(raw string) string {
 	return chosen
 }
 
-// The category the model settled on, and whatever it put in front of it.
-var categoryTag = regexp.MustCompile(`^(.*?)\[?([A-Z]{2,10})\]?\s+(.*)$`)
+// The first category we recognise, and whatever the model put in front of it.
+// Built from the list so a new category cannot be added without this seeing it.
+var categoryTag = regexp.MustCompile(`\[?\b(` + strings.Join(categories, "|") + `)\b\]?[\s:]+`)
 
 // normalizeTitle puts the right glyph on the front, whatever the model sent.
 //
@@ -148,22 +122,28 @@ var categoryTag = regexp.MustCompile(`^(.*?)\[?([A-Z]{2,10})\]?\s+(.*)$`)
 // the disagreement the old emoji had with itself: one glyph per category, the
 // same every time.
 //
-// Anything without a recognisable category is passed through untouched, which
-// is what keeps a custom prompt's own format intact.
-func normalizeTitle(title string, glyphs bool) string {
-	match := categoryTag.FindStringSubmatch(title)
-	if match == nil {
-		return title
+// The second return says whether a category was found. Our own prompt always
+// asks for one, so its absence means the reply is not a title — most often the
+// model asking for more context than the session has given it — and the caller
+// drops it rather than naming a session after a sentence of prose. A custom
+// prompt never reaches here, so its own format is left intact.
+func normalizeTitle(title string, glyphs bool) (string, bool) {
+	// Indices, not the submatches: what follows the tag is the title, and that
+	// is the part the expression does not capture.
+	at := categoryTag.FindStringSubmatchIndex(title)
+	if at == nil {
+		return title, false
 	}
-	category, rest := match[2], strings.TrimSpace(match[3])
+	category := title[at[2]:at[3]]
+	rest := strings.TrimSpace(title[at[1]:])
 	glyph, known := categoryGlyphs[category]
 	if !known || rest == "" {
-		return title
+		return title, false
 	}
 	if !glyphs {
-		return fmt.Sprintf("[%s] %s", category, rest)
+		return fmt.Sprintf("[%s] %s", category, rest), true
 	}
-	return fmt.Sprintf("%s [%s] %s", glyph, category, rest)
+	return fmt.Sprintf("%s [%s] %s", glyph, category, rest), true
 }
 
 // tidyTitleLine strips the dressing a model puts around an answer.
@@ -193,14 +173,11 @@ func tidyTitleLine(line string) string {
 //
 // The cost of that is theirs to carry: SKIP and the glyph list are ours, so a
 // custom prompt that does not mention SKIP will title every "hi" it sees.
-func titleSystemPrompt(custom string, glyphs, forceTitle bool) string {
+func titleSystemPrompt(custom string, forceTitle bool) string {
 	if trimmed := strings.TrimSpace(custom); trimmed != "" {
 		return trimmed
 	}
-	if glyphs {
-		return autoTitleSystemPrompt(forceTitle)
-	}
-	return autoTitleSystemPromptNoEmoji(forceTitle)
+	return autoTitleSystemPrompt(forceTitle)
 }
 
 // TriggerAutoTitle checks eligibility and fires async title generation if appropriate.
@@ -215,25 +192,53 @@ func TriggerAutoTitle(ctx *provider.HookContext, sessionID, cwd, transcriptPath 
 		return
 	}
 
-	go generateTitle(ctx.DB, sessionID, cwd, transcriptPath, notify)
+	go generateTitle(ctx.DB, sessionID, cwd, transcriptPath, notify, false)
 }
 
-func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notify func(string, interface{})) {
+// RegenerateTitle names a session on request, whatever it is called now.
+//
+// The automatic path leaves a titled session alone and lets the model decline
+// a session it judges not worth naming. Both are right for something that
+// fires on every turn. A click is the opposite: a request for a name, made by
+// someone looking at the name they already have — so it ignores the existing
+// title, the attempt count, and SKIP.
+//
+// It ignores autotitle.enabled as well. That setting decides whether helios
+// names sessions on its own, which is a different question from being asked
+// to name one.
+//
+// Synchronous, unlike the hook path, so the endpoint can say what happened: a
+// button that reports nothing is how a title that never changed came to look
+// like a broken feature.
+func RegenerateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notify func(string, interface{})) string {
+	sess, err := db.GetSession(sessionID)
+	if err != nil || sess == nil {
+		return ""
+	}
+	return generateTitle(db, sessionID, cwd, transcriptPath, notify, true)
+}
+
+// generateTitle asks the model for a name and saves what comes back, returning
+// the title it set or "" if it set none. `asked` is a human waiting on it,
+// which is what suspends the guards that exist for the automatic path.
+func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notify func(string, interface{}), asked bool) string {
 	attempts, err := db.IncrementAutoTitleAttempts(sessionID)
 	if err != nil {
 		log.Printf("autotitle: failed to increment attempts for %s: %v", sessionID, err)
-		return
+		return ""
 	}
 
-	if attempts > maxAutoTitleAttempts {
-		return
+	// The cap stops helios spending a call per turn on a session the model
+	// keeps declining. It has nothing to say about a request.
+	if !asked && attempts > maxAutoTitleAttempts {
+		return ""
 	}
 
-	forceTitle := attempts >= maxAutoTitleAttempts
+	forceTitle := asked || attempts >= maxAutoTitleAttempts
 
 	sess, err := db.GetSession(sessionID)
 	if err != nil || sess == nil {
-		return
+		return ""
 	}
 
 	userMsg := ""
@@ -241,7 +246,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 		userMsg = *sess.LastUserMessage
 	}
 	if userMsg == "" || strings.HasPrefix(strings.TrimSpace(userMsg), "/") {
-		return
+		return ""
 	}
 	recentPairs := extractLastExchangePairs(transcriptPath, 5)
 	project := filepath.Base(cwd)
@@ -250,11 +255,11 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 
 	custom, _ := db.GetSetting("autotitle.prompt")
 	emoji, _ := db.GetSetting("autotitle.emoji")
-	systemPrompt := titleSystemPrompt(custom, emoji != "false", forceTitle)
+	systemPrompt := titleSystemPrompt(custom, forceTitle)
 
 	caller := provider.GetSmallModelCaller("claude")
 	if caller == nil {
-		return
+		return ""
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -263,7 +268,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	title, err := caller(ctx, systemPrompt, prompt)
 	if err != nil || title == "" {
 		log.Printf("autotitle: haiku call failed for %s (attempt %d): %v", sessionID, attempts, err)
-		return
+		return ""
 	}
 
 	// Before the SKIP check, not after: a model that reasons out loud buries
@@ -272,23 +277,31 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	title = cleanTitle(title)
 	if title == "" {
 		log.Printf("autotitle: nothing usable in the reply for %s (attempt %d)", sessionID, attempts)
-		return
+		return ""
 	}
 
 	if !forceTitle && strings.EqualFold(title, "SKIP") {
 		log.Printf("autotitle: skipped for %s (attempt %d)", sessionID, attempts)
-		return
+		return ""
 	}
 
 	// Only for our own prompt: a custom one owns its format, and rewriting it
 	// into ours would ignore the whole point of setting it.
 	if strings.TrimSpace(custom) == "" {
-		title = normalizeTitle(title, emoji != "false")
+		normalized, ok := normalizeTitle(title, emoji != "false")
+		if !ok {
+			// Our prompt always asks for a category. Without one this is not a
+			// title — usually the model asking for more context than the
+			// session has given it yet.
+			log.Printf("autotitle: no category in the reply for %s (attempt %d): %q", sessionID, attempts, truncateWords(title, 12))
+			return ""
+		}
+		title = normalized
 	}
 
 	if err := db.UpdateSessionTitle(sessionID, title); err != nil {
 		log.Printf("autotitle: failed to save title for %s: %v", sessionID, err)
-		return
+		return ""
 	}
 
 	log.Printf("autotitle: set title for %s (attempt %d): %q", sessionID, attempts, title)
@@ -299,6 +312,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 			"title":      title,
 		})
 	}
+	return title
 }
 
 func buildTitlePrompt(project, userMsg string, pairs []exchangePair) string {

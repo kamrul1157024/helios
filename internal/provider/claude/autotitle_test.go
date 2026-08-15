@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-func TestTitlePrompt_NamesAGlyphForEveryCategory(t *testing.T) {
-	prompt := autoTitleSystemPrompt(false)
-
-	for _, category := range categories {
-		glyph, ok := categoryGlyphs[category]
-		if !ok {
-			t.Errorf("category %s has no glyph", category)
-			continue
-		}
-		// The pair, not just the two separately: the model is told to use the
-		// glyph beside the category, so they have to arrive together.
-		if !strings.Contains(prompt, glyph+" "+category) {
-			t.Errorf("prompt does not pair %q with %s", glyph, category)
-		}
-	}
-}
-
-// Two categories sharing a glyph would make the prefix meaningless as a signal.
 func TestTitlePrompt_GlyphsAreDistinct(t *testing.T) {
 	seen := map[string]string{}
 	for category, glyph := range categoryGlyphs {
@@ -32,19 +14,6 @@ func TestTitlePrompt_GlyphsAreDistinct(t *testing.T) {
 		seen[glyph] = category
 	}
 }
-
-// The emoji instruction is what the glyphs replaced; leaving it in would invite
-// the model to reach for one anyway.
-func TestTitlePrompt_DoesNotAskForEmoji(t *testing.T) {
-	prompt := autoTitleSystemPrompt(false)
-	if strings.Contains(prompt, "EMOJI") {
-		t.Error("prompt still asks for an EMOJI")
-	}
-	if !strings.Contains(prompt, "GLYPH [CATEGORY]") {
-		t.Error("prompt does not state the glyph format")
-	}
-}
-
 func TestTitlePrompt_SkipIsOfferedUntilTheLastAttempt(t *testing.T) {
 	if !strings.Contains(autoTitleSystemPrompt(false), "SKIP") {
 		t.Error("a normal attempt should be allowed to skip a greeting")
@@ -56,40 +25,28 @@ func TestTitlePrompt_SkipIsOfferedUntilTheLastAttempt(t *testing.T) {
 
 func TestTitlePrompt_CustomReplacesTheBuiltIn(t *testing.T) {
 	custom := "Name the session in Bengali. Nothing else."
-	got := titleSystemPrompt(custom, true, false)
+	got := titleSystemPrompt(custom, false)
 
 	if got != custom {
 		t.Errorf("custom prompt not used verbatim: %q", got)
 	}
 	// Appending would leave two format rules contradicting each other.
-	if strings.Contains(got, "GLYPH") {
+	if strings.Contains(got, "Pick one category") {
 		t.Error("the built-in rules leaked into a custom prompt")
 	}
 }
 
 func TestTitlePrompt_BlankCustomFallsBack(t *testing.T) {
 	for _, blank := range []string{"", "   ", "\n\t "} {
-		got := titleSystemPrompt(blank, true, false)
-		if !strings.Contains(got, "GLYPH [CATEGORY]") {
+		got := titleSystemPrompt(blank, false)
+		if !strings.Contains(got, "[CATEGORY] Short title here") {
 			t.Errorf("blank custom prompt %q did not fall back to the built-in", blank)
 		}
 	}
 }
 
-func TestTitlePrompt_GlyphsOffDropsThePrefix(t *testing.T) {
-	got := titleSystemPrompt("", false, false)
-
-	if strings.Contains(got, "GLYPH") {
-		t.Error("glyphs were turned off but the prompt still asks for one")
-	}
-	if !strings.Contains(got, "Format: [CATEGORY]") {
-		t.Errorf("expected the bare category format, got: %q", got)
-	}
-}
-
-// The reply that named a session after several paragraphs of the model's own
-// reasoning, copied out of the daemon log. Everything above the last line is
-// Haiku thinking out loud.
+// The reply that named a session after four paragraphs of the model's own
+// reasoning, copied out of the daemon log.
 var narratedReply = `I need to generate a session title based on the context provided.
 
 Let me analyze the session:
@@ -183,7 +140,7 @@ func TestCleanTitle_EmptyReplyIsNothing(t *testing.T) {
 
 // The prompt cannot enforce this on its own, but it should still ask.
 func TestTitlePrompt_ForbidsPreamble(t *testing.T) {
-	for _, prompt := range []string{autoTitleSystemPrompt(false), autoTitleSystemPromptNoEmoji(false)} {
+	for _, prompt := range []string{autoTitleSystemPrompt(false), autoTitleSystemPrompt(true)} {
 		if !strings.Contains(prompt, "No reasoning") {
 			t.Errorf("prompt does not forbid reasoning: %q", prompt)
 		}
@@ -194,7 +151,7 @@ func TestTitlePrompt_ForbidsPreamble(t *testing.T) {
 // glyph was asked for, and the brackets dropped. PUA codepoints are not
 // something it can reproduce, however firmly the prompt asks.
 func TestNormalizeTitle_ReplacesTheModelsEmojiWithTheGlyph(t *testing.T) {
-	got := normalizeTitle("🗂️ API Multipart file upload with stored paths", true)
+	got := first(normalizeTitle("🗂️ API Multipart file upload with stored paths", true))
 
 	want := categoryGlyphs["API"] + " [API] Multipart file upload with stored paths"
 	if got != want {
@@ -203,7 +160,7 @@ func TestNormalizeTitle_ReplacesTheModelsEmojiWithTheGlyph(t *testing.T) {
 }
 
 func TestNormalizeTitle_AddsTheGlyphWhenTheModelSentNone(t *testing.T) {
-	got := normalizeTitle("[FIX] Stop the double upload", true)
+	got := first(normalizeTitle("[FIX] Stop the double upload", true))
 
 	if want := categoryGlyphs["FIX"] + " [FIX] Stop the double upload"; got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -213,17 +170,17 @@ func TestNormalizeTitle_AddsTheGlyphWhenTheModelSentNone(t *testing.T) {
 func TestNormalizeTitle_KeepsACorrectTitleAsItIs(t *testing.T) {
 	title := categoryGlyphs["DB"] + " [DB] Add the uploads table"
 
-	if got := normalizeTitle(title, true); got != title {
+	if got := first(normalizeTitle(title, true)); got != title {
 		t.Errorf("got %q, want %q", got, title)
 	}
 }
 
 // With icons off, whatever the model prefixed comes off too.
 func TestNormalizeTitle_StripsThePrefixWhenIconsAreOff(t *testing.T) {
-	if got := normalizeTitle("🗂️ API Multipart upload", false); got != "[API] Multipart upload" {
+	if got := first(normalizeTitle("🗂️ API Multipart upload", false)); got != "[API] Multipart upload" {
 		t.Errorf("got %q", got)
 	}
-	if got := normalizeTitle(categoryGlyphs["DB"]+" [DB] Add a table", false); got != "[DB] Add a table" {
+	if got := first(normalizeTitle(categoryGlyphs["DB"]+" [DB] Add a table", false)); got != "[DB] Add a table" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -236,8 +193,73 @@ func TestNormalizeTitle_LeavesUnknownShapesAlone(t *testing.T) {
 		"just some words with no category",
 		"[UNKNOWNCAT] something else",
 	} {
-		if got := normalizeTitle(title, true); got != title {
+		if got := first(normalizeTitle(title, true)); got != title {
 			t.Errorf("normalizeTitle(%q) = %q, want it untouched", title, got)
 		}
+	}
+}
+
+// Every category needs a glyph, since the glyph is now chosen here rather than
+// asked for.
+func TestGlyphs_CoverEveryCategory(t *testing.T) {
+	for _, category := range categories {
+		if categoryGlyphs[category] == "" {
+			t.Errorf("category %s has no glyph", category)
+		}
+	}
+}
+
+// Asking for a glyph is what produced "GLYPH FIX ..." — the model copying the
+// placeholder out of the format line. The prompt must not mention one.
+func TestTitlePrompt_NeverMentionsAGlyph(t *testing.T) {
+	prompt := autoTitleSystemPrompt(false)
+	for _, word := range []string{"GLYPH", "EMOJI", "glyph"} {
+		if strings.Contains(prompt, word) {
+			t.Errorf("prompt still mentions %q", word)
+		}
+	}
+	for category, glyph := range categoryGlyphs {
+		if strings.Contains(prompt, glyph) {
+			t.Errorf("prompt carries the %s glyph, which the model cannot reproduce", category)
+		}
+	}
+}
+
+// Straight from the daemon log: the model wrote the placeholder word instead
+// of a glyph, and dropped the brackets.
+func TestNormalizeTitle_RecoversFromTheLiteralPlaceholder(t *testing.T) {
+	got := first(normalizeTitle("GLYPH FIX Auto-title prompt capturing thinking text", true))
+
+	want := categoryGlyphs["FIX"] + " [FIX] Auto-title prompt capturing thinking text"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// first drops the "did it find a category" flag where a test only cares about
+// the text.
+func first(title string, _ bool) string { return title }
+
+// The model, given too little to go on, asks for more context and quotes the
+// format back — "…following the format [CATEGORY] Short title". That sentence
+// is not a title, and naming a session after it is worse than leaving it
+// unnamed. Straight from a live run.
+func TestNormalizeTitle_RejectsTheModelAskingForContext(t *testing.T) {
+	reply := "Once I have the assistant's response, I can generate an appropriate " +
+		"title following the format [CATEGORY] Short title."
+
+	if _, ok := normalizeTitle(reply, true); ok {
+		t.Error("a request for more context was accepted as a title")
+	}
+}
+
+// The same reply must not be preferred by the line picker either: it was
+// chosen over the other lines because it contained a bracketed word.
+func TestCleanTitle_DoesNotPreferTheEchoedPlaceholder(t *testing.T) {
+	raw := "I need more context to generate a session title.\n\n" +
+		"Once I have it, I can follow the format [CATEGORY] Short title."
+
+	if _, ok := normalizeTitle(cleanTitle(raw), true); ok {
+		t.Errorf("accepted %q as a title", cleanTitle(raw))
 	}
 }

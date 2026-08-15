@@ -972,13 +972,21 @@ func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http
 	notify := func(eventType string, data interface{}) {
 		s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
 	}
-	ctx := &provider.HookContext{
-		DB:     s.shared.DB,
-		Notify: notify,
-	}
-	claudeprovider.TriggerAutoTitle(ctx, id, session.CWD, transcriptPath, notify)
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+	// Not the hook path: that one leaves a titled session alone, so asking it to
+	// rename a session did nothing at all. Waits for the answer, so the caller
+	// hears whether the name changed rather than being told "success" either way.
+	title := claudeprovider.RegenerateTitle(s.shared.DB, id, session.CWD, transcriptPath, notify)
+	if title == "" {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "no_title",
+			"message": "the model did not return a usable title",
+		})
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "title": title})
 }
 
 func extractSessionID(path, suffix string) string {
