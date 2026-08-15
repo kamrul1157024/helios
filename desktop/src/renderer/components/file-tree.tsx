@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { api } from '../bridge.ts'
 import type { FileEntry } from '../../shared/models.ts'
+import { Chevron } from './icons.tsx'
 
 interface Props {
   hostId: string
@@ -101,7 +102,7 @@ export function FileTree({ hostId, root, selected, reveal, onOpen }: Props): JSX
           title={entry.name}
           onClick={() => (entry.is_dir ? toggle(entry.path) : onOpen(entry.path))}
         >
-          <span className="tree-twist">{entry.is_dir ? (open ? '▾' : '▸') : ''}</span>
+          <span className="tree-twist">{entry.is_dir && <Chevron open={open} />}</span>
           <span className={`tree-name ${entry.is_dir ? 'dir' : ''}`}>{entry.name}</span>
           {busy.has(entry.path) && <span className="tree-busy">…</span>}
         </button>,

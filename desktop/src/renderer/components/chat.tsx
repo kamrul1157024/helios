@@ -12,6 +12,7 @@ import {
 } from '../attachments.ts'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
+import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
   extractFilePaths,
@@ -554,7 +555,7 @@ function FileChip({
         title={`Find ${name} in the Files panel`}
         onClick={() => store.findFile(hostId, resolved)}
       >
-        <span className="file-chip-icon">{isDir ? '▸' : '⌕'}</span>
+        <span className="file-chip-icon">{isDir ? <Chevron dir="right" /> : '⌕'}</span>
         {name}
       </button>
       <button className="file-chip-act" title={`Open ${resolved}`} onClick={() => store.openFile(hostId, resolved)}>
@@ -621,7 +622,7 @@ function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
         <span className="tool-name">{tool}</span>
         <span className="tool-summary">{message.summary ?? ''}</span>
-        <span className="chevron">{open ? '▾' : '▸'}</span>
+        <Chevron className="chevron" open={open} />
       </button>
       {open && (
         <div className="tool-detail">

@@ -7,6 +7,7 @@ import { byLastTouched, type Worktree } from '../../shared/models.ts'
 import { CodeEditor, type Cursor } from './editor.tsx'
 import { FileTree } from './file-tree.tsx'
 import { FindInFiles } from './find-in-files.tsx'
+import { Chevron } from './icons.tsx'
 import { PathLabel } from './path-label.tsx'
 import { QuickOpen } from './quick-open.tsx'
 import { RootPicker } from './root-picker.tsx'
@@ -377,7 +378,7 @@ export function FilesPanel({
             title="Choose a worktree or another folder"
             onClick={() => setRootPicker(true)}
           >
-            ▾
+            <Chevron dir="down" />
           </button>
           {root !== sessionRoot && (
             <button className="pill" title="Back to this session's own folder" onClick={() => setRootOverride(null)}>
@@ -653,7 +654,7 @@ function FileView({
                         })
                       }
                     >
-                      {folded ? '▸' : '▾'}
+                      <Chevron open={!folded} />
                     </button>
                   )}
                   <div className="md-block-body" dangerouslySetInnerHTML={{ __html: block.html }} />

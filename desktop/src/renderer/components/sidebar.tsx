@@ -15,6 +15,7 @@ import {
   type HostRecord,
   type Session,
 } from '../../shared/models.ts'
+import { Chevron } from './icons.tsx'
 
 interface Row {
   host: HostRecord
@@ -140,7 +141,7 @@ export function Sidebar({
                 {/* No count until there is one: a 0 that turns into 12 reads as
                     an answer, and it was not one. */}
                 {!loading && <span className="host-count">{rows.length}</span>}
-                <span className="chevron">{isCollapsed ? '▸' : '▾'}</span>
+                <Chevron className="chevron" open={!isCollapsed} />
               </button>
 
               {/* Above the list, not below it: revealed sessions are appended,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
 import { DiffView } from './diff-view.tsx'
+import { Chevron } from './icons.tsx'
 import { PathLabel } from './path-label.tsx'
 import { timeAgo, type Commit, type GitChanges, type GitDiff, type GitLog, type GitStatus } from '../../shared/models.ts'
 
@@ -83,7 +84,7 @@ export function ScopePicker({
         {scope.kind === 'working' && dirtyCount(status) > 0 && (
           <span className="pill">{dirtyCount(status)}</span>
         )}
-        <span className="scope-caret">▾</span>
+        <Chevron className="scope-caret" dir="down" />
       </button>
 
       {at && (
