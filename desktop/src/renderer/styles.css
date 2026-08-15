@@ -1706,13 +1706,17 @@ small {
 }
 
 /* Beside Send, because that is where the hand already is when a turn has to
-   be cut short. */
+   be cut short — and filled like it, or a bare glyph beside a solid circle
+   reads as a mark on the box rather than something to press. */
 .stop-btn {
   font-size: 11px;
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  color: var(--on-surface);
 }
 
 .stop-btn:hover:not(:disabled) {
-  color: var(--error);
+  background: var(--error-container);
+  color: var(--on-error-container);
 }
 
 /* A file dropped anywhere over the composer counts, so the whole of it lights
