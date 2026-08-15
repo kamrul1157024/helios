@@ -195,3 +195,34 @@ func TestPermissionModeSurvivesUpsert(t *testing.T) {
 		t.Errorf("PermissionMode = %v, want acceptEdits to survive the upsert", sess.PermissionMode)
 	}
 }
+
+// Reading the count must not spend one. An attempt is the session's budget for
+// ever being named, and a timed-out model call used to cost it the same as a
+// real answer — five slow minutes and the session could never be titled.
+func TestAutoTitleAttempts_ReadingDoesNotSpend(t *testing.T) {
+	s := setupTestStore(t)
+	if err := s.UpsertSession(&Session{SessionID: "sess-1", Source: "claude", CWD: "/tmp", Status: "idle"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	for range 3 {
+		spent, err := s.AutoTitleAttempts("sess-1")
+		if err != nil {
+			t.Fatalf("read attempts: %v", err)
+		}
+		if spent != 0 {
+			t.Fatalf("reading changed the count: got %d, want 0", spent)
+		}
+	}
+
+	if _, err := s.IncrementAutoTitleAttempts("sess-1"); err != nil {
+		t.Fatalf("increment: %v", err)
+	}
+	spent, err := s.AutoTitleAttempts("sess-1")
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if spent != 1 {
+		t.Errorf("after one increment: got %d, want 1", spent)
+	}
+}

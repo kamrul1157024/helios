@@ -16,6 +16,13 @@ import (
 
 const maxAutoTitleAttempts = 5
 
+// How long the model gets to answer.
+//
+// The call runs 3-6s against Vertex on a good day and occasionally spikes well
+// past that. At 20s those spikes were killed mid-flight and logged as failures,
+// which is a slow provider being mistaken for a broken session.
+const titleCallTimeout = 45 * time.Second
+
 var categories = []string{"DB", "AUTH", "API", "UI", "TEST", "DOCS", "INFRA", "REFACTOR", "FIX", "FEAT"}
 
 // The glyph that goes in front of each category, from the Nerd Font range.
@@ -222,19 +229,25 @@ func RegenerateTitle(db *store.Store, sessionID, cwd, transcriptPath string, not
 // the title it set or "" if it set none. `asked` is a human waiting on it,
 // which is what suspends the guards that exist for the automatic path.
 func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notify func(string, interface{}), asked bool) string {
-	attempts, err := db.IncrementAutoTitleAttempts(sessionID)
+	// Read the count rather than spend one. An attempt is the session's budget
+	// for ever being named, and it is only fair to charge for one once the
+	// model has answered — a call that timed out says nothing about whether the
+	// session is nameable, and five slow minutes used to disable titling for
+	// good.
+	spent, err := db.AutoTitleAttempts(sessionID)
 	if err != nil {
-		log.Printf("autotitle: failed to increment attempts for %s: %v", sessionID, err)
+		log.Printf("autotitle: failed to read attempts for %s: %v", sessionID, err)
 		return ""
 	}
+	attempt := spent + 1
 
 	// The cap stops helios spending a call per turn on a session the model
 	// keeps declining. It has nothing to say about a request.
-	if !asked && attempts > maxAutoTitleAttempts {
+	if !asked && attempt > maxAutoTitleAttempts {
 		return ""
 	}
 
-	forceTitle := asked || attempts >= maxAutoTitleAttempts
+	forceTitle := asked || attempt >= maxAutoTitleAttempts
 
 	sess, err := db.GetSession(sessionID)
 	if err != nil || sess == nil {
@@ -262,13 +275,20 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 		return ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), titleCallTimeout)
 	defer cancel()
 
 	title, err := caller(ctx, systemPrompt, prompt)
 	if err != nil || title == "" {
-		log.Printf("autotitle: haiku call failed for %s (attempt %d): %v", sessionID, attempts, err)
+		// Deliberately before the attempt is charged: the model never answered.
+		log.Printf("autotitle: haiku call failed for %s (attempt %d, not charged): %v", sessionID, attempt, err)
 		return ""
+	}
+
+	// It answered. Whatever it said — a title, or SKIP — that is the session
+	// spending one of its attempts.
+	if _, err := db.IncrementAutoTitleAttempts(sessionID); err != nil {
+		log.Printf("autotitle: failed to count the attempt for %s: %v", sessionID, err)
 	}
 
 	// Before the SKIP check, not after: a model that reasons out loud buries
@@ -276,12 +296,12 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	// reasoning then becomes the title.
 	title = cleanTitle(title)
 	if title == "" {
-		log.Printf("autotitle: nothing usable in the reply for %s (attempt %d)", sessionID, attempts)
+		log.Printf("autotitle: nothing usable in the reply for %s (attempt %d)", sessionID, attempt)
 		return ""
 	}
 
 	if !forceTitle && strings.EqualFold(title, "SKIP") {
-		log.Printf("autotitle: skipped for %s (attempt %d)", sessionID, attempts)
+		log.Printf("autotitle: skipped for %s (attempt %d)", sessionID, attempt)
 		return ""
 	}
 
@@ -293,7 +313,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 			// Our prompt always asks for a category. Without one this is not a
 			// title — usually the model asking for more context than the
 			// session has given it yet.
-			log.Printf("autotitle: no category in the reply for %s (attempt %d): %q", sessionID, attempts, truncateWords(title, 12))
+			log.Printf("autotitle: no category in the reply for %s (attempt %d): %q", sessionID, attempt, truncateWords(title, 12))
 			return ""
 		}
 		title = normalized
@@ -304,7 +324,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 		return ""
 	}
 
-	log.Printf("autotitle: set title for %s (attempt %d): %q", sessionID, attempts, title)
+	log.Printf("autotitle: set title for %s (attempt %d): %q", sessionID, attempt, title)
 
 	if notify != nil {
 		notify("session_updated", map[string]interface{}{
