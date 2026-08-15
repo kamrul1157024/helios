@@ -16,6 +16,7 @@ import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
 import '../services/voice_service.dart';
 import '../services/narration_service.dart';
+import '../utils/large_paste.dart';
 import '../widgets/skeleton.dart';
 import 'file_browser_screen.dart';
 import 'git_status_screen.dart';
@@ -39,6 +40,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
   final _promptController = TextEditingController();
   final List<UploadFile> _attachments = [];
+  /// The block just pasted into the composer, while the offer to file it is up.
+  String? _pastedBlock;
+  String _lastPrompt = '';
   final _scrollController = ScrollController();
   List<Message> _messages = [];
   bool _loading = true;
@@ -66,6 +70,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   @override
   void initState() {
     super.initState();
+    _promptController.addListener(_watchForLargePaste);
     // Restore persisted worktree selection
     _selectedWorktreePath = _worktreeSelections[widget.session.sessionId];
     _breathController = AnimationController(
@@ -288,6 +293,30 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     );
   }
 
+  /// Notices a block arriving in one edit, which on a phone means a paste.
+  void _watchForLargePaste() {
+    final before = _lastPrompt;
+    final after = _promptController.text;
+    _lastPrompt = after;
+    final inserted = insertedText(before, after);
+    if (inserted == null || !isLargePaste(inserted)) return;
+    setState(() => _pastedBlock = inserted);
+  }
+
+  /// Moves the pasted block out of the composer and into an attachment.
+  void _filePastedBlock() {
+    final block = _pastedBlock;
+    if (block == null) return;
+    setState(() {
+      _attachments.add(pastedTextFile(block));
+      _promptController.text = removeFirst(_promptController.text, block);
+      _promptController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _promptController.text.length),
+      );
+      _pastedBlock = null;
+    });
+  }
+
   Future<void> _sendPrompt() async {
     final text = _promptController.text.trim();
     if (text.isEmpty && _attachments.isEmpty) return;
@@ -332,7 +361,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         : await sse.sendSessionPrompt(widget.session.sessionId, message);
     if (error == null && mounted) {
       _promptController.clear();
-      setState(() => _attachments.clear());
+      setState(() {
+        _attachments.clear();
+        _pastedBlock = null;
+      });
       await Future.delayed(const Duration(milliseconds: 500));
       await _loadTranscript();
     } else if (mounted) {
@@ -1420,6 +1452,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 );
               },
             ),
+          if (_pastedBlock != null &&
+              _promptController.text.contains(_pastedBlock!))
+            _PasteOffer(
+              bytes: pastedTextFile(_pastedBlock!).size,
+              onAttach: _sending ? null : _filePastedBlock,
+              onDismiss: () => setState(() => _pastedBlock = null),
+            ),
           if (_attachments.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -1843,6 +1882,63 @@ enum _AttachSource { gallery, camera, files }
 
 /// One pending attachment. A thumbnail for images, because the point of
 /// sending a screenshot is knowing which screenshot went.
+/// Offers to turn a large paste into a file. An offer, not an interception:
+/// ignoring it sends the prompt exactly as it was pasted.
+class _PasteOffer extends StatelessWidget {
+  final int bytes;
+  final VoidCallback? onAttach;
+  final VoidCallback onDismiss;
+
+  const _PasteOffer({
+    required this.bytes,
+    required this.onAttach,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(left: 12, right: 2, top: 2, bottom: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Pasted ${_AttachmentChip._size(bytes)} of text',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onAttach,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+            child: const Text('Attach as file', style: TextStyle(fontSize: 12)),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close, size: 14),
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: EdgeInsets.zero,
+            tooltip: 'Keep it in the prompt',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AttachmentChip extends StatelessWidget {
   final UploadFile file;
   final VoidCallback? onRemove;

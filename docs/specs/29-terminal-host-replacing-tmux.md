@@ -432,6 +432,9 @@ length, `uint8` type, then payload.
 | `0x06 Status` | H→C | JSON `{state, writer, viewers}` | advisory UI state |
 | `0x07 Exit` | H→C | `int32 code` | child exited; host shutting down |
 | `0x08 Ping` / `0x09 Pong` | both | — | liveness, 15s interval |
+| `0x0d Paste` | C→H | raw text | bracketed paste when the child set `?2004`; see spec 37 |
+
+Overlay frames `0x0a`–`0x0c` are specified in spec 36.
 
 The daemon exposes this to the network at
 `GET /api/sessions/{id}/terminal` (WebSocket), forwarding frames verbatim.

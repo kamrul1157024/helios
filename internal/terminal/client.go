@@ -75,6 +75,14 @@ func (c *Client) Send(p []byte) error {
 	return WriteFrame(c.conn, FrameInput, p)
 }
 
+// Paste hands text to the host to deliver as a paste rather than as typed
+// input, so the application can tell where it ends.
+func (c *Client) Paste(text string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return WriteFrame(c.conn, FramePaste, []byte(text))
+}
+
 // Resize requests a new PTY size. Only honoured for interactive viewers.
 func (c *Client) Resize(cols, rows int) error {
 	c.mu.Lock()

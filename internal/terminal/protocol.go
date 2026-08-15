@@ -32,6 +32,12 @@ const (
 	FrameOverlaySet   FrameType = 0x0a
 	FrameOverlayClear FrameType = 0x0b
 	FrameOverlayInput FrameType = 0x0c
+
+	// FramePaste carries prompt text the host must deliver as a paste rather
+	// than as keystrokes. Sending it as input instead lets the application
+	// mistake the trailing Enter for part of the burst, which loses the
+	// submit. See docs/specs/37-prompt-delivery-reliability.md.
+	FramePaste FrameType = 0x0d
 )
 
 // MaxFrameSize bounds a single frame so a corrupt or hostile length prefix
@@ -67,6 +73,8 @@ func (t FrameType) String() string {
 		return "overlay-clear"
 	case FrameOverlayInput:
 		return "overlay-input"
+	case FramePaste:
+		return "paste"
 	default:
 		return fmt.Sprintf("unknown(0x%02x)", uint8(t))
 	}

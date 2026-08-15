@@ -756,6 +756,13 @@ func (h *Host) serveConn(conn net.Conn) {
 			if err := h.Write(fr.Payload, v.name); err != nil {
 				break
 			}
+		case FramePaste:
+			if h.captureInput(v, fr.Payload) {
+				continue
+			}
+			if err := h.Paste(string(fr.Payload), v.name); err != nil {
+				break
+			}
 		case FrameOverlaySet:
 			if h.controlViewer() != v {
 				continue

@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,6 +13,26 @@ import (
 const (
 	mirrorCols = 200
 	mirrorRows = 60
+)
+
+// Timings for the Enter that submits a pasted prompt. The paste itself is
+// unambiguous — the host brackets it — but the application still has to finish
+// ingesting it, and an Enter that arrives mid-ingest is read as part of the
+// paste and becomes a newline instead of a submit.
+//
+// So the Enter waits for the screen to stop changing rather than for a fixed
+// interval: a 10 KB prompt takes far longer to render than a one-liner, and any
+// constant that covers the first is dead time for the second. Measured failure
+// rates for a 10 KB prompt are in docs/specs/37-prompt-delivery-reliability.md.
+const (
+	// How long the screen must hold still before the paste counts as ingested.
+	pasteQuiet = 250 * time.Millisecond
+	// How long to wait for the paste to start rendering. A child that echoes
+	// nothing must not pay the whole settle window.
+	pasteRenderWait = 300 * time.Millisecond
+	// Ceiling on the whole wait, for an application that never goes quiet.
+	pasteSettleCap  = 3 * time.Second
+	pasteSettlePoll = 20 * time.Millisecond
 )
 
 // Mirror is the daemon's live copy of one session's terminal.
@@ -27,6 +48,10 @@ const (
 type Mirror struct {
 	sessionID string
 	socket    string
+	// What the host on the far end understands, read from its sidecar. A host
+	// from an older build ignores frames it has no case for, so sending one
+	// loses the prompt outright.
+	protocol int
 
 	screen *Screen
 	client *Client
@@ -34,6 +59,7 @@ type Mirror struct {
 	mu             sync.Mutex
 	onUpdate       func()
 	onOverlayInput func([]byte)
+	lastOutput     time.Time
 	lastState      State
 	lastViewers    int
 	exitCode       int
@@ -60,6 +86,7 @@ func NewMirror(sessionID, socket string) (*Mirror, error) {
 	m := &Mirror{
 		sessionID: sessionID,
 		socket:    socket,
+		protocol:  hostProtocol(socket),
 		screen:    NewScreen(mirrorCols, mirrorRows),
 		client:    client,
 		done:      make(chan struct{}),
@@ -88,10 +115,12 @@ func (m *Mirror) pump() {
 		switch f.Type {
 		case FrameOutput:
 			m.screen.Write(f.Payload)
+			m.markOutput()
 			m.notify()
 		case FrameSnapshot:
 			if _, ansi, err := DecodeSnapshot(f.Payload); err == nil {
 				m.screen.Write(ansi)
+				m.markOutput()
 				m.notify()
 			}
 		case FrameOverlayInput:
@@ -124,6 +153,12 @@ func (m *Mirror) markExited() {
 	m.exited = true
 	m.mu.Unlock()
 	m.notify()
+}
+
+func (m *Mirror) markOutput() {
+	m.mu.Lock()
+	m.lastOutput = time.Now()
+	m.mu.Unlock()
 }
 
 func (m *Mirror) notify() {
@@ -173,19 +208,67 @@ func (m *Mirror) Snapshot() string { return m.screen.RenderSnapshot(SnapshotScro
 // Send writes input bytes to the hosted process.
 func (m *Mirror) Send(p []byte) error { return m.client.Send(p) }
 
-// SendText submits a prompt: the text, then Enter.
+// SendText submits a prompt: the text as a paste, then Enter.
 //
-// Written as bytes straight to the PTY, so shell metacharacters, quotes, and
-// newlines arrive exactly as typed. This is the defect that made tmux
-// send-keys mangle multi-line prompts.
+// Delivered as bytes, so shell metacharacters, quotes, and newlines arrive
+// exactly as typed. This is the defect that made tmux send-keys mangle
+// multi-line prompts.
+//
+// The host pastes rather than types, which is what keeps the Enter separable
+// from the prompt: sent as plain input, a large prompt is one indivisible
+// burst to the application and the Enter at its tail is read as a newline
+// within it. The submit is then lost with no error anywhere — the text simply
+// waits in the composer until some later Enter flushes it.
+//
+// A host too old for FramePaste gets the text as plain input. It is the
+// weaker delivery — the application has to guess where the paste ended — but
+// the settle below carries most of the benefit, and a frame the host has no
+// case for is discarded without a word, which loses the prompt entirely.
 func (m *Mirror) SendText(text string) error {
-	if err := m.client.Send([]byte(text)); err != nil {
+	send := func() error { return m.client.Send([]byte(text)) }
+	if m.protocol >= 1 {
+		send = func() error { return m.client.Paste(text) }
+	}
+	if err := send(); err != nil {
 		return err
 	}
-	// A brief pause lets the application's input handler see the paste before
-	// the submit, which matters for TUIs that debounce bracketed input.
-	time.Sleep(30 * time.Millisecond)
+	m.settleAfterPaste()
 	return m.client.Send([]byte("\r"))
+}
+
+// hostProtocol reads the sidecar beside a host's socket. Anything unreadable
+// is treated as the oldest protocol: guessing high loses prompts, guessing low
+// only forgoes bracketing.
+func hostProtocol(socket string) int {
+	s, err := ReadSidecar(strings.TrimSuffix(socket, ".sock") + ".json")
+	if err != nil {
+		return 0
+	}
+	return s.Protocol
+}
+
+// settleAfterPaste waits for the screen to stop changing, so the Enter that
+// follows lands on an application that has finished taking the paste in.
+func (m *Mirror) settleAfterPaste() {
+	start := time.Now()
+	for time.Since(start) < pasteRenderWait {
+		m.mu.Lock()
+		rendering := m.lastOutput.After(start)
+		m.mu.Unlock()
+		if rendering {
+			break
+		}
+		time.Sleep(pasteSettlePoll)
+	}
+	for time.Since(start) < pasteSettleCap {
+		m.mu.Lock()
+		idle := time.Since(m.lastOutput)
+		m.mu.Unlock()
+		if idle >= pasteQuiet {
+			return
+		}
+		time.Sleep(pasteSettlePoll)
+	}
 }
 
 // Exited reports whether the hosted process has ended.
