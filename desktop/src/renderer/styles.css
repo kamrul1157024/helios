@@ -508,6 +508,13 @@ small {
   background: transparent;
 }
 
+/* Cards carry the surface they sit on down with them. Left opaque they read as
+   pasted onto the panel rather than part of it — the mismatch is far more
+   obvious than the transparency itself. */
+[data-glass='on'] .session-card {
+  background: var(--glass-container);
+}
+
 /* Code and diffs keep a solid bed. They are the one thing in the window that
    is read character by character, and a wallpaper moving underneath a diff is
    the point at which the look starts costing something. */
