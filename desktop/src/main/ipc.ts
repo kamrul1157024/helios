@@ -207,12 +207,17 @@ export function registerIpc(deps: IpcDeps): void {
   // theme is showing rather than a slot of its own.
   const backdropState = (): BackdropState => {
     const theme = themes.active()
+    const named = theme.backdrop?.stops ?? null
     return {
       themeId: theme.id,
       themeName: theme.name,
       glass: theme.glass !== null,
       style: theme.backdrop?.style ?? 'desktop',
       intensity: theme.backdrop?.intensity ?? DEFAULT_INTENSITY,
+      // Padded to the derived length, so a theme that named two colours still
+      // gives the picker a full set of wells to edit.
+      palette: theme.backdropPalette.map((derived, i) => named?.[i] ?? derived),
+      custom: named !== null,
       // Offering the desktop where there is no way to show it would be
       // offering an opaque window under a different name.
       desktopSupported: glassSupported,

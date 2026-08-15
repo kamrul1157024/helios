@@ -62,7 +62,12 @@ export interface HeliosTheme {
    * for whatever the OS puts behind the window instead, which is the macOS
    * material or, anywhere else, nothing.
    */
-  backdrop: { style: BackdropStyle; intensity: number } | null
+  backdrop: {
+    style: BackdropStyle
+    intensity: number
+    /** Colours the theme named itself, or null where they are derived. */
+    stops: string[] | null
+  } | null
   /**
    * The colours a backdrop of this theme is drawn from, whether or not one is
    * showing — the picker draws its swatches from them, and a swatch has to be
@@ -234,7 +239,14 @@ export function resolveTheme(
   let backdrop: HeliosTheme['backdrop'] = null
   if (spec && style !== 'desktop') {
     vars['--backdrop'] = backdropValue(spec, resolved.get('surface') ?? bg, palette)
-    backdrop = { style, intensity: clampIntensity(spec.intensity) }
+    // Normalised to plain hex on the way out: the picker puts these in a colour
+    // input, which takes nothing else.
+    const named = spec.stops?.map((stop) => parseColor(stop.color ?? '')).filter((c): c is Rgb => c !== null)
+    backdrop = {
+      style,
+      intensity: clampIntensity(spec.intensity),
+      stops: named?.length ? named.map(toHex) : null,
+    }
   }
 
   const terminalBg = colour('terminal.background') ?? bg
