@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, session, shell } from 'electron'
 import path from 'node:path'
 
 import { HostRegistry } from './hosts.ts'
@@ -71,7 +71,17 @@ async function start(): Promise<void> {
   }
   notifier = new Notifier(hosts, hud, prefs, activateNotification, openSettings, quit)
 
-  registerIpc({ hosts, terminals, notifier, prefs, themes, quit, window: () => window })
+  registerIpc({
+    hosts,
+    terminals,
+    notifier,
+    prefs,
+    themes,
+    quit,
+    glassSupported: GLASS_SUPPORTED,
+    onAppearanceChange: applyWindowMaterial,
+    window: () => window,
+  })
 
   // The HUD is shown without focus, so nothing reaches its keyboard handlers
   // until the user asks for it.
@@ -110,6 +120,40 @@ async function start(): Promise<void> {
   })
 }
 
+/**
+ * The OS backdrop, and whether it is showing.
+ *
+ * Only macOS: this is the system's own material behind the window, not a blur
+ * of our own making, so on Tahoe it is Liquid Glass without us drawing any of
+ * it. Windows has an equivalent in `setBackgroundMaterial`, but not one this
+ * can be tested against here.
+ */
+const GLASS_SUPPORTED = process.platform === 'darwin'
+
+function glassOn(): boolean {
+  return GLASS_SUPPORTED && Boolean(themes?.active().glass)
+}
+
+/**
+ * Applies the backdrop, and tells AppKit which appearance to draw it in.
+ *
+ * The material takes its light or dark form from the app's appearance, not from
+ * our stylesheet, so a user who has pinned a dark theme under a light system
+ * would otherwise get a white pane behind a dark app. Setting `themeSource`
+ * from the same preference keeps the two in step; when the preference is
+ * 'system' both sides defer to the OS and nothing is overridden.
+ */
+function applyWindowMaterial(): void {
+  if (!themes) return
+  nativeTheme.themeSource = themes.getPrefs().mode
+  if (!window || window.isDestroyed()) return
+  const on = glassOn()
+  if (GLASS_SUPPORTED) window.setVibrancy(on ? 'under-window' : null)
+  // An opaque background sits in front of the material and hides it, so the
+  // window has to stop painting one for the backdrop to be visible at all.
+  window.setBackgroundColor(on ? '#00000000' : (themes.active().vars['--surface'] ?? '#101014'))
+}
+
 function createWindow(): void {
   window = new BrowserWindow({
     width: 1440,
@@ -120,7 +164,8 @@ function createWindow(): void {
     icon: appIcon,
     // The frame is painted before the renderer runs, so it has to come from the
     // theme too or the window flashes the old dark grey on every open.
-    backgroundColor: themes?.active().vars['--surface'] ?? '#101014',
+    backgroundColor: glassOn() ? '#00000000' : (themes?.active().vars['--surface'] ?? '#101014'),
+    ...(glassOn() ? { vibrancy: 'under-window' as const } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(distDir, 'preload', 'preload.js'),

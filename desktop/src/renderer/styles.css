@@ -470,6 +470,59 @@ small {
   overflow: hidden;
 }
 
+/* ─── Backdrop ──────────────────────────────────────────────────────────── */
+
+/* With the OS material behind the window, the surfaces in front of it have to
+   stop painting for any of it to be seen. Only two do: the page itself, which
+   turns the window's margins and the strip behind the title bar into glass, and
+   the sidebar. The transcript, the terminal and the editor stay opaque on
+   purpose — they are for reading, and reading off a moving desktop is not
+   worth the look. */
+[data-glass='on'] body {
+  background: transparent;
+}
+
+/* Tinted rather than clear: the material supplies the blur, the tint keeps the
+   theme's own colour in the mix so a panel still belongs to the app. The
+   hairline is what stops two adjacent translucent panels reading as one. */
+[data-glass='on'] .sidebar,
+[data-glass='on'] .detail {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 9%, transparent);
+}
+
+[data-glass='on'] .sidebar {
+  background: var(--glass-sidebar);
+}
+
+[data-glass='on'] .detail {
+  background: var(--glass-panel);
+}
+
+/* The panels inside a session — transcript, terminal, git, files — sit on the
+   detail panel, so anything of theirs that paints has to give way too. */
+[data-glass='on'] .panes,
+[data-glass='on'] .pane,
+[data-glass='on'] .pane-term,
+[data-glass='on'] .chat,
+[data-glass='on'] .chat-scroll {
+  background: transparent;
+}
+
+/* Cards carry the surface they sit on down with them. Left opaque they read as
+   pasted onto the panel rather than part of it — the mismatch is far more
+   obvious than the transparency itself. */
+[data-glass='on'] .session-card {
+  background: var(--glass-container);
+}
+
+/* Code and diffs keep a solid bed. They are the one thing in the window that
+   is read character by character, and a wallpaper moving underneath a diff is
+   the point at which the look starts costing something. */
+[data-glass='on'] .code-block,
+[data-glass='on'] .cm-editor {
+  background: var(--code-bg);
+}
+
 .sidebar-head {
   display: flex;
   align-items: center;

@@ -163,8 +163,8 @@ class Store {
     // The preload painted the boot theme already; this keeps up with changes
     // made afterwards, whether from the settings dialog or the OS switching
     // between light and dark underneath us.
-    bridge.theme.onChanged(({ theme, terminal }) => {
-      applyTheme(document.documentElement, theme)
+    bridge.theme.onChanged(({ theme, terminal, glass }) => {
+      applyTheme(document.documentElement, theme, glass)
       this.set({ terminalTheme: terminal })
     })
 

@@ -14,8 +14,23 @@ export interface TokenColor {
   settings?: { foreground?: string; fontStyle?: string }
 }
 
+/**
+ * Helios' own addition to the format: how far the window lets the desktop
+ * through, per surface. Values are the opacity the surface keeps, so 1 is
+ * solid and 0 is clear.
+ *
+ * Carried inside the theme file under a namespaced key, which VS Code ignores,
+ * so a glass theme is still a theme anyone can drop into VS Code.
+ */
+export interface GlassSpec {
+  sidebar: number
+  panel: number
+  terminal: number
+}
+
 export interface VSCodeTheme {
   name?: string
+  'helios.glass'?: Partial<GlassSpec>
   /** Absent more often than not; the resolver falls back to luminance. */
   type?: string
   /** A sibling theme file this one layers on top of. */
@@ -180,6 +195,17 @@ export function ensureContrast(colour: Rgb, background: Rgb, target: number): Rg
 export function toHex(c: Rgb): string {
   const pair = (n: number): string => clamp(n).toString(16).padStart(2, '0')
   return `#${pair(c.r)}${pair(c.g)}${pair(c.b)}`
+}
+
+/**
+ * Eight-digit hex, for consumers that parse colours themselves rather than
+ * handing them to CSS. xterm is the one that matters here: it does not
+ * understand the modern `rgb(r g b / a)` form and silently falls back to black,
+ * which is how a translucent terminal ends up an opaque one.
+ */
+export function toHexAlpha(c: Rgb, alpha: number): string {
+  const pair = (n: number): string => clamp(n).toString(16).padStart(2, '0')
+  return `${toHex(c)}${pair(Math.round(alpha * 255))}`
 }
 
 export function toRgba(c: Rgb, alpha: number): string {

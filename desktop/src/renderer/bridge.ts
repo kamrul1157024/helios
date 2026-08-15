@@ -1,4 +1,14 @@
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
+
+/** What the main process hands over whenever the appearance changes. */
+export interface ThemePayload {
+  theme: HeliosTheme
+  terminal: XtermTheme
+  /** The OS backdrop is on: some surfaces stop painting so it shows through. */
+  glass: boolean
+  /** This platform can show it at all; false hides the toggle entirely. */
+  glassSupported: boolean
+}
 import type {
   AppearancePrefs,
   CommandInfo,
@@ -96,12 +106,12 @@ interface RawBridge {
   }
   theme: {
     /** The theme the preload already painted, before this code ran. */
-    boot(): { theme: HeliosTheme; terminal: XtermTheme }
+    boot(): ThemePayload
     list(): Promise<ThemeSummary[]>
     prefs(): Promise<AppearancePrefs>
-    set(next: Partial<AppearancePrefs>): Promise<{ theme: HeliosTheme; terminal: XtermTheme }>
+    set(next: Partial<AppearancePrefs>): Promise<ThemePayload>
     reload(): Promise<ThemeSummary[]>
-    onChanged(fn: (payload: { theme: HeliosTheme; terminal: XtermTheme }) => void): Unsubscribe
+    onChanged(fn: (payload: ThemePayload) => void): Unsubscribe
   }
   hud: {
     resize(height: number): void
