@@ -700,9 +700,21 @@ small {
 }
 
 .host-count,
+/* Drawn, so it fills its box: sized in em to follow the row it sits in rather
+   than pinning a size of its own. See components/icons.tsx. */
+.chevron-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .chevron {
   opacity: 0.7;
-  font-weight: 500;
 }
 
 /* Quieter than the new-session button beside it, and filled only while it is
@@ -1249,7 +1261,7 @@ small {
   min-width: 22px;
   height: 22px;
   padding: 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
 }
 
@@ -1447,6 +1459,8 @@ small {
 }
 
 .file-chip-icon {
+  display: inline-flex;
+  align-items: center;
   opacity: 0.7;
 }
 
@@ -2168,12 +2182,14 @@ small {
 }
 
 .md-fold {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   width: 16px;
   padding: 0;
   background: transparent;
   color: var(--on-surface-variant);
-  font-size: 12px;
   line-height: 1;
 }
 
@@ -2343,6 +2359,9 @@ small {
 }
 
 .ws-root-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   width: 22px;
   height: 22px;
@@ -2397,9 +2416,12 @@ small {
 }
 
 .tree-twist {
-  width: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
   flex: none;
-  font-size: 11px;
+  line-height: 1;
   color: var(--on-surface-variant);
 }
 
@@ -2982,7 +3004,6 @@ hr {
 }
 
 .scope-caret {
-  font-size: 10px;
   color: var(--on-surface-variant);
 }
 
