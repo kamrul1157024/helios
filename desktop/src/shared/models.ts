@@ -16,6 +16,9 @@ export interface Session {
   last_event_at?: string
   last_user_message?: string
   pinned: boolean
+  /** Place in a hand-arranged list; only meaningful in manual sort mode.
+   *  Absent from a daemon older than the feature, which sorts by activity. */
+  sort_order?: number
   archived: boolean
   managed: boolean
   permission_mode?: string

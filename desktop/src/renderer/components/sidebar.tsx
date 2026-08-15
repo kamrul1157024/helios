@@ -47,6 +47,10 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
   const showArchived = useStore((s) => s.showArchived)
+  const sortMode = useStore((s) => s.sortMode)
+  // The card being dragged, so the row under the pointer can show where it
+  // would land. Held per host: a drag never crosses from one daemon to another.
+  const [dragging, setDragging] = useState<{ hostId: string; sessionId: string } | null>(null)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
@@ -75,7 +79,7 @@ export function Sidebar({
       const rows: Row[] = visible
         .filter((session) => !hideTerminated || !isTerminated(session))
         .map((session) => ({ host, session, pending: pendingByCwd.get(session.session_id) ?? 0 }))
-        .sort(compareRows)
+        .sort(sortMode[host.id] === 'manual' ? byHand : compareRows)
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
       // An unfetched host has no entry at all, an empty one has []. Without the
@@ -84,7 +88,11 @@ export function Sidebar({
       const loading = sessions[host.id] === undefined
       return { host, rows, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showArchived, showTerminated])
+  }, [hosts, sessions, notifications, query, showArchived, showTerminated, sortMode])
+
+  // One host answering "manual" is enough to show the switch as on: the click
+  // writes the other way to every host, which settles any disagreement.
+  const manual = hosts.some((host) => sortMode[host.id] === 'manual')
 
   return (
     <aside className="sidebar">
@@ -100,6 +108,18 @@ export function Sidebar({
             onChange={(event) => store.setQuery(event.target.value)}
           />
         </div>
+        <button
+          className={manual ? 'fab sort-toggle on' : 'fab sort-toggle'}
+          aria-label={manual ? 'Sorting by hand' : 'Sorting by activity'}
+          title={
+            manual
+              ? 'Sort: Manual — drag a session to move it.\nClick to sort by activity instead.'
+              : 'Sort: Activity — approvals first, then live, then most recent.\nClick to arrange them by hand instead.'
+          }
+          onClick={() => void store.setSortModeEverywhere(manual ? 'activity' : 'manual')}
+        >
+          ⇅
+        </button>
         <button className="fab" title="New session (⌘N)" onClick={onNewSession}>
           +
         </button>
@@ -147,6 +167,22 @@ export function Sidebar({
                     selected={
                       selection?.hostId === host.id && selection.sessionId === session.session_id
                     }
+                    draggable={sortMode[host.id] === 'manual'}
+                    dragging={dragging?.sessionId === session.session_id}
+                    onDragStart={() => setDragging({ hostId: host.id, sessionId: session.session_id })}
+                    onDragEnd={() => setDragging(null)}
+                    onDropBefore={(draggedId) => {
+                      // The id off the drag itself, not React state: the drop
+                      // can arrive in the same tick as the drag start, before
+                      // a setState has committed, and then nothing moves.
+                      const ids = rows.map((row) => row.session.session_id)
+                      const from = ids.indexOf(draggedId)
+                      const to = ids.indexOf(session.session_id)
+                      setDragging(null)
+                      if (from === -1 || to === -1 || from === to) return
+                      ids.splice(to, 0, ids.splice(from, 1)[0] as string)
+                      void store.reorderSessions(host.id, ids)
+                    }}
                   />
                 ))}
 
@@ -270,11 +306,22 @@ function SessionRow({
   session,
   pending,
   selected,
+  draggable,
+  dragging,
+  onDragStart,
+  onDragEnd,
+  onDropBefore,
 }: {
   hostId: string
   session: Session
   pending: number
   selected: boolean
+  /** Only in manual mode: dragging a card in an auto-sorted list means nothing. */
+  draggable: boolean
+  dragging: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
+  onDropBefore: (draggedId: string) => void
 }): JSX.Element {
   const live = hasTerminal(session)
   const busy = BUSY_STATUSES.has(session.status)
@@ -282,7 +329,27 @@ function SessionRow({
   const cold = needsRecovery(session)
   return (
     <article
-      className={`session-card ${session.status} ${selected ? 'selected' : ''}`}
+      className={`session-card ${session.status} ${selected ? 'selected' : ''}${dragging ? ' dragging' : ''}${draggable ? ' movable' : ''}`}
+      draggable={draggable}
+      onDragStart={(event) => {
+        // Firefox and Chromium both want data on the transfer or the drag never
+        // starts; the id is also what makes the drop unambiguous.
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', session.session_id)
+        onDragStart()
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={(event) => {
+        if (!draggable) return
+        // Without this the drop never fires: the default is to refuse.
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+      }}
+      onDrop={(event) => {
+        if (!draggable) return
+        event.preventDefault()
+        onDropBefore(event.dataTransfer.getData('text/plain'))
+      }}
       onClick={() => store.select(hostId, session.session_id)}
       // A terminated session has to be resumed before it has a terminal worth
       // opening, so the shortcut resumes instead of waking one it will refuse.
@@ -347,6 +414,20 @@ function SessionRow({
 }
 
 /** Pending approvals first, then live sessions, then most recent activity. */
+/**
+ * The order the user put them in, and nothing else.
+ *
+ * No tie-breaking on activity: the whole point is that a card does not move
+ * when a session does something. Sessions the daemon has not numbered yet sort
+ * by creation, newest first, which is where a new one belongs.
+ */
+function byHand(a: Row, b: Row): number {
+  const left = a.session.sort_order ?? 0
+  const right = b.session.sort_order ?? 0
+  if (left !== right) return left - right
+  return b.session.created_at.localeCompare(a.session.created_at)
+}
+
 function compareRows(a: Row, b: Row): number {
   if (a.pending !== b.pending) return b.pending - a.pending
   if (a.session.pinned !== b.session.pinned) return a.session.pinned ? -1 : 1

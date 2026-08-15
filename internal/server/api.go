@@ -989,6 +989,39 @@ func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "title": title})
 }
 
+// handleSessionOrder records a hand-arranged order for the session list.
+//
+// The whole arrangement in one request: dragging one card shifts every card it
+// passed, and the client knows the result it wants. Sending positions one at a
+// time would leave the list half-reordered if the second call failed.
+func (s *PublicServer) handleSessionOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.Order) == 0 {
+		jsonError(w, "missing order", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.shared.DB.SetSessionOrder(req.Order); err != nil {
+		log.Printf("session-order: %v", err)
+		jsonError(w, "failed to save order", http.StatusInternalServerError)
+		return
+	}
+
+	// Every client is looking at the same list, so they all need to hear about
+	// it — the one that did the dragging has already moved the card itself.
+	s.shared.SSE.Broadcast(SSEEvent{Type: "session_updated", Data: map[string]interface{}{
+		"reordered": len(req.Order),
+	}})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 func extractSessionID(path, suffix string) string {
 	path = strings.TrimPrefix(path, "/api/sessions/")
 	path = strings.TrimSuffix(path, suffix)

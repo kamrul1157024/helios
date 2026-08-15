@@ -180,6 +180,9 @@ export class HostApi {
   uploadFiles(id: string, files: UploadPart[]): Promise<UploadedFile[]> {
     return this.call('uploadFiles', id, files)
   }
+  setSessionOrder(order: string[]): Promise<unknown> {
+    return this.call('setSessionOrder', order)
+  }
   stop(id: string): Promise<unknown> {
     return this.call('stop', id)
   }

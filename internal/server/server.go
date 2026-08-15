@@ -152,6 +152,9 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	protectedMux.HandleFunc("GET /api/sessions/directories", s.handleListDirectories)
+	// Registered before the /api/sessions/ catch-all below, which would take
+	// "order" for a session id.
+	protectedMux.HandleFunc("POST /api/sessions/order", s.handleSessionOrder)
 	protectedMux.HandleFunc("GET /api/files", s.handleListFiles)
 	protectedMux.HandleFunc("GET /api/files/search", s.handleSearchFiles)
 	protectedMux.HandleFunc("GET /api/files/grep", s.handleGrepFiles)
