@@ -139,6 +139,7 @@ func handlePtyHost(args []string) {
 		Cwd:       cwd,
 		Socket:    sock,
 		StartedAt: time.Now(),
+		Protocol:  terminal.HostProtocol,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "ptyhost: write sidecar: %v\n", err)
 	}

@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, statusOf } from '../bridge.ts'
 import {
+  isLargePaste,
   needingUpload,
+  pastedTextAttachment,
   promptWithAttachments,
+  removeFirst,
   withStoredPaths,
   type Attachment,
 } from '../attachments.ts'
@@ -48,6 +51,8 @@ export function ChatPanel({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  // The block the user just pasted, while the offer to file it instead is up.
+  const [pasted, setPasted] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
   const picker = useRef<HTMLInputElement | null>(null)
   const nextAttachment = useRef(0)
@@ -141,6 +146,14 @@ export function ChatPanel({
     setAttachments((current) => current.filter((a) => a.id !== attachment.id))
   }
 
+  /** Moves the block the user just pasted out of the composer and into a file. */
+  const fileThePaste = (): void => {
+    if (!pasted) return
+    setAttachments((current) => [...current, pastedTextAttachment(++nextAttachment.current, pasted)])
+    setDraft((current) => removeFirst(current, pasted))
+    setPasted(null)
+  }
+
   const send = async (): Promise<void> => {
     const text = draft.trim()
     if ((!text && attachments.length === 0) || sending) return
@@ -165,6 +178,7 @@ export function ChatPanel({
 
       const result = await api(hostId).sendPrompt(session.session_id, message)
       setDraft('')
+      setPasted(null)
       for (const attachment of attachments) {
         if (attachment.preview) URL.revokeObjectURL(attachment.preview)
       }
@@ -283,6 +297,25 @@ export function ChatPanel({
             void attach(event.dataTransfer.files)
           }}
         >
+          {pasted !== null && draft.includes(pasted) && (
+            <div className="paste-offer">
+              <span className="paste-offer-text">
+                Pasted {fileSize(new Blob([pasted]).size)} of text
+              </span>
+              <button className="ghost" onClick={fileThePaste}>
+                Attach as file
+              </button>
+              <button
+                className="attachment-drop"
+                aria-label="Keep the paste in the prompt"
+                title="Keep it in the prompt"
+                onClick={() => setPasted(null)}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {attachments.length > 0 && (
             <div className="attachments">
               {attachments.map((attachment) => (
@@ -343,9 +376,16 @@ export function ChatPanel({
               onPaste={(event) => {
                 // A screenshot on the clipboard comes through as a file. Let
                 // the default run when there is none, or pasted text is lost.
-                if (event.clipboardData.files.length === 0) return
-                event.preventDefault()
-                void attach(event.clipboardData.files)
+                if (event.clipboardData.files.length > 0) {
+                  event.preventDefault()
+                  void attach(event.clipboardData.files)
+                  return
+                }
+                // A large block is only offered, never intercepted: the paste
+                // lands in the composer as it always has, and ignoring the
+                // offer leaves the prompt exactly as the user typed it.
+                const text = event.clipboardData.getData('text')
+                setPasted(isLargePaste(text) ? text : null)
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') return

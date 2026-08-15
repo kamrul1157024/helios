@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  isLargePaste,
+  LARGE_PASTE_CHARS,
+  LARGE_PASTE_LINES,
   needingUpload,
+  pastedTextAttachment,
+  removeFirst,
   promptWithAttachments,
   withStoredPaths,
   type Attachment,
@@ -61,4 +66,37 @@ test('attachments with no text still make a prompt', () => {
 
 test('no attachments leaves the text alone', () => {
   assert.equal(promptWithAttachments([], 'plain prompt'), 'plain prompt')
+})
+
+test('a short paste is left alone', () => {
+  assert.equal(isLargePaste('a stack trace line'), false)
+})
+
+test('a paste is large by length or by line count', () => {
+  assert.equal(isLargePaste('x'.repeat(LARGE_PASTE_CHARS)), true)
+  assert.equal(isLargePaste('short\n'.repeat(LARGE_PASTE_LINES)), true)
+})
+
+test('a pasted block becomes a text attachment the upload path understands', () => {
+  const a = pastedTextAttachment(7, 'hello', new Date('2026-08-15T04:05:06Z'))
+  assert.equal(a.id, 7)
+  assert.equal(a.name, 'pasted-20260815T040506.txt')
+  assert.equal(a.type, 'text/plain')
+  assert.equal(a.size, 5)
+  assert.equal(a.path, null, 'not stored until the send uploads it')
+  assert.equal(new TextDecoder().decode(a.bytes), 'hello')
+})
+
+// Filing the paste has to leave the rest of the prompt as it was.
+test('only the pasted block leaves the draft', () => {
+  assert.equal(removeFirst('look at this: LOG here', 'LOG'), 'look at this:  here')
+})
+
+// An identical block pasted earlier on purpose is not the one being filed.
+test('an earlier identical block survives', () => {
+  assert.equal(removeFirst('LOG and LOG', 'LOG'), 'and LOG')
+})
+
+test('a draft the paste is no longer in is untouched', () => {
+  assert.equal(removeFirst('user deleted it', 'LOG'), 'user deleted it')
 })

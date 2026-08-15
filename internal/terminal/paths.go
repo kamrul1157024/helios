@@ -31,6 +31,13 @@ func SidecarPath(heliosDir, sessionID string) string {
 	return filepath.Join(RunDir(heliosDir), socketName(sessionID)+".json")
 }
 
+// HostProtocol is the frame vocabulary this build's hosts understand. Bump it
+// whenever a new frame type becomes load-bearing, so a daemon can tell what
+// the host on the other end of the socket will do with it.
+//
+// 1 adds FramePaste.
+const HostProtocol = 1
+
 // Sidecar is the durable session→terminal mapping. It replaces the
 // @helios_session_id tmux pane option, so the mapping survives without a
 // multiplexer server holding it.
@@ -41,6 +48,11 @@ type Sidecar struct {
 	Cwd       string    `json:"cwd"`
 	Socket    string    `json:"socket"`
 	StartedAt time.Time `json:"started_at"`
+	// Protocol is what the running host speaks, which is not what this binary
+	// speaks: hosts outlive the daemon that spawned them, so an upgraded daemon
+	// routinely talks to hosts from the previous build. Absent means 0 — a host
+	// that predates the field and will silently drop any frame it does not know.
+	Protocol int `json:"protocol,omitempty"`
 }
 
 // WriteSidecar persists host metadata next to its socket.

@@ -1669,6 +1669,31 @@ small {
   color: var(--error);
 }
 
+.paste-offer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-highest);
+  font-size: 12px;
+}
+
+.paste-offer-text {
+  flex: 1;
+  color: var(--on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paste-offer .ghost {
+  flex: none;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
 .composer-actions {
   display: flex;
   align-items: center;

@@ -20,6 +20,49 @@ export interface Attachment {
   path: string | null
 }
 
+/**
+ * When a pasted block is big enough to be worth offering as a file instead.
+ *
+ * Not a correctness limit — the daemon delivers a prompt of any size — but a
+ * wall of pasted log lines reads better to the agent as a path it can open than
+ * as ten thousand characters of prompt.
+ */
+export const LARGE_PASTE_CHARS = 2000
+export const LARGE_PASTE_LINES = 50
+
+export function isLargePaste(text: string): boolean {
+  return text.length >= LARGE_PASTE_CHARS || text.split('\n').length >= LARGE_PASTE_LINES
+}
+
+/** A pasted block as an attachment, so it takes the path every file takes. */
+export function pastedTextAttachment(id: number, text: string, at = new Date()): Attachment {
+  const stamp = at.toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
+  const bytes = new TextEncoder().encode(text)
+  return {
+    id,
+    name: `pasted-${stamp}.txt`,
+    type: 'text/plain',
+    size: bytes.length,
+    bytes,
+    preview: null,
+    path: null,
+  }
+}
+
+/**
+ * Takes the pasted block back out of the draft, once only.
+ *
+ * The paste has already landed in the composer by the time the offer can be
+ * accepted — the default is deliberately left to run, so ignoring the offer
+ * changes nothing — and removing every occurrence would also delete an
+ * identical block the user pasted earlier on purpose.
+ */
+export function removeFirst(draft: string, pasted: string): string {
+  const at = draft.indexOf(pasted)
+  if (at === -1) return draft
+  return (draft.slice(0, at) + draft.slice(at + pasted.length)).trim()
+}
+
 /** Those the daemon has not stored yet. */
 export function needingUpload(attachments: Attachment[]): Attachment[] {
   return attachments.filter((attachment) => attachment.path === null)
