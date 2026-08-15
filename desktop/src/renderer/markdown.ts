@@ -159,27 +159,41 @@ export function highlightCode(code: string, language?: string | null): string {
   }
 }
 
-const marked = new Marked({
-  gfm: true,
-  breaks: true,
-  renderer: {
-    code({ text, lang }): string {
-      const name = normalizeLanguage(lang)
-      return (
-        `<pre class="code-block"><code class="hljs${name ? ` language-${name}` : ''}">` +
-        `${highlightCode(text, name)}</code></pre>`
-      )
+/**
+ * Two parsers, differing only in what a lone newline means.
+ *
+ * An agent writing into a transcript ends a line because it meant to end one,
+ * so `breaks` honours it. A file on disk is hard-wrapped by its author at
+ * whatever column they favour, and honouring those would print the document at
+ * the width it was typed at rather than the width it is read at — GitHub
+ * reflows them, and so does the preview.
+ */
+function parser(breaks: boolean): Marked {
+  return new Marked({
+    gfm: true,
+    breaks,
+    renderer: {
+      code({ text, lang }): string {
+        const name = normalizeLanguage(lang)
+        return (
+          `<pre class="code-block"><code class="hljs${name ? ` language-${name}` : ''}">` +
+          `${highlightCode(text, name)}</code></pre>`
+        )
+      },
+      link(token): string {
+        // The renderer has no network of its own and never navigates: an
+        // external link is handed to the OS browser by the main process's
+        // window-open handler, which only fires for target=_blank.
+        const href = escapeHtml(token.href)
+        const title = token.title ? ` title="${escapeHtml(token.title)}"` : ''
+        return `<a href="${href}"${title} target="_blank" rel="noreferrer noopener">${this.parser.parseInline(token.tokens)}</a>`
+      },
     },
-    link(token): string {
-      // The renderer has no network of its own and never navigates: an external
-      // link is handed to the OS browser by the main process's window-open
-      // handler, which only fires for target=_blank.
-      const href = escapeHtml(token.href)
-      const title = token.title ? ` title="${escapeHtml(token.title)}"` : ''
-      return `<a href="${href}"${title} target="_blank" rel="noreferrer noopener">${this.parser.parseInline(token.tokens)}</a>`
-    },
-  },
-})
+  })
+}
+
+const marked = parser(true)
+const fileParser = parser(false)
 
 /**
  * Markdown to HTML, sanitized.
@@ -212,13 +226,13 @@ export interface MarkdownBlock {
 export function renderMarkdownBlocks(source: string): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = []
   let line = 1
-  for (const token of marked.lexer(source)) {
+  for (const token of fileParser.lexer(source)) {
     const startLine = line
     const newlines = (token.raw.match(/\n/g) ?? []).length
     line += newlines
     // Blank lines between blocks belong to neither, and have nothing to render.
     if (token.type === 'space') continue
-    const html = DOMPurify.sanitize(marked.parser([token], { async: false }), { ADD_ATTR: ['target'] })
+    const html = DOMPurify.sanitize(fileParser.parser([token], { async: false }), { ADD_ATTR: ['target'] })
     blocks.push({
       html,
       startLine,
