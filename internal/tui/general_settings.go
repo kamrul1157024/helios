@@ -20,7 +20,7 @@ var generalSettingsKeys = []struct {
 	section string
 }{
 	{key: "autotitle.enabled", label: "Auto title generation", section: "Auto Title"},
-	{key: "autotitle.emoji", label: "Title emoji prefix", section: ""},
+	{key: "autotitle.emoji", label: "Title icon prefix", section: ""},
 }
 
 var generalSettingDefaults = map[string]bool{
