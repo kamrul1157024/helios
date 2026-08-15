@@ -1612,16 +1612,46 @@ small {
   color: var(--on-surface-variant);
 }
 
+/* The box the prompt is typed into: the textarea gives up its own frame so
+   the buttons can sit inside one, on a row of their own rather than floating
+   over the text they belong to. */
 .composer-input {
   position: relative;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--surface-high);
+  transition: border-color 120ms ease;
 }
 
-/* Inside the box rather than under it: the button belongs to the text being
-   typed, and the row it used to sit in was empty most of the time. */
-.send-btn {
+.composer-input:focus-within {
+  border-color: var(--primary);
+}
+
+/* Over the text rather than under it: a row of its own would push the box
+   taller for buttons that are only ever at its edges. The bar itself lets
+   clicks through, so the gap between the buttons still focuses the composer. */
+.composer-bar {
   position: absolute;
-  right: 10px;
-  bottom: 12px;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.composer-bar button {
+  pointer-events: auto;
+}
+
+/* Attach holds the left edge; everything that acts on the turn — Stop, then
+   Send — gathers at the right. */
+.composer-bar .attach-btn {
+  margin-right: auto;
+}
+
+.send-btn {
   width: 30px;
   height: 30px;
   padding: 0;
@@ -1646,30 +1676,43 @@ small {
   /* Inline-block by default, and auto margins do not centre one. */
   display: block;
   width: 100%;
-  /* Room for the buttons on either side, so a long line runs under neither. */
-  padding-right: 48px;
-  padding-left: 42px;
+  /* Bottom padding is the strip the buttons float over. */
+  padding: 10px 12px 44px;
+  background: transparent;
+  border: none;
   resize: vertical;
-  min-height: 60px;
-  border-radius: var(--r-md);
+  min-height: 84px;
   line-height: 1.5;
+}
+
+.composer textarea:focus {
+  border-color: transparent;
 }
 
 /* Attachments: the bytes go to the daemon, and the prompt carries the path. */
 
-.attach-btn {
-  position: absolute;
-  left: 8px;
-  bottom: 12px;
-  width: 28px;
-  height: 28px;
+.attach-btn,
+.stop-btn {
+  width: 32px;
+  height: 32px;
   padding: 0;
-  font-size: 15px;
+  border-radius: 50%;
+  font-size: 20px;
   color: var(--on-surface-variant);
 }
 
 .attach-btn:hover:not(:disabled) {
   color: var(--primary);
+}
+
+/* Beside Send, because that is where the hand already is when a turn has to
+   be cut short. */
+.stop-btn {
+  font-size: 11px;
+}
+
+.stop-btn:hover:not(:disabled) {
+  color: var(--error);
 }
 
 /* A file dropped anywhere over the composer counts, so the whole of it lights
@@ -1768,14 +1811,6 @@ small {
   flex: none;
   padding: 2px 10px;
   font-size: 12px;
-}
-
-.composer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
 }
 
 /* ─── Approvals ─────────────────────────────────────────────────────────── */

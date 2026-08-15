@@ -354,15 +354,6 @@ export function ChatPanel({
                 event.target.value = ''
               }}
             />
-            <button
-              className="icon-btn attach-btn"
-              title="Attach files — or paste and drop them here"
-              aria-label="Attach files"
-              disabled={sending}
-              onClick={() => picker.current?.click()}
-            >
-              ⊕
-            </button>
             <textarea
               ref={composer}
               value={draft}
@@ -397,23 +388,37 @@ export function ChatPanel({
                 void send()
               }}
             />
-            <button
-              className="filled send-btn"
-              disabled={(!draft.trim() && attachments.length === 0) || sending}
-              title={cold ? 'Wake and send' : 'Send (↵)'}
-              aria-label={cold ? 'Wake and send' : 'Send'}
-              onClick={() => void send()}
-            >
-              {sending ? <span className="spinner" /> : '↑'}
-            </button>
-          </div>
-          {busy && (
-            <div className="composer-actions">
-              <button className="ghost" onClick={() => void api(hostId).stop(session.session_id)}>
-                Stop
+            <div className="composer-bar">
+              <button
+                className="icon-btn attach-btn"
+                title="Attach files — or paste and drop them here"
+                aria-label="Attach files"
+                disabled={sending}
+                onClick={() => picker.current?.click()}
+              >
+                ⊕
+              </button>
+              {busy && (
+                <button
+                  className="icon-btn stop-btn"
+                  title="Stop the agent — the turn ends where it is"
+                  aria-label="Stop the agent"
+                  onClick={() => void api(hostId).stop(session.session_id)}
+                >
+                  ■
+                </button>
+              )}
+              <button
+                className="filled send-btn"
+                disabled={(!draft.trim() && attachments.length === 0) || sending}
+                title={cold ? 'Wake and send' : 'Send (↵)'}
+                aria-label={cold ? 'Wake and send' : 'Send'}
+                onClick={() => void send()}
+              >
+                {sending ? <span className="spinner" /> : '↑'}
               </button>
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
