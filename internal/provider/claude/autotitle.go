@@ -17,24 +17,55 @@ const maxAutoTitleAttempts = 5
 
 var categories = []string{"DB", "AUTH", "API", "UI", "TEST", "DOCS", "INFRA", "REFACTOR", "FIX", "FEAT"}
 
+// The glyph that goes in front of each category, from the Nerd Font range.
+//
+// Emoji were the model's own choice and no two sessions agreed: the same
+// refactor came back a hammer one time and a broom the next, at double width,
+// aligning badly down a column of monospaced titles. A glyph per category is
+// one cell wide, the same for the same kind of work, and sits in a terminal
+// font without pushing the text off its grid.
+//
+// Named in the prompt rather than prefixed afterwards, because the model is the
+// one choosing the category — asking for the pair keeps the two agreeing.
+var categoryGlyphs = map[string]string{
+	"DB":       "", // database
+	"AUTH":     "", // lock
+	"API":      "", // exchange
+	"UI":       "", // display
+	"TEST":     "", // flask
+	"DOCS":     "", // book
+	"INFRA":    "", // server
+	"REFACTOR": "", // cycle
+	"FIX":      "", // bug
+	"FEAT":     "", // star
+}
+
+// glyphList renders the pairs for the prompt, in the order of `categories` so
+// the list reads the same way on every call.
+func glyphList() string {
+	var sb strings.Builder
+	for _, category := range categories {
+		sb.WriteString(fmt.Sprintf("\n  %s %s", categoryGlyphs[category], category))
+	}
+	return sb.String()
+}
+
 func autoTitleSystemPrompt(forceTitle bool) string {
-	categoryList := strings.Join(categories, ", ")
 	skipLine := ""
 	if !forceTitle {
 		skipLine = `- If the session is a greeting, test message, or non-substantive (e.g. "hi", "hello", "thanks", "test"), respond with exactly: SKIP` + "\n"
 	}
 
-	emojiLine := "- Start with one relevant emoji, then the category tag, then the title."
 	return fmt.Sprintf(`You are a session title generator for a coding assistant.
 
 Given a session context (project, user message, assistant response), generate a concise title.
 
 Rules:
-%s- Pick one category from: [%s]
-- %s
+%s- Pick the one category that fits, and use the glyph written beside it:%s
+- Copy the glyph exactly. Do not replace it with an emoji or a description.
 - Keep the title 5-8 words.
-- Format: EMOJI [CATEGORY] Short title here
-- No explanation, no quotes, nothing else.`, skipLine, categoryList, emojiLine)
+- Format: GLYPH [CATEGORY] Short title here
+- No explanation, no quotes, nothing else.`, skipLine, glyphList())
 }
 
 func autoTitleSystemPromptNoEmoji(forceTitle bool) string {
@@ -53,6 +84,25 @@ Rules:
 - Keep the title 5-8 words.
 - Format: [CATEGORY] Short title here
 - No explanation, no quotes, nothing else.`, skipLine, categoryList)
+}
+
+// titleSystemPrompt picks the instructions the model is given.
+//
+// A custom prompt replaces the built-in one outright rather than being appended
+// to it. Someone who writes their own wants their own format — a house style, a
+// ticket number, another language — and leaving the built-in rules underneath
+// would have the two contradict each other over the format line.
+//
+// The cost of that is theirs to carry: SKIP and the glyph list are ours, so a
+// custom prompt that does not mention SKIP will title every "hi" it sees.
+func titleSystemPrompt(custom string, glyphs, forceTitle bool) string {
+	if trimmed := strings.TrimSpace(custom); trimmed != "" {
+		return trimmed
+	}
+	if glyphs {
+		return autoTitleSystemPrompt(forceTitle)
+	}
+	return autoTitleSystemPromptNoEmoji(forceTitle)
 }
 
 // TriggerAutoTitle checks eligibility and fires async title generation if appropriate.
@@ -100,18 +150,9 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 
 	prompt := buildTitlePrompt(project, userMsg, recentPairs)
 
-	emojiEnabled := true
-	val, _ := db.GetSetting("autotitle.emoji")
-	if val == "false" {
-		emojiEnabled = false
-	}
-
-	var systemPrompt string
-	if emojiEnabled {
-		systemPrompt = autoTitleSystemPrompt(forceTitle)
-	} else {
-		systemPrompt = autoTitleSystemPromptNoEmoji(forceTitle)
-	}
+	custom, _ := db.GetSetting("autotitle.prompt")
+	emoji, _ := db.GetSetting("autotitle.emoji")
+	systemPrompt := titleSystemPrompt(custom, emoji != "false", forceTitle)
 
 	caller := provider.GetSmallModelCaller("claude")
 	if caller == nil {

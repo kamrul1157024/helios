@@ -3413,6 +3413,26 @@ hr {
   margin-top: 16px;
 }
 
+.title-prompt {
+  margin-top: 14px;
+}
+
+.title-prompt textarea {
+  width: 100%;
+  margin-top: 6px;
+  border-radius: var(--r-md);
+  /* A prompt is read as much as it is written, and the glyphs it names only
+     line up in a monospaced font. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.title-prompt textarea:disabled {
+  opacity: 0.5;
+}
+
 .settings-group {
   margin-top: 20px;
 }

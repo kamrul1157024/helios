@@ -308,8 +308,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (_autoTitleEnabled)
                   SwitchListTile(
                     secondary: const Icon(Icons.emoji_emotions_outlined),
-                    title: const Text('Title emoji'),
-                    subtitle: const Text('Prefix titles with a category emoji'),
+                    title: const Text('Title icon'),
+                    subtitle: const Text('Prefix titles with a Nerd Font category glyph'),
                     value: _autoTitleEmoji,
                     onChanged: (value) {
                       setState(() => _autoTitleEmoji = value);
