@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api, bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
@@ -490,6 +490,11 @@ function Backdrop(): JSX.Element | null {
   /** Held while the slider is under the pointer; saving each step would rewrite
       the theme file on every frame of a drag. */
   const [dragging, setDragging] = useState<number | null>(null)
+  /** The same, for the colour wells: an OS colour panel streams changes as the
+      user moves around it, and only the one they settle on is worth saving. */
+  const [picking, setPicking] = useState<string[] | null>(null)
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => clearTimeout(settle.current ?? undefined), [])
 
   // The active theme changes with the pickers above and with the OS switching
   // between light and dark, and each is a different file to edit.
@@ -506,6 +511,7 @@ function Backdrop(): JSX.Element | null {
     setState({ ...state, style: spec.style ?? state.style, intensity: spec.intensity ?? state.intensity })
     try {
       setState(await bridge.theme.setBackdrop(spec))
+      setPicking(null)
     } catch (err) {
       store.fail(err)
       setState(await bridge.theme.backdrop())
@@ -519,6 +525,24 @@ function Backdrop(): JSX.Element | null {
     if (next !== state.intensity) void save({ style: state.style, intensity: next })
   }
 
+  /**
+   * A colour edit, held back until the user stops moving.
+   *
+   * The wells follow every change so the swatches stay live, but each save
+   * rewrites the theme file and repaints every window, which is not something
+   * to do on each step through a colour wheel.
+   */
+  const pick = (index: number, colour: string): void => {
+    if (!state) return
+    const next = [...(picking ?? state.palette)]
+    next[index] = colour
+    setPicking(next)
+    clearTimeout(settle.current ?? undefined)
+    settle.current = setTimeout(() => {
+      void save({ style: state.style, intensity: state.intensity, stops: next.map((color) => ({ color })) })
+    }, 400)
+  }
+
   // An opaque theme has nothing to show a backdrop through, and a picker that
   // changes nothing visible is worse than no picker.
   if (!state?.glass) return null
@@ -528,6 +552,7 @@ function Backdrop(): JSX.Element | null {
     ...BACKDROP_STYLES,
   ]
   const intensity = dragging ?? state.intensity
+  const palette = picking ?? state.palette
 
   return (
     <div className="theme-picker">
@@ -537,12 +562,18 @@ function Backdrop(): JSX.Element | null {
           <button
             key={style}
             className={state.style === style ? 'theme-chip selected' : 'theme-chip'}
-            onClick={() => void save({ style, intensity })}
+            onClick={() =>
+              void save({
+                style,
+                intensity,
+                ...(state.custom ? { stops: palette.map((color) => ({ color })) } : {}),
+              })
+            }
             title={style === 'desktop' ? 'Show the desktop through the window' : `Paint a ${style} gradient`}
           >
             <span
               className={style === 'desktop' ? 'backdrop-swatch desktop' : 'backdrop-swatch'}
-              style={style === 'desktop' ? undefined : { background: previewOf(theme, style, intensity) }}
+              style={style === 'desktop' ? undefined : { background: previewOf(theme, style, intensity, palette) }}
             />
             {BACKDROP_LABELS[style]}
           </button>
@@ -564,6 +595,30 @@ function Backdrop(): JSX.Element | null {
           onBlur={() => commit()}
         />
       )}
+      {state.style !== 'desktop' && (
+        <div className="backdrop-colours">
+          {palette.map((colour, index) => (
+            <input
+              key={index}
+              type="color"
+              value={colour}
+              // Four wells whichever style is showing: Wash draws two of them
+              // and Mesh all four, and switching between the two should not
+              // throw away a colour that was chosen.
+              title={`Backdrop colour ${index + 1}`}
+              onChange={(event) => pick(index, event.target.value)}
+            />
+          ))}
+          {state.custom && (
+            <button
+              className="ghost"
+              onClick={() => void save({ style: state.style, intensity: state.intensity })}
+            >
+              Use theme colours
+            </button>
+          )}
+        </div>
+      )}
       <span className="modal-note">Saved in {state.themeName}.</span>
     </div>
   )
@@ -575,8 +630,8 @@ function Backdrop(): JSX.Element | null {
  * Built by the generator the window itself uses, from the palette the resolver
  * derived, so a swatch cannot disagree with the result of clicking it.
  */
-function previewOf(theme: HeliosTheme, style: BackdropStyle, intensity: number): string {
-  const stops = theme.backdropPalette.map(parseColor).filter((c): c is Rgb => c !== null)
+function previewOf(theme: HeliosTheme, style: BackdropStyle, intensity: number, palette: string[]): string {
+  const stops = palette.map(parseColor).filter((c): c is Rgb => c !== null)
   const base = parseColor(theme.vars['--surface'] ?? '') ?? (parseColor('#101014') as Rgb)
   return backdropValue({ style, intensity }, base, stops)
 }

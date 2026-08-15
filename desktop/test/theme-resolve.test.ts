@@ -304,8 +304,8 @@ test('a backdrop block becomes one gradient per layer over the theme surface', (
     'helios.backdrop': { intensity: 0.45 },
     colors: DARK,
   })
-  // Mesh is what a block with no style asked for.
-  assert.deepEqual(theme.backdrop, { style: 'mesh', intensity: 0.45 })
+  // Mesh is what a block with no style asked for, from the derived palette.
+  assert.deepEqual(theme.backdrop, { style: 'mesh', intensity: 0.45, stops: null })
   const value = theme.vars['--backdrop'] as string
   assert.equal(value.match(/radial-gradient\(/g)?.length, 4)
   // The strongest layer is the intensity itself, and the theme's own surface is
@@ -401,6 +401,17 @@ test('a stop position that is not a pair of percentages falls back to the layout
   const value = theme.vars['--backdrop'] as string
   assert.ok(!value.includes('url('))
   assert.match(value, /at 12% 8%/)
+})
+
+// The picker puts these in a colour input, which takes #rrggbb and nothing
+// else — including the shorthand and alpha forms a theme file may use.
+test('named stops are reported back as plain hex', () => {
+  const theme = resolveTheme('named', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { stops: [{ color: '#f0a' }, { color: '#00ff0080' }] },
+    colors: DARK,
+  })
+  assert.deepEqual(theme.backdrop?.stops, ['#ff00aa', '#00ff00'])
 })
 
 test('a stop whose colour does not parse is left out', () => {
