@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/session.dart';
+import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
@@ -61,8 +62,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
     return 3;
   }
 
-  List<Session> _sortSessions(List<Session> sessions) {
+  List<Session> _sortSessions(List<Session> sessions, {bool manual = false}) {
     sessions.sort((a, b) {
+      if (manual) {
+        final handCmp = a.sortOrder.compareTo(b.sortOrder);
+        if (handCmp != 0) return handCmp;
+        return b.createdAt.compareTo(a.createdAt);
+      }
       final orderCmp = _statusOrder(a).compareTo(_statusOrder(b));
       if (orderCmp != 0) return orderCmp;
       final aTime = a.lastEventAt ?? a.createdAt;
@@ -70,6 +76,30 @@ class _SessionsScreenState extends State<SessionsScreen> {
       return bTime.compareTo(aTime);
     });
     return sessions;
+  }
+
+  /// Dragging needs one host in view: the arrangement lives per host, and a
+  /// list mixing two of them has no order either daemon could be told about.
+  DaemonAPIService? _orderableService(HostManager hm) {
+    if (hm.activeHostId == null) return null;
+    if (_cwdFilter != null) return null;
+    if (_searchExpanded && _searchController.text.trim().isNotEmpty) return null;
+    return hm.serviceFor(hm.activeHostId!);
+  }
+
+  Future<void> _toggleManualOrder(HostManager hm, List<Session> visible) async {
+    final byHost = <String, List<String>>{};
+    for (final session in visible) {
+      byHost.putIfAbsent(session.hostId, () => []).add(session.sessionId);
+    }
+    await hm.setManualOrder(!hm.manualOrder, byHost);
+  }
+
+  Future<void> _onReorder(DaemonAPIService service, List<Session> visible, int from, int to) async {
+    final ids = visible.map((s) => s.sessionId).toList();
+    if (to > from) to -= 1;
+    ids.insert(to, ids.removeAt(from));
+    await service.setSessionOrder(ids);
   }
 
   String get _filterParam {
@@ -287,12 +317,14 @@ class _SessionsScreenState extends State<SessionsScreen> {
           return _buildEmptyState();
         }
 
-        final filtered = _sortSessions(_filterSessions(sessions));
+        final manual = hm.manualOrder;
+        final orderable = manual ? _orderableService(hm) : null;
+        final filtered = _sortSessions(_filterSessions(sessions), manual: manual);
 
         return Column(
           children: [
             if (_multiSelect) _buildMultiSelectBar(),
-            _buildFilterRow(sessions),
+            _buildFilterRow(sessions, hm, filtered),
             if (_cwdFilter != null) _buildActiveFiltersRow(),
             Expanded(
               child: filtered.isEmpty
@@ -301,12 +333,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
                       onRefresh: () => hm.activeHostId != null
                           ? hm.refreshHost(hm.activeHostId!)
                           : hm.refreshAll(),
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemCount: filtered.length,
-                        itemBuilder: (context, index) =>
-                            _buildSwipeableCard(filtered[index], hm),
-                      ),
+                      child: manual && orderable != null
+                          ? ReorderableListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              itemCount: filtered.length,
+                              onReorder: (from, to) => _onReorder(orderable, filtered, from, to),
+                              itemBuilder: (context, index) =>
+                                  _buildSwipeableCard(filtered[index], hm),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              itemCount: filtered.length,
+                              itemBuilder: (context, index) =>
+                                  _buildSwipeableCard(filtered[index], hm),
+                            ),
                     ),
             ),
           ],
@@ -344,19 +384,19 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildFilterRow(List<Session> allSessions) {
+  Widget _buildFilterRow(List<Session> allSessions, HostManager hm, List<Session> visible) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: AnimatedCrossFade(
         duration: const Duration(milliseconds: 200),
         crossFadeState: _searchExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-        firstChild: _buildFilterChips(allSessions),
+        firstChild: _buildFilterChips(allSessions, hm, visible),
         secondChild: _buildSearchBar(),
       ),
     );
   }
 
-  Widget _buildFilterChips(List<Session> allSessions) {
+  Widget _buildFilterChips(List<Session> allSessions, HostManager hm, List<Session> visible) {
     final allCount = allSessions.where((s) => !s.archived).length;
     final pinnedCount = allSessions.where((s) => s.pinned && !s.archived).length;
     final archivedCount = allSessions.where((s) => s.archived).length;
@@ -369,6 +409,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
         const SizedBox(width: 8),
         _filterChip('Archived', archivedCount, SessionFilter.archived),
         const Spacer(),
+        IconButton(
+          icon: Icon(
+            hm.manualOrder ? Icons.swap_vert : Icons.sort,
+            size: 20,
+            color: hm.manualOrder ? Theme.of(context).colorScheme.primary : null,
+          ),
+          tooltip: hm.manualOrder
+              ? 'Sort: Manual — long-press a session to move it. Tap to sort by activity instead.'
+              : 'Sort: Activity — active first, then most recent. Tap to arrange them by hand instead.',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => _toggleManualOrder(hm, visible),
+        ),
         IconButton(
           icon: const Icon(Icons.folder_outlined, size: 20),
           tooltip: 'Filter by directory',

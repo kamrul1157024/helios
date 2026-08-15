@@ -170,6 +170,7 @@ class DaemonAPIService extends ChangeNotifier {
     fetchNotifications();
     fetchProviders();
     fetchCommands();
+    fetchSortMode();
     if (!_connected) _startPolling();
   }
 
@@ -847,6 +848,53 @@ class DaemonAPIService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[$hostId] updateSettings error: $e');
     }
+    return false;
+  }
+
+  // ==================== Session order ====================
+
+  /// The daemon owns the mode, so every client of this host agrees on it.
+  static const _sortModeSetting = 'sessions.sort';
+  bool _manualOrder = false;
+  bool get manualOrder => _manualOrder;
+
+  Future<void> fetchSortMode() async {
+    final body = await getSettings();
+    if (body == null) return;
+    final settings = body['settings'] as Map<String, dynamic>?;
+    final manual = settings?[_sortModeSetting] == 'manual';
+    if (manual == _manualOrder) return;
+    _manualOrder = manual;
+    notifyListeners();
+  }
+
+  /// Switching to manual freezes [visibleOrder] as it stands, so the list does
+  /// not jump the moment it stops sorting itself.
+  Future<void> setManualOrder(bool manual, {List<String> visibleOrder = const []}) async {
+    if (manual && visibleOrder.isNotEmpty) await setSessionOrder(visibleOrder);
+    final ok = await updateSettings({_sortModeSetting: manual ? 'manual' : 'activity'});
+    if (!ok) return;
+    _manualOrder = manual;
+    notifyListeners();
+  }
+
+  /// Writes the arrangement, painting it locally first so the drag lands
+  /// without waiting for the round trip.
+  Future<bool> setSessionOrder(List<String> sessionIds) async {
+    final previous = _sessions;
+    final positions = {for (var i = 0; i < sessionIds.length; i++) sessionIds[i]: i};
+    _sessions = _sessions
+        .map((s) => positions.containsKey(s.sessionId) ? s.copyWith(sortOrder: positions[s.sessionId]) : s)
+        .toList();
+    notifyListeners();
+    try {
+      final resp = await _api.post('/api/sessions/order', body: {'order': sessionIds});
+      if (resp.statusCode == 200) return true;
+    } catch (e) {
+      debugPrint('[$hostId] setSessionOrder error: $e');
+    }
+    _sessions = previous;
+    notifyListeners();
     return false;
   }
 

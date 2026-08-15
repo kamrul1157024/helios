@@ -27,6 +27,10 @@ class Session {
   final String createdAt;
   final String? endedAt;
 
+  /// Where the session sits when the host is ordered by hand. Lower first, and
+  /// it goes negative: a new session takes one less than the smallest.
+  final int sortOrder;
+
   Session({
     this.hostId = '',
     required this.sessionId,
@@ -48,6 +52,7 @@ class Session {
     this.supportsPromptQueue = false,
     required this.createdAt,
     this.endedAt,
+    this.sortOrder = 0,
   });
 
   factory Session.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
@@ -72,6 +77,7 @@ class Session {
       supportsPromptQueue: json['supports_prompt_queue'] == true,
       createdAt: json['created_at'] as String,
       endedAt: json['ended_at'] as String?,
+      sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -117,6 +123,7 @@ class Session {
     bool? pinned,
     bool? archived,
     String? permissionMode,
+    int? sortOrder,
   }) {
     return Session(
       hostId: hostId,
@@ -139,6 +146,7 @@ class Session {
       supportsPromptQueue: supportsPromptQueue,
       createdAt: createdAt,
       endedAt: endedAt,
+      sortOrder: sortOrder ?? this.sortOrder,
     );
   }
 

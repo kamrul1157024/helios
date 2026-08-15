@@ -217,6 +217,11 @@ export class ApiClient {
     })
   }
 
+  /** The whole arrangement, first id first. See store.SetSessionOrder. */
+  setSessionOrder(order: string[]): Promise<unknown> {
+    return this.request('POST', '/api/sessions/order', { order })
+  }
+
   stop(id: string): Promise<unknown> {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/stop`)
   }

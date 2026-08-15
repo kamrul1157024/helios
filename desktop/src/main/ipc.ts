@@ -21,6 +21,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'transcript',
   'subagents',
   'sendPrompt',
+  'setSessionOrder',
   'uploadFiles',
   'stop',
   'terminate',

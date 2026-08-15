@@ -47,6 +47,9 @@ export function sessionKey(hostId: string, sessionId: string): string {
 
 export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
 
+/** Sorted by what the sessions are doing, or by hand. */
+export type SortMode = 'activity' | 'manual'
+
 /**
  * A file the user asked to see, from a chip in the transcript. The counter is
  * what makes clicking the same chip twice reopen it: the path alone would not
@@ -99,6 +102,14 @@ export interface State {
   /** Sidebar filter, matched against title, project and cwd. */
   query: string
   showArchived: boolean
+  /**
+   * How each host's session list is ordered, by host id.
+   *
+   * 'activity' recomputes the order from what the sessions are doing —
+   * approvals first, then live, then most recent. 'manual' leaves them where
+   * they were put. The daemon holds it, so every client agrees.
+   */
+  sortMode: Record<string, SortMode>
   loading: boolean
   toast: { text: string; kind: 'info' | 'error' } | null
   pairingLink: string | null
@@ -120,6 +131,7 @@ const initial: State = {
   promptDraft: null,
   query: '',
   showArchived: false,
+  sortMode: {},
   loading: true,
   terminalTheme: bridge.theme.boot().terminal,
   toast: null,
@@ -127,6 +139,26 @@ const initial: State = {
 }
 
 type Listener = () => void
+
+/**
+ * The order the sidebar shows before it is frozen — approvals first, then
+ * pinned, then live, then most recent.
+ *
+ * Duplicated from the sidebar's own comparator on purpose: that one sorts rows
+ * it has already built, and this has to answer the same question from the store
+ * before any row exists. They must agree, or turning manual on would rearrange
+ * the list at the moment it promised to stop.
+ */
+function byActivity(a: Session, b: Session, pending: Map<string, number>): number {
+  const aPending = pending.get(a.session_id) ?? 0
+  const bPending = pending.get(b.session_id) ?? 0
+  if (aPending !== bPending) return bPending - aPending
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+  const aLive = hasTerminal(a)
+  const bLive = hasTerminal(b)
+  if (aLive !== bLive) return aLive ? -1 : 1
+  return (b.last_event_at ?? b.created_at).localeCompare(a.last_event_at ?? a.created_at)
+}
 
 /** Matches the mobile app's coalescing window (daemon_api_service.dart:348). */
 const REFRESH_DEBOUNCE = 500
@@ -222,7 +254,84 @@ class Store {
   // ─── Data ──────────────────────────────────────────────────────────────
 
   async refreshHost(hostId: string): Promise<void> {
-    await Promise.all([this.refreshSessions(hostId), this.refreshNotifications(hostId)])
+    await Promise.all([this.refreshSessions(hostId), this.refreshNotifications(hostId), this.refreshSortMode(hostId)])
+  }
+
+  /** The daemon owns the sort mode, so a second window opens on the same one. */
+  async refreshSortMode(hostId: string): Promise<void> {
+    try {
+      const body = (await api(hostId).settings()) as { settings?: Record<string, string> }
+      const mode: SortMode = body.settings?.['sessions.sort'] === 'manual' ? 'manual' : 'activity'
+      this.set((s) => ({ sortMode: { ...s.sortMode, [hostId]: mode } }))
+    } catch {
+      // Offline. The list falls back to sorting by activity, which needs
+      // nothing from the daemon.
+    }
+  }
+
+  /**
+   * One switch for every host: the arrangement is stored per daemon, but a
+   * sidebar that sorts one group by activity and holds another still is a
+   * sidebar with no answer to "why did that move".
+   */
+  async setSortModeEverywhere(mode: SortMode): Promise<void> {
+    await Promise.all(this.state.hosts.map((host) => this.setSortMode(host.id, mode)))
+  }
+
+  async setSortMode(hostId: string, mode: SortMode): Promise<void> {
+    const before = this.state.sortMode[hostId] ?? 'activity'
+    this.set((s) => ({ sortMode: { ...s.sortMode, [hostId]: mode } }))
+    try {
+      await api(hostId).updateSettings({ 'sessions.sort': mode })
+      // Switching to manual freezes what is on screen, so the order the user
+      // was looking at is the order they keep.
+      if (mode === 'manual') await this.freezeOrder(hostId)
+    } catch (err) {
+      this.set((s) => ({ sortMode: { ...s.sortMode, [hostId]: before } }))
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Writes the order the sessions are in right now.
+   *
+   * Without this, turning manual on would sort by a sort_order nobody has set
+   * — every session at 0, or at whatever negative number it was created with —
+   * and the list would jump the moment it was supposed to stop moving.
+   */
+  private async freezeOrder(hostId: string): Promise<void> {
+    const sessions = this.state.sessions[hostId] ?? []
+    if (sessions.length === 0) return
+    const pending = new Map<string, number>()
+    for (const notification of this.state.notifications[hostId] ?? []) {
+      pending.set(notification.source_session, (pending.get(notification.source_session) ?? 0) + 1)
+    }
+    const ordered = [...sessions]
+      .sort((a, b) => byActivity(a, b, pending))
+      .map((session) => session.session_id)
+    await api(hostId).setSessionOrder(ordered)
+    await this.refreshSessions(hostId)
+  }
+
+  /** Applies a drag: the whole arrangement, in the order the user left it. */
+  async reorderSessions(hostId: string, orderedIds: string[]): Promise<void> {
+    const before = this.state.sessions[hostId] ?? []
+    // Locally first: a card that snaps back while the daemon answers reads as
+    // a drag that failed.
+    const byId = new Map(before.map((session) => [session.session_id, session]))
+    const next: Session[] = []
+    orderedIds.forEach((id, index) => {
+      const session = byId.get(id)
+      if (session) next.push({ ...session, sort_order: index })
+    })
+    this.set((s) => ({ sessions: { ...s.sessions, [hostId]: next } }))
+
+    try {
+      await api(hostId).setSessionOrder(orderedIds)
+    } catch (err) {
+      this.set((s) => ({ sessions: { ...s.sessions, [hostId]: before } }))
+      this.fail(err)
+    }
   }
 
   async refreshSessions(hostId: string): Promise<void> {

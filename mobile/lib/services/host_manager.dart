@@ -105,6 +105,19 @@ class HostManager extends ChangeNotifier {
     return _services[_activeHostId]?.notifications ?? [];
   }
 
+  /// One switch for every host: the arrangement is stored per daemon, but a
+  /// list that sorts itself on one host and holds still on another is neither.
+  bool get manualOrder => _services.values.any((s) => s.manualOrder);
+
+  /// [visibleByHost] is what each host shows right now, frozen as the starting
+  /// arrangement so nothing jumps as the sorting stops.
+  Future<void> setManualOrder(bool manual, Map<String, List<String>> visibleByHost) async {
+    await Future.wait(_services.entries.map(
+      (e) => e.value.setManualOrder(manual, visibleOrder: visibleByHost[e.key] ?? const []),
+    ));
+    notifyListeners();
+  }
+
   /// Whether sessions have been loaded (any host for "all", specific for filtered).
   bool get sessionsLoaded {
     if (_activeHostId == null) {
@@ -182,6 +195,7 @@ class HostManager extends ChangeNotifier {
       service.fetchSessions();
       service.fetchCommands();
       service.fetchProviders();
+      service.fetchSortMode();
       await service.startActive();
     } else {
       await service.startBackground();

@@ -226,3 +226,77 @@ func TestAutoTitleAttempts_ReadingDoesNotSpend(t *testing.T) {
 		t.Errorf("after one increment: got %d, want 1", spent)
 	}
 }
+
+// A hand-arranged order is written whole, and numbering starts at zero.
+func TestSetSessionOrder_WritesTheArrangement(t *testing.T) {
+	s := setupTestStore(t)
+	for _, id := range []string{"a", "b", "c"} {
+		if err := s.UpsertSession(&Session{SessionID: id, Source: "claude", CWD: "/tmp", Status: "idle"}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	if err := s.SetSessionOrder([]string{"c", "a", "b"}); err != nil {
+		t.Fatalf("set order: %v", err)
+	}
+
+	for want, id := range []string{"c", "a", "b"} {
+		sess, err := s.GetSession(id)
+		if err != nil || sess == nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if sess.SortOrder != want {
+			t.Errorf("%s: sort_order %d, want %d", id, sess.SortOrder, want)
+		}
+	}
+}
+
+// A session created after an arrangement belongs on top, without renumbering
+// everything that was already placed.
+func TestUpsertSession_NewSessionSortsAboveTheArrangement(t *testing.T) {
+	s := setupTestStore(t)
+	for _, id := range []string{"a", "b"} {
+		if err := s.UpsertSession(&Session{SessionID: id, Source: "claude", CWD: "/tmp", Status: "idle"}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	if err := s.SetSessionOrder([]string{"a", "b"}); err != nil {
+		t.Fatalf("set order: %v", err)
+	}
+
+	if err := s.UpsertSession(&Session{SessionID: "fresh", Source: "claude", CWD: "/tmp", Status: "idle"}); err != nil {
+		t.Fatalf("seed fresh: %v", err)
+	}
+
+	fresh, _ := s.GetSession("fresh")
+	first, _ := s.GetSession("a")
+	if fresh.SortOrder >= first.SortOrder {
+		t.Errorf("new session sorts at %d, not above the arranged %d", fresh.SortOrder, first.SortOrder)
+	}
+
+	// And the arrangement it landed above is untouched.
+	second, _ := s.GetSession("b")
+	if first.SortOrder != 0 || second.SortOrder != 1 {
+		t.Errorf("arrangement moved: a=%d b=%d, want 0 and 1", first.SortOrder, second.SortOrder)
+	}
+}
+
+// An update to an existing session must not shuffle it back to the top.
+func TestUpsertSession_UpdateKeepsItsPlace(t *testing.T) {
+	s := setupTestStore(t)
+	if err := s.UpsertSession(&Session{SessionID: "a", Source: "claude", CWD: "/tmp", Status: "idle"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.SetSessionOrder([]string{"a"}); err != nil {
+		t.Fatalf("set order: %v", err)
+	}
+
+	if err := s.UpsertSession(&Session{SessionID: "a", Source: "claude", CWD: "/tmp", Status: "active"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	sess, _ := s.GetSession("a")
+	if sess.SortOrder != 0 {
+		t.Errorf("an update moved it to %d, want 0", sess.SortOrder)
+	}
+}

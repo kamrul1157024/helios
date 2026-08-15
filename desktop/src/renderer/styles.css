@@ -705,6 +705,34 @@ small {
   font-weight: 500;
 }
 
+/* Quieter than the new-session button beside it, and filled only while it is
+   the one holding the list still. */
+.sort-toggle {
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 16px;
+}
+
+.sort-toggle:hover:not(:disabled) {
+  background: var(--surface-container);
+}
+
+.sort-toggle.on {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+/* Only in manual mode: a card that offers to be dragged in a list that
+   rearranges itself would be lying about what the drag achieves. */
+.session-card.movable {
+  cursor: grab;
+}
+
+.session-card.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
 /* Session card — the mobile list item, one column narrower. */
 .session-card {
   position: relative;
