@@ -3347,6 +3347,72 @@ hr {
 
 /* ─── Settings ──────────────────────────────────────────────────────────── */
 
+/* Wider than the other modals, since it carries a nav as well as a panel.
+   Selected on the content rather than through a prop, so the Modal shell stays
+   the same shell every other dialog uses. */
+.modal:has(.settings-shell) {
+  width: 760px;
+}
+
+.settings-shell {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  /* Tall enough that switching panes does not resize the dialog under the
+     pointer, short enough to sit on a laptop screen. */
+  height: min(60vh, 520px);
+}
+
+.settings-nav {
+  flex: none;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+}
+
+.settings-nav button {
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  text-align: left;
+}
+
+.settings-nav button:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.settings-nav button.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-weight: 600;
+}
+
+/* The pane scrolls, not the dialog: the nav stays put while a long theme list
+   moves past it. */
+.settings-panel {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* The first heading in a pane has the dialog title right above it. */
+.settings-panel > .settings-group:first-child,
+.settings-panel > h3:first-child {
+  margin-top: 0;
+}
+
+/* One host's toggles, when several daemons are paired. */
+.settings-host + .settings-host {
+  margin-top: 16px;
+}
+
 .settings-group {
   margin-top: 20px;
 }
