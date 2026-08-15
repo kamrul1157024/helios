@@ -97,6 +97,41 @@ body,
   margin: 0;
 }
 
+/**
+ * The category glyph on a session title, and nothing else.
+ *
+ * Titles are drawn in the UI sans stack, which has no Nerd Font in it, so every
+ * glyph landed on the same missing-character box — three different codepoints,
+ * one identical square, and an icon that says nothing is worse than none.
+ *
+ * unicode-range is what keeps this to the glyph: name a whole monospace family
+ * on the title and the words go monospace with it. Restricted to the Private
+ * Use Area, the browser reaches for this font only when a character falls in
+ * that range and leaves the rest of the title alone.
+ *
+ * Symbols Nerd Font first because it carries the glyphs and no letters; the
+ * patched families are the usual ones people already have. If none is
+ * installed the box comes back, which is what the icon toggle is for.
+ *
+ * These are PostScript names, not family names. local() matches on the
+ * PostScript or full name, so local('FiraCode Nerd Font') — the family, and the
+ * obvious thing to write — silently matches nothing and the face loads with
+ * status "error". The name to give is FiraCodeNF-Reg.
+ */
+@font-face {
+  font-family: 'Helios Glyphs';
+  src:
+    local('SymbolsNerdFont-Regular'),
+    local('SymbolsNerdFontMono-Regular'),
+    local('FiraCodeNF-Reg'),
+    local('JetBrainsMonoNF-Regular'),
+    local('Hack Nerd Font'),
+    local('HackNF-Regular'),
+    local('MesloLGSNF-Regular'),
+    local('MesloLGS NF Regular');
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD, U+100000-10FFFD;
+}
+
 body {
   background: var(--surface);
   color: var(--on-surface);
@@ -747,6 +782,9 @@ small {
 
 .card-title {
   margin-top: 8px;
+  /* The glyph font is first, but only claims the Private Use Area — the words
+     fall through to the stack behind it. */
+  font-family: 'Helios Glyphs', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
@@ -873,6 +911,7 @@ small {
 
 .detail-title h1 {
   margin: 0;
+  font-family: 'Helios Glyphs', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;

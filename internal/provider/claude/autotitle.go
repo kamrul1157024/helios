@@ -319,7 +319,11 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	// Only for our own prompt: a custom one owns its format, and rewriting it
 	// into ours would ignore the whole point of setting it.
 	if strings.TrimSpace(custom) == "" {
-		normalized, ok := normalizeTitle(title, emoji != "false")
+		// Off unless asked for. The glyphs come from the Private Use Area, so
+		// they need a patched Nerd Font to render — and where there is none,
+		// every category collapses to the same missing-character box, which
+		// says less than no icon at all.
+		normalized, ok := normalizeTitle(title, emoji == "true")
 		if !ok {
 			// Our prompt always asks for a category. Without one this is not a
 			// title — usually the model asking for more context than the

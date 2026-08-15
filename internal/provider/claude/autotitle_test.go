@@ -386,3 +386,26 @@ func TestUsableMessage_RejectsWhatCannotBeTitled(t *testing.T) {
 		t.Errorf("usableMessage(nil) = %q, want empty", got)
 	}
 }
+
+// Icons are off unless asked for. The glyphs live in the Private Use Area, so
+// a machine without a patched Nerd Font draws the same empty box for every
+// category — an icon that distinguishes nothing is worse than none.
+func TestNormalizeTitle_IconsAreOptIn(t *testing.T) {
+	// The daemon reads the setting as `emoji == "true"`, so anything else —
+	// unset, "false", nonsense — means off.
+	for _, setting := range []string{"", "false", "0", "yes"} {
+		on := setting == "true"
+		got, ok := normalizeTitle("[FIX] Stop the double upload", on)
+		if !ok {
+			t.Fatalf("setting %q: title rejected", setting)
+		}
+		if got != "[FIX] Stop the double upload" {
+			t.Errorf("setting %q: got %q, want no glyph", setting, got)
+		}
+	}
+
+	got, _ := normalizeTitle("[FIX] Stop the double upload", true)
+	if want := categoryGlyphs["FIX"] + " [FIX] Stop the double upload"; got != want {
+		t.Errorf("turned on: got %q, want %q", got, want)
+	}
+}

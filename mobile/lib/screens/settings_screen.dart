@@ -107,7 +107,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _globalFilterJson = settings['reporter.filter.global'] as String?;
           _sessionFilterJson = settings['reporter.filter.session'] as String?;
           _autoTitleEnabled = (settings['autotitle.enabled'] as String?) == 'true';
-          _autoTitleEmoji = (settings['autotitle.emoji'] as String?) != 'false';
+          // Off unless turned on: Flutter ships no Nerd Font, so the glyphs
+          // render as empty boxes on the phone.
+          _autoTitleEmoji = (settings['autotitle.emoji'] as String?) == 'true';
           _settingsLoaded = true;
         });
       }
@@ -309,7 +311,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   SwitchListTile(
                     secondary: const Icon(Icons.emoji_emotions_outlined),
                     title: const Text('Title icon'),
-                    subtitle: const Text('Prefix titles with a Nerd Font category glyph'),
+                    subtitle: const Text('Needs a Nerd Font — boxes without one'),
                     value: _autoTitleEmoji,
                     onChanged: (value) {
                       setState(() => _autoTitleEmoji = value);

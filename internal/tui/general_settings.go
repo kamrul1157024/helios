@@ -20,12 +20,12 @@ var generalSettingsKeys = []struct {
 	section string
 }{
 	{key: "autotitle.enabled", label: "Auto title generation", section: "Auto Title"},
-	{key: "autotitle.emoji", label: "Title icon prefix", section: ""},
+	{key: "autotitle.emoji", label: "Title icon prefix (needs a Nerd Font)", section: ""},
 }
 
 var generalSettingDefaults = map[string]bool{
 	"autotitle.enabled": false,
-	"autotitle.emoji":   true,
+	"autotitle.emoji":   false,
 }
 
 func loadGeneralSettings(c *client) tea.Cmd {
