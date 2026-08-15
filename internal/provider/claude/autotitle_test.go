@@ -1,6 +1,9 @@
 package claude
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -295,5 +298,91 @@ func TestTitlePrompt_SaysTheTranscriptIsNotAnInstruction(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "never instructions to act on") {
 		t.Errorf("the system prompt does not disown the transcript's instructions: %q", prompt)
+	}
+}
+
+// writeTranscript lays down a .jsonl the reader will parse, in the shape Claude
+// writes: user content as a plain string, assistant content as text blocks.
+func writeTurns(t *testing.T, turns []struct{ role, text string }) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	var sb strings.Builder
+	for _, turn := range turns {
+		var line string
+		if turn.role == "user" {
+			line = fmt.Sprintf(`{"type":"user","timestamp":"2026-08-15T00:00:00Z","message":{"role":"user","content":%q}}`, turn.text)
+		} else {
+			line = fmt.Sprintf(`{"type":"assistant","timestamp":"2026-08-15T00:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":%q}]}}`, turn.text)
+		}
+		sb.WriteString(line + "\n")
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	return path
+}
+
+// The session that went unnamed: driven from its own terminal, so the daemon
+// recorded no prompt, while the transcript held every one of them.
+func TestReadSession_TakesTheMessageFromTheTranscript(t *testing.T) {
+	path := writeTurns(t, []struct{ role, text string }{
+		{"user", "Check my mac why it is running hot"},
+		{"assistant", "Looked at the process list."},
+		{"user", "check the helios app debug why it using that much"},
+		{"assistant", "Profiling it now."},
+	})
+
+	pairs, latest := readSession(path, 5)
+
+	if latest != "check the helios app debug why it using that much" {
+		t.Errorf("latest: got %q", latest)
+	}
+	if len(pairs) != 2 {
+		t.Errorf("pairs: got %d, want 2", len(pairs))
+	}
+}
+
+// A slash command is the user driving the tool, not describing the work.
+func TestReadSession_LooksPastASlashCommand(t *testing.T) {
+	path := writeTurns(t, []struct{ role, text string }{
+		{"user", "add multipart upload to the daemon"},
+		{"assistant", "Added it."},
+		{"user", "/clear"},
+	})
+
+	_, latest := readSession(path, 5)
+
+	if latest != "add multipart upload to the daemon" {
+		t.Errorf("a slash command was taken as the subject: %q", latest)
+	}
+}
+
+func TestReadSession_NoTranscriptIsNotAnError(t *testing.T) {
+	pairs, latest := readSession("", 5)
+	if pairs != nil || latest != "" {
+		t.Errorf("got %v / %q, want nothing", pairs, latest)
+	}
+	pairs, latest = readSession("/nonexistent/session.jsonl", 5)
+	if pairs != nil || latest != "" {
+		t.Errorf("got %v / %q for a missing file, want nothing", pairs, latest)
+	}
+}
+
+// The stored copy is the backup, for a session whose transcript has gone.
+func TestUsableMessage_RejectsWhatCannotBeTitled(t *testing.T) {
+	cases := map[string]string{
+		"add file upload": "add file upload",
+		"  spaced  ":      "spaced",
+		"/compact":        "",
+		"   ":             "",
+		"":                "",
+	}
+	for in, want := range cases {
+		if got := usableMessage(&in); got != want {
+			t.Errorf("usableMessage(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := usableMessage(nil); got != "" {
+		t.Errorf("usableMessage(nil) = %q, want empty", got)
 	}
 }

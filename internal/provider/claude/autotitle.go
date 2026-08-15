@@ -23,7 +23,7 @@ const maxAutoTitleAttempts = 5
 // which is a slow provider being mistaken for a broken session.
 const titleCallTimeout = 45 * time.Second
 
-var categories = []string{"DB", "AUTH", "API", "UI", "TEST", "DOCS", "INFRA", "REFACTOR", "FIX", "FEAT"}
+var categories = []string{"DB", "AUTH", "API", "UI", "TEST", "DOCS", "INFRA", "PERF", "REFACTOR", "FIX", "FEAT"}
 
 // The glyph that goes in front of each category, from the Nerd Font range.
 //
@@ -43,6 +43,7 @@ var categoryGlyphs = map[string]string{
 	"TEST":     "", // flask
 	"DOCS":     "", // book
 	"INFRA":    "", // server
+	"PERF":     "", // gauge
 	"REFACTOR": "", // cycle
 	"FIX":      "", // bug
 	"FEAT":     "", // star
@@ -257,14 +258,21 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 		return ""
 	}
 
-	userMsg := ""
-	if sess.LastUserMessage != nil {
-		userMsg = *sess.LastUserMessage
+	// The transcript first, and the stored message only when there is no
+	// transcript to read. last_user_message is a copy the daemon keeps when a
+	// prompt happens to arrive through a path that records one — the
+	// UserPromptSubmit hook with a message on it, or a client send. A session
+	// driven straight from its terminal records nothing, and this used to give
+	// up on it while holding the file that had every prompt in it.
+	recentPairs, latest := readSession(transcriptPath, 5)
+	userMsg := latest
+	if userMsg == "" {
+		userMsg = usableMessage(sess.LastUserMessage)
 	}
-	if userMsg == "" || strings.HasPrefix(strings.TrimSpace(userMsg), "/") {
+	if userMsg == "" {
+		log.Printf("autotitle: nothing the user said for %s — no transcript and no recorded prompt", sessionID)
 		return ""
 	}
-	recentPairs := extractLastExchangePairs(transcriptPath, 5)
 	project := filepath.Base(cwd)
 
 	prompt := buildTitlePrompt(project, userMsg, recentPairs)
@@ -374,31 +382,42 @@ type exchangePair struct {
 	assistant string
 }
 
-// extractLastExchangePairs returns the last n user+assistant pairs from the
-// transcript. ParseClaudeTranscript with offset=0 returns the most recent
-// messages, so we scan in reverse collecting complete pairs.
-func extractLastExchangePairs(transcriptPath string, n int) []exchangePair {
+// readSession returns the last n exchange pairs and the most recent thing the
+// user actually said, from one read of the transcript.
+//
+// One read, because the file is the session's whole history — a busy one runs
+// to megabytes — and both answers come out of the same scan.
+func readSession(transcriptPath string, n int) (pairs []exchangePair, latest string) {
 	if transcriptPath == "" {
-		return nil
+		return nil, ""
 	}
 
 	result, err := transcript.ParseClaudeTranscript(transcriptPath, 200, 0)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 
-	// Scan in reverse, collecting pairs.
-	var pairs []exchangePair
+	// Scan in reverse: the recent end is what a title is about, and it is where
+	// the latest user message is.
 	var current exchangePair
-	for i := len(result.Messages) - 1; i >= 0 && len(pairs) < n; i-- {
+	for i := len(result.Messages) - 1; i >= 0; i-- {
 		msg := result.Messages[i]
 		switch msg.Role {
 		case transcript.RoleAssistant:
-			if msg.Content != "" && current.assistant == "" {
+			if msg.Content != "" && current.assistant == "" && len(pairs) < n {
 				current.assistant = msg.Content
 			}
 		case transcript.RoleUser:
-			if msg.Content != "" && current.user == "" {
+			if msg.Content == "" {
+				continue
+			}
+			// A slash command is the user driving the tool, not describing
+			// their work, so it makes a poor title — but an older message
+			// underneath it is still fair game.
+			if latest == "" {
+				latest = usableMessage(&msg.Content)
+			}
+			if current.user == "" && len(pairs) < n {
 				current.user = msg.Content
 				// Complete pair — prepend so output is chronological.
 				pairs = append([]exchangePair{current}, pairs...)
@@ -407,7 +426,19 @@ func extractLastExchangePairs(transcriptPath string, n int) []exchangePair {
 		}
 	}
 
-	return pairs
+	return pairs, latest
+}
+
+// usableMessage returns the message if it is worth titling from, or "".
+func usableMessage(message *string) string {
+	if message == nil {
+		return ""
+	}
+	text := strings.TrimSpace(*message)
+	if text == "" || strings.HasPrefix(text, "/") {
+		return ""
+	}
+	return text
 }
 
 func truncateWords(s string, maxWords int) string {
