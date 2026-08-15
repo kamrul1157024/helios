@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import { applyTheme } from '../shared/theme/apply.ts'
+import { applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 
 interface ThemeBoot {
@@ -8,6 +8,7 @@ interface ThemeBoot {
   terminal: XtermTheme
   glass: boolean
   glassSupported: boolean
+  proseSize: number
 }
 
 /**
@@ -55,8 +56,13 @@ function on(channel: string, listener: (payload: unknown) => void): () => void {
  */
 const boot = ipcRenderer.sendSync('theme:boot') as ThemeBoot
 
-if (document.documentElement) {
+const paint = (): void => {
   applyTheme(document.documentElement, boot.theme, boot.glass)
+  applyProseSize(document.documentElement, boot.proseSize)
+}
+
+if (document.documentElement) {
+  paint()
 } else {
   // Usually this branch: a preload runs before the parser has built <html>, so
   // there is nothing to write to yet. Waiting for DOMContentLoaded would be too
@@ -64,7 +70,7 @@ if (document.documentElement) {
   // observer fires the moment <html> appears, which is still before <head>.
   const observer = new MutationObserver(() => {
     if (!document.documentElement) return
-    applyTheme(document.documentElement, boot.theme, boot.glass)
+    paint()
     observer.disconnect()
   })
   observer.observe(document, { childList: true })
