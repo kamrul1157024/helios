@@ -4,7 +4,10 @@ import { api, bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
 import { Modal } from './newsession.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
-import type { AppearancePrefs, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
+import { BACKDROP_STYLES, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
+import { parseColor, type BackdropSpec, type BackdropStyle, type Rgb } from '../../shared/theme/vscode.ts'
+import type { HeliosTheme } from '../../shared/theme/resolve.ts'
+import type { AppearancePrefs, BackdropState, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
 
 /**
  * Which types can be silenced, in the order the phone lists them. Keeping the
@@ -176,6 +179,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         />
 
         <ProseSize size={appearance?.proseSize} onPick={(size) => void setTheme({ proseSize: size })} />
+
+        <Backdrop />
 
         <button className="ghost" onClick={() => void reloadThemes()}>
           Reload themes
@@ -464,6 +469,118 @@ function ThemePicker({
  * preview both. Committed on blur or Enter rather than on every keystroke: a
  * half-typed "1" would otherwise repaint the app at the smallest size allowed.
  */
+const BACKDROP_LABELS: Record<BackdropStyle, string> = {
+  desktop: 'Desktop',
+  mesh: 'Mesh',
+  corner: 'Corner',
+  wash: 'Wash',
+  aurora: 'Aurora',
+}
+
+/**
+ * What sits behind the glass, for whichever theme is showing.
+ *
+ * Saved into the theme file rather than into this window's preferences, so the
+ * choice travels with the theme it was made against — the gradients are drawn
+ * from that theme's own palette.
+ */
+function Backdrop(): JSX.Element | null {
+  const [state, setState] = useState<BackdropState | null>(null)
+  const [theme, setActive] = useState<HeliosTheme>(() => bridge.theme.boot().theme)
+  /** Held while the slider is under the pointer; saving each step would rewrite
+      the theme file on every frame of a drag. */
+  const [dragging, setDragging] = useState<number | null>(null)
+
+  // The active theme changes with the pickers above and with the OS switching
+  // between light and dark, and each is a different file to edit.
+  useEffect(() => {
+    void bridge.theme.backdrop().then(setState)
+    return bridge.theme.onChanged((payload) => {
+      setActive(payload.theme)
+      void bridge.theme.backdrop().then(setState)
+    })
+  }, [])
+
+  const save = async (spec: BackdropSpec): Promise<void> => {
+    if (!state) return
+    setState({ ...state, style: spec.style ?? state.style, intensity: spec.intensity ?? state.intensity })
+    try {
+      setState(await bridge.theme.setBackdrop(spec))
+    } catch (err) {
+      store.fail(err)
+      setState(await bridge.theme.backdrop())
+    }
+  }
+
+  const commit = (): void => {
+    if (dragging === null || !state) return
+    const next = dragging
+    setDragging(null)
+    if (next !== state.intensity) void save({ style: state.style, intensity: next })
+  }
+
+  // An opaque theme has nothing to show a backdrop through, and a picker that
+  // changes nothing visible is worse than no picker.
+  if (!state?.glass) return null
+
+  const styles: BackdropStyle[] = [
+    ...(state.desktopSupported ? (['desktop'] as BackdropStyle[]) : []),
+    ...BACKDROP_STYLES,
+  ]
+  const intensity = dragging ?? state.intensity
+
+  return (
+    <div className="theme-picker">
+      <span className="theme-picker-label">Backdrop</span>
+      <div className="theme-grid">
+        {styles.map((style) => (
+          <button
+            key={style}
+            className={state.style === style ? 'theme-chip selected' : 'theme-chip'}
+            onClick={() => void save({ style, intensity })}
+            title={style === 'desktop' ? 'Show the desktop through the window' : `Paint a ${style} gradient`}
+          >
+            <span
+              className={style === 'desktop' ? 'backdrop-swatch desktop' : 'backdrop-swatch'}
+              style={style === 'desktop' ? undefined : { background: previewOf(theme, style, intensity) }}
+            />
+            {BACKDROP_LABELS[style]}
+          </button>
+        ))}
+      </div>
+      {state.style !== 'desktop' && (
+        <input
+          className="backdrop-intensity"
+          type="range"
+          min={MIN_INTENSITY}
+          max={MAX_INTENSITY}
+          step={0.05}
+          value={intensity}
+          onChange={(event) => setDragging(Number(event.target.value))}
+          // The swatches follow the thumb; the window and the file wait for it
+          // to be let go.
+          onPointerUp={() => commit()}
+          onKeyUp={() => commit()}
+          onBlur={() => commit()}
+        />
+      )}
+      <span className="modal-note">Saved in {state.themeName}.</span>
+    </div>
+  )
+}
+
+/**
+ * The same value the theme would resolve to, drawn small.
+ *
+ * Built by the generator the window itself uses, from the palette the resolver
+ * derived, so a swatch cannot disagree with the result of clicking it.
+ */
+function previewOf(theme: HeliosTheme, style: BackdropStyle, intensity: number): string {
+  const stops = theme.backdropPalette.map(parseColor).filter((c): c is Rgb => c !== null)
+  const base = parseColor(theme.vars['--surface'] ?? '') ?? (parseColor('#101014') as Rgb)
+  return backdropValue({ style, intensity }, base, stops)
+}
+
 function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: number) => void }): JSX.Element {
   const [draft, setDraft] = useState('')
   const shown = draft || String(size ?? '')

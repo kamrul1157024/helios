@@ -6,6 +6,10 @@
     "panel": 0.42,
     "terminal": 0.34
   },
+  "helios.backdrop": {
+    "style": "mesh",
+    "intensity": 0.45
+  },
   "colors": {
     "checkbox.border": "#3C3C3C",
     "editor.background": "#0d0f13",

@@ -3,8 +3,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { resolveTheme, type HeliosTheme, type ThemeMode } from '../shared/theme/resolve.ts'
-import { parseJsonc, type VSCodeTheme } from '../shared/theme/vscode.ts'
+import { mergeThemes, resolveTheme, type HeliosTheme, type ThemeMode } from '../shared/theme/resolve.ts'
+import { parseJsonc, type BackdropSpec, type VSCodeTheme } from '../shared/theme/vscode.ts'
 import type { AppearancePrefs, ThemeSummary } from '../shared/models.ts'
 
 export const DEFAULT_APPEARANCE: AppearancePrefs = {
@@ -81,12 +81,35 @@ export class ThemeRegistry {
       if (!entry.endsWith('.json')) continue
       const id = entry.slice(0, -'.json'.length)
       try {
-        const raw = parseJsonc(fs.readFileSync(path.join(dir, entry), 'utf8')) as VSCodeTheme
+        const raw = this.read(path.join(dir, entry))
         this.themes.set(id, resolveTheme(id, raw))
       } catch (err) {
         console.error(`theme ${id} failed to load:`, err)
       }
     }
+  }
+
+  /**
+   * A theme file, with whatever it includes layered underneath it.
+   *
+   * `include` names a sibling, and a user file may name a bundled one — which
+   * is how the backdrop picker saves: a handful of lines in ~/.helios/themes
+   * over the bundled theme's several hundred colours, so the override keeps
+   * working when those colours change under it.
+   */
+  private read(file: string, depth = 0): VSCodeTheme {
+    const raw = parseJsonc(fs.readFileSync(file, 'utf8')) as VSCodeTheme
+    // A file that includes itself is the shape this takes when a user copies an
+    // override next to the theme it overrode; the depth cap makes it a theme
+    // with no parent rather than a hang at startup.
+    if (!raw.include || depth >= 4) return raw
+    const sibling = path.basename(raw.include)
+    for (const dir of [path.dirname(file), this.bundledDir]) {
+      const parent = path.join(dir, sibling)
+      if (parent === file || !fs.existsSync(parent)) continue
+      return mergeThemes(this.read(parent, depth + 1), raw)
+    }
+    return raw
   }
 
   list(): ThemeSummary[] {
@@ -108,6 +131,39 @@ export class ThemeRegistry {
 
   getPrefs(): AppearancePrefs {
     return { ...this.prefs }
+  }
+
+  /**
+   * Saves a theme's backdrop, as a file in ~/.helios/themes rather than a
+   * preference of its own.
+   *
+   * The backdrop is a property of the theme — a mesh drawn from one theme's
+   * palette means nothing under another — so it belongs beside the colours it
+   * is derived from, where a user can also hand-edit it and where exporting the
+   * theme takes the backdrop with it.
+   *
+   * A bundled theme is not written to. The override includes it and states only
+   * what the picker changed, so the bundled colours stay the source and keep
+   * being updated by the app.
+   */
+  setBackdrop(id: string, spec: BackdropSpec): HeliosTheme {
+    if (!this.themes.has(id)) throw new Error(`unknown theme: ${id}`)
+    const file = path.join(this.userDir, `${id}.json`)
+    let doc: VSCodeTheme = { include: `${id}.json` }
+    if (fs.existsSync(file)) {
+      // Their own theme, or an override written by an earlier pick: edited in
+      // place, so nothing else the file says is lost.
+      try {
+        doc = parseJsonc(fs.readFileSync(file, 'utf8')) as VSCodeTheme
+      } catch {
+        // A file we cannot parse is one the user cannot have meant to keep.
+      }
+    }
+    doc['helios.backdrop'] = spec
+    fs.mkdirSync(this.userDir, { recursive: true })
+    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`)
+    this.reload()
+    return this.themes.get(id) as HeliosTheme
   }
 
   setPrefs(next: Partial<AppearancePrefs>): AppearancePrefs {

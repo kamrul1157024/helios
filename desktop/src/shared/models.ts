@@ -3,6 +3,8 @@
 // Go names, and optional fields are optional here for the same reason they are
 // pointers there.
 
+import type { BackdropStyle } from './theme/vscode.ts'
+
 export interface Session {
   session_id: string
   source: string
@@ -476,6 +478,23 @@ export interface AppearancePrefs {
   terminalTheme: string
   /** Body size of rendered markdown, in px; headings and tables scale with it. */
   proseSize: number
+}
+
+/**
+ * What the backdrop picker shows, for whichever theme is active.
+ *
+ * Not part of AppearancePrefs: the backdrop is saved into the theme file, since
+ * a gradient drawn from one theme's palette means nothing under another.
+ */
+export interface BackdropState {
+  themeId: string
+  themeName: string
+  /** False for an opaque theme, where a backdrop would never be seen. */
+  glass: boolean
+  style: BackdropStyle
+  intensity: number
+  /** Whether this platform can show the desktop behind the window. */
+  desktopSupported: boolean
 }
 
 /** A theme as the picker lists it; `swatch` is a handful of representative colours. */

@@ -18,6 +18,7 @@ import {
   type AnsiName,
   type DeriveContext,
 } from './mapping.ts'
+import { backdropValue, clampIntensity, derivedStops, styleOf } from './backdrop.ts'
 import {
   composite,
   contrast,
@@ -29,6 +30,7 @@ import {
   parseColor,
   rgb,
   toHex,
+  type BackdropStyle,
   type GlassSpec,
   type Rgb,
   type VSCodeTheme,
@@ -55,6 +57,18 @@ export interface HeliosTheme {
    * and means every surface stays opaque.
    */
   glass: GlassSpec | null
+  /**
+   * The gradient the theme paints behind its glass. Null is the theme asking
+   * for whatever the OS puts behind the window instead, which is the macOS
+   * material or, anywhere else, nothing.
+   */
+  backdrop: { style: BackdropStyle; intensity: number } | null
+  /**
+   * The colours a backdrop of this theme is drawn from, whether or not one is
+   * showing — the picker draws its swatches from them, and a swatch has to be
+   * able to show a style the theme is not currently using.
+   */
+  backdropPalette: string[]
 }
 
 const FALLBACK_BG: Record<ThemeMode, Rgb> = { dark: rgb(0x11, 0x13, 0x18), light: rgb(0xff, 0xff, 0xff) }
@@ -211,6 +225,18 @@ export function resolveTheme(
     vars['--glass-container'] = toRgba(resolved.get('surface-container') ?? bg, glass.panel)
   }
 
+  // Only meaningful under glass: the backdrop is what the translucent surfaces
+  // are translucent onto, and painting one behind an opaque app would be work
+  // no pixel ever shows.
+  const palette = derivedStops(resolved.get('primary') ?? bg, ansi.magenta, ansi.cyan, mode === 'dark')
+  const spec = glass ? theme['helios.backdrop'] : undefined
+  const style = styleOf(spec)
+  let backdrop: HeliosTheme['backdrop'] = null
+  if (spec && style !== 'desktop') {
+    vars['--backdrop'] = backdropValue(spec, resolved.get('surface') ?? bg, palette)
+    backdrop = { style, intensity: clampIntensity(spec.intensity) }
+  }
+
   const terminalBg = colour('terminal.background') ?? bg
   const ansiTheme = {
     // Eight-digit hex rather than rgb(): xterm parses this itself, and does
@@ -224,7 +250,16 @@ export function resolveTheme(
   } as XtermTheme
   for (const name of ANSI_NAMES) ansiTheme[name] = toHex(ansi[name])
 
-  return { id, name: options.name ?? theme.name ?? id, mode, vars, ansi: ansiTheme, glass }
+  return {
+    id,
+    name: options.name ?? theme.name ?? id,
+    mode,
+    vars,
+    ansi: ansiTheme,
+    glass,
+    backdrop,
+    backdropPalette: palette.map(toHex),
+  }
 }
 
 /**
@@ -236,6 +271,7 @@ export function mergeThemes(parent: VSCodeTheme, child: VSCodeTheme): VSCodeThem
     name: child.name ?? parent.name,
     type: child.type ?? parent.type,
     'helios.glass': child['helios.glass'] ?? parent['helios.glass'],
+    'helios.backdrop': child['helios.backdrop'] ?? parent['helios.backdrop'],
     colors: { ...(parent.colors ?? {}), ...(child.colors ?? {}) },
     tokenColors: [...(parent.tokenColors ?? []), ...(child.tokenColors ?? [])],
   }

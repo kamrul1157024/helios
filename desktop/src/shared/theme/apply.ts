@@ -18,8 +18,13 @@ export function applyProseSize(root: HTMLElement, size: number): void {
 
 export function applyTheme(root: HTMLElement, theme: Pick<HeliosTheme, 'vars'>, glass = false): void {
   for (const [name, value] of Object.entries(theme.vars)) root.style.setProperty(name, value)
-  // An attribute rather than more variables: the backdrop changes which
-  // surfaces paint at all, not what colour they are.
+  // Every other variable is emitted by every theme, so writing over them is
+  // enough. The backdrop is the one a theme may decline to set, and a stale
+  // gradient left behind is the app painting over the desktop it was just
+  // asked to show.
+  if (!theme.vars['--backdrop']) root.style.removeProperty('--backdrop')
+  // An attribute rather than more variables: glass changes which surfaces
+  // paint at all, not what colour they are.
   if (glass) root.dataset.glass = 'on'
   else delete root.dataset.glass
 }
