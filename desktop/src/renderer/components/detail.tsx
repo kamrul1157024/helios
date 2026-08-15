@@ -11,7 +11,6 @@ import { TerminalPanes } from './terminal.tsx'
 import {
   BUSY_STATUSES,
   canResume,
-  hasTerminal,
   needsRecovery,
   sessionLabel,
   statusLabel,
@@ -321,7 +320,6 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(session.title ?? '')
   const overflow = useRef<HTMLDetailsElement | null>(null)
-  const live = hasTerminal(session)
   const busy = BUSY_STATUSES.has(session.status)
   const terminated = canResume(session)
   const cold = needsRecovery(session)
@@ -403,26 +401,19 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
 
         <PermissionMode hostId={hostId} session={session} />
 
-        {/* Resume, not Wake: waking a terminated session starts its host but
-            leaves the daemon refusing every prompt. */}
-        {terminated ? (
-          <button
-            className="filled"
-            onClick={() => void store.resumeSession(hostId, session.session_id)}
-          >
+        {/* Resume has no equivalent anywhere else, so it stays. Terminated is
+            the one state the daemon refuses prompts for outright, and this is
+            the only control that clears it.
+
+            Waking is not like that. A cold session wakes itself the moment it
+            is given something to do: the daemon starts a host on send, and the
+            composer already says so. The terminal pane offers its own button
+            for the case where a terminal is what you want. A header button as
+            well was a third way to say the same thing. */}
+        {terminated && (
+          <button className="filled" onClick={() => void store.resumeSession(hostId, session.session_id)}>
             Resume
           </button>
-        ) : (
-          // Only while the host is cold. Waking one is not something the tab
-          // strip does — showTerminal refuses to start a host on its own — so
-          // this is the one-click way in. Once it is live the tab is the way
-          // back to the terminal, and a second control beside it that does the
-          // same thing is just another thing to read.
-          !live && (
-            <button className="filled" onClick={() => void store.openTerminal(hostId, session, true)}>
-              Wake
-            </button>
-          )
         )}
 
         {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
