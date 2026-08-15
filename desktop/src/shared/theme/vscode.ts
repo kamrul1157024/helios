@@ -28,9 +28,39 @@ export interface GlassSpec {
   terminal: number
 }
 
+/** One soft blob of the backdrop. Omitted fields fall back to the slot's own. */
+export interface BackdropStop {
+  /** Hex, as everywhere else in a theme file. Omitted means the derived colour. */
+  color?: string
+  /** CSS position, `<x>% <y>%`. */
+  at?: string
+  /** CSS size, `<w>% <h>%`. */
+  size?: string
+}
+
+/**
+ * How the gradients are arranged, or 'desktop' for a theme that would rather
+ * show whatever is behind the window than paint anything itself.
+ */
+export type BackdropStyle = 'desktop' | 'mesh' | 'corner' | 'wash' | 'aurora'
+
+/**
+ * The gradient a glass theme paints behind itself, so the look does not depend
+ * on the desktop showing through. Namespaced like `helios.glass`, and ignored
+ * by VS Code for the same reason.
+ */
+export interface BackdropSpec {
+  style?: BackdropStyle
+  /** Alpha of the strongest layer; the rest are scaled from it. */
+  intensity?: number
+  /** Replaces the derived palette outright. */
+  stops?: BackdropStop[]
+}
+
 export interface VSCodeTheme {
   name?: string
   'helios.glass'?: Partial<GlassSpec>
+  'helios.backdrop'?: BackdropSpec
   /** Absent more often than not; the resolver falls back to luminance. */
   type?: string
   /** A sibling theme file this one layers on top of. */
@@ -190,6 +220,56 @@ export function ensureContrast(colour: Rgb, background: Rgb, target: number): Rg
     if (contrast(result, background) >= target) break
   }
   return result
+}
+
+/**
+ * Recolours to a fixed lightness, keeping the hue and raising the saturation to
+ * at least `minSaturation`.
+ *
+ * A theme's palette is chosen to be read as text, which makes it pale: most
+ * dark themes state their blue somewhere around 75% lightness. Painted at
+ * partial alpha over a near-black background that pale blue composites to grey,
+ * and the hue the stop was chosen for disappears. Pinning the lightness where
+ * the colour is at its most saturated is what keeps a blob recognisably blue.
+ */
+export function withLightness(c: Rgb, lightness: number, minSaturation: number): Rgb {
+  const r = c.r / 255
+  const g = c.g / 255
+  const b = c.b / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  const delta = max - min
+
+  let h = 0
+  if (delta > 0) {
+    if (max === r) h = ((g - b) / delta) % 6
+    else if (max === g) h = (b - r) / delta + 2
+    else h = (r - g) / delta + 4
+    h *= 60
+    if (h < 0) h += 360
+  }
+  const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1))
+
+  return fromHsl(h, Math.max(s, minSaturation), lightness)
+}
+
+function fromHsl(h: number, s: number, l: number): Rgb {
+  const chroma = (1 - Math.abs(2 * l - 1)) * s
+  const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - chroma / 2
+  const sextant = Math.floor(h / 60) % 6
+  const [r, g, b] = (
+    [
+      [chroma, x, 0],
+      [x, chroma, 0],
+      [0, chroma, x],
+      [0, x, chroma],
+      [x, 0, chroma],
+      [chroma, 0, x],
+    ] as [number, number, number][]
+  )[sextant] as [number, number, number]
+  return { r: clamp((r + m) * 255), g: clamp((g + m) * 255), b: clamp((b + m) * 255), a: 1 }
 }
 
 export function toHex(c: Rgb): string {

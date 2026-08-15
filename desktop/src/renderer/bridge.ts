@@ -1,10 +1,11 @@
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
+import type { BackdropSpec } from '../shared/theme/vscode.ts'
 
 /** What the main process hands over whenever the appearance changes. */
 export interface ThemePayload {
   theme: HeliosTheme
   terminal: XtermTheme
-  /** The OS backdrop is on: some surfaces stop painting so it shows through. */
+  /** A backdrop is on: some surfaces stop painting so it shows through. */
   glass: boolean
   /** This platform can show it at all; false hides the toggle entirely. */
   glassSupported: boolean
@@ -13,6 +14,7 @@ export interface ThemePayload {
 }
 import type {
   AppearancePrefs,
+  BackdropState,
   CommandInfo,
   DeviceInfo,
   DirectoryInfo,
@@ -113,6 +115,9 @@ interface RawBridge {
     prefs(): Promise<AppearancePrefs>
     set(next: Partial<AppearancePrefs>): Promise<ThemePayload>
     reload(): Promise<ThemeSummary[]>
+    /** The active theme's backdrop, which lives in the theme file itself. */
+    backdrop(): Promise<BackdropState>
+    setBackdrop(spec: BackdropSpec): Promise<BackdropState>
     onChanged(fn: (payload: ThemePayload) => void): Unsubscribe
   }
   hud: {

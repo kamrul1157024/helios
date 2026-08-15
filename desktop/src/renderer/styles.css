@@ -516,14 +516,17 @@ small {
 
 /* ─── Backdrop ──────────────────────────────────────────────────────────── */
 
-/* With the OS material behind the window, the surfaces in front of it have to
-   stop painting for any of it to be seen. Only two do: the page itself, which
-   turns the window's margins and the strip behind the title bar into glass, and
-   the sidebar. The transcript, the terminal and the editor stay opaque on
-   purpose — they are for reading, and reading off a moving desktop is not
-   worth the look. */
+/* With a backdrop behind the window, the surfaces in front of it have to stop
+   painting for any of it to be seen. Only two do: the page itself, which turns
+   the window's margins and the strip behind the title bar into glass, and the
+   sidebar. The transcript, the terminal and the editor stay opaque on purpose —
+   they are for reading, and reading off a moving desktop is not worth the look.
+
+   The theme's own gradient when it declares one, and transparent when it does
+   not, which is the case where the OS material behind the window is the
+   backdrop and anything painted here would hide it. */
 [data-glass='on'] body {
-  background: transparent;
+  background: var(--backdrop, transparent);
 }
 
 /* Tinted rather than clear: the material supplies the blur, the tint keeps the
@@ -3684,6 +3687,33 @@ hr {
     var(--surface-high) 0 4px,
     var(--surface-highest) 4px 8px
   );
+}
+
+/* Wider than a theme swatch and in the window's own proportions: these are
+   scale models of the backdrop, and a gradient judged in a 40px strip is not
+   the one that ends up behind the app. */
+.backdrop-swatch {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 30px;
+  border-radius: 4px;
+  border: 1px solid var(--outline-variant);
+}
+
+/* The desktop is not ours to draw, so the chip says so rather than guessing at
+   a wallpaper. */
+.backdrop-swatch.desktop {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-high) 0 5px,
+    var(--surface-highest) 5px 10px
+  );
+}
+
+.backdrop-intensity {
+  width: 100%;
+  margin-top: 8px;
+  accent-color: var(--primary);
 }
 
 .modal-note {

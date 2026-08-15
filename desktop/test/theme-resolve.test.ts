@@ -16,6 +16,8 @@ import {
   parseJsonc,
   pickReadable,
   toHex,
+  type BackdropStyle,
+  type Rgb,
 } from '../src/shared/theme/vscode.ts'
 
 test('parseJsonc tolerates comments and trailing commas', () => {
@@ -285,6 +287,139 @@ test('an omitted surface in the glass block gets a default rather than nothing',
 test('the glass block survives an include chain', () => {
   const merged = mergeThemes({ 'helios.glass': { sidebar: 0.5 }, colors: {} }, { name: 'Child', colors: {} })
   assert.equal(merged['helios.glass']?.sidebar, 0.5)
+})
+
+const GLASS = { sidebar: 0.34, panel: 0.42, terminal: 0.34 }
+const DARK = { 'editor.background': '#0d0f13', 'editor.foreground': '#e8eaed', 'textLink.foreground': '#7cb7ff' }
+
+test('a glass theme with no backdrop block leaves the window to the OS', () => {
+  const theme = resolveTheme('os-glass', { 'helios.glass': GLASS, colors: DARK })
+  assert.equal(theme.backdrop, null)
+  assert.equal(theme.vars['--backdrop'], undefined)
+})
+
+test('a backdrop block becomes one gradient per layer over the theme surface', () => {
+  const theme = resolveTheme('meshy', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { intensity: 0.45 },
+    colors: DARK,
+  })
+  // Mesh is what a block with no style asked for.
+  assert.deepEqual(theme.backdrop, { style: 'mesh', intensity: 0.45 })
+  const value = theme.vars['--backdrop'] as string
+  assert.equal(value.match(/radial-gradient\(/g)?.length, 4)
+  // The strongest layer is the intensity itself, and the theme's own surface is
+  // the bed the gradients fade into.
+  assert.match(value, /rgb\(.* \/ 45%\) 0%/)
+  assert.match(value, /, rgb\(13 15 19 \/ 100%\)$/)
+})
+
+test('each style lays its own gradients out', () => {
+  const value = (style: BackdropStyle): string =>
+    resolveTheme('styled', {
+      'helios.glass': GLASS,
+      'helios.backdrop': { style, intensity: 0.4 },
+      colors: DARK,
+    }).vars['--backdrop'] as string
+
+  assert.equal(value('corner').match(/radial-gradient\(/g)?.length, 2)
+  assert.equal(value('wash').match(/radial-gradient\(/g)?.length, 2)
+  // Aurora is the one style with bands rather than blobs.
+  assert.equal(value('aurora').match(/linear-gradient\(/g)?.length, 2)
+  assert.equal(value('aurora').match(/radial-gradient\(/g)?.length, 1)
+})
+
+test('the desktop style paints nothing, so the OS shows through', () => {
+  const theme = resolveTheme('to-the-os', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { style: 'desktop' },
+    colors: DARK,
+  })
+  assert.equal(theme.backdrop, null)
+  assert.equal(theme.vars['--backdrop'], undefined)
+})
+
+test('a backdrop with no glass block is not painted', () => {
+  const theme = resolveTheme('opaque', { 'helios.backdrop': { intensity: 0.5 }, colors: DARK })
+  assert.equal(theme.backdrop, null)
+  assert.equal(theme.vars['--backdrop'], undefined)
+})
+
+test('the palette a picker draws its swatches from survives an opaque theme', () => {
+  const theme = resolveTheme('solid', { colors: DARK })
+  assert.equal(theme.backdropPalette.length, 4)
+  for (const colour of theme.backdropPalette) assert.match(colour, /^#[0-9a-f]{6}$/)
+})
+
+// A theme's palette is picked to be read as text, which makes it pale; painted
+// at partial alpha over near-black a pale blue composites to grey.
+test('derived stops are pulled to a lightness that still reads as a hue', () => {
+  const theme = resolveTheme('pastel', {
+    'helios.glass': GLASS,
+    colors: { ...DARK, 'textLink.foreground': '#cfe3ff' },
+  })
+  const [strong] = theme.backdropPalette as [string]
+  assert.notEqual(strong, '#cfe3ff')
+  assert.ok(luminance(parseColor(strong) as Rgb) < luminance(parseColor('#cfe3ff') as Rgb))
+})
+
+test('backdrop intensity is clamped short of drowning the text', () => {
+  const loud = resolveTheme('loud', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { intensity: 4 },
+    colors: DARK,
+  })
+  assert.match(loud.vars['--backdrop'] as string, /rgb\(.* \/ 60%\) 0%/)
+})
+
+test('declared stops replace the derived palette, and place themselves', () => {
+  const theme = resolveTheme('custom', {
+    'helios.glass': GLASS,
+    'helios.backdrop': {
+      intensity: 0.4,
+      stops: [{ color: '#ff0000', at: '10% 20%', size: '50% 40%' }, { color: '#00ff00' }],
+    },
+    colors: DARK,
+  })
+  const value = theme.vars['--backdrop'] as string
+  assert.match(value, /radial-gradient\(50% 40% at 10% 20%, rgb\(255 0 0 \/ 40%\)/)
+  assert.match(value, /rgb\(0 255 0 \//)
+  // Fewer colours than the style has layers: they repeat rather than leaving a
+  // corner of the window bare.
+  assert.equal(value.match(/radial-gradient\(/g)?.length, 4)
+})
+
+// The strings in a stop reach an inline style untouched by any parser, so a
+// position that is not plainly a pair of percentages is replaced rather than
+// passed on.
+test('a stop position that is not a pair of percentages falls back to the layout', () => {
+  const theme = resolveTheme('sneaky', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { stops: [{ color: '#ff0000', at: '0 0), url(https://example.com/x' }] },
+    colors: DARK,
+  })
+  const value = theme.vars['--backdrop'] as string
+  assert.ok(!value.includes('url('))
+  assert.match(value, /at 12% 8%/)
+})
+
+test('a stop whose colour does not parse is left out', () => {
+  const theme = resolveTheme('bad-stop', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { stops: [{ color: 'rebeccapurple' }, { color: '#00ff00' }] },
+    colors: DARK,
+  })
+  const value = theme.vars['--backdrop'] as string
+  // Two of the four mesh layers land on the unparseable stop and are dropped;
+  // the other two are the green one.
+  assert.equal(value.match(/radial-gradient\(/g)?.length, 2)
+  assert.ok(!value.includes('rebeccapurple'))
+  assert.match(value, /rgb\(0 255 0/)
+})
+
+test('the backdrop block survives an include chain', () => {
+  const merged = mergeThemes({ 'helios.backdrop': { intensity: 0.3 }, colors: {} }, { name: 'Child', colors: {} })
+  assert.equal(merged['helios.backdrop']?.intensity, 0.3)
 })
 
 test('mergeThemes layers a child over what its include supplied', () => {

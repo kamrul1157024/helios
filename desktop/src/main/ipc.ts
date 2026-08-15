@@ -6,7 +6,9 @@ import type { Notifier } from './notify.ts'
 import type { PrefsStore } from './prefs.ts'
 import type { TerminalManager } from './terminals.ts'
 import type { ThemeRegistry } from './themes.ts'
-import type { AppearancePrefs } from '../shared/models.ts'
+import { DEFAULT_INTENSITY } from '../shared/theme/backdrop.ts'
+import type { BackdropSpec } from '../shared/theme/vscode.ts'
+import type { AppearancePrefs, BackdropState } from '../shared/models.ts'
 
 /**
  * REST calls the renderer may make. An allow-list rather than a reflective
@@ -162,9 +164,10 @@ export function registerIpc(deps: IpcDeps): void {
     terminal: themes.activeTerminal(),
     proseSize: themes.getPrefs().proseSize,
     // A property of the chosen theme, not a setting of its own: picking a
-    // glass theme is the whole of the request. Gated on the platform, because
-    // a preference to show a backdrop that does not exist is not showing one.
-    glass: glassSupported && themes.active().glass !== null,
+    // glass theme is the whole of the request. A theme with no backdrop of its
+    // own is gated on the platform, because a preference to show a backdrop
+    // that does not exist is not showing one.
+    glass: themes.active().glass !== null && (themes.active().backdrop !== null || glassSupported),
     glassSupported,
   })
 
@@ -198,6 +201,30 @@ export function registerIpc(deps: IpcDeps): void {
     themes.reload()
     broadcastTheme()
     return themes.list()
+  })
+
+  // The backdrop belongs to the theme, so the picker reads and writes whichever
+  // theme is showing rather than a slot of its own.
+  const backdropState = (): BackdropState => {
+    const theme = themes.active()
+    return {
+      themeId: theme.id,
+      themeName: theme.name,
+      glass: theme.glass !== null,
+      style: theme.backdrop?.style ?? 'desktop',
+      intensity: theme.backdrop?.intensity ?? DEFAULT_INTENSITY,
+      // Offering the desktop where there is no way to show it would be
+      // offering an opaque window under a different name.
+      desktopSupported: glassSupported,
+    }
+  }
+
+  handle('theme:backdrop', async () => backdropState())
+  handle('theme:setBackdrop', async (_e, spec: BackdropSpec) => {
+    themes.setBackdrop(themes.active().id, spec)
+    onAppearanceChange()
+    broadcastTheme()
+    return backdropState()
   })
 
   // ─── Terminals ─────────────────────────────────────────────────────────

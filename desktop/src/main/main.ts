@@ -131,7 +131,17 @@ async function start(): Promise<void> {
 const GLASS_SUPPORTED = process.platform === 'darwin'
 
 function glassOn(): boolean {
-  return GLASS_SUPPORTED && Boolean(themes?.active().glass)
+  const theme = themes?.active()
+  if (!theme?.glass) return false
+  // A theme that carries its own gradient needs nothing from the OS, so it is
+  // glass on every platform. One that does not is asking for the desktop, which
+  // only macOS can hand over.
+  return theme.backdrop !== null || GLASS_SUPPORTED
+}
+
+/** Whether the window itself has to let anything through to show the backdrop. */
+function vibrancyOn(): boolean {
+  return GLASS_SUPPORTED && glassOn() && themes?.active().backdrop === null
 }
 
 /**
@@ -147,11 +157,13 @@ function applyWindowMaterial(): void {
   if (!themes) return
   nativeTheme.themeSource = themes.getPrefs().mode
   if (!window || window.isDestroyed()) return
-  const on = glassOn()
-  if (GLASS_SUPPORTED) window.setVibrancy(on ? 'under-window' : null)
-  // An opaque background sits in front of the material and hides it, so the
-  // window has to stop painting one for the backdrop to be visible at all.
-  window.setBackgroundColor(on ? '#00000000' : (themes.active().vars['--surface'] ?? '#101014'))
+  const clear = vibrancyOn()
+  if (GLASS_SUPPORTED) window.setVibrancy(clear ? 'under-window' : null)
+  // An opaque background sits in front of the material and hides it, so a
+  // window showing the desktop has to stop painting one. A window painting its
+  // own gradient keeps it: the renderer draws over it either way, and a clear
+  // window would show the desktop through the app's own backdrop.
+  window.setBackgroundColor(clear ? '#00000000' : (themes.active().vars['--surface'] ?? '#101014'))
 }
 
 function createWindow(): void {
@@ -164,8 +176,8 @@ function createWindow(): void {
     icon: appIcon,
     // The frame is painted before the renderer runs, so it has to come from the
     // theme too or the window flashes the old dark grey on every open.
-    backgroundColor: glassOn() ? '#00000000' : (themes?.active().vars['--surface'] ?? '#101014'),
-    ...(glassOn() ? { vibrancy: 'under-window' as const } : {}),
+    backgroundColor: vibrancyOn() ? '#00000000' : (themes?.active().vars['--surface'] ?? '#101014'),
+    ...(vibrancyOn() ? { vibrancy: 'under-window' as const } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(distDir, 'preload', 'preload.js'),
