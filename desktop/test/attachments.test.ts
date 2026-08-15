@@ -56,12 +56,17 @@ test('the prompt names every stored file before the typed text', () => {
   const list = [attachment(1, 'a.png', '/uploads/s1/a.png'), attachment(2, 'b.png', '/uploads/s1/b.png')]
   assert.equal(
     promptWithAttachments(list, 'what is wrong here?'),
-    'Attached: /uploads/s1/a.png\nAttached: /uploads/s1/b.png\n\nwhat is wrong here?',
+    'Attached: `/uploads/s1/a.png`\nAttached: `/uploads/s1/b.png`\n\nwhat is wrong here?',
   )
 })
 
-test('attachments with no text still make a prompt', () => {
-  assert.equal(promptWithAttachments([attachment(1, 'a.png', '/uploads/s1/a.png')], ''), 'Attached: /uploads/s1/a.png')
+// A bare path to an image is eaten by the agent's composer, which takes it for
+// an attachment to make rather than text to keep.
+test('the path is quoted so the composer leaves it alone', () => {
+  assert.equal(
+    promptWithAttachments([attachment(1, 'a.png', '/uploads/s1/a.png')], ''),
+    'Attached: `/uploads/s1/a.png`',
+  )
 })
 
 test('no attachments leaves the text alone', () => {

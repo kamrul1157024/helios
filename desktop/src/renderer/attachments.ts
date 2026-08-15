@@ -90,11 +90,16 @@ export function withStoredPaths(
  * The prompt as the agent receives it: a line naming each file, then whatever
  * was typed. The path is the whole mechanism — the agent opens it with Read,
  * so the bytes never enter the context.
+ *
+ * Backticked because the prompt is delivered by pasting it into the agent's
+ * own composer, and a bare path to an image is taken there as an attachment to
+ * be made rather than text to be kept: the path is removed from the prompt and
+ * nothing arrives in its place. Quoting it leaves it as the words it is.
  */
 export function promptWithAttachments(attachments: Attachment[], text: string): string {
   const lines = attachments
     .filter((attachment) => attachment.path !== null)
-    .map((attachment) => `Attached: ${attachment.path}`)
+    .map((attachment) => `Attached: \`${attachment.path}\``)
   if (lines.length === 0) return text
   return [...lines, '', text].join('\n').trim()
 }
