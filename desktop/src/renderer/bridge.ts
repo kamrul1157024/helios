@@ -204,7 +204,8 @@ export class HostApi {
   setPermissionMode(id: string, mode: string): Promise<unknown> {
     return this.call('setPermissionMode', id, mode)
   }
-  generateTitle(id: string): Promise<unknown> {
+  /** Answers only once the model has, so the caller can report what it said. */
+  generateTitle(id: string): Promise<{ success: boolean; title?: string; error?: string }> {
     return this.call('generateTitle', id)
   }
   patchSession(id: string, patch: Record<string, unknown>): Promise<unknown> {

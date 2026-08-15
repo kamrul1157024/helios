@@ -26,6 +26,8 @@ import type {
 const TOKEN_LIFETIME = 3600
 const TOKEN_REFRESH_MARGIN = 300
 const REQUEST_TIMEOUT = 15_000
+/** Past the daemon's own 45s ceiling, so its answer arrives before we give up. */
+const TITLE_TIMEOUT = 60_000
 /** An upload carries megabytes over a tunnel; the shared timeout is for JSON. */
 const UPLOAD_TIMEOUT = 120_000
 
@@ -93,11 +95,11 @@ export class ApiClient {
     return `Bearer ${this.getToken()}`
   }
 
-  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    let response = await this.send(method, path, body)
+  async request<T>(method: string, path: string, body?: unknown, timeout = REQUEST_TIMEOUT): Promise<T> {
+    let response = await this.send(method, path, body, timeout)
     if (response.status === 401) {
       this.invalidate()
-      response = await this.send(method, path, body)
+      response = await this.send(method, path, body, timeout)
     }
 
     if (response.status === 204) return undefined as T
@@ -116,7 +118,7 @@ export class ApiClient {
     return parsed as T
   }
 
-  private async send(method: string, path: string, body?: unknown): Promise<Response> {
+  private async send(method: string, path: string, body?: unknown, timeout = REQUEST_TIMEOUT): Promise<Response> {
     const headers: Record<string, string> = { Authorization: this.authHeader() }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
 
@@ -124,7 +126,7 @@ export class ApiClient {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      signal: AbortSignal.timeout(timeout),
     })
   }
 
@@ -255,8 +257,18 @@ export class ApiClient {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/permission-mode`, { mode })
   }
 
-  generateTitle(id: string): Promise<unknown> {
-    return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/title/generate`)
+  /**
+   * Waits for the model, which is why it gets its own budget.
+   *
+   * The daemon answers this one only once the title is written, and the model
+   * behind it runs 3-6s on a good day and spikes well past that. Under the
+   * shared 15s the desktop gave up first — "operation was aborted due to
+   * timeout" — while the daemon carried on and set a title nobody was told
+   * about. Longer here than the daemon's own ceiling, so whoever gives up
+   * first, it is the side that knows why.
+   */
+  generateTitle(id: string): Promise<{ success: boolean; title?: string; error?: string }> {
+    return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/title/generate`, undefined, TITLE_TIMEOUT)
   }
 
   patchSession(id: string, patch: Record<string, unknown>): Promise<unknown> {

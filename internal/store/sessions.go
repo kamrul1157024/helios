@@ -315,6 +315,15 @@ func (s *Store) IncrementAutoTitleAttempts(sessionID string) (int, error) {
 	return count, err
 }
 
+// AutoTitleAttempts reports how many attempts a session has already spent,
+// without spending another. An attempt is the session's budget for ever being
+// named, so it is only worth counting once the model has actually answered.
+func (s *Store) AutoTitleAttempts(sessionID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT autotitle_attempts FROM sessions WHERE session_id = ?`, sessionID).Scan(&count)
+	return count, err
+}
+
 // ResetAutoTitleAttempts resets autotitle_attempts to 0 for a session.
 func (s *Store) ResetAutoTitleAttempts(sessionID string) error {
 	_, err := s.db.Exec(

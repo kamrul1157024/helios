@@ -442,7 +442,19 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
               if (overflow.current) overflow.current.open = false
             }}
           >
-            <button onClick={() => void run(() => api(hostId).generateTitle(session.session_id))}>
+            {/* The daemon waits for the model before answering, so this can sit
+                for several seconds. Saying what came back is the difference
+                between a slow button and a broken one. */}
+            <button
+              onClick={() =>
+                void run(async () => {
+                  store.notify('Naming the session…')
+                  const result = await api(hostId).generateTitle(session.session_id)
+                  if (result.title) store.notify(result.title)
+                  else store.notify('The model did not return a usable title', 'error')
+                })
+              }
+            >
               Regenerate title
             </button>
             <button
