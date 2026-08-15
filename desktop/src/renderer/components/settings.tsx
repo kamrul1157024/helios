@@ -241,6 +241,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
 interface TitlePrefs {
   enabled: boolean
   emoji: boolean
+  /** Empty means the built-in prompt. Anything else replaces it outright. */
+  prompt: string
 }
 
 /**
@@ -265,9 +267,10 @@ function SessionTitles(): JSX.Element {
             ...current,
             [host.id]: {
               enabled: values['autotitle.enabled'] === 'true',
-              // Only an explicit false turns the emoji off, which is how the
-              // daemon reads it (claude/autotitle.go:104).
+              // Only an explicit false turns the icon off, which is how the
+              // daemon reads it (claude/autotitle.go).
               emoji: values['autotitle.emoji'] !== 'false',
+              prompt: values['autotitle.prompt'] ?? '',
             },
           }))
         })
@@ -286,6 +289,7 @@ function SessionTitles(): JSX.Element {
       await api(hostId).updateSettings({
         'autotitle.enabled': String(after.enabled),
         'autotitle.emoji': String(after.emoji),
+        'autotitle.prompt': after.prompt,
       })
     } catch (err) {
       setPrefs((all) => ({ ...all, [hostId]: before }))
@@ -333,15 +337,64 @@ function SessionTitles(): JSX.Element {
                   onChange={(event) => void change(host.id, { emoji: event.target.checked })}
                 />
                 <span>
-                  Emoji prefix
-                  <small>🐛 [FIX] rather than [FIX].</small>
+                  Icon prefix
+                  <small>A Nerd Font glyph per category —  [FIX] rather than [FIX]. Needs a Nerd Font to show.</small>
                 </span>
               </label>
+
+              <CustomPrompt
+                value={value.prompt}
+                disabled={!value.enabled}
+                onSave={(prompt) => void change(host.id, { prompt })}
+              />
             </div>
           )
         })
       )}
     </section>
+  )
+}
+
+/**
+ * The system prompt the titler runs with.
+ *
+ * Saved on blur rather than per keystroke: this is a round trip to the daemon,
+ * and a prompt is written a sentence at a time. Empty restores the built-in.
+ */
+function CustomPrompt({
+  value,
+  disabled,
+  onSave,
+}: {
+  value: string
+  disabled: boolean
+  onSave: (prompt: string) => void
+}): JSX.Element {
+  const [draft, setDraft] = useState(value)
+
+  // The saved value wins when it changes underneath — another client editing
+  // the same daemon, or the host list reloading.
+  useEffect(() => setDraft(value), [value])
+
+  return (
+    <div className="title-prompt">
+      <span className="theme-picker-label">Custom prompt</span>
+      <p className="modal-note">
+        Replaces the built-in instructions entirely, so the format, the categories and the rule that skips
+        greetings all become yours to state. Leave it empty to use the built-in one.
+      </p>
+      <textarea
+        rows={5}
+        disabled={disabled}
+        value={draft}
+        placeholder="Using the built-in prompt."
+        spellCheck={false}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (draft !== value) onSave(draft)
+        }}
+      />
+    </div>
   )
 }
 
