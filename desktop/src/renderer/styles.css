@@ -1255,9 +1255,12 @@ small {
 
 /* ─── Markdown ──────────────────────────────────────────────────────────── */
 
-/* The agent writes markdown, so the transcript renders it — same as mobile. */
+/* The agent writes markdown, so the transcript renders it — same as mobile.
+   Prose is the one thing here the reader sets the size of, so everything
+   inside is em: one setting moves headings, tables and code with the body. */
 .md {
   white-space: normal;
+  font-size: var(--prose-size, 14px);
 }
 
 .md > *:first-child {
@@ -1286,19 +1289,19 @@ small {
 }
 
 .md h1 {
-  font-size: 18px;
+  font-size: 1.29em;
 }
 
 .md h2 {
-  font-size: 16px;
+  font-size: 1.14em;
 }
 
 .md h3 {
-  font-size: 14.5px;
+  font-size: 1.04em;
 }
 
 .md h4 {
-  font-size: 13.5px;
+  font-size: 0.96em;
   color: var(--on-surface-variant);
 }
 
@@ -1338,7 +1341,7 @@ small {
 
 .md table {
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 0.89em;
 }
 
 .md th,
@@ -1356,7 +1359,7 @@ small {
 /* Inline code, but not the code inside a highlighted block. */
 .md code:not(.hljs) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 0.86em;
   background: var(--surface-highest);
   border-radius: 4px;
   padding: 1px 5px;
@@ -3594,6 +3597,11 @@ hr {
   font-size: 12px;
   color: var(--on-surface-variant);
   margin-bottom: 6px;
+}
+
+.prose-size {
+  width: 72px;
+  margin-right: 8px;
 }
 
 .theme-grid {

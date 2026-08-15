@@ -175,6 +175,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           onPick={(id) => void setTheme({ terminalTheme: id })}
         />
 
+        <ProseSize size={appearance?.proseSize} onPick={(size) => void setTheme({ proseSize: size })} />
+
         <button className="ghost" onClick={() => void reloadThemes()}>
           Reload themes
         </button>
@@ -453,6 +455,43 @@ function ThemePicker({
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+/**
+ * The size rendered markdown is read at, in px — the transcript and the file
+ * preview both. Committed on blur or Enter rather than on every keystroke: a
+ * half-typed "1" would otherwise repaint the app at the smallest size allowed.
+ */
+function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: number) => void }): JSX.Element {
+  const [draft, setDraft] = useState('')
+  const shown = draft || String(size ?? '')
+
+  const commit = (): void => {
+    setDraft('')
+    const next = Number(shown)
+    if (Number.isFinite(next) && next !== size) onPick(Math.min(Math.max(Math.round(next), 10), 28))
+  }
+
+  return (
+    <div className="theme-picker">
+      <span className="theme-picker-label">Text size</span>
+      <input
+        className="prose-size"
+        type="number"
+        min={10}
+        max={28}
+        step={1}
+        value={shown}
+        disabled={size === undefined}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+        }}
+      />
+      <span className="modal-note">px — chat and file previews.</span>
     </div>
   )
 }

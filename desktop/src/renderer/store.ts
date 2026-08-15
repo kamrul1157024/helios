@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 import { api, bridge, statusOf } from './bridge.ts'
-import { applyTheme } from '../shared/theme/apply.ts'
+import { applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type { HostRecord, HostStatus, Notification, Session, SSEEvent, TabStatus } from '../shared/models.ts'
 import type { XtermTheme } from '../shared/theme/resolve.ts'
@@ -195,8 +195,9 @@ class Store {
     // The preload painted the boot theme already; this keeps up with changes
     // made afterwards, whether from the settings dialog or the OS switching
     // between light and dark underneath us.
-    bridge.theme.onChanged(({ theme, terminal, glass }) => {
+    bridge.theme.onChanged(({ theme, terminal, glass, proseSize }) => {
       applyTheme(document.documentElement, theme, glass)
+      applyProseSize(document.documentElement, proseSize)
       this.set({ terminalTheme: terminal })
     })
 

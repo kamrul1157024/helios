@@ -8,6 +8,8 @@ export interface ThemePayload {
   glass: boolean
   /** This platform can show it at all; false hides the toggle entirely. */
   glassSupported: boolean
+  /** Reading size for rendered markdown, in px. */
+  proseSize: number
 }
 import type {
   AppearancePrefs,

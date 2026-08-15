@@ -151,9 +151,16 @@ export function registerIpc(deps: IpcDeps): void {
 
   // Every window, not just the main one: the HUD draws its cards from the same
   // variables and would otherwise keep the old theme until it next opened.
-  const themePayload = (): { theme: unknown; terminal: unknown; glass: boolean; glassSupported: boolean } => ({
+  const themePayload = (): {
+    theme: unknown
+    terminal: unknown
+    glass: boolean
+    glassSupported: boolean
+    proseSize: number
+  } => ({
     theme: themes.active(),
     terminal: themes.activeTerminal(),
+    proseSize: themes.getPrefs().proseSize,
     // A property of the chosen theme, not a setting of its own: picking a
     // glass theme is the whole of the request. Gated on the platform, because
     // a preference to show a backdrop that does not exist is not showing one.

@@ -474,6 +474,8 @@ export interface AppearancePrefs {
   darkTheme: string
   /** A theme id, or 'match' to follow whichever UI theme is active. */
   terminalTheme: string
+  /** Body size of rendered markdown, in px; headings and tables scale with it. */
+  proseSize: number
 }
 
 /** A theme as the picker lists it; `swatch` is a handful of representative colours. */

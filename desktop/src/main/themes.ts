@@ -12,6 +12,18 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   lightTheme: 'light-modern',
   darkTheme: 'dark-modern',
   terminalTheme: 'match',
+  proseSize: 14,
+}
+
+/* Clamped rather than trusted: the file is hand-editable, and a zero or a
+   thousand there is a window with no readable way back to the setting. */
+const MIN_PROSE = 10
+const MAX_PROSE = 28
+
+function proseSize(value: unknown): number {
+  const size = Math.round(Number(value))
+  if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.proseSize
+  return Math.min(Math.max(size, MIN_PROSE), MAX_PROSE)
 }
 
 /**
@@ -44,6 +56,7 @@ export class ThemeRegistry {
         lightTheme: parsed.lightTheme ?? DEFAULT_APPEARANCE.lightTheme,
         darkTheme: parsed.darkTheme ?? DEFAULT_APPEARANCE.darkTheme,
         terminalTheme: parsed.terminalTheme ?? DEFAULT_APPEARANCE.terminalTheme,
+        proseSize: proseSize(parsed.proseSize ?? DEFAULT_APPEARANCE.proseSize),
       }
     } catch {
       this.prefs = { ...DEFAULT_APPEARANCE }
@@ -99,6 +112,7 @@ export class ThemeRegistry {
 
   setPrefs(next: Partial<AppearancePrefs>): AppearancePrefs {
     this.prefs = { ...this.prefs, ...next }
+    this.prefs.proseSize = proseSize(this.prefs.proseSize)
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
     fs.writeFileSync(this.file, JSON.stringify(this.prefs, null, 2))
     return this.getPrefs()
