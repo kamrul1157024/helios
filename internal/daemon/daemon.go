@@ -192,7 +192,14 @@ func startDaemon(cfg *Config) error {
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
 		return fmt.Errorf("write pid: %w", err)
 	}
-	defer os.Remove(pidPath)
+	// Only if it is still ours. A daemon that failed to bind used to remove the
+	// file on its way out, taking the running daemon's pid with it — which is
+	// why the machine that logged this had a live daemon and no pid file.
+	defer func() {
+		if pidFromFile() == os.Getpid() {
+			os.Remove(pidPath)
+		}
+	}()
 
 	log.Printf("helios daemon starting")
 	log.Printf("  internal: 127.0.0.1:%d (hooks + admin)", cfg.Server.InternalPort)
