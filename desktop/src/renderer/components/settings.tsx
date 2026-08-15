@@ -269,7 +269,9 @@ function SessionTitles(): JSX.Element {
               enabled: values['autotitle.enabled'] === 'true',
               // Only an explicit false turns the icon off, which is how the
               // daemon reads it (claude/autotitle.go).
-              emoji: values['autotitle.emoji'] !== 'false',
+              // Off unless turned on: without a Nerd Font every category
+              // renders as the same missing-character box.
+              emoji: values['autotitle.emoji'] === 'true',
               prompt: values['autotitle.prompt'] ?? '',
             },
           }))
@@ -338,7 +340,12 @@ function SessionTitles(): JSX.Element {
                 />
                 <span>
                   Icon prefix
-                  <small>A Nerd Font glyph per category —  [FIX] rather than [FIX]. Needs a Nerd Font to show.</small>
+                  <small>
+                    A glyph per category —  [FIX] rather than [FIX]. Off by default: the glyphs come from a
+                    patched <a href="https://www.nerdfonts.com" target="_blank" rel="noreferrer noopener">Nerd
+                    Font</a>, and without one installed every category shows the same empty box. The phone has no
+                    Nerd Font, so titles made here appear boxed there.
+                  </small>
                 </span>
               </label>
 
