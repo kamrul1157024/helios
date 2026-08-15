@@ -350,7 +350,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     }
     if (_attachments.isNotEmpty) {
       message = [
-        ..._attachments.map((f) => 'Attached: ${f.storedPath}'),
+        // Backticked: pasted bare into the agent's composer, a path to an
+        // image is taken for an attachment to make rather than text to keep,
+        // and vanishes from the prompt with nothing in its place.
+        ..._attachments.map((f) => 'Attached: `${f.storedPath}`'),
         '',
         text,
       ].join('\n').trim();
