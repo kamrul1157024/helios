@@ -131,6 +131,21 @@ func TestUpload_FilenameCannotEscapeTheUploadDirectory(t *testing.T) {
 	}
 }
 
+// The path is handed to the agent in a line of prose, and a macOS screenshot
+// is named in four words that read as part of the sentence.
+func TestUpload_SpacesInTheNameAreNotKept(t *testing.T) {
+	s, shared, home := newUploadTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+
+	_, payload := upload(t, s, "sess-1", part{name: "Screenshot 2026-08-15 at 2.33.50 PM.png", content: "x"})
+	paths := uploadedPaths(t, payload)
+
+	want := filepath.Join(home, ".helios", "uploads", "sess-1", "Screenshot-2026-08-15-at-2.33.50-PM.png")
+	if paths[0] != want {
+		t.Errorf("path: got %q, want %q", paths[0], want)
+	}
+}
+
 // Two screenshots are both called Screenshot.png. Neither may overwrite the
 // other: the first one's path is already in a prompt by then.
 func TestUpload_SameNameTwiceKeepsBothFiles(t *testing.T) {

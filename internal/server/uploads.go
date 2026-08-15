@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -142,8 +143,13 @@ func safeName(name string) string {
 	}
 	// Control characters and separators have no business in a filename, and the
 	// path goes on to be pasted into a prompt.
+	//
+	// Whitespace goes with them: the agent reads the path out of a line of
+	// prose, and "Screenshot 2026-08-15 at 2.33.50 PM.png" — what macOS calls
+	// every screenshot — is four words the agent cannot tell from the sentence
+	// around them.
 	base = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || r == '/' {
+		if r < 0x20 || r == 0x7f || r == '/' || unicode.IsSpace(r) {
 			return '-'
 		}
 		return r
