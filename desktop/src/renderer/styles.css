@@ -541,11 +541,21 @@ small {
    The whole filter arrives as one variable rather than a radius this rule
    builds on: a theme that asks for no blur emits nothing, the reference goes
    unresolved, and the property falls back to `none` — where a `blur(0px)` would
-   still have promoted every glass surface to its own compositing layer. */
+   still have promoted every glass surface to its own compositing layer.
+
+   Frosted once, for the whole window, rather than per panel. The panels do not
+   cover the window: there is a drag strip above them and an 8px channel between
+   and around them, and blurring only the panels leaves those bands showing the
+   backdrop raw — barely noticeable under a gradient, and a set of sharp seams
+   under a photograph. One layer also means one filtered surface to composite
+   instead of four overlapping ones. */
+[data-glass='on'] .app {
+  backdrop-filter: var(--glass-frost);
+}
+
 [data-glass='on'] .sidebar,
 [data-glass='on'] .detail {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 9%, transparent);
-  backdrop-filter: var(--glass-frost);
 }
 
 [data-glass='on'] .sidebar {
@@ -554,6 +564,11 @@ small {
 
 [data-glass='on'] .detail {
   background: var(--glass-panel);
+}
+
+/* The splash screen is its own root, so it does not get the shell's frost. */
+[data-glass='on'] .boot {
+  backdrop-filter: var(--glass-frost);
 }
 
 /* The panels inside a session — transcript, terminal, git, files — sit on the
