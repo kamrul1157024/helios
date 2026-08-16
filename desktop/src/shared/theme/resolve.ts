@@ -18,7 +18,15 @@ import {
   type AnsiName,
   type DeriveContext,
 } from './mapping.ts'
-import { backdropValue, clampIntensity, derivedStops, styleOf } from './backdrop.ts'
+import {
+  DEFAULT_BLUR,
+  backdropValue,
+  clampBlur,
+  clampIntensity,
+  derivedStops,
+  imageName,
+  styleOf,
+} from './backdrop.ts'
 import {
   composite,
   contrast,
@@ -67,6 +75,8 @@ export interface HeliosTheme {
     intensity: number
     /** Colours the theme named itself, or null where they are derived. */
     stops: string[] | null
+    /** File name of the image behind an 'image' style, null for the rest. */
+    image: string | null
   } | null
   /**
    * The colours a backdrop of this theme is drawn from, whether or not one is
@@ -74,6 +84,11 @@ export interface HeliosTheme {
    * able to show a style the theme is not currently using.
    */
   backdropPalette: string[]
+  /**
+   * How far the glass surfaces blur what is behind them, in px. Zero for an
+   * opaque theme, and for a glass theme that asked for none.
+   */
+  backdropBlur: number
 }
 
 const FALLBACK_BG: Record<ThemeMode, Rgb> = { dark: rgb(0x11, 0x13, 0x18), light: rgb(0xff, 0xff, 0xff) }
@@ -236,6 +251,20 @@ export function resolveTheme(
   const palette = derivedStops(resolved.get('primary') ?? bg, ansi.magenta, ansi.cyan, mode === 'dark')
   const spec = glass ? theme['helios.backdrop'] : undefined
   const style = styleOf(spec)
+
+  // The frosting, which is a property of the glass rather than of the backdrop:
+  // a window showing the desktop is blurred by the same rule as one showing a
+  // gradient. It starts at zero for the desktop only because the OS material
+  // has already blurred what is behind, and frosting it twice is just haze.
+  const blur = glass ? clampBlur(spec?.blur ?? (style === 'desktop' ? 0 : DEFAULT_BLUR)) : 0
+  if (blur > 0) {
+    // Saturation rises with the radius because blurring towards an average
+    // pulls the colour out of whatever is behind.
+    vars['--glass-frost'] = `blur(${blur}px) saturate(1.5)`
+    // Cards are a sheet on a sheet; blurring them as hard again flattens the
+    // difference between the two.
+    vars['--glass-frost-soft'] = `blur(${Math.round(blur / 2)}px)`
+  }
   let backdrop: HeliosTheme['backdrop'] = null
   if (spec && style !== 'desktop') {
     vars['--backdrop'] = backdropValue(spec, resolved.get('surface') ?? bg, palette)
@@ -246,6 +275,7 @@ export function resolveTheme(
       style,
       intensity: clampIntensity(spec.intensity),
       stops: named?.length ? named.map(toHex) : null,
+      image: style === 'image' ? imageName(spec) : null,
     }
   }
 
@@ -271,6 +301,7 @@ export function resolveTheme(
     glass,
     backdrop,
     backdropPalette: palette.map(toHex),
+    backdropBlur: blur,
   }
 }
 

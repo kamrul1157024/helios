@@ -20,6 +20,9 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
 const MIN_PROSE = 10
 const MAX_PROSE = 28
 
+/** What a backdrop image may be, and therefore what the media scheme serves. */
+const IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+
 function proseSize(value: unknown): number {
   const size = Math.round(Number(value))
   if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.proseSize
@@ -37,12 +40,14 @@ function proseSize(value: unknown): number {
 export class ThemeRegistry {
   private readonly bundledDir: string
   private readonly userDir: string
+  private readonly home: string
   private readonly file: string
   private themes = new Map<string, HeliosTheme>()
   private prefs: AppearancePrefs = { ...DEFAULT_APPEARANCE }
 
   constructor(bundledDir: string, userDataDir = app.getPath('userData'), home = os.homedir()) {
     this.bundledDir = bundledDir
+    this.home = home
     this.userDir = path.join(home, '.helios', 'themes')
     this.file = path.join(userDataDir, 'appearance.json')
   }
@@ -131,6 +136,33 @@ export class ThemeRegistry {
 
   getPrefs(): AppearancePrefs {
     return { ...this.prefs }
+  }
+
+  /** Where imported backdrop images live, next to the themes that name them. */
+  static mediaDir(home = os.homedir()): string {
+    return path.join(home, '.helios', 'backdrops')
+  }
+
+  /**
+   * Takes a copy of an image the user chose, and answers with the name a theme
+   * file refers to it by.
+   *
+   * Copied rather than linked: a backdrop that vanishes because the original
+   * was in a folder the user later tidied is a window that silently loses its
+   * look. One image per theme, overwritten, so choosing repeatedly does not
+   * leave a directory of abandoned wallpapers.
+   */
+  importImage(id: string, source: string): string {
+    const extension = path.extname(source).toLowerCase()
+    if (!IMAGE_TYPES.has(extension)) throw new Error(`unsupported image type: ${extension || 'none'}`)
+    const dir = ThemeRegistry.mediaDir(this.home)
+    fs.mkdirSync(dir, { recursive: true })
+    for (const stale of IMAGE_TYPES) {
+      if (stale !== extension) fs.rmSync(path.join(dir, `${id}${stale}`), { force: true })
+    }
+    const name = `${id}${extension}`
+    fs.copyFileSync(source, path.join(dir, name))
+    return name
   }
 
   /**

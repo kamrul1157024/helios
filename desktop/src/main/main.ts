@@ -1,5 +1,6 @@
-import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, session, shell } from 'electron'
+import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, net, protocol, session, shell } from 'electron'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { HostRegistry } from './hosts.ts'
 import { Hud } from './hud.ts'
@@ -26,6 +27,22 @@ let quitting = false
 
 /** Brings the HUD forward and gives it the keyboard, since it opens unfocused. */
 const ANSWER_SHORTCUT = 'CommandOrControl+Shift+A'
+
+/**
+ * How a backdrop image reaches the page.
+ *
+ * The renderer is a file:// document with `img-src 'self'`, which does not
+ * cover another file somewhere in the user's home. Rather than widen that to
+ * `file:`, which would let anything the page can be talked into requesting read
+ * the disk, one scheme serves one directory and refuses everything else.
+ *
+ * Must be declared before the app is ready, which is why it is out here.
+ */
+const MEDIA_SCHEME = 'helios-backdrop'
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+])
 
 /**
  * One window at a time. A second launch — or a `helios://` link handed to the
@@ -55,6 +72,7 @@ async function start(): Promise<void> {
 
   await app.whenReady()
   hardenSession()
+  serveBackdrops()
 
   hosts = new HostRegistry()
   terminals = new TerminalManager(hosts)
@@ -218,7 +236,7 @@ function hardenSession(): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data:; font-src 'self' data:; connect-src 'none'; " +
+            `img-src 'self' data: ${MEDIA_SCHEME}:; font-src 'self' data:; connect-src 'none'; ` +
             "object-src 'none'; base-uri 'none'; form-action 'none'",
         ],
       },
@@ -226,6 +244,23 @@ function hardenSession(): void {
   })
 
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+}
+
+/**
+ * Serves the backdrop images the user has imported, and nothing else.
+ *
+ * The path is resolved and then checked to be inside the directory, so a
+ * request dressed up with `..` lands outside and is refused rather than
+ * followed.
+ */
+function serveBackdrops(): void {
+  const root = ThemeRegistry.mediaDir()
+  protocol.handle(MEDIA_SCHEME, async (request) => {
+    const name = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '')
+    const file = path.resolve(root, name)
+    if (file !== path.join(root, path.basename(file))) return new Response('not found', { status: 404 })
+    return net.fetch(pathToFileURL(file).toString())
+  })
 }
 
 function focusWindow(): void {

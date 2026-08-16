@@ -118,6 +118,8 @@ interface RawBridge {
     /** The active theme's backdrop, which lives in the theme file itself. */
     backdrop(): Promise<BackdropState>
     setBackdrop(spec: BackdropSpec): Promise<BackdropState>
+    /** Opens a file dialog, imports the chosen image, and switches to it. */
+    pickBackdropImage(): Promise<BackdropState>
     onChanged(fn: (payload: ThemePayload) => void): Unsubscribe
   }
   hud: {

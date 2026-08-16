@@ -305,7 +305,7 @@ test('a backdrop block becomes one gradient per layer over the theme surface', (
     colors: DARK,
   })
   // Mesh is what a block with no style asked for, from the derived palette.
-  assert.deepEqual(theme.backdrop, { style: 'mesh', intensity: 0.45, stops: null })
+  assert.deepEqual(theme.backdrop, { style: 'mesh', intensity: 0.45, stops: null, image: null })
   const value = theme.vars['--backdrop'] as string
   assert.equal(value.match(/radial-gradient\(/g)?.length, 4)
   // The strongest layer is the intensity itself, and the theme's own surface is
@@ -426,6 +426,67 @@ test('a stop whose colour does not parse is left out', () => {
   assert.equal(value.match(/radial-gradient\(/g)?.length, 2)
   assert.ok(!value.includes('rebeccapurple'))
   assert.match(value, /rgb\(0 255 0/)
+})
+
+test('blur is emitted as a filter, and only when there is one to apply', () => {
+  const frosted = resolveTheme('frosted', { 'helios.glass': GLASS, 'helios.backdrop': { blur: 30 }, colors: DARK })
+  assert.equal(frosted.backdropBlur, 30)
+  assert.equal(frosted.vars['--glass-frost'], 'blur(30px) saturate(1.5)')
+  // Cards are a sheet on a sheet, so they get half.
+  assert.equal(frosted.vars['--glass-frost-soft'], 'blur(15px)')
+
+  // No variable rather than blur(0px): the reference goes unresolved and the
+  // property falls back to none, instead of promoting every glass surface to a
+  // compositing layer to blur it by nothing.
+  const sharp = resolveTheme('sharp', { 'helios.glass': GLASS, 'helios.backdrop': { blur: 0 }, colors: DARK })
+  assert.equal(sharp.vars['--glass-frost'], undefined)
+})
+
+// The OS material has already blurred what is behind the window; frosting it
+// again is haze. A painted gradient has had nothing done to it.
+test('blur defaults to none for the desktop and to a radius for a gradient', () => {
+  const desktop = resolveTheme('os', { 'helios.glass': GLASS, 'helios.backdrop': { style: 'desktop' }, colors: DARK })
+  assert.equal(desktop.backdropBlur, 0)
+
+  const painted = resolveTheme('painted', { 'helios.glass': GLASS, 'helios.backdrop': { style: 'mesh' }, colors: DARK })
+  assert.ok(painted.backdropBlur > 0)
+})
+
+test('an opaque theme frosts nothing, whatever its backdrop block says', () => {
+  const theme = resolveTheme('solid', { 'helios.backdrop': { blur: 40 }, colors: DARK })
+  assert.equal(theme.backdropBlur, 0)
+  assert.equal(theme.vars['--glass-frost'], undefined)
+})
+
+test('an image backdrop is served over the media scheme, under a scrim', () => {
+  const theme = resolveTheme('pictured', {
+    'helios.glass': GLASS,
+    'helios.backdrop': { style: 'image', image: 'liquid-glass.png', intensity: 0.3 },
+    colors: DARK,
+  })
+  assert.equal(theme.backdrop?.style, 'image')
+  assert.equal(theme.backdrop?.image, 'liquid-glass.png')
+  const value = theme.vars['--backdrop'] as string
+  assert.match(value, /url\('helios-backdrop:\/\/media\/liquid-glass\.png'\) center \/ cover no-repeat/)
+  // The scrim is the theme's own surface at the chosen strength, so a
+  // photograph cannot decide how readable the transcript on top of it is.
+  assert.match(value, /^linear-gradient\(rgb\(13 15 19 \/ 30%\), rgb\(13 15 19 \/ 30%\)\)/)
+})
+
+// The name reaches a url() in an inline style, and the scheme that serves it
+// refuses to leave one directory — so anything that is not a bare file name of
+// a type we serve is not an image at all.
+test('an image name that is a path is refused, and the style falls back', () => {
+  for (const image of ['../../secrets.png', '/etc/passwd', 'evil.png\'), url(\'http://x', 'notes.txt']) {
+    const theme = resolveTheme('sneaky', {
+      'helios.glass': GLASS,
+      'helios.backdrop': { style: 'image', image },
+      colors: DARK,
+    })
+    assert.equal(theme.backdrop?.image, null)
+    assert.equal(theme.backdrop?.style, 'mesh')
+    assert.ok(!(theme.vars['--backdrop'] as string).includes('url('))
+  }
 })
 
 test('the backdrop block survives an include chain', () => {

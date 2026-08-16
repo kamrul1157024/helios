@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { ApiError, type ApiClient } from './api.ts'
 import type { HostRegistry } from './hosts.ts'
@@ -214,10 +214,12 @@ export function registerIpc(deps: IpcDeps): void {
       glass: theme.glass !== null,
       style: theme.backdrop?.style ?? 'desktop',
       intensity: theme.backdrop?.intensity ?? DEFAULT_INTENSITY,
+      blur: theme.backdropBlur,
       // Padded to the derived length, so a theme that named two colours still
       // gives the picker a full set of wells to edit.
       palette: theme.backdropPalette.map((derived, i) => named?.[i] ?? derived),
       custom: named !== null,
+      image: theme.backdrop?.image ?? null,
       // Offering the desktop where there is no way to show it would be
       // offering an opaque window under a different name.
       desktopSupported: glassSupported,
@@ -225,6 +227,38 @@ export function registerIpc(deps: IpcDeps): void {
   }
 
   handle('theme:backdrop', async () => backdropState())
+
+  /**
+   * Picks an image, copies it in, and switches the theme to it in one step.
+   *
+   * One call rather than a pick followed by a save: a chosen file that failed
+   * to become a backdrop would leave a copy in the media directory and nothing
+   * pointing at it.
+   */
+  handle('theme:pickBackdropImage', async () => {
+    const parent = deps.window()
+    const options = {
+      title: 'Choose a backdrop image',
+      properties: ['openFile' as const],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    }
+    const picked =
+      parent && !parent.isDestroyed()
+        ? await dialog.showOpenDialog(parent, options)
+        : await dialog.showOpenDialog(options)
+    const source = picked.filePaths[0]
+    if (picked.canceled || !source) return backdropState()
+    const theme = themes.active()
+    themes.setBackdrop(theme.id, {
+      style: 'image',
+      intensity: theme.backdrop?.intensity ?? DEFAULT_INTENSITY,
+      blur: theme.backdropBlur,
+      image: themes.importImage(theme.id, source),
+    })
+    onAppearanceChange()
+    broadcastTheme()
+    return backdropState()
+  })
   handle('theme:setBackdrop', async (_e, spec: BackdropSpec) => {
     themes.setBackdrop(themes.active().id, spec)
     onAppearanceChange()

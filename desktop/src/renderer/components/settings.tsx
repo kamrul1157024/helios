@@ -4,7 +4,7 @@ import { api, bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
 import { Modal } from './newsession.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
-import { BACKDROP_STYLES, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
+import { BACKDROP_STYLES, MAX_BLUR, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
 import { parseColor, type BackdropSpec, type BackdropStyle, type Rgb } from '../../shared/theme/vscode.ts'
 import type { HeliosTheme } from '../../shared/theme/resolve.ts'
 import type { AppearancePrefs, BackdropState, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
@@ -475,6 +475,7 @@ const BACKDROP_LABELS: Record<BackdropStyle, string> = {
   corner: 'Corner',
   wash: 'Wash',
   aurora: 'Aurora',
+  image: 'Image',
 }
 
 /**
@@ -487,9 +488,9 @@ const BACKDROP_LABELS: Record<BackdropStyle, string> = {
 function Backdrop(): JSX.Element | null {
   const [state, setState] = useState<BackdropState | null>(null)
   const [theme, setActive] = useState<HeliosTheme>(() => bridge.theme.boot().theme)
-  /** Held while the slider is under the pointer; saving each step would rewrite
+  /** Held while a slider is under the pointer; saving each step would rewrite
       the theme file on every frame of a drag. */
-  const [dragging, setDragging] = useState<number | null>(null)
+  const [dragging, setDragging] = useState<{ intensity?: number; blur?: number }>({})
   /** The same, for the colour wells: an OS colour panel streams changes as the
       user moves around it, and only the one they settle on is worth saving. */
   const [picking, setPicking] = useState<string[] | null>(null)
@@ -506,9 +507,23 @@ function Backdrop(): JSX.Element | null {
     })
   }, [])
 
-  const save = async (spec: BackdropSpec): Promise<void> => {
+  /**
+   * Writes the whole block, not the field that changed.
+   *
+   * Saving replaces `helios.backdrop` in the theme file outright, so a partial
+   * spec is how the blur disappears the next time someone moves the intensity.
+   * Dropping `stops` is therefore also how the reset works.
+   */
+  const save = async (patch: Partial<BackdropSpec> & { stops?: BackdropSpec['stops'] }): Promise<void> => {
     if (!state) return
-    setState({ ...state, style: spec.style ?? state.style, intensity: spec.intensity ?? state.intensity })
+    const spec: BackdropSpec = {
+      style: state.style,
+      intensity: state.intensity,
+      blur: state.blur,
+      ...(state.custom ? { stops: state.palette.map((color) => ({ color })) } : {}),
+      ...patch,
+    }
+    setState({ ...state, ...patch, stops: undefined } as BackdropState)
     try {
       setState(await bridge.theme.setBackdrop(spec))
       setPicking(null)
@@ -518,11 +533,11 @@ function Backdrop(): JSX.Element | null {
     }
   }
 
-  const commit = (): void => {
-    if (dragging === null || !state) return
-    const next = dragging
-    setDragging(null)
-    if (next !== state.intensity) void save({ style: state.style, intensity: next })
+  const commit = (field: 'intensity' | 'blur'): void => {
+    const next = dragging[field]
+    if (next === undefined || !state) return
+    setDragging((held) => ({ ...held, [field]: undefined }))
+    if (next !== state[field]) void save({ [field]: next })
   }
 
   /**
@@ -538,9 +553,15 @@ function Backdrop(): JSX.Element | null {
     next[index] = colour
     setPicking(next)
     clearTimeout(settle.current ?? undefined)
-    settle.current = setTimeout(() => {
-      void save({ style: state.style, intensity: state.intensity, stops: next.map((color) => ({ color })) })
-    }, 400)
+    settle.current = setTimeout(() => void save({ stops: next.map((color) => ({ color })) }), 400)
+  }
+
+  const chooseImage = async (): Promise<void> => {
+    try {
+      setState(await bridge.theme.pickBackdropImage())
+    } catch (err) {
+      store.fail(err)
+    }
   }
 
   // An opaque theme has nothing to show a backdrop through, and a picker that
@@ -550,8 +571,10 @@ function Backdrop(): JSX.Element | null {
   const styles: BackdropStyle[] = [
     ...(state.desktopSupported ? (['desktop'] as BackdropStyle[]) : []),
     ...BACKDROP_STYLES,
+    'image',
   ]
-  const intensity = dragging ?? state.intensity
+  const intensity = dragging.intensity ?? state.intensity
+  const blur = dragging.blur ?? state.blur
   const palette = picking ?? state.palette
 
   return (
@@ -562,40 +585,46 @@ function Backdrop(): JSX.Element | null {
           <button
             key={style}
             className={state.style === style ? 'theme-chip selected' : 'theme-chip'}
-            onClick={() =>
-              void save({
-                style,
-                intensity,
-                ...(state.custom ? { stops: palette.map((color) => ({ color })) } : {}),
-              })
-            }
-            title={style === 'desktop' ? 'Show the desktop through the window' : `Paint a ${style} gradient`}
+            // Choosing the image style means choosing an image: a chip that
+            // selected an empty one and left the user to find a second control
+            // would be a chip that appears to do nothing.
+            onClick={() => (style === 'image' ? void chooseImage() : void save({ style }))}
+            title={CHIP_HINTS[style]}
           >
             <span
               className={style === 'desktop' ? 'backdrop-swatch desktop' : 'backdrop-swatch'}
-              style={style === 'desktop' ? undefined : { background: previewOf(theme, style, intensity, palette) }}
+              style={
+                style === 'desktop' ? undefined : { background: swatchOf(theme, style, intensity, palette, state.image) }
+              }
             />
             {BACKDROP_LABELS[style]}
           </button>
         ))}
       </div>
       {state.style !== 'desktop' && (
-        <input
-          className="backdrop-intensity"
-          type="range"
+        <Slider
+          label={state.style === 'image' ? 'Dim' : 'Colour'}
           min={MIN_INTENSITY}
           max={MAX_INTENSITY}
           step={0.05}
           value={intensity}
-          onChange={(event) => setDragging(Number(event.target.value))}
-          // The swatches follow the thumb; the window and the file wait for it
-          // to be let go.
-          onPointerUp={() => commit()}
-          onKeyUp={() => commit()}
-          onBlur={() => commit()}
+          onDrag={(next) => setDragging((held) => ({ ...held, intensity: next }))}
+          onSettle={() => commit('intensity')}
         />
       )}
-      {state.style !== 'desktop' && (
+      {/* Offered for the desktop too: the frosting is a property of the glass,
+          and a window showing a wallpaper wants it at least as much as one
+          showing a gradient. */}
+      <Slider
+        label="Blur"
+        min={0}
+        max={MAX_BLUR}
+        step={2}
+        value={blur}
+        onDrag={(next) => setDragging((held) => ({ ...held, blur: next }))}
+        onSettle={() => commit('blur')}
+      />
+      {state.style !== 'desktop' && state.style !== 'image' && (
         <div className="backdrop-colours">
           {palette.map((colour, index) => (
             <input
@@ -624,16 +653,82 @@ function Backdrop(): JSX.Element | null {
   )
 }
 
+const CHIP_HINTS: Record<BackdropStyle, string> = {
+  desktop: 'Show the desktop through the window',
+  mesh: 'Paint a mesh of four soft blobs',
+  corner: 'Paint two opposing corner glows',
+  wash: 'Paint a single wash from the top',
+  aurora: 'Paint diagonal bands',
+  image: 'Choose a picture to sit behind the glass',
+}
+
+/** A labelled range that reports while it moves and again when it is let go. */
+function Slider({
+  label,
+  min,
+  max,
+  step,
+  value,
+  onDrag,
+  onSettle,
+}: {
+  label: string
+  min: number
+  max: number
+  step: number
+  value: number
+  onDrag: (value: number) => void
+  onSettle: () => void
+}): JSX.Element {
+  return (
+    <label className="backdrop-slider">
+      <span>{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onDrag(Number(event.target.value))}
+        // The swatches follow the thumb; the window and the file wait for it to
+        // be let go.
+        onPointerUp={onSettle}
+        onKeyUp={onSettle}
+        onBlur={onSettle}
+      />
+    </label>
+  )
+}
+
 /**
  * The same value the theme would resolve to, drawn small.
  *
  * Built by the generator the window itself uses, from the palette the resolver
  * derived, so a swatch cannot disagree with the result of clicking it.
  */
-function previewOf(theme: HeliosTheme, style: BackdropStyle, intensity: number, palette: string[]): string {
+function swatchOf(
+  theme: HeliosTheme,
+  style: BackdropStyle,
+  intensity: number,
+  palette: string[],
+  image: string | null,
+): string {
+  if (style !== 'image') return previewOf(theme, style, intensity, palette)
+  // Nothing imported yet: the chip is an invitation rather than a preview.
+  if (!image) return `repeating-linear-gradient(45deg, ${theme.vars['--surface-high']} 0 5px, ${theme.vars['--surface-highest']} 5px 10px)`
+  return previewOf(theme, style, intensity, palette, image)
+}
+
+function previewOf(
+  theme: HeliosTheme,
+  style: BackdropStyle,
+  intensity: number,
+  palette: string[],
+  image?: string,
+): string {
   const stops = palette.map(parseColor).filter((c): c is Rgb => c !== null)
   const base = parseColor(theme.vars['--surface'] ?? '') ?? (parseColor('#101014') as Rgb)
-  return backdropValue({ style, intensity }, base, stops)
+  return backdropValue({ style, intensity, ...(image ? { image } : {}) }, base, stops)
 }
 
 function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: number) => void }): JSX.Element {

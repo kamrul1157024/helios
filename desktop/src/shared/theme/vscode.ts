@@ -42,7 +42,7 @@ export interface BackdropStop {
  * How the gradients are arranged, or 'desktop' for a theme that would rather
  * show whatever is behind the window than paint anything itself.
  */
-export type BackdropStyle = 'desktop' | 'mesh' | 'corner' | 'wash' | 'aurora'
+export type BackdropStyle = 'desktop' | 'mesh' | 'corner' | 'wash' | 'aurora' | 'image'
 
 /**
  * The gradient a glass theme paints behind itself, so the look does not depend
@@ -53,8 +53,20 @@ export interface BackdropSpec {
   style?: BackdropStyle
   /** Alpha of the strongest layer; the rest are scaled from it. */
   intensity?: number
+  /**
+   * How far the glass surfaces blur what is behind them, in px. Applies to the
+   * desktop as much as to a painted gradient — it is the frosting, not the
+   * thing being frosted.
+   */
+  blur?: number
   /** Replaces the derived palette outright. */
   stops?: BackdropStop[]
+  /**
+   * File name of an imported image, for the 'image' style. A bare name inside
+   * the backdrops directory — never a path, since it is served by a scheme that
+   * refuses to leave that directory.
+   */
+  image?: string
 }
 
 export interface VSCodeTheme {
