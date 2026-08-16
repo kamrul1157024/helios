@@ -493,10 +493,14 @@ export interface BackdropState {
   glass: boolean
   style: BackdropStyle
   intensity: number
+  /** How far the glass surfaces blur what is behind them, in px. */
+  blur: number
   /** What the gradients are drawn from, whether named by the theme or derived. */
   palette: string[]
   /** True when those colours were named rather than derived from the theme. */
   custom: boolean
+  /** File name of the chosen image, or null where none has been imported. */
+  image: string | null
   /** Whether this platform can show the desktop behind the window. */
   desktopSupported: boolean
 }

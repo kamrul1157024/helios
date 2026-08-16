@@ -122,6 +122,7 @@ const helios = {
     reload: () => call('theme:reload'),
     backdrop: () => call('theme:backdrop'),
     setBackdrop: (spec: unknown) => call('theme:setBackdrop', spec),
+    pickBackdropImage: () => call('theme:pickBackdropImage'),
     onChanged: (fn: (payload: unknown) => void) => on('theme:changed', fn),
   },
   hud: {

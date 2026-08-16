@@ -29,7 +29,7 @@ type Layer =
  * which is what keeps it from reading as a plain vignette. The rest are the
  * quieter arrangements of the same idea.
  */
-const STYLES: Record<Exclude<BackdropStyle, 'desktop'>, Layer[]> = {
+const STYLES: Record<Exclude<BackdropStyle, 'desktop' | 'image'>, Layer[]> = {
   mesh: [
     { kind: 'radial', at: '12% 8%', size: '70% 60%', colour: 0, weight: 1 },
     { kind: 'radial', at: '88% 18%', size: '60% 55%', colour: 1, weight: 0.5 },
@@ -51,7 +51,13 @@ const STYLES: Record<Exclude<BackdropStyle, 'desktop'>, Layer[]> = {
   ],
 }
 
-export const BACKDROP_STYLES = Object.keys(STYLES) as Exclude<BackdropStyle, 'desktop'>[]
+export const BACKDROP_STYLES = Object.keys(STYLES) as Exclude<BackdropStyle, 'desktop' | 'image'>[]
+
+/** The scheme the main process serves imported images on. */
+export const MEDIA_SCHEME = 'helios-backdrop'
+
+/** A bare file name: no separators, no `..`, and an extension we serve. */
+const IMAGE_NAME = /^[\w.-]+\.(?:png|jpe?g|webp)$/i
 
 /* Below the floor the backdrop is a waste of a layer; above the ceiling it
    reaches the text, which is the one thing the surfaces above it are for. */
@@ -78,11 +84,31 @@ export function clampIntensity(value: number | undefined): number {
   return Math.max(MIN_INTENSITY, Math.min(MAX_INTENSITY, value as number))
 }
 
+/* Zero is a legitimate answer here — a theme may want its gradient sharp, and
+   on macOS the window material has already blurred the desktop. The ceiling is
+   where more radius stops changing anything a viewer can see. */
+export const MAX_BLUR = 48
+export const DEFAULT_BLUR = 24
+
+export function clampBlur(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_BLUR
+  return Math.max(0, Math.min(MAX_BLUR, Math.round(value as number)))
+}
+
 /** 'desktop' for a theme that asks for the OS material, or has asked for nothing. */
 export function styleOf(spec: BackdropSpec | undefined): BackdropStyle {
   if (!spec) return 'desktop'
   if (spec.style === 'desktop') return 'desktop'
+  // An image style with no usable image left would otherwise be a blank
+  // window; falling back to the gradient keeps something behind the glass.
+  if (spec.style === 'image') return imageName(spec) ? 'image' : 'mesh'
   return spec.style && spec.style in STYLES ? spec.style : 'mesh'
+}
+
+/** The image a spec names, or null where it names nothing we would serve. */
+export function imageName(spec: BackdropSpec | undefined): string | null {
+  const name = spec?.image?.trim()
+  return name && IMAGE_NAME.test(name) ? name : null
 }
 
 /**
@@ -125,6 +151,20 @@ export function backdropValue(spec: BackdropSpec, base: Rgb, derived: Rgb[]): st
   const style = styleOf(spec)
   if (style === 'desktop') return ''
 
+  // An image is laid under a scrim of the theme's own surface rather than shown
+  // raw. A photograph behind a transcript is a contrast problem, and intensity
+  // is how far towards the theme it is pulled — the same slider, doing the
+  // same job it does for a gradient.
+  const image = style === 'image' ? imageName(spec) : null
+  if (image) {
+    const scrim = toRgba(base, clampIntensity(spec.intensity))
+    return [
+      `linear-gradient(${scrim}, ${scrim})`,
+      `url('${MEDIA_SCHEME}://media/${encodeURIComponent(image)}') center / cover no-repeat`,
+      toRgba(base, 1),
+    ].join(', ')
+  }
+
   const intensity = clampIntensity(spec.intensity)
   const declared = spec.stops?.length ? spec.stops : null
   const palette: (Rgb | null)[] = declared
@@ -132,7 +172,7 @@ export function backdropValue(spec: BackdropSpec, base: Rgb, derived: Rgb[]): st
     : derived
 
   const layers: string[] = []
-  for (const layer of STYLES[style]) {
+  for (const layer of STYLES[style as keyof typeof STYLES]) {
     // A style may have more layers than the palette has colours, and a stop
     // whose colour does not parse is left out rather than guessed at: one
     // missing blob is a quieter failure than a grey one in the wrong place.
