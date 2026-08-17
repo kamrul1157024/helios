@@ -390,13 +390,15 @@ type exchangePair struct {
 // user actually said, from one read of the transcript.
 //
 // One read, because the file is the session's whole history — a busy one runs
-// to megabytes — and both answers come out of the same scan.
+// to megabytes — and both answers come out of the same scan. It goes through
+// the store, since this runs on the Stop hook of every turn and the only new
+// part of the file is what that turn wrote.
 func readSession(transcriptPath string, n int) (pairs []exchangePair, latest string) {
 	if transcriptPath == "" {
 		return nil, ""
 	}
 
-	result, err := transcript.ParseClaudeTranscript(transcriptPath, 200, 0)
+	result, err := transcript.Page(transcriptPath, 200, 0)
 	if err != nil {
 		return nil, ""
 	}

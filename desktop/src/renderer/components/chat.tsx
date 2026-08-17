@@ -30,7 +30,7 @@ import {
   type TranscriptMessage,
 } from '../../shared/models.ts'
 
-const PAGE = 200
+const PAGE = 50
 
 export function ChatPanel({
   hostId,
@@ -51,6 +51,9 @@ export function ChatPanel({
   const [reload, setReload] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [total, setTotal] = useState(0)
+  // Which parse the held seq numbers count against. A delta quotes it back so
+  // the daemon can say when it no longer holds.
+  const [epoch, setEpoch] = useState('')
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -63,6 +66,12 @@ export function ChatPanel({
   const scroller = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
   const pinnedToBottom = useRef(true)
+  // The messages a delta has to follow on from, without the delta effect
+  // re-running every time one arrives.
+  const messagesRef = useRef<TranscriptMessage[]>([])
+  const loadingOlder = useRef(false)
+  // Scroll height captured before older messages are prepended.
+  const anchor = useRef<number | null>(null)
   const promptDraft = useStore((s) => s.promptDraft)
   const [selection, clearSelection] = useTextSelection(scroller)
 
@@ -71,10 +80,9 @@ export function ChatPanel({
   const terminated = canResume(session)
   const cold = needsRecovery(session)
 
+  // The newest page, on arrival at a session. An unwatched transcript is not
+  // read at all: reading it again on the way back costs one request.
   useEffect(() => {
-    // last_event_at moves with every hook the agent fires, so an unwatched
-    // transcript would refetch itself all day. Reading it again on the way
-    // back costs one request instead.
     if (!active) return
     let cancelled = false
     const load = async (): Promise<void> => {
@@ -84,6 +92,7 @@ export function ChatPanel({
         setMessages(page.messages)
         setTotal(page.total)
         setHasMore(page.has_more)
+        setEpoch(page.epoch ?? '')
         setLoadedFor(session.session_id)
       } catch (err) {
         if (!cancelled) store.fail(err)
@@ -93,9 +102,39 @@ export function ChatPanel({
     return () => {
       cancelled = true
     }
-    // Reloads as the agent works: last_event_at moves on every hook, and the
-    // transcript is a file the daemon re-reads rather than a stream.
-  }, [hostId, session.session_id, session.last_event_at, status, active, reload])
+  }, [hostId, session.session_id, active, reload])
+
+  // Then only what the agent has added since. last_event_at moves on every
+  // hook it fires, which for a busy session is several times a turn — pulling
+  // the whole page each time would re-render the transcript and lose the
+  // reader's place for the sake of one new message.
+  useEffect(() => {
+    if (!active || loadedFor !== session.session_id || !epoch) return
+    const newest = messagesRef.current[messagesRef.current.length - 1]?.seq ?? -1
+    let cancelled = false
+    const load = async (): Promise<void> => {
+      try {
+        const page = await api(hostId).transcriptSince(session.session_id, newest, epoch, PAGE)
+        if (cancelled || page.messages.length === 0) return
+        if (page.epoch_changed) {
+          // The transcript is no longer the one those seq numbers counted
+          // against — forked, or replaced. What is held has to go.
+          setMessages(page.messages)
+          setEpoch(page.epoch ?? '')
+          setHasMore(page.has_more)
+        } else {
+          setMessages((current) => [...current, ...page.messages])
+        }
+        setTotal(page.total)
+      } catch (err) {
+        if (!cancelled) store.fail(err)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [hostId, session.session_id, session.last_event_at, status, active, loadedFor, epoch])
 
   // Lines picked in the Files panel arrive here rather than being sent: what to
   // ask about them is still to be typed.
@@ -110,20 +149,35 @@ export function ChatPanel({
   }, [promptDraft?.seq])
 
   useEffect(() => {
-    if (pinnedToBottom.current && scroller.current) {
-      scroller.current.scrollTop = scroller.current.scrollHeight
+    messagesRef.current = messages
+    const el = scroller.current
+    if (!el) return
+    // Older messages arriving above the reader must not move what they are
+    // reading: the view stays where it was by the height that was inserted.
+    if (anchor.current !== null) {
+      el.scrollTop += el.scrollHeight - anchor.current
+      anchor.current = null
+      return
     }
+    if (pinnedToBottom.current) el.scrollTop = el.scrollHeight
   }, [messages])
 
   useEffect(() => () => retries.current.forEach(clearTimeout), [])
 
   const loadOlder = async (): Promise<void> => {
+    if (loadingOlder.current || !hasMore) return
+    loadingOlder.current = true
+    anchor.current = scroller.current?.scrollHeight ?? null
     try {
       const page = await api(hostId).transcript(session.session_id, PAGE, messages.length)
       setMessages((current) => [...page.messages, ...current])
       setHasMore(page.has_more)
+      setTotal(page.total)
     } catch (err) {
+      anchor.current = null
       store.fail(err)
+    } finally {
+      loadingOlder.current = false
     }
   }
 
@@ -229,6 +283,8 @@ export function ChatPanel({
         onScroll={(event) => {
           const el = event.currentTarget
           pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          // Near the top is a request for what came before it.
+          if (el.scrollTop < 200) void loadOlder()
         }}
       >
         {loadedFor !== session.session_id ? (

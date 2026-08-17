@@ -27,6 +27,10 @@ const (
 
 // Message is a generic, provider-agnostic transcript message.
 type Message struct {
+	// Seq is the message's position in the transcript, counted from the start
+	// of the file. Transcripts are append-only, so a seq refers to the same
+	// message for as long as the epoch it was served under holds.
+	Seq       int                    `json:"seq"`
 	Role      MessageRole            `json:"role"`
 	Content   string                 `json:"content,omitempty"`
 	Tool      string                 `json:"tool,omitempty"`
@@ -43,6 +47,14 @@ type TranscriptResult struct {
 	Returned int       `json:"returned"`
 	Offset   int       `json:"offset"`
 	HasMore  bool      `json:"has_more"`
+	// Epoch identifies the parse the seq numbers belong to. It changes when a
+	// transcript stops being an extension of what was read before — a fork, a
+	// new file at the same path, a truncation.
+	Epoch string `json:"epoch,omitempty"`
+	// EpochChanged answers a delta request that named a stale epoch. The
+	// messages are then a fresh newest page rather than a delta, and the
+	// caller has to replace what it holds instead of appending.
+	EpochChanged bool `json:"epoch_changed,omitempty"`
 }
 
 // claudeEntry is the raw structure of a Claude .jsonl line.
@@ -84,30 +96,54 @@ func ParseClaudeTranscript(path string, limit, offset int) (*TranscriptResult, e
 
 // parseClaude parses the .jsonl stream, skipping any entry longer than max.
 func parseClaude(src io.Reader, max, limit, offset int) (*TranscriptResult, error) {
-	var allMessages []Message
+	allMessages, _, err := parseSegment(src, max, 0)
+	if err != nil {
+		return nil, err
+	}
+	return page(allMessages, limit, offset), nil
+}
+
+// parseSegment parses complete lines out of src, numbering messages from
+// firstSeq, and reports how many bytes it consumed.
+//
+// A transcript is read while it is being written, so the last line can be half
+// there. Only bytes up to and including the final newline are counted as
+// consumed: an unterminated tail is left for the next read rather than parsed
+// into a truncated message that would then be cached forever.
+func parseSegment(src io.Reader, max, firstSeq int) (msgs []Message, consumed int64, err error) {
 	r := bufio.NewReaderSize(src, 64*1024)
+	seq := firstSeq
 
 	for {
-		line, oversized, err := readLine(r, max)
+		line, oversized, raw, terminated, readErr := readSegmentLine(r, max)
+		if terminated {
+			consumed += raw
+		}
 		// An entry longer than the cap is a tool result carrying a whole file,
 		// and its tail is gone: parsing the head would only yield broken JSON.
-		if len(line) > 0 && !oversized {
+		if terminated && len(line) > 0 && !oversized {
 			var entry claudeEntry
 			if json.Unmarshal(line, &entry) == nil {
-				allMessages = append(allMessages, parseClaudeEntry(&entry)...)
+				for _, m := range parseClaudeEntry(&entry) {
+					m.Seq = seq
+					seq++
+					msgs = append(msgs, m)
+				}
 			}
 		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return msgs, consumed, nil
 			}
-			return nil, fmt.Errorf("read transcript: %w", err)
+			return nil, 0, fmt.Errorf("read transcript: %w", readErr)
 		}
 	}
+}
 
-	total := len(allMessages)
+// page slices a window off the end of msgs: offset=0 gets the last `limit`.
+func page(msgs []Message, limit, offset int) *TranscriptResult {
+	total := len(msgs)
 
-	// Paginate from the end: offset=0 gets the last `limit` messages
 	start := total - offset - limit
 	end := total - offset
 	if start < 0 {
@@ -120,27 +156,29 @@ func parseClaude(src io.Reader, max, limit, offset int) (*TranscriptResult, erro
 		end = total
 	}
 
-	page := allMessages[start:end]
-
 	return &TranscriptResult{
-		Messages: page,
+		Messages: msgs[start:end],
 		Total:    total,
-		Returned: len(page),
+		Returned: end - start,
 		Offset:   offset,
 		HasMore:  start > 0,
-	}, nil
+	}
 }
 
-// readLine returns the next line without its terminator, reporting whether it
-// was longer than max bytes — in which case the excess is read and dropped.
+// readSegmentLine returns the next line without its terminator, reporting
+// whether it was longer than max bytes — in which case the excess is read and
+// dropped — how many raw bytes it occupied, and whether it ended in a newline.
+//
 // bufio.Scanner cannot do this: one over-long line ends the scan, and a single
 // huge tool result would cost the caller the whole transcript.
-func readLine(r *bufio.Reader, max int) (line []byte, oversized bool, err error) {
+func readSegmentLine(r *bufio.Reader, max int) (line []byte, oversized bool, raw int64, terminated bool, err error) {
 	total := 0
 	for {
 		chunk, readErr := r.ReadSlice('\n')
 		more := errors.Is(readErr, bufio.ErrBufferFull)
+		raw += int64(len(chunk))
 		if !more {
+			terminated = len(chunk) > 0 && chunk[len(chunk)-1] == '\n'
 			chunk = trimEOL(chunk)
 		}
 		total += len(chunk)
@@ -153,7 +191,7 @@ func readLine(r *bufio.Reader, max int) (line []byte, oversized bool, err error)
 		if more {
 			continue
 		}
-		return line, total > max, readErr
+		return line, total > max, raw, terminated, readErr
 	}
 }
 

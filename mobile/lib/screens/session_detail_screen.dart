@@ -49,6 +49,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   bool _sending = false;
   int _total = 0;
   bool _hasMore = false;
+  bool _loadingOlder = false;
+
+  /// Which parse the held seq numbers count against, quoted back when asking
+  /// for a delta so the daemon can say when it no longer holds.
+  String _epoch = '';
+
+  /// Messages per request. A page is what fills a screen and a little more,
+  /// not the whole conversation: the rest arrives as the reader scrolls.
+  static const int _pageSize = 50;
   StreamSubscription<SSEEvent>? _eventSub;
   String _currentVerb = randomClaudeVerb();
   Timer? _verbTimer;
@@ -95,11 +104,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         if (event.type == 'session_status' &&
             data['session_id'] == widget.session.sessionId) {
           debugPrint(
-            '[Transcript][${widget.session.sessionId}] SSE session_status → reload transcript (status=${data['status']})',
+            '[Transcript][${widget.session.sessionId}] SSE session_status → read new messages (status=${data['status']})',
           );
           _transcriptDebounce?.cancel();
           _transcriptDebounce = Timer(const Duration(milliseconds: 500), () {
-            _loadTranscript();
+            _loadNewMessages();
           });
         }
         if (event.type == 'notification' ||
@@ -173,7 +182,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       debugPrint('[Transcript][$sid] no SSE service, aborting');
       return;
     }
-    final result = await sse.fetchTranscript(sid, limit: 200);
+    final result = await sse.fetchTranscript(sid, limit: _pageSize);
     debugPrint(
       '[Transcript][$sid] fetchTranscript result=${result == null ? "null" : "total=${result.total} returned=${result.messages.length} hasMore=${result.hasMore}"}',
     );
@@ -182,6 +191,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         _messages = result.messages;
         _total = result.total;
         _hasMore = result.hasMore;
+        _epoch = result.epoch;
         _loading = false;
       });
     } else if (mounted) {
@@ -190,6 +200,66 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       );
       setState(() => _loading = false);
     }
+  }
+
+  /// Pulls what the agent has written since the last message held.
+  ///
+  /// A status event fires several times a turn, and the answer to it is
+  /// usually one message. Asking for the page again would rebuild the list and
+  /// throw away where the reader was.
+  Future<void> _loadNewMessages() async {
+    final sse = _sse;
+    if (sse == null) return;
+    if (_messages.isEmpty || _epoch.isEmpty) {
+      await _loadTranscript();
+      return;
+    }
+
+    final result = await sse.fetchTranscript(
+      widget.session.sessionId,
+      limit: _pageSize,
+      afterSeq: _messages.last.seq,
+      epoch: _epoch,
+    );
+    if (result == null || !mounted) return;
+
+    setState(() {
+      if (result.epochChanged) {
+        // The transcript those seq numbers counted against is gone — forked,
+        // or replaced. Start from what is there now.
+        _messages = result.messages;
+        _epoch = result.epoch;
+        _hasMore = result.hasMore;
+      } else if (result.messages.isNotEmpty) {
+        _messages = [..._messages, ...result.messages];
+      }
+      _total = result.total;
+      _loading = false;
+    });
+  }
+
+  /// Reads the page before the oldest message held, for a reader scrolling
+  /// back through the conversation.
+  Future<void> _loadOlder() async {
+    final sse = _sse;
+    if (sse == null || _loadingOlder || !_hasMore) return;
+    setState(() => _loadingOlder = true);
+
+    final result = await sse.fetchTranscript(
+      widget.session.sessionId,
+      limit: _pageSize,
+      offset: _messages.length,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      if (result != null) {
+        _messages = [...result.messages, ..._messages];
+        _hasMore = result.hasMore;
+        _total = result.total;
+      }
+      _loadingOlder = false;
+    });
   }
 
   Future<void> _loadGitStatus() async {
@@ -940,17 +1010,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: itemCount,
       itemBuilder: (context, index) {
-        // Last item in reversed list = "earlier messages" banner
+        // Last item in the reversed list, so the top of the screen: building
+        // it means the reader has scrolled to the start of what is held, and
+        // the page before it is what they are reaching for.
         if (_hasMore && index == itemCount - 1) {
-          return Center(
+          WidgetsBinding.instance.addPostFrameCallback((_) => _loadOlder());
+          return const Center(
             child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                '${_total - _messages.length} earlier messages',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
           );

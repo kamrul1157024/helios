@@ -151,8 +151,18 @@ export class ApiClient {
     return res.directories ?? []
   }
 
-  transcript(id: string, limit = 200, offset = 0): Promise<TranscriptPage> {
+  transcript(id: string, limit = 50, offset = 0): Promise<TranscriptPage> {
     const query = queryString({ limit: String(limit), offset: String(offset) })
+    return this.request('GET', `/api/sessions/${encodeURIComponent(id)}/transcript${query}`)
+  }
+
+  /**
+   * Asks only for what has been written since seq, under the epoch those seq
+   * numbers came from. A reply with epoch_changed set is a whole page instead:
+   * the transcript is no longer the one being followed.
+   */
+  transcriptSince(id: string, afterSeq: number, epoch: string, limit = 50): Promise<TranscriptPage> {
+    const query = queryString({ after_seq: String(afterSeq), epoch, limit: String(limit) })
     return this.request('GET', `/api/sessions/${encodeURIComponent(id)}/transcript${query}`)
   }
 
