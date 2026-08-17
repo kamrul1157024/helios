@@ -399,7 +399,7 @@ func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Re
 	}
 
 	// Parse limit/offset from query
-	limit := 200
+	limit := 50
 	offset := 0
 	if l := r.URL.Query().Get("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
@@ -408,7 +408,17 @@ func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Re
 		fmt.Sscanf(o, "%d", &offset)
 	}
 
-	result, err := transcript.ParseClaudeTranscript(*session.TranscriptPath, limit, offset)
+	// after_seq asks for what has arrived since the caller last looked, which
+	// is what a client watching a running session wants on every event. The
+	// epoch it quotes says which parse its seq numbers came from.
+	var result *transcript.TranscriptResult
+	if a := r.URL.Query().Get("after_seq"); a != "" {
+		afterSeq := -1
+		fmt.Sscanf(a, "%d", &afterSeq)
+		result, err = transcript.Delta(*session.TranscriptPath, r.URL.Query().Get("epoch"), afterSeq, limit)
+	} else {
+		result, err = transcript.Page(*session.TranscriptPath, limit, offset)
+	}
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to read transcript: %v", err), http.StatusInternalServerError)
 		return

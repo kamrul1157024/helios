@@ -7,32 +7,51 @@ import (
 	"testing"
 )
 
-func TestReadLineSplitsAndTrims(t *testing.T) {
+func TestReadSegmentLineSplitsAndTrims(t *testing.T) {
 	r := bufio.NewReaderSize(strings.NewReader("one\r\ntwo\nthree"), 16)
 
 	for _, want := range []string{"one", "two", "three"} {
-		line, oversized, err := readLine(r, 1024)
+		line, oversized, _, terminated, err := readSegmentLine(r, 1024)
 		if oversized {
-			t.Fatalf("readLine(%q) reported oversized", want)
+			t.Fatalf("readSegmentLine(%q) reported oversized", want)
 		}
 		if string(line) != want {
-			t.Fatalf("readLine = %q, want %q", line, want)
+			t.Fatalf("readSegmentLine = %q, want %q", line, want)
+		}
+		// "three" has no newline after it, which is how a line still being
+		// written looks.
+		if got := terminated; got != (want != "three") {
+			t.Fatalf("readSegmentLine(%q) terminated = %v", want, got)
 		}
 		if err != nil && want != "three" {
-			t.Fatalf("readLine(%q) error: %v", want, err)
+			t.Fatalf("readSegmentLine(%q) error: %v", want, err)
 		}
 	}
 }
 
-func TestReadLineDropsOversizedAndKeepsGoing(t *testing.T) {
+func TestReadSegmentLineCountsRawBytes(t *testing.T) {
+	r := bufio.NewReaderSize(strings.NewReader("one\r\ntwo\n"), 16)
+
+	_, _, raw, _, err := readSegmentLine(r, 1024)
+	if err != nil {
+		t.Fatalf("readSegmentLine: %v", err)
+	}
+	// The consumed count has to include the terminator, or an incremental read
+	// would re-read it and mistake it for a new line.
+	if raw != 5 {
+		t.Fatalf("raw = %d, want 5 (\"one\" plus CRLF)", raw)
+	}
+}
+
+func TestReadSegmentLineDropsOversizedAndKeepsGoing(t *testing.T) {
 	long := strings.Repeat("x", 5000)
 	// The bufio buffer is deliberately smaller than the line, so the read also
 	// spans several ErrBufferFull chunks.
 	r := bufio.NewReaderSize(strings.NewReader(long+"\nshort\n"), 16)
 
-	line, oversized, err := readLine(r, 100)
+	line, oversized, raw, _, err := readSegmentLine(r, 100)
 	if err != nil {
-		t.Fatalf("readLine: %v", err)
+		t.Fatalf("readSegmentLine: %v", err)
 	}
 	if !oversized {
 		t.Fatal("long line not reported as oversized")
@@ -40,13 +59,17 @@ func TestReadLineDropsOversizedAndKeepsGoing(t *testing.T) {
 	if len(line) != 100 {
 		t.Fatalf("kept %d bytes, want the 100-byte cap", len(line))
 	}
+	// Dropping the content must not drop the bytes from the count.
+	if raw != int64(len(long)+1) {
+		t.Fatalf("raw = %d, want %d", raw, len(long)+1)
+	}
 
-	line, oversized, err = readLine(r, 100)
+	line, oversized, _, _, err = readSegmentLine(r, 100)
 	if err != nil {
-		t.Fatalf("readLine after a dropped line: %v", err)
+		t.Fatalf("readSegmentLine after a dropped line: %v", err)
 	}
 	if oversized || string(line) != "short" {
-		t.Fatalf("readLine after a dropped line = %q (oversized=%v), want \"short\"", line, oversized)
+		t.Fatalf("readSegmentLine after a dropped line = %q (oversized=%v), want \"short\"", line, oversized)
 	}
 }
 

@@ -21,6 +21,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'getSession',
   'listDirectories',
   'transcript',
+  'transcriptSince',
   'subagents',
   'sendPrompt',
   'setSessionOrder',

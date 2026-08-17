@@ -1,5 +1,8 @@
 /// Generic, provider-agnostic transcript message.
 class Message {
+  /// Position in the whole transcript, not in the page it arrived in. Asking
+  /// for what came after it is how the app follows a running session.
+  final int seq;
   final String role; // user, assistant, tool_use, tool_result
   final String? content;
   final String? tool;
@@ -9,6 +12,7 @@ class Message {
   final String timestamp;
 
   Message({
+    this.seq = 0,
     required this.role,
     this.content,
     this.tool,
@@ -20,6 +24,7 @@ class Message {
 
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
+      seq: json['seq'] as int? ?? 0,
       role: json['role'] as String,
       content: json['content'] as String?,
       tool: json['tool'] as String?,
@@ -59,12 +64,21 @@ class TranscriptResult {
   final int offset;
   final bool hasMore;
 
+  /// Which parse the seq numbers count against.
+  final String epoch;
+
+  /// Set when a delta was asked for under an epoch that no longer holds: the
+  /// messages are a fresh newest page and replace what is held.
+  final bool epochChanged;
+
   TranscriptResult({
     required this.messages,
     required this.total,
     required this.returned,
     required this.offset,
     required this.hasMore,
+    this.epoch = '',
+    this.epochChanged = false,
   });
 
   factory TranscriptResult.fromJson(Map<String, dynamic> json) {
@@ -75,6 +89,8 @@ class TranscriptResult {
       returned: json['returned'] as int? ?? 0,
       offset: json['offset'] as int? ?? 0,
       hasMore: json['has_more'] as bool? ?? false,
+      epoch: json['epoch'] as String? ?? '',
+      epochChanged: json['epoch_changed'] as bool? ?? false,
     );
   }
 }

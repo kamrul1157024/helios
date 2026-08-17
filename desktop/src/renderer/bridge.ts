@@ -179,6 +179,9 @@ export class HostApi {
   transcript(id: string, limit?: number, offset?: number): Promise<TranscriptPage> {
     return this.call('transcript', id, limit, offset)
   }
+  transcriptSince(id: string, afterSeq: number, epoch: string, limit?: number): Promise<TranscriptPage> {
+    return this.call('transcriptSince', id, afterSeq, epoch, limit)
+  }
   subagents(id: string): Promise<Subagent[]> {
     return this.call('subagents', id)
   }

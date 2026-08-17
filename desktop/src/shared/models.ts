@@ -171,6 +171,8 @@ export interface QuestionPayload {
 
 /** internal/transcript/reader.go:22 */
 export interface TranscriptMessage {
+  /** Position in the whole transcript, not in the page. */
+  seq: number
   role: 'user' | 'assistant' | 'tool' | 'system' | string
   content?: string
   tool?: string
@@ -186,6 +188,13 @@ export interface TranscriptPage {
   returned: number
   offset: number
   has_more: boolean
+  /** Which parse the seq numbers count against. */
+  epoch?: string
+  /**
+   * Set when a delta was asked for under an epoch that no longer holds. The
+   * messages are then a fresh newest page and replace what the caller holds.
+   */
+  epoch_changed?: boolean
 }
 
 /** internal/store/sessions.go:64 */

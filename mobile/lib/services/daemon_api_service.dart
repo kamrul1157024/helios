@@ -570,14 +570,22 @@ class DaemonAPIService extends ChangeNotifier {
     return [];
   }
 
+  /// Reads a page of a transcript, or — given [afterSeq] and [epoch] — only
+  /// what has been written since that message. Following a running session
+  /// through deltas is what stops an event from costing a whole page.
   Future<TranscriptResult?> fetchTranscript(
     String sessionId, {
-    int limit = 200,
+    int limit = 50,
     int offset = 0,
+    int? afterSeq,
+    String? epoch,
   }) async {
     try {
+      final query = afterSeq != null
+          ? 'limit=$limit&after_seq=$afterSeq&epoch=${Uri.encodeQueryComponent(epoch ?? '')}'
+          : 'limit=$limit&offset=$offset';
       final resp = await _api.get(
-        '/api/sessions/$sessionId/transcript?limit=$limit&offset=$offset',
+        '/api/sessions/$sessionId/transcript?$query',
       );
       debugPrint(
         '[$hostId] fetchTranscript[$sessionId] status=${resp.statusCode}',
