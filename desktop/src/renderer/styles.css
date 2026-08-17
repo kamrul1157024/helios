@@ -1409,13 +1409,17 @@ small {
   padding: 1px 5px;
 }
 
+/* A block runs to its full length rather than becoming a little window with a
+   scrollbar of its own: one scrollbar for the transcript reads as one
+   conversation, and a scroll that stops dead over a code block does not.
+   Long lines still scroll sideways, which the transcript cannot do for them. */
 .code-block {
   margin: 0 0 10px;
   padding: 10px 12px;
   border-radius: var(--r-md);
   background: var(--code-bg);
-  overflow: auto;
-  max-height: 420px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .code-block code {
