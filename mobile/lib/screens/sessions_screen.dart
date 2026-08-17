@@ -338,8 +338,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
                               padding: const EdgeInsets.symmetric(horizontal: 12),
                               itemCount: filtered.length,
                               onReorder: (from, to) => _onReorder(orderable, filtered, from, to),
+                              // The cards carry their own handle, so the list's
+                              // long-press drag would only fight the options
+                              // sheet that a long press already opens.
+                              buildDefaultDragHandles: false,
                               itemBuilder: (context, index) =>
-                                  _buildSwipeableCard(filtered[index], hm),
+                                  _buildSwipeableCard(filtered[index], hm, reorderIndex: index),
                             )
                           : ListView.builder(
                               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -514,7 +518,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  Widget _buildSwipeableCard(Session session, HostManager hm) {
+  /// [reorderIndex] is the card's place in a list arranged by hand, and null
+  /// when the list sorts itself. The drag handle needs it to say which card is
+  /// being moved.
+  Widget _buildSwipeableCard(Session session, HostManager hm, {int? reorderIndex}) {
     final theme = Theme.of(context);
     final isArchived = session.archived;
     final service = hm.serviceFor(session.hostId);
@@ -580,11 +587,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
           return false;
         }
       },
-      child: _buildSessionCard(session, hm),
+      child: _buildSessionCard(session, hm, reorderIndex: reorderIndex),
     );
   }
 
-  Widget _buildSessionCard(Session session, HostManager hm) {
+  Widget _buildSessionCard(Session session, HostManager hm, {int? reorderIndex}) {
     final theme = Theme.of(context);
     final statusColor = _statusColor(session.status, theme);
     final statusIcon = _statusIcon(session.status);
@@ -728,6 +735,23 @@ class _SessionsScreenState extends State<SessionsScreen> {
                           ],
                         ),
                       ),
+                      // A handle rather than the whole card, because a card
+                      // already answers a long press by opening its options:
+                      // the drag would never win that gesture. Dragging starts
+                      // the moment the handle is touched.
+                      if (reorderIndex != null)
+                        ReorderableDragStartListener(
+                          index: reorderIndex,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.drag_handle,
+                              size: 22,
+                              color: theme.colorScheme.onSurfaceVariant,
+                              semanticLabel: 'Drag to reorder',
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

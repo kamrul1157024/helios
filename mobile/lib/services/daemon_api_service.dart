@@ -852,7 +852,7 @@ class DaemonAPIService extends ChangeNotifier {
   Future<bool> updateSettings(Map<String, String> settings) async {
     try {
       final resp = await _api.post('/api/settings', body: settings);
-      return resp.statusCode == 200;
+      return isSuccess(resp.statusCode);
     } catch (e) {
       debugPrint('[$hostId] updateSettings error: $e');
     }
@@ -1631,6 +1631,14 @@ class Worktree {
 
   String get timeAgo => _timeAgo(date);
 }
+
+/// Whether a response says the request was carried out.
+///
+/// Not every write answers 200: a write with nothing to report answers 204,
+/// which `POST /api/settings` does. Reading that as a failure is what left the
+/// sort toggle looking dead — the daemon had stored the mode and the app had
+/// decided it hadn't.
+bool isSuccess(int statusCode) => statusCode >= 200 && statusCode < 300;
 
 /// Most recently committed first. Worktrees with no date — pruned, or past the
 /// detail cap the daemon enforces — keep their listing order at the end.
