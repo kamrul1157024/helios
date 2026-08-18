@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/host_manager.dart';
 import 'services/notification_service.dart';
-import 'services/voice_service.dart';
 import 'screens/setup_screen.dart';
 import 'screens/home_screen.dart';
 import 'widgets/skeleton.dart';
@@ -13,7 +12,6 @@ import 'widgets/skeleton.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.instance.init();
-  await VoiceService.instance.init();
 
   runApp(
     MultiProvider(

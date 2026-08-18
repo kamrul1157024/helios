@@ -6,8 +6,6 @@ import '../providers/theme_provider.dart';
 import '../services/host_manager.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
-import '../services/voice_service.dart';
-import 'event_filter_screen.dart';
 import 'host_detail_screen.dart';
 import 'notification_settings_screen.dart';
 import 'setup_screen.dart';
@@ -22,21 +20,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late bool _soundEnabled;
   late bool _vibrationEnabled;
-  late bool _voiceInputEnabled;
-  late bool _autoReadEnabled;
-  late double _speechRate;
-  late double _pitch;
-  Map<String, String>? _selectedVoice;
-  Timer? _sampleDebounce;
-
-  // Reporter settings from backend
-  String _activePersonaId = 'default';
-  int _debounceSeconds = 10;
-  String _customPrompt = '';
-  List<Map<String, dynamic>> _personas = [];
-  Map<String, List<Map<String, dynamic>>> _eventTypes = {};
-  String? _globalFilterJson;
-  String? _sessionFilterJson;
   bool _settingsLoaded = false;
 
   // Auto title settings
@@ -55,29 +38,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _soundEnabled = NotificationService.instance.soundEnabled;
     _vibrationEnabled = NotificationService.instance.vibrationEnabled;
-    _voiceInputEnabled = VoiceService.instance.voiceInputEnabled;
-    _autoReadEnabled = VoiceService.instance.autoReadEnabled;
-    _speechRate = VoiceService.instance.speechRate;
-    _pitch = VoiceService.instance.pitch;
-    _selectedVoice = VoiceService.instance.selectedVoice;
-    _loadReporterSettings();
+    _loadSettings();
     _loadVersionAndCheckUpdate();
   }
 
-  @override
-  void dispose() {
-    _sampleDebounce?.cancel();
-    super.dispose();
-  }
-
-  void _debounceSample() {
-    _sampleDebounce?.cancel();
-    _sampleDebounce = Timer(const Duration(milliseconds: 500), () {
-      VoiceService.instance.speakSample();
-    });
-  }
-
-  Future<void> _loadReporterSettings() async {
+  Future<void> _loadSettings() async {
     final hm = context.read<HostManager>();
     // Use the first connected host for settings
     for (final host in hm.hosts) {
@@ -86,26 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final data = await service.getSettings();
       if (data != null && mounted) {
         final settings = (data['settings'] as Map<String, dynamic>?) ?? {};
-        final personas = (data['personas'] as List?)
-                ?.map((p) => Map<String, dynamic>.from(p as Map))
-                .toList() ??
-            [];
-        final rawEventTypes = data['event_types'] as Map<String, dynamic>? ?? {};
-        final parsedEventTypes = <String, List<Map<String, dynamic>>>{};
-        for (final entry in rawEventTypes.entries) {
-          parsedEventTypes[entry.key] = (entry.value as List)
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList();
-        }
         setState(() {
-          _activePersonaId = (settings['reporter.persona'] as String?) ?? 'default';
-          final debounceStr = settings['reporter.debounce_seconds'] as String?;
-          _debounceSeconds = int.tryParse(debounceStr ?? '') ?? 10;
-          _customPrompt = (settings['reporter.custom_prompt'] as String?) ?? '';
-          _personas = personas;
-          _eventTypes = parsedEventTypes;
-          _globalFilterJson = settings['reporter.filter.global'] as String?;
-          _sessionFilterJson = settings['reporter.filter.session'] as String?;
           _autoTitleEnabled = (settings['autotitle.enabled'] as String?) == 'true';
           // Off unless turned on: Flutter ships no Nerd Font, so the glyphs
           // render as empty boxes on the phone.
@@ -145,7 +91,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _updateDownloading = false);
   }
 
-  Future<void> _updateReporterSetting(String key, String value) async {
+  Future<void> _updateSetting(String key, String value) async {
     final hm = context.read<HostManager>();
     for (final host in hm.hosts) {
       final service = hm.serviceFor(host.id);
@@ -210,83 +156,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
               ),
-              const _SectionHeader('Voice'),
-              SwitchListTile(
-                title: const Text('Voice input'),
-                subtitle: const Text('Show mic button in voice mode'),
-                value: _voiceInputEnabled,
-                onChanged: (value) async {
-                  setState(() => _voiceInputEnabled = value);
-                  VoiceService.instance.setVoiceInputEnabled(value);
-                  if (value) {
-                    final warning = await VoiceService.instance.checkSttAvailability();
-                    if (warning != null && mounted) {
-                      _showServiceWarning(warning);
-                    }
-                  }
-                },
-              ),
-              SwitchListTile(
-                title: const Text('Auto-read responses'),
-                subtitle: const Text('Speak new messages in voice mode'),
-                value: _autoReadEnabled,
-                onChanged: (value) async {
-                  setState(() => _autoReadEnabled = value);
-                  VoiceService.instance.setAutoReadEnabled(value);
-                  if (value) {
-                    final warning = await VoiceService.instance.checkTtsAvailability();
-                    if (warning != null && mounted) {
-                      _showServiceWarning(warning);
-                    }
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.speed),
-                title: const Text('Speech rate'),
-                subtitle: Slider(
-                  value: _speechRate,
-                  min: 0.1,
-                  max: 1.0,
-                  divisions: 9,
-                  label: _speechRate.toStringAsFixed(1),
-                  onChanged: (value) {
-                    setState(() => _speechRate = value);
-                    VoiceService.instance.setSpeechRate(value);
-                    _debounceSample();
-                  },
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.tune),
-                title: const Text('Pitch'),
-                subtitle: Slider(
-                  value: _pitch,
-                  min: 0.5,
-                  max: 2.0,
-                  divisions: 15,
-                  label: _pitch.toStringAsFixed(1),
-                  onChanged: (value) {
-                    setState(() => _pitch = value);
-                    VoiceService.instance.setPitch(value);
-                    _debounceSample();
-                  },
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.record_voice_over),
-                title: const Text('Voice'),
-                subtitle: Text(
-                  _selectedVoice != null
-                      ? VoiceService.displayName(_selectedVoice!['name'] ?? '')
-                      : 'System default',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                ),
-                trailing: const Icon(Icons.chevron_right, size: 20),
-                onTap: _showVoicePicker,
-              ),
               const _SectionHeader('Session Titles'),
               if (!_settingsLoaded)
                 const ListTile(
@@ -304,7 +173,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _autoTitleEnabled,
                   onChanged: (value) {
                     setState(() => _autoTitleEnabled = value);
-                    _updateReporterSetting('autotitle.enabled', value ? 'true' : 'false');
+                    _updateSetting('autotitle.enabled', value ? 'true' : 'false');
                   },
                 ),
                 if (_autoTitleEnabled)
@@ -315,70 +184,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     value: _autoTitleEmoji,
                     onChanged: (value) {
                       setState(() => _autoTitleEmoji = value);
-                      _updateReporterSetting('autotitle.emoji', value ? 'true' : 'false');
-                    },
-                  ),
-              ],
-              const _SectionHeader('AI Narrator'),
-              if (_settingsLoaded) ...[
-                ListTile(
-                  leading: const Icon(Icons.person),
-                  title: const Text('Narrator persona'),
-                  subtitle: Text(
-                    _personas
-                        .where((p) => p['id'] == _activePersonaId)
-                        .map((p) => '${p['name']} — ${p['description']}')
-                        .firstOrNull ?? _activePersonaId,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                  trailing: const Icon(Icons.chevron_right, size: 20),
-                  onTap: _showPersonaPicker,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.timer),
-                  title: const Text('Narration delay'),
-                  subtitle: Text(
-                    '${_debounceSeconds}s — batches events before narrating',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                  trailing: const Icon(Icons.chevron_right, size: 20),
-                  onTap: _showDebounceDialog,
-                ),
-                if (_activePersonaId == 'custom')
-                  ListTile(
-                    leading: const Icon(Icons.edit_note),
-                    title: const Text('Custom prompt'),
-                    subtitle: Text(
-                      _customPrompt.isNotEmpty ? _customPrompt : 'No custom prompt set',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                    ),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
-                    onTap: _showCustomPromptDialog,
-                  ),
-                if (_eventTypes.isNotEmpty)
-                  ListTile(
-                    leading: const Icon(Icons.filter_list),
-                    title: const Text('Event filters'),
-                    subtitle: Text(
-                      'Choose which events trigger narration',
-                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                    ),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => EventFilterScreen(
-                            eventTypes: _eventTypes,
-                            globalFilterJson: _globalFilterJson,
-                            sessionFilterJson: _sessionFilterJson,
-                            onUpdate: _updateReporterSetting,
-                          ),
-                        ),
-                      );
+                      _updateSetting('autotitle.emoji', value ? 'true' : 'false');
                     },
                   ),
               ],
@@ -386,269 +192,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       },
-    );
-  }
-
-  void _showPersonaPicker() {
-    final allOptions = [
-      ..._personas,
-      {'id': 'custom', 'name': 'Custom', 'description': 'Your own narrator prompt'},
-    ];
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.3,
-          maxChildSize: 0.85,
-          expand: false,
-          builder: (ctx, scrollController) {
-            return SafeArea(
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text('Narrator Persona', style: Theme.of(ctx).textTheme.titleSmall),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: allOptions.length,
-                      itemBuilder: (ctx, index) {
-                        final p = allOptions[index];
-                        final id = p['id'] as String;
-                        final isSelected = id == _activePersonaId;
-                        return ListTile(
-                          leading: Icon(
-                            isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                            color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
-                          ),
-                          title: Text(
-                            p['name'] as String,
-                            style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
-                          ),
-                          subtitle: Text(
-                            p['description'] as String,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            setState(() => _activePersonaId = id);
-                            _updateReporterSetting('reporter.persona', id);
-                            if (id == 'custom') {
-                              Future.delayed(const Duration(milliseconds: 300), _showCustomPromptDialog);
-                            }
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showDebounceDialog() {
-    int value = _debounceSeconds;
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              title: const Text('Narration Delay'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Wait ${value}s after the last event before generating narration.',
-                    style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 16),
-                  Slider(
-                    value: value.toDouble(),
-                    min: 2,
-                    max: 60,
-                    divisions: 29,
-                    label: '${value}s',
-                    onChanged: (v) => setDialogState(() => value = v.round()),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    setState(() => _debounceSeconds = value);
-                    _updateReporterSetting('reporter.debounce_seconds', value.toString());
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showCustomPromptDialog() {
-    final controller = TextEditingController(text: _customPrompt);
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Custom Narrator Prompt'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Write a system prompt for your custom narrator personality.',
-                style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                maxLines: 5,
-                decoration: InputDecoration(
-                  hintText: 'e.g. You are a zen monk who speaks in haiku...',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                final prompt = controller.text.trim();
-                setState(() => _customPrompt = prompt);
-                _updateReporterSetting('reporter.custom_prompt', prompt);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showVoicePicker() async {
-    final voices = await VoiceService.instance.getAvailableVoices();
-    if (!mounted) return;
-
-    if (voices.isEmpty) {
-      _showServiceWarning('No voices available for the current language.');
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.3,
-          maxChildSize: 0.85,
-          expand: false,
-          builder: (ctx, scrollController) {
-            return SafeArea(
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text('Select Voice', style: Theme.of(ctx).textTheme.titleSmall),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: voices.length + 1,
-                      itemBuilder: (ctx, index) {
-                        // First item is "System default"
-                        if (index == 0) {
-                          final isSelected = _selectedVoice == null;
-                          return ListTile(
-                            leading: Icon(
-                              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                              color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
-                            ),
-                            title: Text(
-                              'System default',
-                              style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
-                            ),
-                            subtitle: const Text('Use device default voice', style: TextStyle(fontSize: 12)),
-                            onTap: () {
-                              Navigator.pop(ctx);
-                              setState(() => _selectedVoice = null);
-                              VoiceService.instance.setSelectedVoice(null);
-                            },
-                          );
-                        }
-                        final voice = voices[index - 1];
-                        final name = voice['name'] ?? '';
-                        final locale = voice['locale'] ?? '';
-                        final displayName = VoiceService.displayName(name);
-                        final gender = VoiceService.guessGender(name);
-                        final isSelected = _selectedVoice?['name'] == name;
-                        return ListTile(
-                          leading: Icon(
-                            isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                            color: isSelected ? Theme.of(ctx).colorScheme.primary : null,
-                          ),
-                          title: Text(
-                            displayName,
-                            style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : null),
-                          ),
-                          subtitle: Text(
-                            gender != null ? '$locale  ·  $gender' : locale,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.play_arrow, size: 20),
-                            tooltip: 'Preview',
-                            onPressed: () => VoiceService.instance.previewVoice(voice),
-                          ),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            setState(() => _selectedVoice = voice);
-                            VoiceService.instance.setSelectedVoice(voice);
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showServiceWarning(String message) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: Icon(Icons.warning_amber_rounded, color: Theme.of(ctx).colorScheme.error, size: 32),
-        title: const Text('Service unavailable'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
     );
   }
 

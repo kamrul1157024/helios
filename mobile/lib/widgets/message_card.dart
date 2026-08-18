@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/message.dart';
-import '../services/voice_service.dart';
-import '../utils/markdown_stripper.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
@@ -112,42 +110,6 @@ class _AssistantMessageCard extends StatefulWidget {
 }
 
 class _AssistantMessageCardState extends State<_AssistantMessageCard> {
-  bool _isSpeaking = false;
-
-  void _speakMessage() async {
-    final content = widget.message.content;
-    final spoken = (content != null && content.isNotEmpty) ? stripMarkdown(content) : null;
-    debugPrint('[MessageCard] _speakMessage: spoken=${spoken != null ? '"${spoken.length > 80 ? '${spoken.substring(0, 80)}...' : spoken}"' : 'null'}');
-    if (spoken != null) {
-      setState(() => _isSpeaking = true);
-      final ok = await VoiceService.instance.speak(spoken);
-      if (!ok && mounted) {
-        setState(() => _isSpeaking = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('TTS unavailable. Check that Google Text-to-Speech is installed and enabled in Settings.'),
-            duration: Duration(seconds: 4),
-          ),
-        );
-        return;
-      }
-      // Listen for completion
-      final prevCallback = VoiceService.instance.onStateChanged;
-      VoiceService.instance.onStateChanged = () {
-        prevCallback?.call();
-        if (!VoiceService.instance.isSpeaking && mounted) {
-          setState(() => _isSpeaking = false);
-          VoiceService.instance.onStateChanged = prevCallback;
-        }
-      };
-    }
-  }
-
-  void _stopSpeaking() {
-    VoiceService.instance.stopSpeaking();
-    if (mounted) setState(() => _isSpeaking = false);
-  }
-
   void _handleLinkTap(String text, String? href, String title) {
     if (href == null) return;
     final uri = Uri.tryParse(href);
@@ -257,19 +219,6 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                         Icons.copy,
                         size: 14,
                         color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: _isSpeaking ? _stopSpeaking : _speakMessage,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Icon(
-                        _isSpeaking ? Icons.stop : Icons.volume_up,
-                        size: 16,
-                        color: _isSpeaking
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                       ),
                     ),
                   ),

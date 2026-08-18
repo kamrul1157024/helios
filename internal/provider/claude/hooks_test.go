@@ -247,33 +247,14 @@ func TestSessionStart_CreatesSession_IdleStatus(t *testing.T) {
 	}
 }
 
-func TestSessionStart_ManagedFalse_WhenNoPaneKnown(t *testing.T) {
-	ctx, db, _ := setupCtx(t)
+func TestSessionStart_EmitsStatusEvent_WhenTerminalExists(t *testing.T) {
+	ctx, _, sseEvents := setupCtx(t)
+	terminalOf(ctx).live("sess-with-terminal")
 
 	callHook(handleSessionStart, ctx, hookInput{
-		SessionID: "sess-unmanaged",
+		SessionID: "sess-with-terminal",
 		CWD:       "/tmp/proj",
 	})
-
-	sess, _ := db.GetSession("sess-unmanaged")
-	if sess.Managed {
-		t.Error("managed = true, want false when no pane is known")
-	}
-}
-
-func TestSessionStart_ManagedTrue_WhenTerminalExists(t *testing.T) {
-	ctx, db, sseEvents := setupCtx(t)
-	terminalOf(ctx).live("sess-managed")
-
-	callHook(handleSessionStart, ctx, hookInput{
-		SessionID: "sess-managed",
-		CWD:       "/tmp/proj",
-	})
-
-	sess, _ := db.GetSession("sess-managed")
-	if !sess.Managed {
-		t.Error("managed = false, want true when the session has a terminal")
-	}
 
 	found := false
 	for _, e := range *sseEvents {
@@ -287,7 +268,7 @@ func TestSessionStart_ManagedTrue_WhenTerminalExists(t *testing.T) {
 }
 
 func TestSessionStart_StopsTrustWatch(t *testing.T) {
-	ctx, db, _ := setupCtx(t)
+	ctx, _, _ := setupCtx(t)
 	var stopped []string
 	ctx.SessionStarted = func(sessionID string) { stopped = append(stopped, sessionID) }
 	terminalOf(ctx).live("sess-pending")
@@ -297,10 +278,6 @@ func TestSessionStart_StopsTrustWatch(t *testing.T) {
 		CWD:       "/tmp/proj",
 	})
 
-	sess, _ := db.GetSession("sess-pending")
-	if !sess.Managed {
-		t.Error("managed = false, want true when the session has a terminal")
-	}
 	if len(stopped) != 1 || stopped[0] != "sess-pending" {
 		t.Errorf("SessionStarted calls = %v, want [sess-pending]", stopped)
 	}
@@ -1617,15 +1594,11 @@ func TestLifecycle_WithPermission(t *testing.T) {
 	assertStatus(t, db, "sess-L3", "terminated")
 }
 
-func TestLifecycle_ManagedSession_WithStopFailure(t *testing.T) {
+func TestLifecycle_TerminalSession_WithStopFailure(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	terminalOf(ctx).live("sess-L4")
 
 	callHook(handleSessionStart, ctx, hookInput{SessionID: "sess-L4", CWD: "/tmp/proj"})
-	sess, _ := db.GetSession("sess-L4")
-	if !sess.Managed {
-		t.Fatal("expected managed=true")
-	}
 
 	callHook(handlePromptSubmit, ctx, hookInput{SessionID: "sess-L4", CWD: "/tmp/proj", Message: "dangerous op"})
 	assertStatus(t, db, "sess-L4", "active")

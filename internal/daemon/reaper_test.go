@@ -98,14 +98,13 @@ func (f *fakeBackend) Sweep() []string {
 	return dead
 }
 
-func seedSession(t *testing.T, db *store.Store, sessionID, cwd, status string, managed bool) {
+func seedSession(t *testing.T, db *store.Store, sessionID, cwd, status string) {
 	t.Helper()
 	sess := &store.Session{
 		SessionID: sessionID,
 		Source:    "claude",
 		CWD:       cwd,
 		Status:    status,
-		Managed:   managed,
 		LastEvent: strPtr("seed"),
 	}
 	if err := db.UpsertSession(sess); err != nil {
@@ -134,7 +133,7 @@ func TestReapStaleSessions_DeadTerminalGoesColdNotTerminated(t *testing.T) {
 	be := newFakeBackend()
 	be.trackDead("sess-dead")
 
-	seedSession(t, db, "sess-dead", "/tmp/proj", "active", false)
+	seedSession(t, db, "sess-dead", "/tmp/proj", "active")
 
 	reapStaleSessions(db, be, sse)
 
@@ -144,14 +143,14 @@ func TestReapStaleSessions_DeadTerminalGoesColdNotTerminated(t *testing.T) {
 	}
 }
 
-// Nothing reaps a managed session that never left "starting": if its launch
-// stalled, the user resumes it by hand.
+// Nothing reaps a session that never left "starting": if its launch stalled,
+// the user resumes it by hand.
 func TestReapStaleSessions_LeavesStuckStartingAlone(t *testing.T) {
 	db := setupTestStore(t)
 	sse := server.NewSSEBroadcaster()
 	be := newFakeBackend("sess-stuck")
 
-	seedSession(t, db, "sess-stuck", "/tmp/proj", "starting", true)
+	seedSession(t, db, "sess-stuck", "/tmp/proj", "starting")
 
 	reapStaleSessions(db, be, sse)
 
@@ -163,7 +162,7 @@ func TestReapStaleSessions_KeepsLiveTerminal(t *testing.T) {
 	sse := server.NewSSEBroadcaster()
 	be := newFakeBackend("sess-live")
 
-	seedSession(t, db, "sess-live", "/tmp/proj", "active", false)
+	seedSession(t, db, "sess-live", "/tmp/proj", "active")
 
 	reapStaleSessions(db, be, sse)
 
@@ -191,7 +190,6 @@ func TestReapStaleSessions_TranscriptBackfill(t *testing.T) {
 		Source:         "claude",
 		CWD:            "/tmp/proj",
 		Status:         "idle",
-		Managed:        false,
 		LastEvent:      strPtr("Stop"),
 		TranscriptPath: &transcriptFile,
 	}

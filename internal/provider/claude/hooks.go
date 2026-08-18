@@ -762,8 +762,6 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		model = &input.Model
 	}
 
-	// A session helios launched already has a terminal under the same ID; one
-	// the user started by hand does not, and stays unmanaged.
 	handle := ""
 	if ctx.Terminal != nil {
 		handle, _ = ctx.Terminal.Handle(input.SessionID)
@@ -781,7 +779,6 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		Model:          model,
 		Status:         "idle",
 		LastEvent:      strPtr("SessionStart"),
-		Managed:        handle != "",
 	}
 	ctx.DB.UpsertSession(sess)
 	updateSessionPermissionMode(ctx, &input)

@@ -591,7 +591,6 @@ func main() {
 		check("GET /api/sessions/{id} finds it", false, err.Error())
 	} else {
 		check("GET /api/sessions/{id} finds it", true, "")
-		check("it is marked managed", sess["managed"] == true, fmt.Sprintf("managed=%v", sess["managed"]))
 		check("its cwd is recorded", str(sess, "cwd") == cwd,
 			fmt.Sprintf("got %q, want %q", str(sess, "cwd"), cwd))
 	}

@@ -40,53 +40,6 @@ func TestUpsertSession_Basic(t *testing.T) {
 	}
 }
 
-func TestManagedFlag_DefaultFalse(t *testing.T) {
-	s := setupTestStore(t)
-
-	sess := &Session{
-		SessionID: "disc-session-1",
-		Source:    "claude",
-		CWD:       "/tmp/test",
-		Status:    "terminated",
-		LastEvent: strPtr("Discovered"),
-	}
-	if err := s.InsertDiscoveredSession(sess); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	got, err := s.GetSession("disc-session-1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Managed {
-		t.Error("managed = true, want false for discovered session")
-	}
-}
-
-func TestManagedFlag_SetOnUpsert(t *testing.T) {
-	s := setupTestStore(t)
-
-	sess := &Session{
-		SessionID: "managed-session-1",
-		Source:    "claude",
-		CWD:       "/tmp/test",
-		Status:    "starting",
-		LastEvent: strPtr("Launch"),
-		Managed:   true,
-	}
-	if err := s.UpsertSession(sess); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-
-	got, err := s.GetSession("managed-session-1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if !got.Managed {
-		t.Error("managed = false, want true")
-	}
-}
-
 func TestUpsertSession_UpdatesStatus(t *testing.T) {
 	s := setupTestStore(t)
 

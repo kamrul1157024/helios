@@ -8,8 +8,6 @@ import '../models/host_connection.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../services/notification_service.dart';
-import '../services/voice_service.dart';
-import '../services/narration_service.dart';
 import '../providers/card_registry.dart' as registry;
 import 'setup_screen.dart';
 import 'sessions_screen.dart';
@@ -29,7 +27,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
-  bool _voiceLoading = false;
 
   @override
   void initState() {
@@ -76,8 +73,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _handleSSEEvent(String hostId, SSEEvent event) {
     debugPrint('[HomeScreen] SSE event: type=${event.type} hostId=$hostId');
 
-    // Voice narration is handled by reporter SSE — no manual event pushing needed
-
     // Answered in the terminal, in the desktop app, or on another device: the
     // tray copy here is now stale and nothing else retracts it.
     if (event.type == 'notification_resolved') {
@@ -118,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final payload = jsonEncode({'hostId': hostId, 'notificationId': id});
 
     final notifSvc = NotificationService.instance;
-    final silent = !notifSvc.isAlertEnabled(type) || VoiceService.instance.globalVoiceActive;
+    final silent = !notifSvc.isAlertEnabled(type);
 
     if (type == 'claude.permission') {
       debugPrint('[HomeScreen] showing OS permission notification');
@@ -267,79 +262,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (confirmed == true && mounted) {
       await _hm.removeHost(host.id);
-    }
-  }
-
-  void _toggleGlobalVoice() async {
-    final newState = !VoiceService.instance.globalVoiceActive;
-
-    if (newState) {
-      // Try to auto-start TTS engine
-      setState(() => _voiceLoading = true);
-      final warning = await VoiceService.instance.ensureServicesReady();
-      if (!mounted) return;
-      setState(() => _voiceLoading = false);
-      if (!VoiceService.instance.ttsReady) {
-        // TTS failed — don't activate global voice
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(warning ?? 'Voice services unavailable.'),
-            duration: const Duration(seconds: 8),
-            action: SnackBarAction(
-              label: 'TTS Settings',
-              onPressed: () => VoiceService.instance.openTtsSettings(),
-            ),
-          ),
-        );
-        return;
-      }
-      if (warning != null) {
-        // TTS ok but STT failed — that's fine for global announcements, just warn
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(warning),
-            duration: const Duration(seconds: 8),
-            action: SnackBarAction(
-              label: 'STT Settings',
-              onPressed: () => VoiceService.instance.openSttSettings(),
-            ),
-          ),
-        );
-      }
-    }
-
-    final wasSessionActive = VoiceService.instance.sessionVoiceActive;
-
-    setState(() {
-      VoiceService.instance.setGlobalVoiceActive(newState);
-    });
-
-    if (newState) {
-      // Connect global reporter SSE for all hosts
-      final hosts = <ReporterHost>[];
-      for (final host in _hm.hosts) {
-        final service = _hm.serviceFor(host.id);
-        if (service != null) {
-          hosts.add(ReporterHost(
-            hostId: host.id,
-            serverUrl: service.serverUrl,
-            getToken: service.getToken,
-          ));
-        }
-      }
-      NarrationService.instance.connectGlobal(hosts);
-      if (wasSessionActive && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session voice turned off'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-      VoiceService.instance.speak('Voice announcements on. I\'ll keep you posted.');
-    } else {
-      // Disconnect all reporter SSE connections
-      NarrationService.instance.disconnectAll();
     }
   }
 
@@ -518,7 +440,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    NarrationService.instance.disconnectAll();
     for (final sub in _eventSubs.values) {
       sub.cancel();
     }
@@ -548,26 +469,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             centerTitle: true,
             actions: [
               _buildConnectionDots(),
-              IconButton(
-                icon: _voiceLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        VoiceService.instance.globalVoiceActive
-                            ? Icons.volume_up
-                            : Icons.volume_off_outlined,
-                        color: VoiceService.instance.globalVoiceActive
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
-                      ),
-                tooltip: VoiceService.instance.globalVoiceActive
-                    ? 'Voice announcements on'
-                    : 'Voice announcements off',
-                onPressed: _voiceLoading ? null : _toggleGlobalVoice,
-              ),
               IconButton(
                 icon: const Icon(Icons.settings_outlined),
                 tooltip: 'Settings',
