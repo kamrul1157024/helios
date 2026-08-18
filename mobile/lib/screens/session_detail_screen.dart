@@ -1035,96 +1035,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     return ok ?? false;
   }
 
-  void _showCommandSheet() {
-    final commands = _sse?.commands ?? [];
-    if (commands.isEmpty) return;
-
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Commands',
-                  style: Theme.of(ctx).textTheme.titleSmall,
-                ),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    ...commands.map(
-                      (cmd) => ListTile(
-                        leading: Icon(_iconForCommand(cmd.icon)),
-                        title: Text(
-                          cmd.name,
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: Text(
-                          cmd.description,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          _sendCommand(cmd.name);
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _sendCommand(String command) async {
-    setState(() => _sending = true);
-    final sse = _sse;
-    final error = sse == null
-        ? 'Not connected'
-        : await sse.sendSessionPrompt(widget.session.sessionId, command);
-    if (error != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error), duration: const Duration(seconds: 3)),
-      );
-    }
-    if (mounted) setState(() => _sending = false);
-  }
-
-  IconData _iconForCommand(String icon) {
-    switch (icon) {
-      case 'compress':
-        return Icons.compress;
-      case 'rate_review':
-        return Icons.rate_review;
-      case 'payments':
-        return Icons.payments;
-      case 'info':
-        return Icons.info_outline;
-      case 'health_and_safety':
-        return Icons.health_and_safety;
-      case 'memory':
-        return Icons.memory;
-      case 'clear_all':
-        return Icons.clear_all;
-      case 'swap_horiz':
-        return Icons.swap_horiz;
-      default:
-        return Icons.terminal;
-    }
-  }
-
   void _openGitStatus(Session session) {
     _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.gitStatus);
     // Use resolved git root so diffs work from any subdirectory
@@ -1309,7 +1219,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     final canSend = session.canSendPrompt;
     final isQueueing = session.isQueueing;
     final theme = Theme.of(context);
-    final hasCommands = (_sse?.commands ?? []).isNotEmpty;
 
     if (session.isTerminated) {
       return Container(
@@ -1437,15 +1346,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             ),
           Row(
             children: [
-              if (hasCommands)
-                IconButton(
-                  onPressed: canSend && !_sending ? _showCommandSheet : null,
-                  icon: const Text(
-                    '/',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  tooltip: 'Commands',
-                ),
               IconButton(
                 onPressed: canSend && !_sending ? _showAttachSheet : null,
                 icon: const Icon(Icons.add_photo_alternate_outlined, size: 22),
