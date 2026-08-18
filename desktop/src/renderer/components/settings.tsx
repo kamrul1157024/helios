@@ -531,6 +531,10 @@ function Backdrop(): JSX.Element | null {
       style: state.style,
       intensity: state.intensity,
       blur: state.blur,
+      // Carried like everything else in the block. Left out, moving a slider
+      // writes an image style naming no image, which resolves to the mesh
+      // gradient: the picture is replaced for the crime of being blurred.
+      ...(state.image ? { image: state.image } : {}),
       ...(state.custom ? { stops: state.palette.map((color) => ({ color })) } : {}),
       ...patch,
     }
