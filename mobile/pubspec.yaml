@@ -41,8 +41,6 @@ dependencies:
   highlight: ^0.7.0
   # Speech-to-text (voice input)
   speech_to_text: ^7.0.0
-  # Text-to-speech (voice output)
-  flutter_tts: ^4.2.0
   # App version info
   package_info_plus: ^8.3.0
   # Open files (APK installer)

@@ -13,7 +13,6 @@ class Session {
   final String? lastUserMessage;
   final bool pinned;
   final bool archived;
-  final bool managed;
 
   /// The agent's permission mode, or null for a session that has not reported
   /// one yet. Switching it restarts the agent, so it is only offered when the
@@ -46,7 +45,6 @@ class Session {
     this.lastUserMessage,
     this.pinned = false,
     this.archived = false,
-    this.managed = false,
     this.permissionMode,
     this.terminal,
     this.supportsPromptQueue = false,
@@ -71,7 +69,6 @@ class Session {
       lastUserMessage: json['last_user_message'] as String?,
       pinned: json['pinned'] == true || json['pinned'] == 1,
       archived: json['archived'] == true || json['archived'] == 1,
-      managed: json['managed'] == true || json['managed'] == 1,
       permissionMode: json['permission_mode'] as String?,
       terminal: json['terminal'] as String?,
       supportsPromptQueue: json['supports_prompt_queue'] == true,
@@ -107,8 +104,7 @@ class Session {
   bool get hasTerminal => terminal != null && terminal!.isNotEmpty;
 
   /// A session with no live terminal has to be woken before it can do
-  /// anything. Being helios-managed does not spare it that: nothing resurrects
-  /// a host on its own.
+  /// anything: nothing resurrects a host on its own.
   bool get needsRecovery => !hasTerminal && !isTerminated;
   bool get canStop => isActive;
   bool get canTerminate => isActive || isIdle;
@@ -140,7 +136,6 @@ class Session {
       lastUserMessage: lastUserMessage,
       pinned: pinned ?? this.pinned,
       archived: archived ?? this.archived,
-      managed: managed,
       permissionMode: permissionMode ?? this.permissionMode,
       terminal: terminal,
       supportsPromptQueue: supportsPromptQueue,

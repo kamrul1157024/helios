@@ -149,6 +149,7 @@ func (s *Store) migrate() error {
 		// Lower sorts first, and it goes negative: a new session takes one less
 		// than the smallest, which puts it on top without renumbering the rest.
 		{"add_sessions_sort_order", `ALTER TABLE sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`},
+		{"drop_sessions_managed", `ALTER TABLE sessions DROP COLUMN managed`},
 	}
 
 	for _, cm := range columnMigrations {

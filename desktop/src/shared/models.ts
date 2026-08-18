@@ -22,7 +22,6 @@ export interface Session {
    *  Absent from a daemon older than the feature, which sorts by activity. */
   sort_order?: number
   archived: boolean
-  managed: boolean
   permission_mode?: string
   /** Socket path of the live terminal host, injected by the daemon. Absent means cold. */
   terminal?: string

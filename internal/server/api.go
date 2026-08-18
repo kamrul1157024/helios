@@ -1139,7 +1139,6 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
-		Managed:   true,
 	}
 	if err := s.shared.DB.UpsertSession(sess); err != nil {
 		log.Printf("create-session: register session %s: %v", sessionID, err)
@@ -1186,7 +1185,6 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
-		Managed:   true,
 	}
 	if err := s.shared.DB.UpsertSession(sess); err != nil {
 		log.Printf("wrap: register session %s: %v", req.SessionID, err)
@@ -1756,7 +1754,6 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
-		Managed:   true,
 	}
 	if err := s.shared.DB.UpsertSession(sess); err != nil {
 		log.Printf("create-session: register session %s: %v", sessionID, err)

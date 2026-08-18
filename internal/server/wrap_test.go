@@ -113,7 +113,7 @@ func postJSON(t *testing.T, url, body string) *http.Response {
 // `helios wrap` starts the terminal itself and then tells the daemon about it,
 // so the session has to exist and be bound to that terminal before any hook
 // arrives — that is what makes it addressable from the phone right away.
-func TestWrap_RegistersManagedSessionBoundToTerminal(t *testing.T) {
+func TestWrap_RegistersSessionBoundToTerminal(t *testing.T) {
 	srv, shared, be := newInternalTestServer(t)
 
 	resp := postJSON(t, srv.URL+"/internal/wrap",
@@ -125,9 +125,6 @@ func TestWrap_RegistersManagedSessionBoundToTerminal(t *testing.T) {
 	sess, err := shared.DB.GetSession("sess-1")
 	if err != nil || sess == nil {
 		t.Fatalf("session not registered: %v", err)
-	}
-	if !sess.Managed {
-		t.Error("session should be managed")
 	}
 	if sess.Status != "starting" {
 		t.Errorf("status = %q, want starting", sess.Status)

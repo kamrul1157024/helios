@@ -14,8 +14,7 @@ import '../services/api_client.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../widgets/message_card.dart';
-import '../services/voice_service.dart';
-import '../services/narration_service.dart';
+import '../services/speech_input_service.dart';
 import '../utils/large_paste.dart';
 import '../widgets/skeleton.dart';
 import 'file_browser_screen.dart';
@@ -66,16 +65,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   late final AnimationController _breathController;
   bool _breathingActive = false;
   bool _isRecording = false;
-  bool _voiceLoading = false;
   GitStatus? _gitStatus;
   List<Worktree> _worktrees = [];
   Map<String, GitStatus> _worktreeStatuses = {};
   String? _selectedWorktreePath;
 
   String get _effectiveCwd => _selectedWorktreePath ?? widget.session.cwd;
-
-  bool get _isVoiceActive =>
-      VoiceService.instance.isSessionActive(widget.session.sessionId);
 
   @override
   void initState() {
@@ -132,11 +127,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     for (final timer in _resendReads) {
       timer.cancel();
     }
-    if (_isRecording) VoiceService.instance.stopListening();
-    if (_isVoiceActive) {
-      VoiceService.instance.setActiveSession(null);
-      NarrationService.instance.disconnectAll();
-    }
+    if (_isRecording) SpeechInputService.instance.stopListening();
     super.dispose();
   }
 
@@ -697,10 +688,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     );
   }
 
-  void _toggleRecording() async {
+  void _toggleRecording() {
     debugPrint('[SessionDetail] _toggleRecording() _isRecording=$_isRecording');
     if (_isRecording) {
-      VoiceService.instance.stopListening();
+      SpeechInputService.instance.stopListening();
       setState(() => _isRecording = false);
       // If there's text in the field, send it
       final text = _promptController.text.trim();
@@ -711,13 +702,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       return;
     }
 
-    // Stop TTS before starting STT to prevent feedback / audio session conflict
-    await VoiceService.instance.stopSpeaking();
-    // Brief delay to let the audio session release
-    await Future.delayed(const Duration(milliseconds: 300));
-
     debugPrint('[SessionDetail] calling startListening...');
-    VoiceService.instance
+    SpeechInputService.instance
         .startListening(
           onResult: (text, finalResult) {
             debugPrint('[SessionDetail] onResult: "$text" final=$finalResult');
@@ -799,105 +785,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       ),
     );
 
-    // Voice mode toggle
-    actions.add(
-      IconButton(
-        icon: _voiceLoading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(
-                _isVoiceActive ? Icons.headset : Icons.headset_off,
-                color: _isVoiceActive
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-        tooltip: _isVoiceActive ? 'Voice mode on' : 'Voice mode off',
-        onPressed: _voiceLoading
-            ? null
-            : () async {
-                if (!_isVoiceActive) {
-                  // Try to auto-start TTS and STT services
-                  setState(() => _voiceLoading = true);
-                  final warning = await VoiceService.instance
-                      .ensureServicesReady();
-                  if (!mounted) return;
-                  setState(() => _voiceLoading = false);
-                  final ttsReady = VoiceService.instance.ttsReady;
-                  final sttReady = VoiceService.instance.sttAvailable;
-                  if (!ttsReady && !sttReady) {
-                    // Both services failed — don't activate voice mode
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(warning ?? 'Voice services unavailable.'),
-                        duration: const Duration(seconds: 8),
-                        action: SnackBarAction(
-                          label: 'Settings',
-                          onPressed: () =>
-                              VoiceService.instance.openVoiceSettings(),
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-                  if (warning != null) {
-                    // One service failed — activate but warn
-                    final label = !ttsReady ? 'TTS Settings' : 'STT Settings';
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(warning),
-                        duration: const Duration(seconds: 8),
-                        action: SnackBarAction(
-                          label: label,
-                          onPressed: () =>
-                              VoiceService.instance.openVoiceSettings(),
-                        ),
-                      ),
-                    );
-                  }
-                  final wasGlobalActive =
-                      VoiceService.instance.globalVoiceActive;
-                  setState(() {
-                    VoiceService.instance.setActiveSession(
-                      widget.session.sessionId,
-                    );
-                  });
-                  // Connect reporter SSE for this session (disconnects all others)
-                  final svc = _sse;
-                  if (svc != null) {
-                    NarrationService.instance.connectSession(
-                      host: ReporterHost(
-                        hostId: widget.session.hostId,
-                        serverUrl: svc.serverUrl,
-                        getToken: svc.getToken,
-                      ),
-                      sessionId: widget.session.sessionId,
-                    );
-                  }
-                  if (wasGlobalActive && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Global announcements turned off'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  }
-                } else {
-                  NarrationService.instance.disconnectAll();
-                  setState(() {
-                    VoiceService.instance.setActiveSession(null);
-                    if (_isRecording) {
-                      VoiceService.instance.stopListening();
-                      _isRecording = false;
-                    }
-                  });
-                }
-              },
-      ),
-    );
-
     // Permission mode. Shown always so the mode is visible at a glance;
     // tappable only when idle, because switching restarts the agent.
     if (session.source == 'claude') {
@@ -914,24 +801,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           onPressed: session.canSwitchPermissionMode
               ? () => _showPermissionModeSheet(session)
               : null,
-        ),
-      );
-    }
-
-    if (session.managed) {
-      actions.add(
-        Tooltip(
-          message: 'Managed by Helios',
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Icon(
-              Icons.shield_outlined,
-              size: 20,
-              color: Theme.of(
-                context,
-              ).colorScheme.primary.withValues(alpha: 0.7),
-            ),
-          ),
         ),
       );
     }
@@ -1688,19 +1557,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                   },
                 ),
               ),
-              if (_isVoiceActive && VoiceService.instance.voiceInputEnabled)
-                Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: IconButton(
-                    onPressed: canSend && !_sending ? _toggleRecording : null,
-                    icon: Icon(
-                      _isRecording ? Icons.stop : Icons.mic,
-                      color: _isRecording ? theme.colorScheme.error : null,
-                      size: 22,
-                    ),
-                    tooltip: _isRecording ? 'Stop recording' : 'Voice input',
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: IconButton(
+                  onPressed: canSend && !_sending ? _toggleRecording : null,
+                  icon: Icon(
+                    _isRecording ? Icons.stop : Icons.mic,
+                    color: _isRecording ? theme.colorScheme.error : null,
+                    size: 22,
                   ),
+                  tooltip: _isRecording ? 'Stop recording' : 'Voice input',
                 ),
+              ),
               const SizedBox(width: 8),
               if (session.canStop) ...[
                 IconButton.filled(

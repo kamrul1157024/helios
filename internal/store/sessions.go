@@ -26,7 +26,6 @@ type Session struct {
 	// and it is ignored entirely unless the list is set to sort manually.
 	SortOrder int  `json:"sort_order"`
 	Archived  bool `json:"archived"`
-	Managed   bool `json:"managed"`
 	// PermissionMode is the agent's permission mode. It is stored because the
 	// mode is a per-invocation flag rather than conversation state: without a
 	// record of it, a session that goes cold comes back in the default mode
@@ -85,8 +84,8 @@ func (s *Store) UpsertSession(sess *Session) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, managed, sort_order)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -95,10 +94,9 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   model = COALESCE(excluded.model, sessions.model),
 		   status = excluded.status,
 		   last_event = excluded.last_event,
-		   last_event_at = excluded.last_event_at,
-		   managed = excluded.managed`,
+		   last_event_at = excluded.last_event_at`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
-		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now, sess.Managed,
+		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
 	)
 	return err
 }
@@ -172,12 +170,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, pinned, archived, managed, sort_order,
+		        last_event, last_event_at, last_user_message, pinned, archived, sort_order,
 		        permission_mode, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed, &sess.SortOrder,
+		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
 		&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -231,7 +229,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-	        last_event, last_event_at, last_user_message, pinned, archived, managed, sort_order,
+	        last_event, last_event_at, last_user_message, pinned, archived, sort_order,
 	        permission_mode, created_at, ended_at
 	 FROM sessions`
 	if len(where) > 0 {
@@ -250,7 +248,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.Managed, &sess.SortOrder,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
 			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}
