@@ -120,7 +120,13 @@ export function Detail(): JSX.Element {
     <div className="detail">
       {hostId && session && (
         <>
-          <SessionHeader hostId={hostId} session={session} />
+          {/* Keyed: the header holds a rename in progress, and switching
+              sessions has to end it rather than carry it across. */}
+          <SessionHeader
+            key={`${hostId}:${session.session_id}`}
+            hostId={hostId}
+            session={session}
+          />
 
           {/* One strip: the panels, the session's own terminal, then the
               shells opened beside it. Tabs within a tab would be a hierarchy
@@ -376,7 +382,18 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
             }}
           />
         ) : (
-          <h1 onDoubleClick={() => setRenaming(true)}>{sessionLabel(session)}</h1>
+          /* Seeded on open rather than kept in step with the session: the
+             draft only means anything while the field is up, and the title can
+             have moved under it since — the daemon names a session itself
+             after the first exchange. */
+          <h1
+            onDoubleClick={() => {
+              setTitle(session.title ?? '')
+              setRenaming(true)
+            }}
+          >
+            {sessionLabel(session)}
+          </h1>
         )}
         <span className="detail-cwd" title={session.cwd}>
           {session.cwd}
