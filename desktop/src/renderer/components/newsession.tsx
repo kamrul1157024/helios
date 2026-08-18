@@ -160,7 +160,15 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Elem
 
       <label className="field">
         <span>First prompt (optional)</span>
-        <textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        {/* The box says a field; the placeholder says what the field is for.
+            Without it this reads as a note to self rather than the first thing
+            the agent will be asked. */}
+        <textarea
+          rows={4}
+          value={prompt}
+          placeholder="What should the agent start on? Left empty, the session opens at a prompt."
+          onChange={(event) => setPrompt(event.target.value)}
+        />
       </label>
 
       <div className="modal-actions">

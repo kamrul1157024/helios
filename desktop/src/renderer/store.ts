@@ -3,7 +3,15 @@ import { useSyncExternalStore } from 'react'
 import { api, bridge, statusOf } from './bridge.ts'
 import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
-import type { HostRecord, HostStatus, Notification, Session, SSEEvent, TabStatus } from '../shared/models.ts'
+import type {
+  Density,
+  HostRecord,
+  HostStatus,
+  Notification,
+  Session,
+  SSEEvent,
+  TabStatus,
+} from '../shared/models.ts'
 import type { XtermTheme } from '../shared/theme/resolve.ts'
 
 export interface Tab {
@@ -115,6 +123,12 @@ export interface State {
   pairingLink: string | null
   /** The palette xterm draws with; the CSS side is set on <html>, not here. */
   terminalTheme: XtermTheme
+  /**
+   * How much of a session the sidebar shows. Kept here as well as on <html>
+   * because the control that changes it lives in the sidebar and has to show
+   * which way it is set.
+   */
+  density: Density
 }
 
 const initial: State = {
@@ -134,6 +148,7 @@ const initial: State = {
   sortMode: {},
   loading: true,
   terminalTheme: bridge.theme.boot().terminal,
+  density: bridge.theme.boot().density,
   toast: null,
   pairingLink: null,
 }
@@ -199,7 +214,7 @@ class Store {
       applyTheme(document.documentElement, theme, glass)
       applyProseSize(document.documentElement, proseSize)
       applyDensity(document.documentElement, density)
-      this.set({ terminalTheme: terminal })
+      this.set({ terminalTheme: terminal, density })
     })
 
     bridge.hosts.onChanged((hosts) => {
@@ -666,10 +681,32 @@ class Store {
       await this.attachTerminal(tab.hostId, tab.sessionId, tab.termId, tab.title).catch((err: unknown) =>
         this.fail(err),
       )
+      // Closing the tab took its id out of the active list, and a strip naming
+      // nothing falls back to the agent's terminal — so reloading a shell
+      // would move the user somewhere they did not ask to go. It comes back
+      // under the same id, so it can be asked for by name.
+      this.selectTab(tab.id)
       return
     }
     const session = this.state.sessions[tab.hostId]?.find((s) => s.session_id === tab.sessionId)
     if (session) await this.openTerminal(tab.hostId, session, false)
+  }
+
+  /**
+   * Swaps the sidebar between showing a session on four lines and on one.
+   *
+   * Painted here before the main process answers: it replies with the resolved
+   * theme rather than the preference, and a toggle that waits for a round trip
+   * reads as one that missed the click.
+   */
+  async setDensity(density: Density): Promise<void> {
+    applyDensity(document.documentElement, density)
+    this.set({ density })
+    try {
+      await bridge.theme.set({ density })
+    } catch (err) {
+      this.fail(err)
+    }
   }
 
   renameTab(tabId: string, title: string): void {
@@ -713,12 +750,45 @@ class Store {
     if (hasTerminal(session)) void this.openTerminal(hostId, session, false)
   }
 
+  /**
+   * Drops a tab, handing the front to the one beside it.
+   *
+   * Naming nothing would do instead — the strip falls back to the agent's
+   * terminal when it finds no name — but closing the middle of three shells is
+   * not a request to leave the shells. The neighbour is the one before it,
+   * since a tab is usually opened after the one it belongs with; the last one
+   * closed leaves the entry empty, and the fallback is right again.
+   */
   closeTab(tabId: string): void {
     void bridge.term.close(tabId)
-    this.set((s) => ({
-      tabs: s.tabs.filter((t) => t.id !== tabId),
-      activeTabs: Object.fromEntries(Object.entries(s.activeTabs).filter(([, id]) => id !== tabId)),
-    }))
+    this.set((s) => {
+      const closing = s.tabs.find((t) => t.id === tabId)
+      const tabs = s.tabs.filter((t) => t.id !== tabId)
+      const activeTabs = { ...s.activeTabs }
+      const key = closing ? sessionKey(closing.hostId, closing.sessionId) : null
+
+      // Naming nothing would do — the strip falls back to the agent's terminal
+      // when it finds no name — but closing the middle of three shells is not
+      // a request to leave the shells. The one before it, since a shell is
+      // usually opened after the one it belongs with; the last shell closed
+      // names nothing, and the fallback is right again.
+      //
+      // Shells only. Closing the agent's terminal is a disconnect, and the
+      // panel has something to say about that which a shell would cover up.
+      if (key && closing?.kind === 'shell' && activeTabs[key] === tabId) {
+        const shells = s.tabs.filter(
+          (t) => t.kind === 'shell' && t.hostId === closing.hostId && t.sessionId === closing.sessionId,
+        )
+        const at = shells.findIndex((t) => t.id === tabId)
+        const next = shells[at - 1] ?? shells[at + 1]
+        if (next) activeTabs[key] = next.id
+        else delete activeTabs[key]
+      } else {
+        for (const [k, id] of Object.entries(activeTabs)) if (id === tabId) delete activeTabs[k]
+      }
+
+      return { tabs, activeTabs }
+    })
   }
 
   /** Brings one of a session's terminals to the front. */

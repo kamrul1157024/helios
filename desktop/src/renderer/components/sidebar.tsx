@@ -17,6 +17,30 @@ import {
 } from '../../shared/models.ts'
 import { Chevron } from './icons.tsx'
 
+/** What the sidebar may be dragged to. Narrower hides titles; wider is a
+ *  session list taking half the window from the session itself. */
+const MIN_SIDEBAR = 260
+const MAX_SIDEBAR = 560
+const SIDEBAR_KEY = 'helios.sidebarWidth'
+
+function readSidebarWidth(): number | null {
+  try {
+    const saved = Number(localStorage.getItem(SIDEBAR_KEY))
+    return saved > 0 ? Math.min(Math.max(saved, MIN_SIDEBAR), MAX_SIDEBAR) : null
+  } catch {
+    return null
+  }
+}
+
+function writeSidebarWidth(width: number | null): void {
+  try {
+    if (width === null) localStorage.removeItem(SIDEBAR_KEY)
+    else localStorage.setItem(SIDEBAR_KEY, String(width))
+  } catch {
+    // A full or unavailable store costs the width, not the sidebar.
+  }
+}
+
 interface Row {
   host: HostRecord
   session: Session
@@ -49,6 +73,7 @@ export function Sidebar({
   const query = useStore((s) => s.query)
   const showArchived = useStore((s) => s.showArchived)
   const sortMode = useStore((s) => s.sortMode)
+  const density = useStore((s) => s.density)
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
   const [dragging, setDragging] = useState<{ hostId: string; sessionId: string } | null>(null)
@@ -56,6 +81,33 @@ export function Sidebar({
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
   const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
+  const aside = useRef<HTMLElement | null>(null)
+
+  // The width is a CSS variable rather than state: the value is read by the
+  // stylesheet, nothing in React branches on it, and a drag that re-rendered
+  // the whole list on every pointer move would stutter against 150 sessions.
+  useEffect(() => {
+    const saved = readSidebarWidth()
+    if (saved !== null) document.documentElement.style.setProperty('--sidebar', `${saved}px`)
+  }, [])
+
+  const resize = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    const fromX = event.clientX
+    const fromWidth = aside.current?.getBoundingClientRect().width ?? MIN_SIDEBAR
+    let latest = fromWidth
+    const move = (moved: PointerEvent): void => {
+      latest = Math.min(Math.max(fromWidth + (moved.clientX - fromX), MIN_SIDEBAR), MAX_SIDEBAR)
+      document.documentElement.style.setProperty('--sidebar', `${Math.round(latest)}px`)
+    }
+    const done = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', done)
+      writeSidebarWidth(Math.round(latest))
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', done)
+  }
 
   const grouped = useMemo<Group[]>(() => {
     const needle = query.trim().toLowerCase()
@@ -96,7 +148,7 @@ export function Sidebar({
   const manual = hosts.some((host) => sortMode[host.id] === 'manual')
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" ref={aside}>
       <header className="sidebar-head">
         <div className="search-field">
           <span className="search-icon" aria-hidden="true">
@@ -120,6 +172,21 @@ export function Sidebar({
           onClick={() => void store.setSortModeEverywhere(manual ? 'activity' : 'manual')}
         >
           ⇅
+        </button>
+        {/* Beside the sort toggle because it is the same kind of control: not
+            a preference set once, but a way of looking at the list, changed
+            while looking at it. Shows the state it is in, as the sort does. */}
+        <button
+          className={density === 'compact' ? 'fab density-toggle on' : 'fab density-toggle'}
+          aria-label={density === 'compact' ? 'Compact list' : 'Comfortable list'}
+          title={
+            density === 'compact'
+              ? 'Compact — one line a session.\nClick for the fuller card.'
+              : 'Comfortable — status, title, directory and model.\nClick to fit more on screen.'
+          }
+          onClick={() => void store.setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+        >
+          {density === 'compact' ? '▤' : '▦'}
         </button>
         <button className="fab" title="New session (⌘N)" onClick={onNewSession}>
           +
@@ -250,6 +317,20 @@ export function Sidebar({
         </button>
         <AppMenu onSettings={onSettings} />
       </footer>
+
+      {/* The panel's own edge, not a bar between the panels: the list is what
+          the pointer is already near, and a gutter belongs to neither side. */}
+      <div
+        className="sidebar-grip"
+        role="separator"
+        aria-label="Resize the session list"
+        title="Drag to resize — double-click to reset"
+        onPointerDown={resize}
+        onDoubleClick={() => {
+          document.documentElement.style.removeProperty('--sidebar')
+          writeSidebarWidth(null)
+        }}
+      />
     </aside>
   )
 }
