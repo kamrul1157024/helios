@@ -28,6 +28,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
   String? _cwdFilter;
   String? _cwdFilterProject;
 
+  /// Whether finished sessions are listed. Off by default: a machine that has
+  /// run a few hundred agents is mostly finished ones, and they are history
+  /// rather than work.
+  bool _showTerminated = false;
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -37,6 +42,15 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   String _compositeKey(Session s) => '${s.hostId}:${s.sessionId}';
+
+  /// A search or a directory filter is a request for particular sessions, and
+  /// answering it while holding some of them back would be a lie. The archive
+  /// tab is left alone too: it exists to show what was put away.
+  bool get _hidingTerminated =>
+      !_showTerminated &&
+      _cwdFilter == null &&
+      _filter != SessionFilter.archived &&
+      !(_searchExpanded && _searchController.text.trim().isNotEmpty);
 
   List<Session> _filterSessions(List<Session> sessions) {
     // When search or CWD filter is active, API already filtered — pass through.
@@ -319,13 +333,24 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
         final manual = hm.manualOrder;
         final orderable = manual ? _orderableService(hm) : null;
-        final filtered = _sortSessions(_filterSessions(sessions), manual: manual);
+        final matching = _filterSessions(sessions);
+        final hiddenTerminated =
+            _hidingTerminated ? matching.where((s) => s.isTerminated).length : 0;
+        final filtered = _sortSessions(
+          _hidingTerminated ? matching.where((s) => !s.isTerminated).toList() : matching,
+          manual: manual,
+        );
 
         return Column(
           children: [
             if (_multiSelect) _buildMultiSelectBar(),
             _buildFilterRow(sessions, hm, filtered),
             if (_cwdFilter != null) _buildActiveFiltersRow(),
+            // Above the list rather than below it: revealed sessions are
+            // appended, so a control under them walks further down the screen
+            // with every use.
+            if (hiddenTerminated > 0 || (_showTerminated && _filter != SessionFilter.archived))
+              _buildTerminatedToggle(hiddenTerminated),
             Expanded(
               child: filtered.isEmpty
                   ? _buildEmptyFilterState()
@@ -356,6 +381,33 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ],
         );
       },
+    );
+  }
+
+  /// The way back to the finished sessions, and the way out of them.
+  Widget _buildTerminatedToggle(int hidden) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+        child: TextButton.icon(
+          onPressed: () => setState(() => _showTerminated = !_showTerminated),
+          icon: Icon(
+            _showTerminated ? Icons.visibility_off_outlined : Icons.history,
+            size: 16,
+          ),
+          label: Text(
+            _showTerminated ? 'Hide terminated' : 'Show $hidden terminated',
+            style: const TextStyle(fontSize: 12),
+          ),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            foregroundColor: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
     );
   }
 
@@ -401,8 +453,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   Widget _buildFilterChips(List<Session> allSessions, HostManager hm, List<Session> visible) {
-    final allCount = allSessions.where((s) => !s.archived).length;
-    final pinnedCount = allSessions.where((s) => s.pinned && !s.archived).length;
+    // Counting what the tab would show, not what exists: a chip reading 155
+    // over a list of twelve is a chip that has to be explained. The archive is
+    // its own tab and holds terminated sessions on purpose.
+    bool counted(Session s) => !s.archived && !(_hidingTerminated && s.isTerminated);
+    final allCount = allSessions.where(counted).length;
+    final pinnedCount = allSessions.where((s) => s.pinned && counted(s)).length;
     final archivedCount = allSessions.where((s) => s.archived).length;
 
     return Row(
