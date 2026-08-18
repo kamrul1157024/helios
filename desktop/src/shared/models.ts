@@ -487,7 +487,11 @@ export interface AppearancePrefs {
   terminalTheme: string
   /** Body size of rendered markdown, in px; headings and tables scale with it. */
   proseSize: number
+  /** How much of a session the sidebar shows: everything, or one line each. */
+  density: Density
 }
+
+export type Density = 'comfortable' | 'compact'
 
 /**
  * What the backdrop picker shows, for whichever theme is active.

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import { applyProseSize, applyTheme } from '../shared/theme/apply.ts'
+import type { Density } from '../shared/models.ts'
+import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 
 interface ThemeBoot {
@@ -9,6 +10,7 @@ interface ThemeBoot {
   glass: boolean
   glassSupported: boolean
   proseSize: number
+  density: Density
 }
 
 /**
@@ -59,6 +61,7 @@ const boot = ipcRenderer.sendSync('theme:boot') as ThemeBoot
 const paint = (): void => {
   applyTheme(document.documentElement, boot.theme, boot.glass)
   applyProseSize(document.documentElement, boot.proseSize)
+  applyDensity(document.documentElement, boot.density)
 }
 
 if (document.documentElement) {

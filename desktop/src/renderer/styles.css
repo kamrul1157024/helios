@@ -917,6 +917,93 @@ small {
   opacity: 1;
 }
 
+/* ── Compact sidebar ────────────────────────────────────────────────────────
+   One line a session: the status dot, the title, and how long ago. Text stays
+   the size it is elsewhere — the space saved is the working directory, the
+   model line and the padding around them, not the reading. */
+
+/* Square, and touching. At this height a rounded card reads as a tile, and a
+   column of tiles reads as a grid rather than a list; square rows butted
+   together read as one list, which is what compact is for. Nothing separates
+   them but the hover and the selection, so the eye follows the pointer instead
+   of counting edges. */
+[data-density='compact'] .session-card {
+  margin-bottom: 0;
+  border-radius: 0;
+}
+
+/* The selected row is the one place a border would show, and on a row with no
+   gap around it the border shifts the text by a pixel. The background says it
+   without moving anything. */
+[data-density='compact'] .session-card.selected {
+  border-color: transparent;
+}
+
+[data-density='compact'] .card-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 14px;
+}
+
+/* The status row's children become the row's children, so the title can sit
+   among them rather than under them. */
+[data-density='compact'] .card-top {
+  display: contents;
+}
+
+/* The chip keeps its dot and loses its word: the colour already says it, and
+   the stripe down the card says it again. */
+[data-density='compact'] .chip {
+  order: 1;
+  height: auto;
+  padding: 0;
+  background: none;
+  font-size: 0;
+  gap: 0;
+}
+
+[data-density='compact'] .card-title {
+  order: 2;
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-density='compact'] .cold-mark {
+  order: 3;
+}
+
+[data-density='compact'] .pin {
+  order: 4;
+}
+
+/* Kept in the row: a session waiting on an answer should not need a hover to
+   say so. */
+[data-density='compact'] .badge {
+  order: 5;
+}
+
+[data-density='compact'] .card-top .grow {
+  display: none;
+}
+
+[data-density='compact'] .card-top .time {
+  order: 6;
+  font-size: 11px;
+}
+
+[data-density='compact'] .card-cwd,
+[data-density='compact'] .card-bottom {
+  display: none;
+}
+
 .check {
   display: flex;
   align-items: center;

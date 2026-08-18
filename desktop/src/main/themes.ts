@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { mergeThemes, resolveTheme, type HeliosTheme, type ThemeMode } from '../shared/theme/resolve.ts'
 import { parseJsonc, type BackdropSpec, type VSCodeTheme } from '../shared/theme/vscode.ts'
-import type { AppearancePrefs, ThemeSummary } from '../shared/models.ts'
+import type { AppearancePrefs, Density, ThemeSummary } from '../shared/models.ts'
 
 export const DEFAULT_APPEARANCE: AppearancePrefs = {
   mode: 'system',
@@ -13,6 +13,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   darkTheme: 'dark-modern',
   terminalTheme: 'match',
   proseSize: 14,
+  density: 'comfortable',
 }
 
 /* Clamped rather than trusted: the file is hand-editable, and a zero or a
@@ -22,6 +23,12 @@ const MAX_PROSE = 28
 
 /** What a backdrop image may be, and therefore what the media scheme serves. */
 const IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+
+/* Anything else in the file — a typo, an older name — reads as the roomy
+   layout, which is the one that shows everything. */
+function density(value: unknown): Density {
+  return value === 'compact' ? 'compact' : 'comfortable'
+}
 
 function proseSize(value: unknown): number {
   const size = Math.round(Number(value))
@@ -62,6 +69,7 @@ export class ThemeRegistry {
         darkTheme: parsed.darkTheme ?? DEFAULT_APPEARANCE.darkTheme,
         terminalTheme: parsed.terminalTheme ?? DEFAULT_APPEARANCE.terminalTheme,
         proseSize: proseSize(parsed.proseSize ?? DEFAULT_APPEARANCE.proseSize),
+        density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
       }
     } catch {
       this.prefs = { ...DEFAULT_APPEARANCE }
@@ -201,6 +209,7 @@ export class ThemeRegistry {
   setPrefs(next: Partial<AppearancePrefs>): AppearancePrefs {
     this.prefs = { ...this.prefs, ...next }
     this.prefs.proseSize = proseSize(this.prefs.proseSize)
+    this.prefs.density = density(this.prefs.density)
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
     fs.writeFileSync(this.file, JSON.stringify(this.prefs, null, 2))
     return this.getPrefs()

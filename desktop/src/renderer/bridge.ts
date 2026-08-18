@@ -11,11 +11,13 @@ export interface ThemePayload {
   glassSupported: boolean
   /** Reading size for rendered markdown, in px. */
   proseSize: number
+  density: Density
 }
 import type {
   AppearancePrefs,
   BackdropState,
   CommandInfo,
+  Density,
   DeviceInfo,
   DirectoryInfo,
   FileContent,
@@ -32,12 +34,12 @@ import type {
   Notification,
   NotificationPrefs,
   ProviderInfo,
-  Session,
-  ThemeSummary,
   SSEEvent,
+  Session,
   Subagent,
   TabStatus,
   TerminalInfo,
+  ThemeSummary,
   TranscriptPage,
   Worktree,
   WriteResult,
