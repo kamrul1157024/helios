@@ -1,12 +1,26 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
+
+/// How long an unused connection is held open.
+///
+/// A daemon can be a long way off — a hundred milliseconds of round trip is
+/// ordinary for a host in another region — and opening a connection costs one
+/// of those before the request costs another. Sessions are watched in bursts
+/// with quiet in between, so the gaps worth surviving are minutes, not the
+/// fifteen seconds dart:io keeps by default.
+const _idleTimeout = Duration(minutes: 5);
 
 /// Authenticated HTTP client for a single Helios host.
 ///
 /// Owns JWT sign/cache and applies a single auto-refresh on 401:
 /// invalidate → re-sign → retry once. Network exceptions propagate to callers.
+///
+/// One client per host, kept for as long as the host is, so its connections
+/// are reused rather than dialled again for every request.
 class ApiClient {
   final String serverUrl;
   final String deviceId;
@@ -15,11 +29,17 @@ class ApiClient {
   String? _cachedToken;
   DateTime? _tokenExpiresAt;
 
+  final http.Client _http;
+
   ApiClient({
     required this.serverUrl,
     required this.deviceId,
     required this.privateKeySeed,
-  });
+    http.Client? client,
+  }) : _http = client ?? IOClient(HttpClient()..idleTimeout = _idleTimeout);
+
+  /// Drops the connections. The client is unusable afterwards.
+  void close() => _http.close();
 
   // ==================== Auth ====================
 
@@ -82,14 +102,14 @@ class ApiClient {
   // ==================== HTTP verbs with 401 auto-refresh ====================
 
   Future<http.Response> get(String path) async {
-    final resp = await http.get(
+    final resp = await _http.get(
       Uri.parse('$serverUrl$path'),
       headers: await _authHeaders(),
     );
     if (resp.statusCode == 401) {
       debugPrint('[ApiClient] 401 on GET $path — refreshing token');
       invalidateToken();
-      return http.get(
+      return _http.get(
         Uri.parse('$serverUrl$path'),
         headers: await _authHeaders(),
       );
@@ -99,7 +119,7 @@ class ApiClient {
 
   Future<http.Response> post(String path, {Map<String, dynamic>? body}) async {
     final encoded = body != null ? jsonEncode(body) : null;
-    final resp = await http.post(
+    final resp = await _http.post(
       Uri.parse('$serverUrl$path'),
       headers: await _authHeaders(json: true),
       body: encoded,
@@ -107,7 +127,7 @@ class ApiClient {
     if (resp.statusCode == 401) {
       debugPrint('[ApiClient] 401 on POST $path — refreshing token');
       invalidateToken();
-      return http.post(
+      return _http.post(
         Uri.parse('$serverUrl$path'),
         headers: await _authHeaders(json: true),
         body: encoded,
@@ -118,7 +138,7 @@ class ApiClient {
 
   Future<http.Response> patch(String path, {Map<String, dynamic>? body}) async {
     final encoded = body != null ? jsonEncode(body) : null;
-    final resp = await http.patch(
+    final resp = await _http.patch(
       Uri.parse('$serverUrl$path'),
       headers: await _authHeaders(json: true),
       body: encoded,
@@ -126,7 +146,7 @@ class ApiClient {
     if (resp.statusCode == 401) {
       debugPrint('[ApiClient] 401 on PATCH $path — refreshing token');
       invalidateToken();
-      return http.patch(
+      return _http.patch(
         Uri.parse('$serverUrl$path'),
         headers: await _authHeaders(json: true),
         body: encoded,
@@ -148,7 +168,7 @@ class ApiClient {
           http.MultipartFile.fromBytes('file', file.bytes, filename: file.name),
         );
       }
-      return http.Response.fromStream(await request.send());
+      return http.Response.fromStream(await _http.send(request));
     }
 
     final resp = await attempt();
@@ -161,14 +181,14 @@ class ApiClient {
   }
 
   Future<http.Response> delete(String path) async {
-    final resp = await http.delete(
+    final resp = await _http.delete(
       Uri.parse('$serverUrl$path'),
       headers: await _authHeaders(),
     );
     if (resp.statusCode == 401) {
       debugPrint('[ApiClient] 401 on DELETE $path — refreshing token');
       invalidateToken();
-      return http.delete(
+      return _http.delete(
         Uri.parse('$serverUrl$path'),
         headers: await _authHeaders(),
       );
