@@ -74,9 +74,6 @@ class DaemonAPIService extends ChangeNotifier {
   String? _lastSessionFilter;
   String? _lastSessionCwd;
 
-  List<SlashCommand> _commands = [];
-  List<SlashCommand> get commands => _commands;
-
   List<ProviderInfo> _providers = [];
   List<ProviderInfo> get providers => _providers;
   bool _providersLoaded = false;
@@ -169,7 +166,6 @@ class DaemonAPIService extends ChangeNotifier {
     fetchSessions();
     fetchNotifications();
     fetchProviders();
-    fetchCommands();
     fetchSortMode();
     if (!_connected) _startPolling();
   }
@@ -817,22 +813,6 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  // ==================== Commands API ====================
-
-  Future<void> fetchCommands() async {
-    try {
-      final resp = await _api.get('/api/commands');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        final list = (data['commands'] as List?) ?? [];
-        _commands = list.map((c) => SlashCommand.fromJson(c)).toList();
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch commands: $e');
-    }
-  }
-
   // ==================== Settings API ====================
 
   /// Fetch all settings and personas from the backend.
@@ -1254,26 +1234,6 @@ class FileReadResult {
     if (size < 1024) return '$size B';
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-}
-
-class SlashCommand {
-  final String name;
-  final String description;
-  final String icon;
-
-  SlashCommand({
-    required this.name,
-    required this.description,
-    required this.icon,
-  });
-
-  factory SlashCommand.fromJson(Map<String, dynamic> json) {
-    return SlashCommand(
-      name: json['name'] as String,
-      description: json['description'] as String? ?? '',
-      icon: json['icon'] as String? ?? '',
-    );
   }
 }
 
