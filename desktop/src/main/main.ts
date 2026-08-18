@@ -176,7 +176,6 @@ function applyWindowMaterial(): void {
   nativeTheme.themeSource = themes.getPrefs().mode
   if (!window || window.isDestroyed()) return
   const clear = vibrancyOn()
-  if (GLASS_SUPPORTED) window.setVibrancy(clear ? 'under-window' : null)
   // An opaque background sits in front of the material and hides it, so a
   // window showing the desktop has to stop painting one. A window painting its
   // own gradient keeps it: the renderer draws over it either way, and a clear
@@ -195,7 +194,13 @@ function createWindow(): void {
     // The frame is painted before the renderer runs, so it has to come from the
     // theme too or the window flashes the old dark grey on every open.
     backgroundColor: vibrancyOn() ? '#00000000' : (themes?.active().vars['--surface'] ?? '#101014'),
-    ...(vibrancyOn() ? { vibrancy: 'under-window' as const } : {}),
+    // Asked for at creation whatever the theme currently says, because a window
+    // born opaque cannot be made translucent afterwards: AppKit fixes that at
+    // creation, and switching to the desktop backdrop would do nothing until
+    // the app was restarted. The material is always there; what decides whether
+    // it is seen is the background painted in front of it, which
+    // applyWindowMaterial does change at runtime.
+    ...(GLASS_SUPPORTED ? { vibrancy: 'under-window' as const } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(distDir, 'preload', 'preload.js'),
