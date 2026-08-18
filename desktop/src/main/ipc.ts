@@ -8,7 +8,7 @@ import type { TerminalManager } from './terminals.ts'
 import type { ThemeRegistry } from './themes.ts'
 import { DEFAULT_INTENSITY } from '../shared/theme/backdrop.ts'
 import type { BackdropSpec } from '../shared/theme/vscode.ts'
-import type { AppearancePrefs, BackdropState } from '../shared/models.ts'
+import type { AppearancePrefs, BackdropState, Density } from '../shared/models.ts'
 
 /**
  * REST calls the renderer may make. An allow-list rather than a reflective
@@ -160,10 +160,12 @@ export function registerIpc(deps: IpcDeps): void {
     glass: boolean
     glassSupported: boolean
     proseSize: number
+    density: Density
   } => ({
     theme: themes.active(),
     terminal: themes.activeTerminal(),
     proseSize: themes.getPrefs().proseSize,
+    density: themes.getPrefs().density,
     // A property of the chosen theme, not a setting of its own: picking a
     // glass theme is the whole of the request. A theme with no backdrop of its
     // own is gated on the platform, because a preference to show a backdrop

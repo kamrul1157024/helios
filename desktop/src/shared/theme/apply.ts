@@ -1,3 +1,4 @@
+import type { Density } from '../models.ts'
 import type { HeliosTheme } from './resolve.ts'
 
 /**
@@ -14,6 +15,16 @@ import type { HeliosTheme } from './resolve.ts'
 /** The reading size for rendered markdown, which the .md rules scale from. */
 export function applyProseSize(root: HTMLElement, size: number): void {
   root.style.setProperty('--prose-size', `${size}px`)
+}
+
+/**
+ * How much of a session the sidebar shows.
+ *
+ * An attribute rather than variables, for the same reason as glass: density
+ * changes which parts of a card are drawn, not what colour or size they are.
+ */
+export function applyDensity(root: HTMLElement, density: Density): void {
+  root.dataset.density = density
 }
 
 export function applyTheme(root: HTMLElement, theme: Pick<HeliosTheme, 'vars'>, glass = false): void {

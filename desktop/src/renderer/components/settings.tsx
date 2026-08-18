@@ -7,7 +7,13 @@ import { ALERT_TYPES } from '../../shared/notifications.ts'
 import { BACKDROP_STYLES, MAX_BLUR, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
 import { parseColor, type BackdropSpec, type BackdropStyle, type Rgb } from '../../shared/theme/vscode.ts'
 import type { HeliosTheme } from '../../shared/theme/resolve.ts'
-import type { AppearancePrefs, BackdropState, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
+import type {
+  AppearancePrefs,
+  BackdropState,
+  Density,
+  NotificationPrefs,
+  ThemeSummary,
+} from '../../shared/models.ts'
 
 /**
  * Which types can be silenced, in the order the phone lists them. Keeping the
@@ -179,6 +185,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         />
 
         <ProseSize size={appearance?.proseSize} onPick={(size) => void setTheme({ proseSize: size })} />
+
+        <SessionDensity
+          density={appearance?.density}
+          onPick={(density) => void setTheme({ density })}
+        />
 
         <Backdrop />
 
@@ -729,6 +740,38 @@ function previewOf(
   const stops = palette.map(parseColor).filter((c): c is Rgb => c !== null)
   const base = parseColor(theme.vars['--surface'] ?? '') ?? (parseColor('#101014') as Rgb)
   return backdropValue({ style, intensity, ...(image ? { image } : {}) }, base, stops)
+}
+
+/** How much of each session the sidebar shows. */
+function SessionDensity({
+  density,
+  onPick,
+}: {
+  density: Density | undefined
+  onPick: (density: Density) => void
+}): JSX.Element {
+  const options: { value: Density; label: string }[] = [
+    { value: 'comfortable', label: 'Comfortable' },
+    { value: 'compact', label: 'Compact' },
+  ]
+
+  return (
+    <div className="theme-picker">
+      <span className="theme-picker-label">Session list</span>
+      <select
+        value={density ?? 'comfortable'}
+        disabled={density === undefined}
+        onChange={(event) => onPick(event.target.value as Density)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <span className="modal-note">Compact is one line a session; hover shows the rest.</span>
+    </div>
+  )
 }
 
 function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: number) => void }): JSX.Element {
