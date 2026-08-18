@@ -1141,6 +1141,9 @@ class DaemonAPIService extends ChangeNotifier {
   void dispose() {
     stop();
     _eventController.close();
+    // The client holds connections open between requests, so a host that is
+    // gone has to give them back.
+    _api.close();
     super.dispose();
   }
 }
