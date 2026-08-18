@@ -72,7 +72,7 @@
   --r-md: 12px;
   --r-lg: 16px;
   --r-xl: 28px;
-  --sidebar: 320px;
+  --sidebar: 360px;
   /* Reading width for the transcript and its composer. It exists to stop a
      reply and the prompt above it drifting to opposite edges of the window,
      not to hold prose to a paragraph width — code blocks and diffs want the
@@ -251,14 +251,16 @@ button.danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--on-surface) 8%, transparent);
 }
 
-/* M3 filled fields: a tonal box, no outline until focus. */
+/* M3 filled fields: a tonal box. The outline is faint rather than absent —
+   against a glass panel a tonal box is barely a box, and a field nobody can
+   see the edge of is a field nobody types in. Focus brightens it. */
 input,
 select,
 textarea {
   font: inherit;
   color: var(--on-surface);
   background: var(--surface-high);
-  border: 1px solid transparent;
+  border: 1px solid var(--outline-variant);
   border-radius: var(--r-sm);
   padding: 9px 12px;
   user-select: text;
@@ -505,6 +507,7 @@ small {
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
 .sidebar {
+  position: relative;
   width: var(--sidebar);
   flex: none;
   display: flex;
@@ -512,6 +515,27 @@ small {
   background: var(--surface-low);
   border-radius: var(--r-lg);
   overflow: hidden;
+}
+
+/* Wider than it looks: a 4px edge is a target that has to be hunted, so the
+   grip reaches inside the panel where nothing else is clickable. It paints
+   nothing until the pointer is on it. */
+.sidebar-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.sidebar-grip:hover {
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--primary) 35%, transparent)
+  );
 }
 
 /* ─── Backdrop ──────────────────────────────────────────────────────────── */
@@ -751,17 +775,20 @@ small {
 
 /* Quieter than the new-session button beside it, and filled only while it is
    the one holding the list still. */
-.sort-toggle {
+.sort-toggle,
+.density-toggle {
   background: transparent;
   color: var(--on-surface-variant);
   font-size: 16px;
 }
 
-.sort-toggle:hover:not(:disabled) {
+.sort-toggle:hover:not(:disabled),
+.density-toggle:hover:not(:disabled) {
   background: var(--surface-container);
 }
 
-.sort-toggle.on {
+.sort-toggle.on,
+.density-toggle.on {
   background: var(--primary-container);
   color: var(--on-primary-container);
 }

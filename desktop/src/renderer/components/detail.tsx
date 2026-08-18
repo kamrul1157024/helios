@@ -306,11 +306,28 @@ function ShellTab({ tab, active }: { tab: Tab; active: boolean }): JSX.Element {
     >
       <span className={`dot ${tab.status.state}`} />
       {tab.title}
+      {/* Reload and end, the pair the agent's terminal carries, in the same
+          place. Its third move — detaching, and staying detached — has no
+          meaning here: the shell list re-attaches anything this client is not
+          showing the next time the session is opened, so a shell let go of
+          comes back on its own. Ending it is the cross. */}
+      <span
+        className="tab-close reload"
+        role="button"
+        aria-label="Reload"
+        title="Reload — the shell keeps running"
+        onClick={(event) => {
+          event.stopPropagation()
+          void store.reconnectTab(tab.id)
+        }}
+      >
+        ⟳
+      </span>
       <span
         className="tab-close"
         role="button"
         aria-label="Close shell"
-        title="Close this shell"
+        title="Close — ends this shell"
         onClick={(event) => {
           event.stopPropagation()
           void store.killShell(tab.id)
