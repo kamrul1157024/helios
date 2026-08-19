@@ -18,6 +18,7 @@ import type {
   Subagent,
   TerminalInfo,
   TranscriptPage,
+  HostStats,
   Worktree,
   WriteResult,
 } from '../shared/models.ts'
@@ -134,9 +135,12 @@ export class ApiClient {
 
   async listSessions(
     params: { q?: string; status?: string; filter?: string; cwd?: string } = {},
-  ): Promise<Session[]> {
-    const res = await this.request<{ sessions?: Session[] }>('GET', `/api/sessions${queryString(params)}`)
-    return res.sessions ?? []
+  ): Promise<{ sessions: Session[]; host?: HostStats }> {
+    const res = await this.request<{ sessions?: Session[]; host?: HostStats }>(
+      'GET',
+      `/api/sessions${queryString(params)}`,
+    )
+    return { sessions: res.sessions ?? [], host: res.host }
   }
 
   async getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {

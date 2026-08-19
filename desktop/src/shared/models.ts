@@ -25,6 +25,8 @@ export interface Session {
   permission_mode?: string
   /** Socket path of the live terminal host, injected by the daemon. Absent means cold. */
   terminal?: string
+  /** Resident memory of the live terminal's process tree. Absent when cold. */
+  memory_bytes?: number
   created_at: string
   ended_at?: string
   supports_prompt_queue: boolean
@@ -523,4 +525,17 @@ export interface ThemeSummary {
   name: string
   mode: 'dark' | 'light'
   swatch: string[]
+}
+
+/** What a host's warm pool costs, and what the machine behind it has left.
+ *  The daemon evicts nothing, so `budget` is only the point past which it is
+ *  worth telling the user. */
+export interface HostStats {
+  warm: number
+  warm_rss: number
+  budget: number
+  /** One-minute load average over the core count: 1 means saturated. */
+  load: number
+  memory_used: number
+  memory_total: number
 }

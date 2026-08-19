@@ -22,6 +22,10 @@ class Session {
   /// Handle of the session's live terminal host, or null when the session is
   /// cold and has to be resumed before it can be driven.
   final String? terminal;
+
+  /// What the live terminal's process tree holds in memory. Null when cold: a
+  /// session that is not running costs nothing until it is woken.
+  final int? memoryBytes;
   final bool supportsPromptQueue;
   final String createdAt;
   final String? endedAt;
@@ -47,6 +51,7 @@ class Session {
     this.archived = false,
     this.permissionMode,
     this.terminal,
+    this.memoryBytes,
     this.supportsPromptQueue = false,
     required this.createdAt,
     this.endedAt,
@@ -71,6 +76,7 @@ class Session {
       archived: json['archived'] == true || json['archived'] == 1,
       permissionMode: json['permission_mode'] as String?,
       terminal: json['terminal'] as String?,
+      memoryBytes: (json['memory_bytes'] as num?)?.toInt(),
       supportsPromptQueue: json['supports_prompt_queue'] == true,
       createdAt: json['created_at'] as String,
       endedAt: json['ended_at'] as String?,
@@ -114,6 +120,15 @@ class Session {
   /// flight and strand any pending permission prompt.
   bool get canSwitchPermissionMode => source == 'claude' && isIdle;
 
+  /// Memory the terminal holds, as "412 MB" or "1.2 GB". Empty when cold.
+  String get memoryLabel {
+    final bytes = memoryBytes;
+    if (bytes == null || bytes <= 0) return '';
+    const gb = 1024 * 1024 * 1024;
+    if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(1)} GB';
+    return '${(bytes / (1024 * 1024)).round()} MB';
+  }
+
   Session copyWith({
     String? title,
     bool? pinned,
@@ -138,6 +153,7 @@ class Session {
       archived: archived ?? this.archived,
       permissionMode: permissionMode ?? this.permissionMode,
       terminal: terminal,
+      memoryBytes: memoryBytes,
       supportsPromptQueue: supportsPromptQueue,
       createdAt: createdAt,
       endedAt: endedAt,

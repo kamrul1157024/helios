@@ -327,6 +327,7 @@ func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"sessions": sessions,
+		"host":     s.shared.hostStats(),
 	})
 }
 

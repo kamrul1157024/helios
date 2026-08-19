@@ -14,6 +14,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/sysinfo"
 )
 
 // Shared holds shared dependencies between internal and public servers.
@@ -56,11 +57,37 @@ type PublicServer struct {
 	shared     *Shared
 }
 
-// injectTerminal enriches a session with the handle of its live terminal, so
-// clients can tell a running session from a cold one.
+// injectTerminal enriches a session with the handle of its live terminal and
+// what that terminal costs, so clients can tell a running session from a cold
+// one and see which of them is worth closing.
 func (sh *Shared) injectTerminal(sess *store.Session) {
-	if handle, ok := sh.Backend.Handle(sess.SessionID); ok {
-		sess.Terminal = &handle
+	handle, ok := sh.Backend.Handle(sess.SessionID)
+	if !ok {
+		return
+	}
+	sess.Terminal = &handle
+	if usage, ok := sh.Backend.(backend.Usager); ok {
+		if rss, found := usage.Usage()[sess.SessionID]; found {
+			sess.MemoryBytes = &rss
+		}
+	}
+}
+
+// hostStats reports what the warm pool costs and what the machine has left,
+// so a client can show a session's price next to the room it is eating into.
+//
+// Nothing enforces the budget — the daemon evicts nobody — so it is only there
+// for a client that wants to say when the pool has grown large.
+func (sh *Shared) hostStats() map[string]interface{} {
+	status := sh.Backend.Status()
+	machine := sysinfo.Read()
+	return map[string]interface{}{
+		"warm":         status.Warm,
+		"warm_rss":     status.WarmRSS,
+		"budget":       machine.MemoryTotal / 4,
+		"load":         machine.Load,
+		"memory_used":  machine.MemoryUsed,
+		"memory_total": machine.MemoryTotal,
 	}
 }
 

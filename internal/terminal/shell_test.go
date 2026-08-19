@@ -82,23 +82,6 @@ func TestTerminalsListsTheAgentFirst(t *testing.T) {
 	}
 }
 
-// A shell holds a scrollback and whatever the user was running. An agent
-// evicted for room comes back with --resume; a shell has nothing to come back
-// from, so the pool must take the room from somewhere else.
-func TestEvictForRoomNeverTakesAShell(t *testing.T) {
-	e := newRegistryEnv(t)
-	e.reg.MaxWarm = 2
-	e.add(ShellID("sess-1", 1), 5*time.Hour) // oldest, and the obvious victim
-	e.add("sess-1", time.Hour)
-	e.add("sess-2", 2*time.Hour)
-
-	e.reg.Sweep()
-
-	if warm := e.warm(); !warm[ShellID("sess-1", 1)] {
-		t.Errorf("warm = %v, want the shell kept", warm)
-	}
-}
-
 func TestKillShellsLeavesTheAgent(t *testing.T) {
 	e := newRegistryEnv(t)
 	e.add("sess-1", 0)

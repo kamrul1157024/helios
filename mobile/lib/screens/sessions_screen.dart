@@ -722,6 +722,16 @@ class _SessionsScreenState extends State<SessionsScreen> {
                                     style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
                                   ),
                                 ),
+                                if (session.memoryLabel.isNotEmpty) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    session.memoryLabel,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
                                 if (session.needsRecovery) ...[
                                   const SizedBox(width: 6),
                                   Tooltip(
