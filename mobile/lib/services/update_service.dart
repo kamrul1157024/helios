@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _repo = 'kamrul1157024/helios';
@@ -29,11 +31,25 @@ class UpdateService {
   UpdateService._();
   static final instance = UpdateService._();
 
+  static const _dismissedKey = 'update.dismissed_version';
+
   String? _currentVersion;
 
   Future<String> get currentVersion async {
     _currentVersion ??= (await PackageInfo.fromPlatform()).version;
     return _currentVersion!;
+  }
+
+  /// Whether this version has already been waved away. Kept per version, so
+  /// the next release is mentioned once and this one never again.
+  Future<bool> isDismissed(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_dismissedKey) == version;
+  }
+
+  Future<void> dismiss(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_dismissedKey, version);
   }
 
   // Returns UpdateInfo if an update is available, null otherwise.
@@ -42,13 +58,17 @@ class UpdateService {
       final res = await http
           .get(Uri.parse(_apiUrl), headers: {'Accept': 'application/vnd.github+json'})
           .timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) return null;
+      if (res.statusCode != 200) {
+        debugPrint('[UpdateService] github said ${res.statusCode}');
+        return null;
+      }
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final tag = (data['tag_name'] as String?)?.replaceFirst('v', '') ?? '';
       if (tag.isEmpty) return null;
 
       final current = await currentVersion;
+      debugPrint('[UpdateService] latest=$tag running=$current');
       if (!_isNewer(tag, current)) return null;
 
       String? apkUrl;
@@ -66,7 +86,10 @@ class UpdateService {
         apkDownloadUrl: apkUrl,
         releasesPageUrl: _releasesUrl,
       );
-    } catch (_) {
+    } catch (e) {
+      // Worth a line: a check that never succeeds is indistinguishable from
+      // being up to date, and that is how a stale build goes unnoticed.
+      debugPrint('[UpdateService] check failed: $e');
       return null;
     }
   }
