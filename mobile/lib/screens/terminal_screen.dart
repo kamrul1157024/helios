@@ -392,12 +392,9 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
       color: const Color(0xFF10101A),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          if (tab.interactive) {
-            // The host has taken this screen's geometry, so everything fits and
-            // the only job left is to keep the type readable.
-            tab.fitTo(constraints.biggest, _fontSize);
-            return _view(tab, constraints.maxWidth);
-          }
+          // Fitted: the view sizes the grid to the screen and tells the host,
+          // so there is nothing to pan.
+          if (tab.interactive) return _view(tab, constraints.maxWidth);
 
           // Observing a desktop means inheriting its columns — 191 of them is
           // normal. Shrinking type until they fit produces something no one can
@@ -419,9 +416,12 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
           controller: tab.controller,
           textStyle: TerminalStyle(fontSize: _fontSize, fontFamily: _fontFamily),
           padding: const EdgeInsets.all(6),
-          // The host owns the size; letting the view resize the emulator would
-          // fight whatever geometry the Status frame just reported.
-          autoResize: false,
+          // Observing, the host owns the size and the view must not touch it;
+          // fitted, the view owns it and the host follows.
+          autoResize: tab.interactive,
+          // Android's IME sends no hardware delete event, so without this the
+          // backspace key does nothing at all.
+          deleteDetection: true,
           backgroundOpacity: 0,
         ),
       );
@@ -451,6 +451,16 @@ class _TerminalTab {
     required this.onChanged,
   }) {
     terminal = Terminal(maxLines: 4000);
+    // The view measures the font and reports the grid it can actually draw.
+    // Computing columns here instead put the emulator's idea of the line out
+    // of step with the painted one, which is what left the cursor at the far
+    // left of a line it had already typed past.
+    terminal.onResize = (width, height, pixelWidth, pixelHeight) {
+      if (!interactive) return;
+      cols = width;
+      rows = height;
+      _connection?.resize(width, height);
+    };
     terminal.onOutput = (data) {
       // The soft keyboard has no Ctrl, so the key bar arms it and the next
       // character it produces is folded into a control code here. Doing it in
@@ -568,18 +578,6 @@ class _TerminalTab {
     _connection?.resize(0, 0);
     detach();
     connect();
-  }
-
-  /// Reports this screen's geometry while interactive, so the host shrinks to
-  /// what the phone can actually show.
-  void fitTo(Size size, double fontSize) {
-    final nextCols = ((size.width - 12) / (fontSize * 0.6)).floor().clamp(20, 200);
-    final nextRows = ((size.height - 12) / (fontSize * 1.35)).floor().clamp(6, 100);
-    if (nextCols == cols && nextRows == rows) return;
-    cols = nextCols;
-    rows = nextRows;
-    terminal.resize(nextCols, nextRows);
-    _connection?.resize(nextCols, nextRows);
   }
 
   void send(String data) => _connection?.send(Uint8List.fromList(utf8.encode(data)));
