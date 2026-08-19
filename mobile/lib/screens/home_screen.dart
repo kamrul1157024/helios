@@ -448,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 // processes, so nothing here or on the daemon interrupts a
                 // session that is running.
                 Text(
-                  'Updating the daemon, desktop or app leaves running sessions alone.',
+                  'Updating the daemon, desktop or app keeps running sessions alive.',
                   style: TextStyle(
                     fontSize: 11,
                     color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.75),

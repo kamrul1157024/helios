@@ -110,7 +110,7 @@ function UpdateBanner(): JSX.Element | null {
           neither the daemon restarting nor this app closing interrupts a
           session that is running. */}
       <span className="update-note">
-        Updating the daemon, desktop or app leaves running sessions alone.
+        Updating the daemon, desktop or app keeps running sessions alive.
       </span>
       {/* An anchor rather than a bridge call: the window open handler already
           sends https elsewhere, and nothing in this app navigates itself. */}
