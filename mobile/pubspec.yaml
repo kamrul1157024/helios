@@ -49,6 +49,8 @@ dependencies:
   path_provider: ^2.1.5
   file_picker: ^11.0.3
   image_picker: ^1.2.3
+  xterm: ^4.0.0
+  web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:

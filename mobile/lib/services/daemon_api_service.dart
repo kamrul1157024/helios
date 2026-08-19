@@ -813,6 +813,51 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
+  // ==================== Terminals API ====================
+
+  /// The live terminals beside a session: its agent, then any shells.
+  Future<List<TerminalInfo>> fetchTerminals(String sessionId) async {
+    try {
+      final resp = await _api.get('/api/sessions/${Uri.encodeComponent(sessionId)}/terminals');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = (data['terminals'] as List?) ?? [];
+        return list.map((t) => TerminalInfo.fromJson(t as Map<String, dynamic>)).toList();
+      }
+    } catch (e) {
+      debugPrint('[$hostId] fetchTerminals error: $e');
+    }
+    return [];
+  }
+
+  /// Opens a shell in the session's directory. It runs no agent and keeps no
+  /// transcript: it is there for when the agent is busy and you want to run
+  /// something yourself.
+  Future<TerminalInfo?> openShell(String sessionId) async {
+    try {
+      final resp = await _api.post('/api/sessions/${Uri.encodeComponent(sessionId)}/terminals');
+      if (isSuccess(resp.statusCode)) {
+        return TerminalInfo.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+      }
+      debugPrint('[$hostId] openShell failed: ${resp.statusCode} ${resp.body}');
+    } catch (e) {
+      debugPrint('[$hostId] openShell error: $e');
+    }
+    return null;
+  }
+
+  /// Closes a shell. The daemon refuses this for a session's agent, which has
+  /// stop and terminate of its own.
+  Future<bool> closeTerminal(String terminalId) async {
+    try {
+      final resp = await _api.delete('/api/terminals/${Uri.encodeComponent(terminalId)}');
+      return isSuccess(resp.statusCode);
+    } catch (e) {
+      debugPrint('[$hostId] closeTerminal error: $e');
+    }
+    return false;
+  }
+
   // ==================== Settings API ====================
 
   /// Fetch all settings and personas from the backend.
@@ -1235,6 +1280,30 @@ class FileReadResult {
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+}
+
+/// One live terminal: a session's agent, or a shell opened beside it.
+class TerminalInfo {
+  final String id;
+  final String parent;
+  final String kind;
+  final String cwd;
+
+  TerminalInfo({
+    required this.id,
+    required this.parent,
+    required this.kind,
+    required this.cwd,
+  });
+
+  factory TerminalInfo.fromJson(Map<String, dynamic> json) => TerminalInfo(
+        id: json['id'] as String,
+        parent: json['parent'] as String? ?? '',
+        kind: json['kind'] as String? ?? 'shell',
+        cwd: json['cwd'] as String? ?? '',
+      );
+
+  bool get isAgent => kind == 'agent';
 }
 
 class DirectoryInfo {
