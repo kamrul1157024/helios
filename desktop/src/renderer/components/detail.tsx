@@ -423,6 +423,12 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
           {statusLabel(session.status)}
         </span>
 
+        {session.memory_bytes !== undefined && (
+          <span className="card-ram" title="Memory this session's terminal holds">
+            {formatBytes(session.memory_bytes)}
+          </span>
+        )}
+
         {cold && (
           <button
             className="ghost cold"
@@ -584,4 +590,9 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
       ))}
     </select>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  return `${Math.round(bytes / 1024 ** 2)} MB`
 }

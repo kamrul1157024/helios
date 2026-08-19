@@ -32,7 +32,7 @@ type Host struct {
 
 // touchInterval bounds how often screen activity reaches the registry.
 // Registry.Touch takes the pool lock and a redrawing TUI produces output many
-// times a second; the LRU does not need that resolution.
+// times a second; the ordering does not need that resolution.
 const touchInterval = 5 * time.Second
 
 // NewHost returns a Host backend over a warm-pool registry. The registry owns
@@ -42,22 +42,10 @@ func NewHost(reg *terminal.Registry) *Host {
 		reg:     reg,
 		mirrors: make(map[string]*terminal.Mirror),
 	}
-	// The registry decides what to evict but cannot see who is watching; only
-	// the mirrors know that.
-	reg.InUse = h.watched
 	return h
 }
 
-// watched reports whether a session has a viewer besides the daemon's own
-// mirror. A session with no mirror has no viewers by definition.
-func (h *Host) watched(sessionID string) bool {
-	h.mu.Lock()
-	m, ok := h.mirrors[sessionID]
-	h.mu.Unlock()
-	return ok && m.Watched()
-}
-
-// markActive pushes session activity into the registry's LRU, throttled to one
+// markActive records session activity in the registry, throttled to one
 // update per touchInterval so a busy screen does not hammer the pool lock.
 func (h *Host) markActive(sessionID string) {
 	v, _ := h.touched.LoadOrStore(sessionID, new(atomic.Int64))
@@ -377,12 +365,20 @@ func (h *Host) Sweep() []string {
 }
 
 func (h *Host) Status() Status {
+	var rss int64
+	for _, bytes := range h.reg.Usage() {
+		rss += bytes
+	}
 	return Status{
 		Name:      "host",
 		Available: true,
 		Warm:      len(h.reg.Warm()),
+		WarmRSS:   rss,
 	}
 }
+
+// Usage reports resident bytes per warm session.
+func (h *Host) Usage() map[string]int64 { return h.reg.Usage() }
 
 // Close drops every mirror. The hosts keep running: that is the point of them
 // being separate processes.

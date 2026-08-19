@@ -47,4 +47,32 @@ void main() {
       expect(s.canStop, isFalse);
     });
   });
+
+  // The daemon reclaims no memory on its own, so this label is what tells the
+  // user which session is worth closing.
+  group('memoryLabel', () {
+    Session withMemory(int? bytes) => Session.fromJson({
+          'session_id': 's1',
+          'source': 'claude',
+          'cwd': '/tmp/proj',
+          'status': 'idle',
+          'created_at': '2026-01-01T00:00:00Z',
+          'memory_bytes': ?bytes,
+        });
+
+    test('megabytes below a gigabyte', () {
+      expect(withMemory(412 * 1024 * 1024).memoryLabel, '412 MB');
+    });
+
+    test('gigabytes above one', () {
+      expect(withMemory(1610612736).memoryLabel, '1.5 GB');
+    });
+
+    // A cold session runs nothing: an empty label is what keeps the chip off
+    // the card entirely, rather than showing a misleading 0 MB.
+    test('a cold session has no label', () {
+      expect(withMemory(null).memoryLabel, isEmpty);
+      expect(withMemory(0).memoryLabel, isEmpty);
+    });
+  });
 }

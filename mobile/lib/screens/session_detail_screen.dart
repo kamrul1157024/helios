@@ -805,6 +805,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       );
     }
 
+    if (session.memoryLabel.isNotEmpty) {
+      actions.add(
+        Tooltip(
+          message: 'Memory this terminal holds',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Center(
+              child: Text(
+                session.memoryLabel,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     if (session.needsRecovery) {
       actions.add(
         IconButton(

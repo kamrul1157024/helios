@@ -33,7 +33,11 @@ type Session struct {
 	PermissionMode *string `json:"permission_mode,omitempty"`
 	// Terminal is the handle of the session's live terminal host, injected by
 	// the daemon rather than stored: a cold session simply has none.
-	Terminal            *string `json:"terminal,omitempty"`
+	Terminal *string `json:"terminal,omitempty"`
+	// MemoryBytes is what the live terminal's process tree costs in resident
+	// memory. Injected alongside Terminal, and absent for a cold session,
+	// which costs nothing until it is woken.
+	MemoryBytes         *int64  `json:"memory_bytes,omitempty"`
 	CreatedAt           string  `json:"created_at"`
 	EndedAt             *string `json:"ended_at,omitempty"`
 	SupportsPromptQueue bool    `json:"supports_prompt_queue"`

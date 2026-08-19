@@ -11,6 +11,7 @@ import type {
   Session,
   SSEEvent,
   TabStatus,
+  HostStats,
 } from '../shared/models.ts'
 import type { XtermTheme } from '../shared/theme/resolve.ts'
 
@@ -87,6 +88,8 @@ export interface State {
   hosts: HostRecord[]
   hostStatus: Record<string, HostStatus>
   sessions: Record<string, Session[]>
+  /** Each host's warm pool and machine load, from the session list envelope. */
+  stats: Record<string, HostStats>
   notifications: Record<string, Notification[]>
   /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
@@ -135,6 +138,7 @@ const initial: State = {
   hosts: [],
   hostStatus: {},
   sessions: {},
+  stats: {},
   notifications: {},
   tabs: [],
   selection: null,
@@ -353,16 +357,19 @@ class Store {
 
   async refreshSessions(hostId: string): Promise<void> {
     try {
-      const sessions = await api(hostId).listSessions()
+      const { sessions, host } = await api(hostId).listSessions()
       const before = this.state.sessions[hostId]
-      this.set((s) => ({ sessions: { ...s.sessions, [hostId]: sessions } }))
+      this.set((s) => ({
+        sessions: { ...s.sessions, [hostId]: sessions },
+        stats: host ? { ...s.stats, [hostId]: host } : s.stats,
+      }))
       for (const session of sessions) {
         if (session.status !== 'terminated') continue
         const was = before?.find((s) => s.session_id === session.session_id)
         if (was && was.status !== 'terminated') this.onTerminated(hostId, session.session_id)
       }
     } catch (err) {
-      this.fail(err)
+      this.failHost(hostId, err)
     }
   }
 
@@ -371,7 +378,7 @@ class Store {
       const notifications = await api(hostId).notifications({ status: 'pending' })
       this.set((s) => ({ notifications: { ...s.notifications, [hostId]: notifications } }))
     } catch (err) {
-      this.fail(err)
+      this.failHost(hostId, err)
     }
   }
 
@@ -809,6 +816,25 @@ class Store {
 
   fail(err: unknown): void {
     this.notify(err instanceof Error ? err.message : String(err), 'error')
+  }
+
+  /**
+   * Reports a failure that belongs to one host.
+   *
+   * A host that cannot be reached already says so with its dot, and undici's
+   * bare "fetch failed" does not even name which one — so a lost connection is
+   * announced once, when the host was still believed to be up, and left to the
+   * dot after that. Anything else is a real error and is shown as it comes.
+   */
+  failHost(hostId: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err)
+    if (!/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network|timeout/i.test(message)) {
+      this.notify(message, 'error')
+      return
+    }
+    if (this.state.hostStatus[hostId]?.state !== 'online') return
+    const name = this.state.hosts.find((host) => host.id === hostId)?.name ?? 'The daemon'
+    this.notify(`${name} is not answering`, 'error')
   }
 }
 

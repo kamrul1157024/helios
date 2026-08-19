@@ -682,6 +682,51 @@ small {
   padding: 0 12px;
 }
 
+/* Under the host it belongs to: what that machine's warm terminals hold, and
+   what the machine itself has left. One line, because it is a reading and not
+   a message — the advice lives in its tooltip. */
+.host-meter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* Left edge on the host head's, so the reading starts under the dot rather
+     than floating in from the session cards. */
+  padding: 0 4px 6px;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.host-meter.heavy {
+  color: var(--s-waiting);
+}
+
+/* The machine's own figure is context for the pool's, not a thing to act on. */
+.host-machine {
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sized in em like the chevron, so the glyph follows the row's font size. */
+.meter-icon {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The second icon in the row starts a new reading; a little air marks that. */
+.host-meter .meter-icon + span {
+  margin-right: 2px;
+}
+
 .sidebar-foot {
   display: flex;
   align-items: center;
@@ -881,6 +926,15 @@ small {
   font-size: 12px;
 }
 
+/* What the session's terminal is holding. Only warm sessions have one, so the
+   slot is simply absent the rest of the time. */
+.card-ram {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* No live host behind the status: the card says idle, this says it will take a
    moment to prove it. */
 .cold-mark {
@@ -1015,6 +1069,12 @@ small {
    say so. */
 [data-density='compact'] .badge {
   order: 5;
+}
+
+/* The compact card is one line of status and time; the memory reading belongs
+   to the roomier layout, and to the detail header. */
+[data-density='compact'] .card-ram {
+  display: none;
 }
 
 [data-density='compact'] .card-top .grow {

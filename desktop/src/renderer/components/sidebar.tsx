@@ -14,8 +14,9 @@ import {
   timeAgo,
   type HostRecord,
   type Session,
+  type HostStats,
 } from '../../shared/models.ts'
-import { Chevron } from './icons.tsx'
+import { Chevron, Cpu, Memory } from './icons.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
  *  session list taking half the window from the session itself. */
@@ -68,6 +69,7 @@ export function Sidebar({
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
   const sessions = useStore((s) => s.sessions)
+  const stats = useStore((s) => s.stats)
   const notifications = useStore((s) => s.notifications)
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
@@ -210,6 +212,8 @@ export function Sidebar({
                 {!loading && <span className="host-count">{rows.length}</span>}
                 <Chevron className="chevron" open={!isCollapsed} />
               </button>
+
+              {!isCollapsed && <HostMeter stats={stats[host.id]} />}
 
               {/* Above the list, not below it: revealed sessions are appended,
                   so a toggle under them walks further down the page with every
@@ -458,6 +462,11 @@ function SessionRow({
             </span>
           )}
           {pending > 0 && <span className="badge">{pending}</span>}
+          {session.memory_bytes !== undefined && (
+            <span className="card-ram" title="Memory this terminal holds">
+              {formatBytes(session.memory_bytes)}
+            </span>
+          )}
           <span className="grow" />
           <span className="time">{timeAgo(session.last_event_at ?? session.created_at)}</span>
         </div>
@@ -532,4 +541,48 @@ function shortMode(mode: string): string {
     default:
       return mode
   }
+}
+
+/**
+ * What this host is carrying: its warm terminals, then the machine behind
+ * them.
+ *
+ * The daemon reclaims nothing on its own any more, so this is the only thing
+ * that tells the user the pool has grown. It belongs to the host and not the
+ * window: memory is a machine's to run out of, and a session on the laptop
+ * says nothing about the one on the VM.
+ */
+function HostMeter({ stats }: { stats?: HostStats }): JSX.Element | null {
+  if (!stats || stats.warm === 0) return null
+  const heavy = stats.budget > 0 && stats.warm_rss > stats.budget
+  const machine = stats.memory_total > 0
+  return (
+    <div
+      className={heavy ? 'host-meter heavy' : 'host-meter'}
+      title={
+        heavy
+          ? `${stats.warm} warm terminals holding ${formatBytes(stats.warm_rss)} — terminate the ones you are done with to free memory`
+          : `${stats.warm} warm terminals holding ${formatBytes(stats.warm_rss)}`
+      }
+    >
+      <Memory />
+      <span>{formatBytes(stats.warm_rss)}</span>
+      {machine && (
+        <span className="host-machine">of {formatPair(stats.memory_used, stats.memory_total)}</span>
+      )}
+      <Cpu />
+      <span>{Math.round(stats.load * 100)}%</span>
+    </div>
+  )
+}
+
+/** Two figures sharing one unit: "21.3/34.4 GB" rather than "21.3 GB/34.4 GB". */
+function formatPair(used: number, total: number): string {
+  if (total >= 1024 ** 3) return `${(used / 1024 ** 3).toFixed(1)}/${(total / 1024 ** 3).toFixed(1)} GB`
+  return `${Math.round(used / 1024 ** 2)}/${Math.round(total / 1024 ** 2)} MB`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  return `${Math.round(bytes / 1024 ** 2)} MB`
 }

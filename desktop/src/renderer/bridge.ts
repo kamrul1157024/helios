@@ -41,6 +41,7 @@ import type {
   TerminalInfo,
   ThemeSummary,
   TranscriptPage,
+  HostStats,
   Worktree,
   WriteResult,
 } from '../shared/models.ts'
@@ -169,7 +170,9 @@ export class HostApi {
     return bridge.api.call<T>(this.hostId, method, args)
   }
 
-  listSessions(params: { q?: string; status?: string; filter?: string; cwd?: string } = {}): Promise<Session[]> {
+  listSessions(
+    params: { q?: string; status?: string; filter?: string; cwd?: string } = {},
+  ): Promise<{ sessions: Session[]; host?: HostStats }> {
     return this.call('listSessions', params)
   }
   getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {

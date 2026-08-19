@@ -355,49 +355,6 @@ func TestE2ERegistryWakeIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestE2EEvictionRespectsMaxWarm checks the warm pool ceiling, which is what
-// keeps three 380 MB Claude processes from becoming ten.
-func TestE2EEvictionRespectsMaxWarm(t *testing.T) {
-	e := newE2E(t)
-
-	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string) error {
-		cmd := exec.Command(e.binary, "ptyhost", sessionID, "--cwd", cwd, "--cmd", "sh")
-		cmd.Env = append(os.Environ(), "HOME="+e.dir)
-		cmd.SysProcAttr = detachSysProcAttr()
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		return cmd.Process.Release()
-	})
-	reg.MaxWarm = 2
-	reg.MaxWarmRSS = 0 // isolate the count ceiling
-
-	ids := []string{"warm-a", "warm-b", "warm-c"}
-	t.Cleanup(func() {
-		for _, id := range ids {
-			reg.Evict(id)
-		}
-	})
-
-	for _, id := range ids {
-		if _, err := reg.Wake(id, e.dir); err != nil {
-			t.Fatalf("Wake %s: %v", id, err)
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-
-	if got := len(reg.Warm()); got > 2 {
-		t.Errorf("warm pool = %d, want at most 2", got)
-	}
-	// The most recent must survive; the oldest must be gone.
-	if !reg.IsWarm("warm-c") {
-		t.Error("most recently woken session was evicted")
-	}
-	if reg.IsWarm("warm-a") {
-		t.Error("least recently used session should have been evicted")
-	}
-}
-
 // hasClaude reports whether the real CLI is installed.
 func hasClaude(t *testing.T) string {
 	t.Helper()
@@ -680,5 +637,39 @@ func TestE2EArgvReachesTheChildWhole(t *testing.T) {
 
 	if !waitForFrameContaining(t, c, "["+raw+"]", 10*time.Second) {
 		t.Errorf("child never received %q intact", raw)
+	}
+}
+
+// TestE2EUsagePricesALiveHost covers the number the clients show. It replaced
+// the eviction the pool used to do on its own: nothing reclaims memory now, so
+// the reading has to be real or the user is deciding on a fiction.
+func TestE2EUsagePricesALiveHost(t *testing.T) {
+	e := newE2E(t)
+	const sid = "e2e-usage"
+
+	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string) error {
+		cmd := exec.Command(e.binary, "ptyhost", sessionID, "--cwd", cwd, "--cmd", "sh")
+		cmd.Env = append(os.Environ(), "HOME="+e.dir)
+		cmd.SysProcAttr = detachSysProcAttr()
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
+	})
+	t.Cleanup(func() { reg.Evict(sid) })
+
+	if _, err := reg.Wake(sid, e.dir); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+
+	usage := reg.Usage()
+	if usage[sid] <= 0 {
+		t.Fatalf("usage = %v, want resident bytes for the live host", usage)
+	}
+
+	// Cached: measuring forks ps and pgrep per process, and clients ask on
+	// every poll.
+	if again := reg.Usage(); len(again) != len(usage) || again[sid] != usage[sid] {
+		t.Errorf("second reading = %v, want the cached %v", again, usage)
 	}
 }

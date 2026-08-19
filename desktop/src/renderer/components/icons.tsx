@@ -39,3 +39,23 @@ export function Chevron({
     </svg>
   )
 }
+
+/** A memory module, for the row that prices a host's terminals. */
+export function Memory({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`meter-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="7" width="18" height="10" rx="1.5" />
+      <path d="M7 17v3M12 17v3M17 17v3M7 11v2M12 11v2M17 11v2" />
+    </svg>
+  )
+}
+
+/** A processor, for the load the host is under. */
+export function Cpu({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`meter-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+      <path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4" />
+    </svg>
+  )
+}

@@ -30,6 +30,8 @@ type Status struct {
 	Detail    string `json:"detail,omitempty"`
 	// Warm is the number of sessions currently holding a live terminal.
 	Warm int `json:"warm"`
+	// WarmRSS is what those terminals cost in resident memory, in bytes.
+	WarmRSS int64 `json:"warm_rss"`
 }
 
 // Backend owns the terminals behind agent sessions.
@@ -90,6 +92,13 @@ type Backend interface {
 
 	// Status reports backend health.
 	Status() Status
+}
+
+// Usager is implemented by backends that can price their terminals. Nothing
+// acts on the number: it is shown to the user, who decides what to close.
+type Usager interface {
+	// Usage reports resident bytes per warm session.
+	Usage() map[string]int64
 }
 
 // Waker is implemented by backends that can bring a cold session back
