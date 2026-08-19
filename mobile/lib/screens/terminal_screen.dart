@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
 import '../models/session.dart';
@@ -33,6 +34,8 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
   String? _activeId;
   bool _loading = true;
   bool _opening = false;
+  double _fontSize = _defaultFontSize;
+  StreamSubscription<SSEEvent>? _eventSub;
 
   DaemonAPIService? get _sse =>
       context.read<HostManager>().serviceFor(widget.session.hostId);
@@ -43,12 +46,22 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadFontSize();
     _load();
+    // A shell is the session's, not this client's: one opened on the desktop
+    // should appear here without a manual refresh.
+    _eventSub = _sse?.events.listen((event) {
+      if (event.type != 'terminal_opened' && event.type != 'terminal_closed') return;
+      if (event.data is! Map) return;
+      if ((event.data as Map)['session_id'] != widget.session.sessionId) return;
+      _load();
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _eventSub?.cancel();
     for (final tab in _tabs.values) {
       tab.dispose();
     }
@@ -71,13 +84,35 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
     }
   }
 
+  Future<void> _loadFontSize() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getDouble(_fontSizeKey);
+    if (saved != null && mounted) setState(() => _fontSize = saved);
+  }
+
+  Future<void> _setFontSize(double size) async {
+    setState(() => _fontSize = size.clamp(7.0, 20.0));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_fontSizeKey, _fontSize);
+  }
+
   Future<void> _load() async {
     final terminals = await _sse?.fetchTerminals(widget.session.sessionId) ?? [];
     if (!mounted) return;
+
+    // Anything gone from the daemon's list is gone for good; keep the rest
+    // connected rather than tearing down a terminal that is still there.
+    final live = terminals.map((t) => t.id).toSet();
+    for (final id in _tabs.keys.where((id) => !live.contains(id)).toList()) {
+      _tabs.remove(id)?.dispose();
+    }
+
     setState(() {
       _terminals = terminals;
       _loading = false;
-      _activeId ??= terminals.isNotEmpty ? terminals.first.id : null;
+      if (_activeId == null || !live.contains(_activeId)) {
+        _activeId = terminals.isNotEmpty ? terminals.first.id : null;
+      }
     });
     if (_activeId != null) _tabFor(_activeId!);
   }
@@ -137,6 +172,9 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
   /// Takes over size negotiation for this terminal. The host adopts the
   /// smallest size any interactive viewer asks for, so this reflows the
   /// terminal for everyone else watching — hence the confirmation.
+  /// Hands the size to this screen, or back. Fitting reflows the terminal for
+  /// everyone watching it, which is why handing back is one tap and taking it
+  /// again asks first.
   Future<void> _claimSize() async {
     final tab = _active;
     if (tab == null) return;
@@ -153,7 +191,7 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
         title: const Text('Fit to this screen?'),
         content: const Text(
           'The terminal resizes for everyone watching it, including the desktop '
-          'and anyone attached in a terminal. Tap again to hand the size back.',
+          'and anyone attached in a terminal.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
@@ -164,6 +202,55 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
     if (confirmed != true || !mounted) return;
     tab.claimSize();
     setState(() {});
+  }
+
+  /// Reading a terminal on a phone is a trade between how much of the screen
+  /// you can see and whether you can read it, and where that lands depends on
+  /// the eyes and the phone. So it is a setting, and it persists.
+  void _showFontSizeSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: StatefulBuilder(
+          builder: (ctx, setSheetState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: Row(
+                  children: [
+                    Text('Text size', style: Theme.of(ctx).textTheme.titleSmall),
+                    const Spacer(),
+                    Text('${_fontSize.toStringAsFixed(0)} pt'),
+                  ],
+                ),
+              ),
+              Slider(
+                value: _fontSize,
+                min: 7,
+                max: 20,
+                divisions: 13,
+                label: _fontSize.toStringAsFixed(0),
+                onChanged: (value) {
+                  setSheetState(() {});
+                  _setFontSize(value);
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  'Smaller text shows more of the terminal at once.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _toast(String message) {
@@ -186,6 +273,11 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
               tooltip: tab.interactive ? 'Hand the size back' : 'Fit to this screen',
               onPressed: _claimSize,
             ),
+          IconButton(
+            icon: const Icon(Icons.text_fields),
+            tooltip: 'Text size',
+            onPressed: _showFontSizeSheet,
+          ),
           IconButton(
             icon: _opening
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
@@ -294,38 +386,60 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
   }
 
   Widget _buildTerminal(_TerminalTab tab) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // An observer inherits the host's geometry, which is likely a desktop's
-        // 120 columns. Shrink the type until they fit rather than cropping the
-        // layout the agent drew.
-        final fontSize = tab.interactive
-            ? 12.0
-            : _fontSizeFor(constraints.maxWidth, tab.status?.cols ?? tab.cols);
-        if (tab.interactive) tab.fitTo(constraints.biggest, fontSize);
+    return ColoredBox(
+      // A terminal is a black rectangle. Letting the app's backdrop through
+      // made it look like the screen had failed to load.
+      color: const Color(0xFF10101A),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (tab.interactive) {
+            // The host has taken this screen's geometry, so everything fits and
+            // the only job left is to keep the type readable.
+            tab.fitTo(constraints.biggest, _fontSize);
+            return _view(tab, constraints.maxWidth);
+          }
 
-        return TerminalView(
+          // Observing a desktop means inheriting its columns — 191 of them is
+          // normal. Shrinking type until they fit produces something no one can
+          // read, so the type stays legible and the screen pans instead.
+          final width = (tab.status?.cols ?? tab.cols) * _fontSize * _cellRatio + 12;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: _view(tab, width < constraints.maxWidth ? constraints.maxWidth : width),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _view(_TerminalTab tab, double width) => SizedBox(
+        width: width,
+        child: TerminalView(
           tab.terminal,
           controller: tab.controller,
-          textStyle: TerminalStyle(fontSize: fontSize, fontFamily: 'monospace'),
+          textStyle: TerminalStyle(fontSize: _fontSize, fontFamily: _fontFamily),
           padding: const EdgeInsets.all(6),
           // The host owns the size; letting the view resize the emulator would
           // fight whatever geometry the Status frame just reported.
           autoResize: false,
           backgroundOpacity: 0,
-        );
-      },
-    );
-  }
+        ),
+      );
 
-  /// Largest type at which [cols] columns still fit across [width].
-  static double _fontSizeFor(double width, int cols) {
-    if (cols <= 0) return 12;
-    // 0.6 em per cell is the usual advance width of a monospace glyph, and the
-    // padding either side comes off the top.
-    final size = (width - 12) / (cols * 0.6);
-    return size.clamp(4.0, 14.0);
-  }
+  /// Bundled rather than the platform's "monospace": Android maps that to
+  /// Droid Sans Mono, whose box-drawing characters do not join, and a TUI is
+  /// mostly box-drawing characters.
+  static const String _fontFamily = 'JetBrainsMono';
+
+  /// Small enough to get a useful number of columns on screen, large enough to
+  /// read without zooming.
+  static const double _defaultFontSize = 11;
+
+  static const String _fontSizeKey = 'terminal.font_size';
+
+  /// Advance width of one cell as a fraction of the font size, for sizing the
+  /// scrollable. JetBrains Mono is a 0.6 em face.
+  static const double _cellRatio = 0.6;
 }
 
 /// One terminal's emulator, connection and decoder.
@@ -374,10 +488,17 @@ class _TerminalTab {
   /// each frame alone would litter the screen with replacement characters.
   ByteConversionSink? _decoder;
 
+  ByteConversionSink _newDecoder() =>
+      utf8.decoder.startChunkedConversion(_TerminalSink(terminal));
+
   LinkState state = LinkState.connecting;
   TerminalStatus? status;
   String? closeReason;
-  bool interactive = false;
+  /// Whether this viewer votes on the PTY size. On by default: a phone
+  /// showing a desktop's 180 columns is unreadable, and the terminal is here
+  /// to be used rather than watched. Handing it back leaves the phone an
+  /// observer, which never disturbs anyone else's geometry.
+  bool interactive = true;
 
   /// Ctrl is a modifier a phone keyboard does not have: the key bar arms it,
   /// and the next character consumes it.
@@ -388,9 +509,7 @@ class _TerminalTab {
   void connect() {
     if (_connection != null) return;
 
-    _decoder = utf8.decoder.startChunkedConversion(
-      StringConversionSink.withCallback((text) => terminal.write(text)),
-    );
+    _decoder = _newDecoder();
 
     final connection = TerminalConnection(
       serverUrl: serverUrl,
@@ -407,9 +526,7 @@ class _TerminalTab {
       // A snapshot is a full repaint of the host's screen; anything held back
       // mid-character belongs to the stream it replaces.
       _decoder?.close();
-      _decoder = utf8.decoder.startChunkedConversion(
-        StringConversionSink.withCallback((text) => terminal.write(text)),
-      );
+      _decoder = _newDecoder();
     });
     _statusSub = connection.status.listen((next) {
       status = next;
@@ -493,6 +610,22 @@ class _TerminalTab {
     _decoder?.close();
     controller.dispose();
   }
+}
+
+/// Feeds decoded text straight to the emulator.
+///
+/// Not StringConversionSink.withCallback: that one buffers everything and
+/// calls back on close, so a live stream renders nothing at all.
+class _TerminalSink implements Sink<String> {
+  _TerminalSink(this.terminal);
+
+  final Terminal terminal;
+
+  @override
+  void add(String data) => terminal.write(data);
+
+  @override
+  void close() {}
 }
 
 /// The keys a phone keyboard does not have and Claude Code cannot be driven

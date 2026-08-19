@@ -107,7 +107,9 @@ func newTerminalServer(t *testing.T) (*httptest.Server, *backend.Host, string) {
 	})
 
 	h := backend.NewHost(reg)
-	ps := &PublicServer{shared: &Shared{Backend: h}}
+	// SSE is not optional in a real server — NewShared always makes one, and
+	// opening a shell announces itself so other clients pick it up.
+	ps := &PublicServer{shared: &Shared{Backend: h, SSE: NewSSEBroadcaster()}}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/sessions/", func(w http.ResponseWriter, r *http.Request) {

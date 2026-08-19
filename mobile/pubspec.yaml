@@ -59,3 +59,13 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # A real terminal face, because Android's "monospace" is Droid Sans Mono:
+  # its box-drawing characters do not join, which is most of what a TUI is
+  # made of. JetBrains Mono is SIL OFL 1.1 — see JetBrainsMono-OFL.txt.
+  fonts:
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
