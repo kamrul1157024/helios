@@ -19,6 +19,7 @@ import '../utils/large_paste.dart';
 import '../widgets/skeleton.dart';
 import 'file_browser_screen.dart';
 import 'git_status_screen.dart';
+import 'terminal_screen.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final Session session;
@@ -143,6 +144,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
           break;
         case _SubRouteType.fileBrowser:
           _openFileBrowser(widget.session);
+          break;
+        case _SubRouteType.terminal:
+          _openTerminal(widget.session);
           break;
       }
     });
@@ -755,6 +759,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         });
   }
 
+  void _openTerminal(Session session) {
+    _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.terminal);
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            settings: const RouteSettings(name: '/terminal'),
+            builder: (_) => TerminalScreen(session: session),
+          ),
+        )
+        .then((_) {
+          _lastSubRoute.remove(session.sessionId);
+        });
+  }
+
   void _openFileBrowser(Session session) {
     _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.fileBrowser);
     Navigator.of(context)
@@ -782,6 +800,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         icon: const Icon(Icons.folder_outlined),
         tooltip: 'Browse files',
         onPressed: () => _openFileBrowser(session),
+      ),
+    );
+
+    actions.add(
+      IconButton(
+        icon: const Icon(Icons.terminal),
+        tooltip: 'Terminal',
+        onPressed: () => _openTerminal(session),
       ),
     );
 
@@ -1748,7 +1774,7 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
   }
 }
 
-enum _SubRouteType { gitStatus, fileBrowser }
+enum _SubRouteType { gitStatus, fileBrowser, terminal }
 
 class _SubRoute {
   final _SubRouteType type;
