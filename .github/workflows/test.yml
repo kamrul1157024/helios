@@ -81,9 +81,11 @@ jobs:
       - run: flutter pub get
         working-directory: mobile
 
-      # Warnings are not failures here, but anything the analyzer calls an
-      # error is: the app will not build with one.
-      - run: flutter analyze
+      # Infos are not failures: CI tracks stable, which runs ahead of the
+      # SDK on a developer's machine, and its deprecation notices land as
+      # infos for APIs that machine does not have a replacement for yet.
+      # Warnings and errors still fail.
+      - run: flutter analyze --no-fatal-infos
         working-directory: mobile
 
       - run: flutter test
