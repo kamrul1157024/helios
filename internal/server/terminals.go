@@ -80,6 +80,17 @@ func (s *PublicServer) handleSessionTerminals(w http.ResponseWriter, r *http.Req
 		jsonError(w, fmt.Sprintf("failed to open shell: %v", err), http.StatusInternalServerError)
 		return
 	}
+	// A shell belongs to the session, not to whoever asked for it: one opened
+	// on the phone is one the desktop should show too.
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "terminal_opened",
+		Data: map[string]interface{}{
+			"session_id":  id,
+			"terminal_id": term.ID,
+			"kind":        term.Kind,
+			"cwd":         term.Cwd,
+		},
+	})
 	jsonResponse(w, http.StatusOK, term)
 }
 
@@ -121,5 +132,13 @@ func (s *PublicServer) killTerminal(w http.ResponseWriter, id string) {
 		jsonError(w, fmt.Sprintf("failed to close terminal: %v", err), http.StatusInternalServerError)
 		return
 	}
+	parent, _ := terminal.SplitID(id)
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "terminal_closed",
+		Data: map[string]interface{}{
+			"session_id":  parent,
+			"terminal_id": id,
+		},
+	})
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
 }

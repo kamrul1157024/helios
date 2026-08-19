@@ -410,6 +410,19 @@ class Store {
       case 'session_deleted':
         void this.refreshSessions(hostId)
         return
+      // A shell belongs to the session, not to the client that opened it: one
+      // started on the phone should be a tab here too, and one closed there
+      // should not linger as a tab attached to nothing.
+      case 'terminal_opened': {
+        const sessionId = str(event.data.session_id)
+        if (sessionId) void this.syncShells(hostId, sessionId)
+        return
+      }
+      case 'terminal_closed': {
+        const termId = str(event.data.terminal_id)
+        if (termId) this.closeTab(terminalId(hostId, termId))
+        return
+      }
       case 'notification':
       case 'notification_resolved':
         void this.refreshNotifications(hostId)
