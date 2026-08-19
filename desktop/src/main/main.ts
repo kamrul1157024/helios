@@ -6,6 +6,7 @@ import { HostRegistry } from './hosts.ts'
 import { Hud } from './hud.ts'
 import { Notifier, type NotifyTarget } from './notify.ts'
 import { PrefsStore } from './prefs.ts'
+import { UpdateChecker } from './updates.ts'
 import { TerminalManager } from './terminals.ts'
 import { ThemeRegistry } from './themes.ts'
 import { registerIpc } from './ipc.ts'
@@ -22,6 +23,7 @@ let terminals: TerminalManager | null = null
 let notifier: Notifier | null = null
 let hud: Hud | null = null
 let prefs: PrefsStore | null = null
+let updates: UpdateChecker | null = null
 let themes: ThemeRegistry | null = null
 let quitting = false
 
@@ -78,6 +80,7 @@ async function start(): Promise<void> {
   terminals = new TerminalManager(hosts)
   prefs = new PrefsStore()
   prefs.load()
+  updates = new UpdateChecker()
   themes = new ThemeRegistry(path.join(distDir, 'themes'))
   themes.load()
   hud = new Hud(rendererDir, path.join(distDir, 'preload', 'preload.js'), activateNotification)
@@ -95,6 +98,7 @@ async function start(): Promise<void> {
     notifier,
     prefs,
     themes,
+    updates,
     quit,
     glassSupported: GLASS_SUPPORTED,
     onAppearanceChange: applyWindowMaterial,

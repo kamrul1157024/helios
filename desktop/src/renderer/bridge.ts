@@ -29,6 +29,7 @@ import type {
   GitStatus,
   GrepResult,
   HostRecord,
+  HostStats,
   HostStatus,
   ModelInfo,
   Notification,
@@ -41,7 +42,7 @@ import type {
   TerminalInfo,
   ThemeSummary,
   TranscriptPage,
-  HostStats,
+  UpdateInfo,
   Worktree,
   WriteResult,
 } from '../shared/models.ts'
@@ -132,6 +133,12 @@ interface RawBridge {
     resolved(key: string): void
     onPresent(fn: (card: { hostId: string; hostName?: string; notification: Notification }) => void): Unsubscribe
     onRetract(fn: (key: string) => void): Unsubscribe
+  }
+  updates: {
+    /** The release worth mentioning, or null when there is nothing new. */
+    check(): Promise<UpdateInfo | null>
+    /** Stops this version being mentioned again on this machine. */
+    dismiss(version: string): Promise<void>
   }
   app: {
     /** Quits for real; closing the window only hides it behind the tray. */

@@ -6,6 +6,7 @@ import type { Notifier } from './notify.ts'
 import type { PrefsStore } from './prefs.ts'
 import type { TerminalManager } from './terminals.ts'
 import type { ThemeRegistry } from './themes.ts'
+import type { UpdateChecker } from './updates.ts'
 import { DEFAULT_INTENSITY } from '../shared/theme/backdrop.ts'
 import type { BackdropSpec } from '../shared/theme/vscode.ts'
 import type { AppearancePrefs, BackdropState, Density } from '../shared/models.ts'
@@ -66,6 +67,7 @@ export interface IpcDeps {
   notifier: Notifier
   prefs: PrefsStore
   themes: ThemeRegistry
+  updates: UpdateChecker
   quit: () => void
   /** Whether this platform can show the OS backdrop at all. */
   glassSupported: boolean
@@ -83,7 +85,8 @@ export interface IpcDeps {
  * string otherwise.
  */
 export function registerIpc(deps: IpcDeps): void {
-  const { hosts, terminals, notifier, prefs, themes, quit, glassSupported, onAppearanceChange } = deps
+  const { hosts, terminals, notifier, prefs, themes, updates, quit, glassSupported, onAppearanceChange } =
+    deps
 
   const send = (channel: string, payload: unknown): void => {
     const window = deps.window()
@@ -149,6 +152,11 @@ export function registerIpc(deps: IpcDeps): void {
   // Quitting for real, as opposed to closing the window, which leaves the app
   // on the tray waiting for approvals.
   handle('app:quit', async () => quit())
+
+  // ─── Updates ───────────────────────────────────────────────────────────
+
+  handle('updates:check', async () => updates.check())
+  handle('updates:dismiss', async (_e, version: string) => updates.dismiss(version))
 
   // ─── Appearance ────────────────────────────────────────────────────────
 

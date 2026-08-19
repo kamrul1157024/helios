@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _repo = 'kamrul1157024/helios';
@@ -29,11 +31,25 @@ class UpdateService {
   UpdateService._();
   static final instance = UpdateService._();
 
+  static const _dismissedKey = 'update.dismissed_version';
+
   String? _currentVersion;
 
   Future<String> get currentVersion async {
     _currentVersion ??= (await PackageInfo.fromPlatform()).version;
     return _currentVersion!;
+  }
+
+  /// Whether this version has already been waved away. Kept per version, so
+  /// the next release is mentioned once and this one never again.
+  Future<bool> isDismissed(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_dismissedKey) == version;
+  }
+
+  Future<void> dismiss(String version) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_dismissedKey, version);
   }
 
   // Returns UpdateInfo if an update is available, null otherwise.
@@ -42,14 +58,18 @@ class UpdateService {
       final res = await http
           .get(Uri.parse(_apiUrl), headers: {'Accept': 'application/vnd.github+json'})
           .timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) return null;
+      if (res.statusCode != 200) {
+        debugPrint('[UpdateService] github said ${res.statusCode}');
+        return null;
+      }
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final tag = (data['tag_name'] as String?)?.replaceFirst('v', '') ?? '';
       if (tag.isEmpty) return null;
 
       final current = await currentVersion;
-      if (!_isNewer(tag, current)) return null;
+      debugPrint('[UpdateService] latest=$tag running=$current');
+      if (!isNewer(tag, current)) return null;
 
       String? apkUrl;
       if (Platform.isAndroid) {
@@ -66,7 +86,10 @@ class UpdateService {
         apkDownloadUrl: apkUrl,
         releasesPageUrl: _releasesUrl,
       );
-    } catch (_) {
+    } catch (e) {
+      // Worth a line: a check that never succeeds is indistinguishable from
+      // being up to date, and that is how a stale build goes unnoticed.
+      debugPrint('[UpdateService] check failed: $e');
       return null;
     }
   }
@@ -111,17 +134,25 @@ class UpdateService {
     await OpenFile.open(file.path);
   }
 
-  bool _isNewer(String latest, String current) {
-    try {
-      final l = latest.split('.').map(int.parse).toList();
-      final c = current.split('.').map(int.parse).toList();
-      for (int i = 0; i < l.length && i < c.length; i++) {
-        if (l[i] > c[i]) return true;
-        if (l[i] < c[i]) return false;
-      }
-      return l.length > c.length;
-    } catch (_) {
-      return false;
+  /// Compares dotted versions, tolerating what a build actually reports: a
+  /// debug build calls itself "0.2.0-dev", and parsing that strictly threw,
+  /// which the catch below turned into "no update" for every dev build ever
+  /// run.
+  @visibleForTesting
+  bool isNewer(String latest, String current) {
+    final l = _parts(latest);
+    final c = _parts(current);
+    for (var i = 0; i < l.length || i < c.length; i++) {
+      final a = i < l.length ? l[i] : 0;
+      final b = i < c.length ? c[i] : 0;
+      if (a != b) return a > b;
     }
+    return false;
   }
+
+  /// Leading digits of each dotted component; anything else counts as zero.
+  List<int> _parts(String version) => version
+      .split('.')
+      .map((part) => int.tryParse(RegExp(r'^\d+').firstMatch(part)?.group(0) ?? '') ?? 0)
+      .toList();
 }

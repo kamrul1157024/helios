@@ -539,3 +539,9 @@ export interface HostStats {
   memory_used: number
   memory_total: number
 }
+
+/** A release newer than what is running, and where to get it. */
+export interface UpdateInfo {
+  version: string
+  url: string
+}

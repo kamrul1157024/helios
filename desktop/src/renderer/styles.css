@@ -3963,3 +3963,29 @@ hr {
   font-size: 12px;
   color: var(--on-surface-variant);
 }
+
+/* Said once, above everything, and gone for good when dismissed: a release
+   nobody has to act on today should not cost the layout permanently. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-size: 12px;
+}
+
+.update-note {
+  opacity: 0.8;
+}
+
+.update-banner .ext-link {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.update-banner .dismiss {
+  color: inherit;
+  opacity: 0.8;
+}

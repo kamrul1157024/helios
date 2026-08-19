@@ -8,6 +8,7 @@ import '../models/host_connection.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 import '../services/notification_service.dart';
+import '../services/update_service.dart';
 import '../providers/card_registry.dart' as registry;
 import 'setup_screen.dart';
 import 'sessions_screen.dart';
@@ -27,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
+  UpdateInfo? _update;
 
   @override
   void initState() {
@@ -35,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _hm = context.read<HostManager>();
     _checkNotificationPermission();
+    _checkForUpdate();
     NotificationService.instance.onAction = _handleNotificationAction;
     _subscribeToAllHosts();
   }
@@ -412,6 +415,67 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Mentions a new release once. The APK does not update itself, and the
+  /// settings screen only says so to somebody already looking; dismissing is
+  /// remembered per version, so the next release gets one mention and this one
+  /// gets none.
+  Future<void> _checkForUpdate() async {
+    final info = await UpdateService.instance.checkForUpdate();
+    if (info == null || !mounted) return;
+    if (await UpdateService.instance.isDismissed(info.latestVersion)) return;
+    if (mounted) setState(() => _update = info);
+  }
+
+  Widget _buildUpdateBanner(UpdateInfo update) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: theme.colorScheme.primaryContainer,
+      child: Row(
+        children: [
+          Icon(Icons.system_update, size: 18, color: theme.colorScheme.onPrimaryContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'helios ${update.latestVersion} is out.',
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onPrimaryContainer),
+                ),
+                // Worth saying outright: the terminals are their own detached
+                // processes, so nothing here or on the daemon interrupts a
+                // session that is running.
+                Text(
+                  'Updating the daemon, desktop or app keeps running sessions alive.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.75),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              UpdateService.instance.dismiss(update.latestVersion);
+              setState(() => _update = null);
+            },
+            child: const Text('Later', style: TextStyle(fontSize: 12)),
+          ),
+          TextButton(
+            onPressed: () => UpdateService.instance.install(update),
+            child: Text(
+              update.canDirectInstall ? 'Update' : 'Get it',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNotifPermissionBanner() {
     final theme = Theme.of(context);
     return Container(
@@ -482,6 +546,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           body: Column(
             children: [
+              if (_update != null) _buildUpdateBanner(_update!),
               if (_notifPermissionDenied) _buildNotifPermissionBanner(),
               Expanded(
                 child: IndexedStack(

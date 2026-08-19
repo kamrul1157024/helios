@@ -136,6 +136,10 @@ const helios = {
     onPresent: (fn: (payload: unknown) => void) => on('hud:present', fn),
     onRetract: (fn: (payload: unknown) => void) => on('hud:retract', fn),
   },
+  updates: {
+    check: () => call<unknown>('updates:check'),
+    dismiss: (version: string) => call<void>('updates:dismiss', version),
+  },
   app: {
     quit: () => call<void>('app:quit'),
     onActivateNotification: (fn: (payload: unknown) => void) => on('app:activate-notification', fn),
