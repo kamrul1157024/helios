@@ -69,7 +69,7 @@ class UpdateService {
 
       final current = await currentVersion;
       debugPrint('[UpdateService] latest=$tag running=$current');
-      if (!_isNewer(tag, current)) return null;
+      if (!isNewer(tag, current)) return null;
 
       String? apkUrl;
       if (Platform.isAndroid) {
@@ -134,17 +134,25 @@ class UpdateService {
     await OpenFile.open(file.path);
   }
 
-  bool _isNewer(String latest, String current) {
-    try {
-      final l = latest.split('.').map(int.parse).toList();
-      final c = current.split('.').map(int.parse).toList();
-      for (int i = 0; i < l.length && i < c.length; i++) {
-        if (l[i] > c[i]) return true;
-        if (l[i] < c[i]) return false;
-      }
-      return l.length > c.length;
-    } catch (_) {
-      return false;
+  /// Compares dotted versions, tolerating what a build actually reports: a
+  /// debug build calls itself "0.2.0-dev", and parsing that strictly threw,
+  /// which the catch below turned into "no update" for every dev build ever
+  /// run.
+  @visibleForTesting
+  bool isNewer(String latest, String current) {
+    final l = _parts(latest);
+    final c = _parts(current);
+    for (var i = 0; i < l.length || i < c.length; i++) {
+      final a = i < l.length ? l[i] : 0;
+      final b = i < c.length ? c[i] : 0;
+      if (a != b) return a > b;
     }
+    return false;
   }
+
+  /// Leading digits of each dotted component; anything else counts as zero.
+  List<int> _parts(String version) => version
+      .split('.')
+      .map((part) => int.tryParse(RegExp(r'^\d+').firstMatch(part)?.group(0) ?? '') ?? 0)
+      .toList();
 }
