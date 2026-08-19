@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 """Generate Helios app icon: abstract flame/torch — bringer of light."""
 
-import math
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
+
+# Drawn this many times larger and scaled back down, so the polygon edges come
+# out smooth instead of stepped like the desktop mark they sit beside.
+SUPERSAMPLE = 4
+
+BG = (18, 12, 30)
 
 
 def draw_helios_icon(size):
     """Draw a flame icon at the given pixel size."""
+    img = _draw_flame(size * SUPERSAMPLE)
+    # The bands meet in hard steps at this scale; a touch of blur before the
+    # downscale gives them the soft falloff the desktop icon has.
+    img = img.filter(ImageFilter.GaussianBlur(size * SUPERSAMPLE * 0.002))
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def _draw_flame(size):
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     cx, cy = size / 2, size / 2
 
     # Background
-    bg = (18, 12, 30)
-    corner = size * 0.18
-    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=corner, fill=bg)
+    corner = size * 0.16
+    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=corner, fill=BG)
 
     # Outer flame (orange-red)
     flame_pts = [
@@ -88,7 +100,7 @@ def main():
 
     # Generate master icon at 1024px
     master = draw_helios_icon(1024)
-    bg_color = (18, 12, 30)
+    bg_color = BG
 
     # Android mipmap sizes
     android_sizes = {
