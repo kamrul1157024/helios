@@ -1,0 +1,92 @@
+name: Test
+
+# Every check that used to be run by hand before a merge. The three suites are
+# separate jobs so a Dart failure does not hide a Go one.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push supersedes whatever was running for the same ref.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l cmd internal)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - run: go test ./...
+
+  desktop:
+    name: Desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: the test script strips types at runtime, which older
+          # Node refuses to do.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: npm ci
+        working-directory: desktop
+
+      - run: npm run typecheck
+        working-directory: desktop
+
+      - run: npm test
+        working-directory: desktop
+
+      - run: npm run build
+        working-directory: desktop
+
+  mobile:
+    name: Mobile
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+        working-directory: mobile
+
+      # Infos are not failures: CI tracks stable, which runs ahead of the
+      # SDK on a developer's machine, and its deprecation notices land as
+      # infos for APIs that machine does not have a replacement for yet.
+      # Warnings and errors still fail.
+      - run: flutter analyze --no-fatal-infos
+        working-directory: mobile
+
+      - run: flutter test
+        working-directory: mobile
