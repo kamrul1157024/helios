@@ -252,7 +252,11 @@ function hardenSession(): void {
     })
   })
 
-  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  // Copy buttons go through navigator.clipboard, which asks for this before
+  // every write; everything else the renderer could ask for it has no use for.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) =>
+    callback(permission === 'clipboard-sanitized-write'),
+  )
 }
 
 /**
