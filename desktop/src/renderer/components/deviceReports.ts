@@ -1,4 +1,7 @@
-import type { IFunctionIdentifier, IParser } from '@xterm/xterm'
+import type { IDisposable, IFunctionIdentifier, IParser } from '@xterm/xterm'
+
+/** The slice of the parser this needs — narrow enough for a test to stub. */
+export type ReportParser = Pick<IParser, 'registerCsiHandler' | 'registerOscHandler'>
 
 /**
  * The device queries an xterm answers on its own — cursor-position reports
@@ -41,12 +44,24 @@ export const OSC_COLOUR_QUERIES: readonly number[] = [10, 11, 12, 4]
  * A handler returning `true` marks the sequence handled, which suppresses
  * xterm's built-in reply. Keystrokes are produced by the key handler, not this
  * parser, so they are unaffected.
+ *
+ * Returns a disposable that removes every registration. `Terminal.dispose()`
+ * tears the parser down anyway, but disposing alongside the other addons keeps
+ * the lifecycle explicit and survives a terminal that is reused rather than
+ * recreated.
  */
-export function silenceDeviceReports(parser: IParser): void {
-  for (const id of DEVICE_REPORT_QUERIES) parser.registerCsiHandler(id, () => true)
+export function silenceDeviceReports(parser: ReportParser): IDisposable {
+  const handlers: IDisposable[] = []
+  for (const id of DEVICE_REPORT_QUERIES) handlers.push(parser.registerCsiHandler(id, () => true))
   // Swallow the colour report but let a colour *set* fall through to the
   // built-in handler by returning false when there is no `?` to answer.
-  for (const id of OSC_COLOUR_QUERIES) parser.registerOscHandler(id, (data) => isColourQuery(data))
+  for (const id of OSC_COLOUR_QUERIES) handlers.push(parser.registerOscHandler(id, (data) => isColourQuery(data)))
+  return {
+    dispose() {
+      for (const h of handlers) h.dispose()
+      handlers.length = 0
+    },
+  }
 }
 
 /** An OSC colour payload is a query when any of its `;`-separated parts is `?`. */

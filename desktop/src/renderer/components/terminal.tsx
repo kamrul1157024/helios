@@ -124,7 +124,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
       theme,
       macOptionIsMeta: true,
     })
-    silenceDeviceReports(term.parser)
+    const reportSilencer = silenceDeviceReports(term.parser)
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())
@@ -149,6 +149,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
 
     return () => {
       sinks.delete(tab.id)
+      reportSilencer.dispose()
       term.dispose()
       termRef.current = null
       fitRef.current = null
