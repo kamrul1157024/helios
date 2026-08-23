@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 
+import { silenceDeviceReports } from './deviceReports.ts'
 import { bridge } from '../bridge.ts'
 import { currentTab, store, terminalId, useStore, type Tab } from '../store.ts'
 import { canResume, hasTerminal, type Session } from '../../shared/models.ts'
@@ -123,6 +124,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
       theme,
       macOptionIsMeta: true,
     })
+    silenceDeviceReports(term.parser)
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())

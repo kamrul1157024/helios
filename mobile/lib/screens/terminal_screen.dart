@@ -450,7 +450,7 @@ class _TerminalTab {
     required this.getToken,
     required this.onChanged,
   }) {
-    terminal = Terminal(maxLines: 4000);
+    terminal = _MirrorTerminal(maxLines: 4000);
     // The view measures the font and reports the grid it can actually draw.
     // Computing columns here instead put the emulator's idea of the line out
     // of step with the painted one, which is what left the cursor at the far
@@ -608,6 +608,34 @@ class _TerminalTab {
     _decoder?.close();
     controller.dispose();
   }
+}
+
+/// A terminal that never answers device queries itself.
+///
+/// The session's terminal is the host; this emulator only mirrors it. The host
+/// already replies to cursor-position (DSR) and device-attribute (DA) queries
+/// the child sends, so if this mirror replied too its answer would travel back
+/// up the input channel a network round-trip late and land on whatever is
+/// reading by then — usually the shell prompt, as a stray `^[[…R`, doubled once
+/// per attached viewer. Suppressing the replies here leaves the keyboard path
+/// (onOutput for real keystrokes) untouched.
+class _MirrorTerminal extends Terminal {
+  _MirrorTerminal({super.maxLines});
+
+  @override
+  void sendCursorPosition() {}
+
+  @override
+  void sendPrimaryDeviceAttributes() {}
+
+  @override
+  void sendSecondaryDeviceAttributes() {}
+
+  @override
+  void sendTertiaryDeviceAttributes() {}
+
+  @override
+  void sendOperatingStatus() {}
 }
 
 /// Feeds decoded text straight to the emulator.
