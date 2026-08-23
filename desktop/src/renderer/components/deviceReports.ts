@@ -25,6 +25,18 @@ export const DEVICE_REPORT_QUERIES: readonly IFunctionIdentifier[] = [
 ]
 
 /**
+ * OSC colour queries: OSC 10/11/12 (fg/bg/cursor) and OSC 4 (palette). Sent
+ * with a `?` argument, the terminal answers with the current colour — e.g.
+ * powerlevel10k probes the background with `^[]11;?^G` on every prompt. That
+ * reply leaks exactly like a DSR one (`^[]11;rgb:1f1f/1f1f/1f1f^[\`), which is
+ * the other half of the stray-line bug.
+ *
+ * Unlike the CSI reports, these OSC numbers also *set* colours, so only the
+ * `?` query is suppressed; a set (`^[]11;#1e1e1e^G`) still recolours the view.
+ */
+export const OSC_COLOUR_QUERIES: readonly number[] = [10, 11, 12, 4]
+
+/**
  * Stop a terminal from replying to device queries, so only the host answers.
  * A handler returning `true` marks the sequence handled, which suppresses
  * xterm's built-in reply. Keystrokes are produced by the key handler, not this
@@ -32,4 +44,12 @@ export const DEVICE_REPORT_QUERIES: readonly IFunctionIdentifier[] = [
  */
 export function silenceDeviceReports(parser: IParser): void {
   for (const id of DEVICE_REPORT_QUERIES) parser.registerCsiHandler(id, () => true)
+  // Swallow the colour report but let a colour *set* fall through to the
+  // built-in handler by returning false when there is no `?` to answer.
+  for (const id of OSC_COLOUR_QUERIES) parser.registerOscHandler(id, (data) => isColourQuery(data))
+}
+
+/** An OSC colour payload is a query when any of its `;`-separated parts is `?`. */
+export function isColourQuery(data: string): boolean {
+  return data.split(';').some((part) => part === '?')
 }
