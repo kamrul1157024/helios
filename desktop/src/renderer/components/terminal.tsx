@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 
 import { silenceDeviceReports } from './deviceReports.ts'
+import { linkHandler, webLinkActivate } from './links.ts'
 import { bridge } from '../bridge.ts'
 import { currentTab, store, terminalId, useStore, type Tab } from '../store.ts'
 import { canResume, hasTerminal, type Session } from '../../shared/models.ts'
@@ -123,11 +124,14 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
       scrollback: 5000,
       theme,
       macOptionIsMeta: true,
+      // OSC 8 hyperlinks: open in the browser instead of xterm's default, which
+      // pops a "potentially dangerous" confirm and then fails to open at all.
+      linkHandler,
     })
     const reportSilencer = silenceDeviceReports(term.parser)
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.loadAddon(new WebLinksAddon())
+    term.loadAddon(new WebLinksAddon(webLinkActivate))
     term.open(container)
 
     try {

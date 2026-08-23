@@ -225,7 +225,9 @@ function createWindow(): void {
   // Nothing in this app should navigate. Links open in the user's browser, and
   // an attempt to navigate the window itself is a bug or worse.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url)
+    // Web links open in the browser; anything else (file:, javascript:, …) is
+    // dropped. The renderer's terminal link handlers route here via window.open.
+    if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
