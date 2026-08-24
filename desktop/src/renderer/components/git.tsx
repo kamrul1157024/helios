@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { api } from '../bridge.ts'
-import { store } from '../store.ts'
+import { store, useStore } from '../store.ts'
 import { CommitChanges, ScopePicker, type Scope } from './commits.tsx'
 import { DiffView } from './diff-view.tsx'
 import { PathLabel } from './path-label.tsx'
@@ -22,6 +22,16 @@ import type { GitChange, GitDiff, GitStatus } from '../../shared/models.ts'
  * Picking a worktree rescopes the whole panel to it, so a session started in
  * one checkout can still read the branch an agent is working in next door.
  */
+/**
+ * An absolute path as a path inside root, or null when it is somewhere else.
+ * A file from another checkout has no diff in this one.
+ */
+function relativeTo(root: string, absolute: string): string | null {
+  const base = root.replace(/\/+$/, '')
+  if (absolute === base) return null
+  return absolute.startsWith(`${base}/`) ? absolute.slice(base.length + 1) : null
+}
+
 export function GitPanel({
   hostId,
   cwd,
@@ -105,6 +115,14 @@ export function GitPanel({
     setScope(next)
     writeScope(scopeKey, next)
   }
+
+  // An agent naming a file means its uncommitted change, so the panel has to
+  // be showing the working tree for the selection below to land anywhere.
+  const diffTarget = useStore((s) => s.diffTarget)
+  useEffect(() => {
+    if (!diffTarget || diffTarget.hostId !== hostId) return
+    setScope({ kind: 'working' })
+  }, [diffTarget?.seq])
 
   // Status is fetched here rather than in the changes view because the header
   // shows the branch in every scope — reading a commit is no reason to lose it.
@@ -210,11 +228,21 @@ function ChangesView({
 }): JSX.Element {
   const [selected, setSelected] = useState<{ path: string; untracked: boolean } | null>(null)
   const [diff, setDiff] = useState<GitDiff | null>(null)
+  const target = useStore((s) => s.diffTarget)
 
   // A path from the previous repository would only produce a failed diff.
   useEffect(() => {
     setSelected(null)
   }, [hostId, root])
+
+  // An agent asked for one file's diff. It names the file the way its own
+  // tools do, absolutely, while git wants it relative to the repository.
+  useEffect(() => {
+    if (!target || target.hostId !== hostId || !target.path) return
+    const rel = relativeTo(root, target.path)
+    if (rel) setSelected({ path: rel, untracked: false })
+    store.clearDiffTarget()
+  }, [target?.seq])
 
   useEffect(() => {
     if (!selected) {
