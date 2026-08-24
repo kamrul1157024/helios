@@ -78,7 +78,10 @@ export interface FileTarget {
 export interface DiffTarget {
   hostId: string
   path?: string
+  /** Branch to diff against, for a whole-branch review. */
   base?: string
+  /** A single commit to show. Never set alongside base. */
+  commit?: string
   seq: number
 }
 
@@ -595,6 +598,7 @@ class Store {
           hostId,
           path: str(data.path) || undefined,
           base: str(data.base) || undefined,
+          commit: str(data.commit) || undefined,
           seq: (s.diffTarget?.seq ?? 0) + 1,
         },
       }))

@@ -116,12 +116,25 @@ export function GitPanel({
     writeScope(scopeKey, next)
   }
 
-  // An agent naming a file means its uncommitted change, so the panel has to
-  // be showing the working tree for the selection below to land anywhere.
+  // The scope an agent asked for. A branch and a single commit are different
+  // questions, and neither is the working tree — putting the panel in the wrong
+  // one is how a diff comes back empty and looks broken.
   const diffTarget = useStore((s) => s.diffTarget)
   useEffect(() => {
     if (!diffTarget || diffTarget.hostId !== hostId) return
-    setScope({ kind: 'working' })
+    if (diffTarget.base) {
+      setScope({ kind: 'review', base: diffTarget.base, span: 0, label: `${diffTarget.base}...HEAD` })
+    } else if (diffTarget.commit) {
+      setScope({
+        kind: 'commit',
+        to: diffTarget.commit,
+        from: null,
+        span: 1,
+        label: diffTarget.commit.slice(0, 7),
+      })
+    } else {
+      setScope({ kind: 'working' })
+    }
   }, [diffTarget?.seq])
 
   // Status is fetched here rather than in the changes view because the header
@@ -239,6 +252,8 @@ function ChangesView({
   // tools do, absolutely, while git wants it relative to the repository.
   useEffect(() => {
     if (!target || target.hostId !== hostId || !target.path) return
+    // A branch or commit target belongs to a history view, not this one.
+    if (target.base || target.commit) return
     const rel = relativeTo(root, target.path)
     if (rel) setSelected({ path: rel, untracked: false })
     store.clearDiffTarget()
