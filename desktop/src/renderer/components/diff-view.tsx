@@ -57,7 +57,15 @@ export function DiffView({
         ) : (
           <div
             key={index}
-            className={`diff-row ${line !== undefined && row.right?.n === line ? 'diff-row-marked' : ''}`}
+            className={[
+              'diff-row',
+              // Both halves of a context row are the same text. Stacked into
+              // one column they would read as the line appearing twice.
+              !row.left?.changed && !row.right?.changed ? 'diff-row-context' : '',
+              line !== undefined && row.right?.n === line ? 'diff-row-marked' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
             ref={line !== undefined && row.right?.n === line ? marked : undefined}
           >
             <Side cell={row.left} kind="del" />

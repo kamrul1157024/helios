@@ -4023,12 +4023,22 @@ hr {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
-  overflow-x: auto;
+  /* The cells scroll, not this: scrolling here would drag the gutters and the
+     hunk headers off screen with the code. */
+  overflow-x: hidden;
+  /* Measured against this pane, not the window. The file list and the sidebar
+     take most of a wide window, so a viewport breakpoint reports 1440px while
+     each column is 200px and every line is cut off mid-token. */
+  container-type: inline-size;
 }
 
 .diff-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, 1fr), not 1fr: plain 1fr is minmax(auto, 1fr), and auto refuses
+     to shrink below the width of `white-space: pre` content — so a long line
+     pushed its column over the other one and the two painted on top of each
+     other. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 /* A file or hunk header belongs to both sides, so it spans them. */
@@ -4044,7 +4054,15 @@ hr {
   min-width: 0;
   padding: 0 10px;
   white-space: pre;
+  /* Each side scrolls on its own. A shared scrollbar would need both columns
+     to be the width of the longer one, which wastes half the pane. */
+  overflow-x: auto;
   border-right: 1px solid var(--outline-variant);
+}
+
+/* The per-cell scrollbars would otherwise stack up, one per line. */
+.diff-cell::-webkit-scrollbar {
+  height: 0;
 }
 
 .diff-cell:last-child {
@@ -4071,14 +4089,27 @@ hr {
   min-width: 0;
 }
 
-/* Too narrow to read two columns: one column beats two unreadable ones. */
-@media (max-width: 900px) {
+/* Two columns need roughly 60 characters each to be worth having. Below that
+   one readable column beats two unreadable ones. */
+@container (max-width: 720px) {
   .diff-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .diff-cell-absent {
     display: none;
+  }
+
+  /* Stacked, a context row would print the same line twice. Keep the new
+     side, so the numbering matches the file as it now stands. */
+  .diff-row-context .diff-cell:first-child {
+    display: none;
+  }
+
+  /* Nothing sits beside a cell any more, so the divider is a stray rule down
+     the middle of the text. */
+  .diff-cell {
+    border-right: none;
   }
 }
 
