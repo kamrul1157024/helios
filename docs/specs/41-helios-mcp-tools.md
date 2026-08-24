@@ -58,9 +58,10 @@ sessions, which is why they need MCP at all.
 ```jsonc
 {
   "view": "file" | "diff" | "terminal" | "agent",
-  "path": "internal/oauth/registration.go",   // file: required. diff: optional.
-  "line": 190,                                // file only
-  "base": "main",                             // diff only
+  "path": "/Users/me/src/opal-app/internal/oauth/registration.go",
+                                    // absolute. file: required, diff: optional.
+  "line": 190,                      // file only
+  "base": "main",                   // diff only
   "note": "This guard is what returned the 400."
 }
 ```
@@ -68,6 +69,15 @@ sessions, which is why they need MCP at all.
 Four views. `diff` with no `path` shows the whole change, so a separate `git`
 view is not needed. `file` already opens the Files panel, so a `files` view is
 not needed either.
+
+**Paths are absolute.** `resolveSafePath` at `internal/server/files.go:134`
+resolves a relative path with `filepath.Abs`, against the *daemon's* working
+directory, which is `/`. A repo-relative path would therefore become one that
+does not exist, and the failure would look like a missing file rather than a
+bad argument. Absolute is also the form the agent already holds: its own `Read`
+and `Edit` calls carry absolute paths, and the transcript's file chips pass
+absolute paths to the same panel. A relative path is refused with a correction.
+`~/` is accepted, because the daemon expands it.
 
 `approvals` is deliberately absent. Helios already raises a notification on the
 desktop and the phone when an agent waits for permission. An agent that can pull

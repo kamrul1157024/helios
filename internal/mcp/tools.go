@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/store"
@@ -51,12 +52,13 @@ func (s *Server) registry() map[string]tool {
 		"helios_show": {
 			description: "Show the human something in the Helios app: open a file, " +
 				"open a diff, or switch to the terminal or the transcript. " +
+				"Paths are absolute, the same form your own file tools use. " +
 				"view=file needs path. view=diff takes an optional path; omit it " +
 				"for the whole change. view=terminal and view=agent take neither. " +
 				"Use this rarely, when the human must actually look at something.",
 			schema: obj(map[string]interface{}{
 				"view": str("file | diff | terminal | agent"),
-				"path": str("repo-relative file path, for view=file and optionally view=diff"),
+				"path": str("absolute file path, for view=file and optionally view=diff"),
 				"line": map[string]interface{}{"type": "integer", "description": "line to scroll to, view=file only"},
 				"base": str("revision to diff against, view=diff only"),
 				"note": str("one line saying why the human should look at this"),
@@ -73,6 +75,12 @@ func (s *Server) registry() map[string]tool {
 			call: s.callSessions,
 		},
 	}
+}
+
+// isAbsolutePath accepts "~/..." as well, because the daemon expands it the
+// same way it expands an absolute path.
+func isAbsolutePath(path string) bool {
+	return filepath.IsAbs(path) || strings.HasPrefix(path, "~/")
 }
 
 func argString(args map[string]interface{}, key string) string {
@@ -107,6 +115,12 @@ func (s *Server) callShow(sessionID string, args map[string]interface{}) (string
 	}
 	if !rules.takesPath && path != "" {
 		return "", fmt.Errorf("view=%s does not take a path", view)
+	}
+	// The daemon resolves a relative path against its own working directory,
+	// which is "/" — so a repo-relative path silently becomes a path that does
+	// not exist. Absolute is also the form the agent's own file tools use.
+	if path != "" && !isAbsolutePath(path) {
+		return "", fmt.Errorf("path must be absolute, not %q", path)
 	}
 
 	payload := map[string]interface{}{
