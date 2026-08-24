@@ -61,7 +61,7 @@ func (s *Server) registry() map[string]tool {
 			schema: obj(map[string]interface{}{
 				"view":   str("file | diff | terminal | agent"),
 				"path":   str("absolute file path, for view=file and optionally view=diff"),
-				"line":   map[string]interface{}{"type": "integer", "description": "line to scroll to, view=file only"},
+				"line":   map[string]interface{}{"type": "integer", "description": "line to scroll to. view=file, or view=diff to point at one line of the patch"},
 				"base":   str("branch to diff against, e.g. main. view=diff only, and not with commit"),
 				"commit": str("one commit to show. view=diff only, and not with base"),
 				"layout": str("split (default, side by side) or unified. view=diff only"),
@@ -156,7 +156,10 @@ func (s *Server) callShow(sessionID string, args map[string]interface{}) (string
 			payload[key] = value
 		}
 	}
-	if line := argInt(args, "line"); line > 0 && view == "file" {
+	// Pointing at a line matters more in a diff than in a file: "look at this
+	// change" is the request, and a file-only line left the agent gesturing at
+	// a whole patch.
+	if line := argInt(args, "line"); line > 0 && (view == "file" || view == "diff") {
 		payload["line"] = line
 	}
 

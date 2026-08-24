@@ -84,6 +84,8 @@ export interface DiffTarget {
   commit?: string
   /** How to draw the patch. Side by side unless the agent asked otherwise. */
   layout?: 'split' | 'unified'
+  /** A line of the new file to scroll to and mark. */
+  line?: number
   seq: number
 }
 
@@ -602,6 +604,7 @@ class Store {
           base: str(data.base) || undefined,
           commit: str(data.commit) || undefined,
           layout: str(data.layout) === 'unified' ? 'unified' : 'split',
+          line: typeof data.line === 'number' ? data.line : undefined,
           seq: (s.diffTarget?.seq ?? 0) + 1,
         },
       }))
