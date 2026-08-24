@@ -28,6 +28,7 @@ const (
 	screenHooksInstall                 // prompt to install Claude hooks
 	screenHooksUpdate                  // prompt to update outdated hooks
 	screenShellSetup                   // prompt to install shell wrapper
+	screenMCPSetup                     // prompt to register the Helios MCP server
 	screenTunnelSelect                 // first time only: pick tunnel provider
 	screenBinaryMissing                // tunnel binary not found
 	screenTunnelStarting               // starting tunnel...
@@ -81,6 +82,7 @@ type statusCheckDone struct {
 	hooksOK        bool
 	hooksOutdated  bool
 	mcpRegistered  bool
+	mcpDeclined    bool
 	shellInfo      daemon.ShellInfo
 	shellInstalled bool
 	tunnelOK       bool
@@ -165,14 +167,17 @@ type StartModel struct {
 	// is one feature, and a user who does not want it should not be nagged past
 	// a single line.
 	mcpRegistered bool
-	mcpMsg        string
-	tunnelOK      bool
-	tunnelURL     string
-	tunnelProv    string
-	tunnelMode    string // tailscale exposure mode of the running tunnel; empty otherwise
-	tunnelWarn    string // daemon-reported caveat about the tunnel just started
-	deviceCount   int
-	devices       []deviceInfo
+	// mcpDeclined records that the user said no during setup. Asking again on
+	// every launch would make an optional feature feel mandatory.
+	mcpDeclined bool
+	mcpMsg      string
+	tunnelOK    bool
+	tunnelURL   string
+	tunnelProv  string
+	tunnelMode  string // tailscale exposure mode of the running tunnel; empty otherwise
+	tunnelWarn  string // daemon-reported caveat about the tunnel just started
+	deviceCount int
+	devices     []deviceInfo
 
 	// General settings screen
 	settingsCursor int
@@ -281,10 +286,18 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mcpRegisterDone:
 		if msg.err != nil {
 			m.mcpMsg = fmt.Sprintf("Could not register: %v", msg.err)
+			// Setup must not dead-end on a failure it cannot fix; the dashboard
+			// still offers the key.
+			if m.screen == screenMCPSetup {
+				return m.proceedAfterMCP()
+			}
 			return m, nil
 		}
 		m.mcpRegistered = true
 		m.mcpMsg = ""
+		if m.screen == screenMCPSetup {
+			return m.proceedAfterMCP()
+		}
 		return m, nil
 
 	case hooksInstallDone:
@@ -359,7 +372,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
-		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenError:
+		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenMCPSetup, screenError:
 			return m, tea.Quit
 		case screenSettings:
 			m.screen = screenMain
@@ -436,6 +449,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The summary screen is where this is usually read: a set-up install
 		// sits there waiting on enter, and never reaches the dashboard.
 		if (m.screen == screenMain || (m.screen == screenLoading && m.daemonOK)) && !m.mcpRegistered {
+			m.mcpDeclined = false
 			m.mcpMsg = "Registering..."
 			return m, registerMCPCmd(m.internalPort)
 		}
@@ -446,6 +460,8 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.proceedAfterHooks()
 		case screenShellSetup:
 			return m.proceedAfterShell()
+		case screenMCPSetup:
+			return m.declineMCP()
 		}
 	}
 
@@ -482,6 +498,10 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			return m.proceedAfterShell()
 		}
 		return m, installShellWrapperCmd(m.shellInfo)
+
+	case screenMCPSetup:
+		m.mcpMsg = "Registering..."
+		return m, registerMCPCmd(m.internalPort)
 
 	case screenTunnelSelect:
 		provider := tunnelProviders[m.tunnelCursor]
@@ -546,6 +566,16 @@ func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 }
 
 func (m StartModel) proceedAfterShell() (tea.Model, tea.Cmd) {
+	// Asked once, and only once. Registering gives agents tools they did not
+	// have, which is the user's call rather than a step to get past.
+	if !m.mcpRegistered && !m.mcpDeclined {
+		m.screen = screenMCPSetup
+		return m, nil
+	}
+	return m.proceedAfterMCP()
+}
+
+func (m StartModel) proceedAfterMCP() (tea.Model, tea.Cmd) {
 	if !m.tunnelOK {
 		return m.enterTunnelSelect()
 	}
@@ -571,6 +601,7 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.shellInfo = msg.shellInfo
 	m.shellInstalled = msg.shellInstalled
 	m.mcpRegistered = msg.mcpRegistered
+	m.mcpDeclined = msg.mcpDeclined
 	m.tunnelOK = msg.tunnelOK
 	m.tunnelURL = msg.tunnelURL
 	m.tunnelProv = msg.tunnelProv
@@ -741,6 +772,9 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 		}
 
 		result.mcpRegistered = mcpRegistered()
+		if settings, err := c.getSettings(); err == nil {
+			result.mcpDeclined = settings[mcpDeclinedSetting] == "true"
+		}
 
 		// Check shell wrapper
 		result.shellInfo = daemon.DetectShell()
@@ -876,6 +910,22 @@ func installShellWrapperCmd(info daemon.ShellInfo) tea.Cmd {
 		}
 		return shellSetupDone{installed: true}
 	}
+}
+
+// mcpDeclinedSetting remembers that the user said no during setup, so the
+// question is asked once rather than at every launch.
+const mcpDeclinedSetting = "mcp.setup_declined"
+
+// declineMCP records the refusal and moves on. Persisted through the daemon so
+// every client agrees, and so a reinstall does not start asking again.
+func (m StartModel) declineMCP() (tea.Model, tea.Cmd) {
+	m.mcpDeclined = true
+	client := m.client
+	model, cmd := m.proceedAfterMCP()
+	return model, tea.Batch(cmd, func() tea.Msg {
+		client.updateSettings(map[string]string{mcpDeclinedSetting: "true"})
+		return nil
+	})
 }
 
 // mcpRegistered reports whether Claude Code has the Helios MCP server in its
