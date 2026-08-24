@@ -82,6 +82,8 @@ export interface DiffTarget {
   base?: string
   /** A single commit to show. Never set alongside base. */
   commit?: string
+  /** How to draw the patch. Side by side unless the agent asked otherwise. */
+  layout?: 'split' | 'unified'
   seq: number
 }
 
@@ -599,6 +601,7 @@ class Store {
           path: str(data.path) || undefined,
           base: str(data.base) || undefined,
           commit: str(data.commit) || undefined,
+          layout: str(data.layout) === 'unified' ? 'unified' : 'split',
           seq: (s.diffTarget?.seq ?? 0) + 1,
         },
       }))

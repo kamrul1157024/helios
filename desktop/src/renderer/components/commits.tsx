@@ -446,7 +446,11 @@ export function CommitChanges({
                 <span>{diff.file}</span>
                 <span className="muted">{diff.stat}</span>
               </header>
-              <DiffView diff={diff.diff} empty="No textual changes — binary, or a mode change." />
+              <DiffView
+                diff={diff.diff}
+                empty="No textual changes — binary, or a mode change."
+                layout={wanted?.layout ?? 'split'}
+              />
             </>
           ) : (
             <p className="empty-note">Pick a file.</p>

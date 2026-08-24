@@ -322,7 +322,7 @@ function ChangesView({
               <span>{diff.file}</span>
               <span className="muted">{diff.stat}</span>
             </header>
-            <DiffView diff={diff.diff} />
+            <DiffView diff={diff.diff} layout={target?.layout ?? 'split'} />
           </>
         ) : (
           <p className="empty-note">{status.dirty ? 'Pick a file.' : 'Nothing to show.'}</p>

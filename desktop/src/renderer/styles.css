@@ -4016,3 +4016,68 @@ hr {
   flex: 1;
   min-width: 0;
 }
+
+/* ─── Side-by-side diff ─────────────────────────────────────────────────── */
+
+.diff-split {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+/* A file or hunk header belongs to both sides, so it spans them. */
+.diff-row-meta {
+  grid-template-columns: 1fr;
+  padding: 2px 10px;
+  white-space: pre;
+}
+
+.diff-cell {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 10px;
+  white-space: pre;
+  border-right: 1px solid var(--outline-variant);
+}
+
+.diff-cell:last-child {
+  border-right: none;
+}
+
+/* Nothing on this side of the pair. Shaded so the eye skips it rather than
+   reading it as a blank line that exists. */
+.diff-cell-absent {
+  background: color-mix(in srgb, var(--on-surface) 4%, transparent);
+  border-right: 1px solid var(--outline-variant);
+}
+
+.diff-gutter {
+  flex: none;
+  min-width: 4ch;
+  text-align: right;
+  color: var(--on-surface-variant);
+  opacity: 0.5;
+  user-select: none;
+}
+
+.diff-text {
+  min-width: 0;
+}
+
+/* Too narrow to read two columns: one column beats two unreadable ones. */
+@media (max-width: 900px) {
+  .diff-row {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-cell-absent {
+    display: none;
+  }
+}
