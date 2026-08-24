@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 /** How a patch is drawn. Side by side reads better for review; unified is
  *  narrower and is what a terminal shows. */
 export type DiffLayout = 'split' | 'unified'
@@ -14,19 +16,30 @@ export function DiffView({
   diff,
   empty,
   layout = 'split',
+  line,
 }: {
   diff: string
   empty?: string
   layout?: DiffLayout
+  /** A line of the new file to scroll to and mark, when one was asked for. */
+  line?: number
 }): JSX.Element {
+  const marked = useRef<HTMLDivElement | null>(null)
+
+  // A patch is long and the interesting line is rarely at the top, so being
+  // pointed at one is worthless unless the pane goes there.
+  useEffect(() => {
+    marked.current?.scrollIntoView({ block: 'center' })
+  }, [line, diff])
+
   if (!diff.trim()) return <p className="empty-note">{empty ?? 'No changes.'}</p>
 
   if (layout === 'unified') {
     return (
       <pre>
-        {diff.split('\n').map((line, index) => (
-          <span key={index} className={diffClass(line)}>
-            {line || ' '}
+        {diff.split('\n').map((text, index) => (
+          <span key={index} className={diffClass(text)}>
+            {text || ' '}
             {'\n'}
           </span>
         ))}
@@ -42,7 +55,11 @@ export function DiffView({
             {row.meta || ' '}
           </div>
         ) : (
-          <div key={index} className="diff-row">
+          <div
+            key={index}
+            className={`diff-row ${line !== undefined && row.right?.n === line ? 'diff-row-marked' : ''}`}
+            ref={line !== undefined && row.right?.n === line ? marked : undefined}
+          >
             <Side cell={row.left} kind="del" />
             <Side cell={row.right} kind="add" />
           </div>

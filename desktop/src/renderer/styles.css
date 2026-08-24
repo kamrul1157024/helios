@@ -4081,3 +4081,10 @@ hr {
     display: none;
   }
 }
+
+/* The one line an agent pointed at, inside a patch that is mostly not it. */
+.diff-row-marked {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  border-radius: 3px;
+}

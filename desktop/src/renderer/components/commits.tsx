@@ -450,6 +450,7 @@ export function CommitChanges({
                 diff={diff.diff}
                 empty="No textual changes — binary, or a mode change."
                 layout={wanted?.layout ?? 'split'}
+                line={wanted?.line}
               />
             </>
           ) : (
