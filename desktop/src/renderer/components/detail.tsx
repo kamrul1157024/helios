@@ -192,6 +192,8 @@ export function Detail(): JSX.Element {
         </>
       )}
 
+      {hostId && session && <ShowNoteStrip hostId={hostId} sessionId={session.session_id} />}
+
       <div className="panel-body">
         {!session &&
           (pendingList ? (
@@ -595,4 +597,31 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
   return `${Math.round(bytes / 1024 ** 2)} MB`
+}
+
+/**
+ * Why the agent moved the view.
+ *
+ * A panel that switches on its own is indistinguishable from a bug. This says
+ * who did it and what to look at, and it stays until dismissed rather than
+ * disappearing on a timer — the point is to be read.
+ */
+function ShowNoteStrip({ hostId, sessionId }: { hostId: string; sessionId: string }): JSX.Element | null {
+  const note = useStore((s) => s.showNote)
+  if (!note || note.hostId !== hostId || note.sessionId !== sessionId) return null
+
+  return (
+    <div className="show-note">
+      <span className="show-note-who">agent</span>
+      <span className="show-note-text">{note.text}</span>
+      <button
+        className="icon-btn"
+        aria-label="Dismiss"
+        title="Dismiss"
+        onClick={() => store.clearShowNote()}
+      >
+        ✕
+      </button>
+    </div>
+  )
 }

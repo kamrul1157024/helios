@@ -286,9 +286,11 @@ export function FilesPanel({
       return
     }
     const mapped = inRoot(path, scope.current.root, scope.current.owners)
+    // An agent pointing at a file usually means one line of it.
+    const at = target.line ? { line: target.line, column: 1 } : undefined
     void (async () => {
-      if (mapped !== path && (await openFile(mapped, undefined, true))) return
-      await openFile(path)
+      if (mapped !== path && (await openFile(mapped, at, true))) return
+      await openFile(path, at)
     })()
     store.clearFileTarget()
     // seq, not path: reopening the same file has to work.

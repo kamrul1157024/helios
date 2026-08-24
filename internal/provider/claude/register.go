@@ -117,12 +117,47 @@ func LaunchPermissionMode(spec provider.SessionSpec) string {
 	}
 }
 
+// mcpPort is the daemon's internal port, set once by Register. Sessions reach
+// the Helios MCP server there. Zero means no port was reported, and then no MCP
+// config is injected at all.
+var mcpPort int
+
+// mcpConfig builds the --mcp-config value that points a session at the Helios
+// MCP server and names the session it belongs to. The id travels in a header,
+// so the agent never has to know its own id or pass it to a tool.
+//
+// This must never be paired with --strict-mcp-config. Measured 2026-08-24:
+// --mcp-config on its own merges with the user's servers, while adding
+// --strict-mcp-config replaces them. That would silently remove every other
+// MCP server from every Helios session.
+func mcpConfig(sessionID string) (string, bool) {
+	if mcpPort == 0 || sessionID == "" {
+		return "", false
+	}
+	encoded, err := json.Marshal(map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"helios": map[string]interface{}{
+				"type":    "http",
+				"url":     fmt.Sprintf("http://127.0.0.1:%d/mcp", mcpPort),
+				"headers": map[string]string{"X-Helios-Session": sessionID},
+			},
+		},
+	})
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
 // sessionArgs builds the argv for a Claude session. Shared with the resume
 // path so a woken session gets the same flags as a fresh one.
 func sessionArgs(spec provider.SessionSpec) []string {
 	argv := []string{"claude"}
 	if spec.SessionID != "" {
 		argv = append(argv, "--session-id", spec.SessionID)
+	}
+	if config, ok := mcpConfig(spec.SessionID); ok {
+		argv = append(argv, "--mcp-config", config)
 	}
 	if spec.Model != "" {
 		argv = append(argv, "--model", spec.Model)
@@ -142,7 +177,9 @@ func sessionArgs(spec provider.SessionSpec) []string {
 }
 
 // Register registers all Claude hook and action handlers.
-func Register() {
+func Register(internalPort int) {
+	mcpPort = internalPort
+
 	// Provider registration
 	provider.RegisterProvider(
 		provider.ProviderInfo{

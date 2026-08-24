@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -176,5 +177,64 @@ func TestPermissionModesMatchCLIChoices(t *testing.T) {
 	}
 	if ValidPermissionMode("default") {
 		t.Error("ValidPermissionMode(\"default\") = true, but the CLI rejects it")
+	}
+}
+
+func TestSessionArgsInjectsSessionScopedMCPConfig(t *testing.T) {
+	mcpPort = 7654
+	t.Cleanup(func() { mcpPort = 0 })
+
+	argv := sessionArgs(provider.SessionSpec{SessionID: "s1", CWD: "/tmp"})
+
+	raw, ok := flagValue(argv, "--mcp-config")
+	if !ok {
+		t.Fatalf("argv = %v, want a --mcp-config flag", argv)
+	}
+
+	var config struct {
+		MCPServers map[string]struct {
+			Type    string            `json:"type"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatalf("--mcp-config is not valid JSON: %v", err)
+	}
+
+	helios, present := config.MCPServers["helios"]
+	if !present {
+		t.Fatalf("no helios server in %s", raw)
+	}
+	if helios.URL != "http://127.0.0.1:7654/mcp" {
+		t.Errorf("url = %q", helios.URL)
+	}
+	// The agent must never need to know its own id, so it travels in a header.
+	if helios.Headers["X-Helios-Session"] != "s1" {
+		t.Errorf("session header = %q, want s1", helios.Headers["X-Helios-Session"])
+	}
+}
+
+// Measured 2026-08-24: --mcp-config alone merges with the user's own MCP
+// servers, but adding --strict-mcp-config replaces them. Passing it would
+// silently strip every other MCP server from every Helios session.
+func TestSessionArgsNeverPassesStrictMCPConfig(t *testing.T) {
+	mcpPort = 7654
+	t.Cleanup(func() { mcpPort = 0 })
+
+	argv := sessionArgs(provider.SessionSpec{SessionID: "s1", CWD: "/tmp"})
+	if slices.Contains(argv, "--strict-mcp-config") {
+		t.Fatalf("argv = %v; --strict-mcp-config would remove the user's other MCP servers", argv)
+	}
+}
+
+// A daemon that reported no port cannot describe a reachable server, and an
+// unreachable one would make every session log a failed MCP connection.
+func TestSessionArgsOmitsMCPConfigWithoutAPort(t *testing.T) {
+	mcpPort = 0
+
+	argv := sessionArgs(provider.SessionSpec{SessionID: "s1", CWD: "/tmp"})
+	if _, ok := flagValue(argv, "--mcp-config"); ok {
+		t.Fatalf("argv = %v, want no --mcp-config when no port is known", argv)
 	}
 }

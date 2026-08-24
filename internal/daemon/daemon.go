@@ -119,7 +119,7 @@ func startDaemon(cfg *Config) error {
 	mgr.StartCleanup()
 
 	// Register providers
-	claude.Register()
+	claude.Register(cfg.Server.InternalPort)
 
 	// Terminal hosts are separate processes, so any that survived the last
 	// daemon are still serving; adopt them before anything else looks at

@@ -3989,3 +3989,30 @@ hr {
   color: inherit;
   opacity: 0.8;
 }
+
+/* ─── Agent note ────────────────────────────────────────────────────────── */
+
+.show-note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--outline-variant);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  font-size: 13px;
+}
+
+.show-note-who {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+}
+
+.show-note-text {
+  flex: 1;
+  min-width: 0;
+}

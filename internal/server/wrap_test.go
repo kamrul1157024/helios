@@ -249,7 +249,7 @@ func TestWrap_AdoptFailureStillRegistersSession(t *testing.T) {
 // has to be recorded even when the caller named none. Leaving the column null
 // would mean "the CLI's default" on the next wake, which is not what it ran in.
 func TestCreateSession_RecordsTheModeItLaunchedWith(t *testing.T) {
-	claude.Register()
+	claude.Register(0)
 	srv, shared, _ := newInternalTestServer(t)
 
 	// A real directory: creating a session resolves its cwd, and a path that
@@ -271,7 +271,7 @@ func TestCreateSession_RecordsTheModeItLaunchedWith(t *testing.T) {
 }
 
 func TestCreateSession_RecordsTheRequestedMode(t *testing.T) {
-	claude.Register()
+	claude.Register(0)
 	srv, shared, _ := newInternalTestServer(t)
 
 	postJSON(t, srv.URL+"/internal/sessions",

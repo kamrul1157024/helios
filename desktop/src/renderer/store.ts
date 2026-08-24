@@ -70,6 +70,29 @@ export interface FileTarget {
   seq: number
   /** 'find' searches the panel's root for the name instead of opening the path. */
   mode: 'open' | 'find'
+  /** Scroll here once the file is open. Absent means the top. */
+  line?: number
+}
+
+/** A diff an agent asked the human to look at. No path means the whole change. */
+export interface DiffTarget {
+  hostId: string
+  path?: string
+  base?: string
+  seq: number
+}
+
+/**
+ * Why an agent moved the view, shown above it.
+ *
+ * Without this a panel switches and nothing says who did it or what to look
+ * for, which is indistinguishable from the app misbehaving.
+ */
+export interface ShowNote {
+  hostId: string
+  sessionId: string
+  text: string
+  seq: number
 }
 
 /**
@@ -109,6 +132,8 @@ export interface State {
    */
   detached: string[]
   fileTarget: FileTarget | null
+  diffTarget: DiffTarget | null
+  showNote: ShowNote | null
   promptDraft: PromptDraft | null
   /** Sidebar filter, matched against title, project and cwd. */
   query: string
@@ -146,6 +171,8 @@ const initial: State = {
   activeTabs: {},
   detached: [],
   fileTarget: null,
+  diffTarget: null,
+  showNote: null,
   promptDraft: null,
   query: '',
   showArchived: false,
@@ -390,6 +417,10 @@ class Store {
    */
   private onServerEvent(hostId: string, event: SSEEvent): void {
     switch (event.type) {
+      case 'show': {
+        this.applyShow(hostId, event.data)
+        return
+      }
       case 'session_status': {
         const id = str(event.data.session_id)
         const status = str(event.data.status)
@@ -523,6 +554,64 @@ class Store {
    * would fire again every time the panel remounts, dragging the user back to
    * a file they looked at an hour ago.
    */
+  /**
+   * Moves a session's view because its agent asked, through helios_show.
+   *
+   * The selection is left alone on purpose. A show for a session you are not
+   * looking at prepares that session's panel and waits there — being thrown
+   * between sessions by a background agent would be worse than missing it.
+   */
+  private applyShow(hostId: string, data: Record<string, unknown>): void {
+    const sessionId = str(data.session_id)
+    const view = str(data.view)
+    if (!sessionId || !view) return
+
+    const target: Selection = { hostId, sessionId }
+    const note = str(data.note)
+    const seq = (this.state.showNote?.seq ?? 0) + 1
+
+    const panel: RightPanel | null =
+      view === 'file' ? 'files' : view === 'diff' ? 'git' : view === 'agent' ? 'chat' : null
+
+    if (view === 'terminal') {
+      const session = this.state.sessions[hostId]?.find((s) => s.session_id === sessionId)
+      if (session) void this.showTerminal(hostId, session)
+    } else if (panel) {
+      this.set((s) => ({ panels: showPanel(s, target, panel) }))
+    }
+
+    if (view === 'file') {
+      const path = str(data.path)
+      if (!path) return
+      const line = typeof data.line === 'number' ? data.line : undefined
+      this.set((s) => ({
+        fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open', line },
+      }))
+    }
+
+    if (view === 'diff') {
+      this.set((s) => ({
+        diffTarget: {
+          hostId,
+          path: str(data.path) || undefined,
+          base: str(data.base) || undefined,
+          seq: (s.diffTarget?.seq ?? 0) + 1,
+        },
+      }))
+    }
+
+    this.set({ showNote: note ? { hostId, sessionId, text: note, seq } : null })
+  }
+
+  /** Dismisses the agent's note, once the human has moved on from it. */
+  clearShowNote(): void {
+    this.set({ showNote: null })
+  }
+
+  clearDiffTarget(): void {
+    this.set({ diffTarget: null })
+  }
+
   clearFileTarget(): void {
     this.set({ fileTarget: null })
   }
