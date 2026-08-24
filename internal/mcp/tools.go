@@ -64,6 +64,7 @@ func (s *Server) registry() map[string]tool {
 				"line":   map[string]interface{}{"type": "integer", "description": "line to scroll to, view=file only"},
 				"base":   str("branch to diff against, e.g. main. view=diff only, and not with commit"),
 				"commit": str("one commit to show. view=diff only, and not with base"),
+				"layout": str("split (default, side by side) or unified. view=diff only"),
 				"note":   str("one line saying why the human should look at this"),
 			}, "view"),
 			call: s.callShow,
@@ -127,8 +128,12 @@ func (s *Server) callShow(sessionID string, args map[string]interface{}) (string
 	}
 
 	base, commit := argString(args, "base"), argString(args, "commit")
-	if view != "diff" && (base != "" || commit != "") {
-		return "", fmt.Errorf("base and commit are for view=diff, not view=%s", view)
+	layout := argString(args, "layout")
+	if view != "diff" && (base != "" || commit != "" || layout != "") {
+		return "", fmt.Errorf("base, commit and layout are for view=diff, not view=%s", view)
+	}
+	if layout != "" && layout != "split" && layout != "unified" {
+		return "", fmt.Errorf("layout must be split or unified, not %q", layout)
 	}
 	// A branch range and a single commit are different questions, and honouring
 	// one while ignoring the other would be worse than refusing.
@@ -144,6 +149,7 @@ func (s *Server) callShow(sessionID string, args map[string]interface{}) (string
 		"path":   path,
 		"base":   base,
 		"commit": commit,
+		"layout": layout,
 		"note":   argString(args, "note"),
 	} {
 		if value != "" {
