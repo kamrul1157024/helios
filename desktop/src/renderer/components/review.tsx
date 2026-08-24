@@ -36,6 +36,16 @@ export function ReviewView({
     setChanges(null)
     setError(null)
     setViewed(new Set())
+    // Persisted in the daemon, not here: a review survives a restart, and an
+    // agent asks what has been read so it can skip it.
+    api(hostId)
+      .reviewedFiles(root, scope.base)
+      .then((files) => {
+        if (!cancelled) setViewed(new Set(files))
+      })
+      .catch(() => {
+        // An older daemon has no reviewed state; ticking still works locally.
+      })
     api(hostId)
       // Merge base, not the branch tip: commits landed on the base since this
       // branch was cut are not this branch's work, and a two-dot diff reports
@@ -53,12 +63,16 @@ export function ReviewView({
   }, [hostId, root, scope.base])
 
   const toggleViewed = (path: string): void => {
-    setViewed((current) => {
-      const next = new Set(current)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
+    const next = new Set(viewed)
+    const reviewed = !next.has(path)
+    if (reviewed) next.add(path)
+    else next.delete(path)
+    setViewed(next)
+    void api(hostId)
+      .setReviewed(root, scope.base, path, reviewed)
+      .catch(() => {
+        // The tick is the user's, so it stands even if the daemon refused it.
+      })
   }
 
   if (error) return <p className="empty-note">{error}</p>

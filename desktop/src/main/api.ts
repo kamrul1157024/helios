@@ -402,6 +402,18 @@ export class ApiClient {
     return { path: res.path, entries: res.entries ?? [] }
   }
 
+  async reviewedFiles(path: string, base: string): Promise<string[]> {
+    const res = await this.request<{ files?: string[] }>(
+      'GET',
+      `/api/git/reviewed${queryString({ path, base })}`,
+    )
+    return res.files ?? []
+  }
+
+  setReviewed(path: string, base: string, file: string, reviewed: boolean): Promise<unknown> {
+    return this.request('POST', '/api/git/reviewed', { path, base, file, reviewed })
+  }
+
   readFile(path: string): Promise<FileContent> {
     return this.request('GET', `/api/file${queryString({ path })}`)
   }

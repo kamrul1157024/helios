@@ -47,6 +47,8 @@ const API_METHODS = new Set<keyof ApiClient>([
   'gitLog',
   'gitChanges',
   'gitWorktrees',
+  'reviewedFiles',
+  'setReviewed',
   'listFiles',
   'readFile',
   'searchFiles',

@@ -118,6 +118,13 @@ func (s *Store) migrate() error {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_pairing_tokens_status ON pairing_tokens(status)`,
+		`CREATE TABLE IF NOT EXISTS reviewed_files (
+			root TEXT NOT NULL,
+			base TEXT NOT NULL,
+			path TEXT NOT NULL,
+			reviewed_at TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (root, base, path)
+		)`,
 	}
 
 	for _, m := range migrations {
