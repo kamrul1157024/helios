@@ -193,6 +193,8 @@ func TestShow_ValidationCorrectsTheAgent(t *testing.T) {
 		{"terminal with a path", map[string]interface{}{"view": "terminal", "path": "/repo/x.go"}, "does not take a path"},
 		{"relative path", map[string]interface{}{"view": "file", "path": "internal/x.go"}, "must be absolute"},
 		{"unknown view", map[string]interface{}{"view": "sidebar"}, "unknown view"},
+		{"base on a file view", map[string]interface{}{"view": "file", "path": "/r/x.go", "base": "main"}, "for view=diff"},
+		{"base and commit together", map[string]interface{}{"view": "diff", "base": "main", "commit": "abc123"}, "not both"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,6 +229,28 @@ func TestShow_DiffTakesAnOptionalPath(t *testing.T) {
 	}
 	if notify.sent[1]["base"] != "main" {
 		t.Errorf("base lost: %+v", notify.sent[1])
+	}
+}
+
+// A branch range and a single commit are the two questions a review asks, and
+// neither is the working tree. Both have to survive to the client, or the panel
+// shows the wrong thing and looks broken.
+func TestShow_CarriesBranchAndCommitRanges(t *testing.T) {
+	s, notify, _ := setup(t)
+
+	callTool(t, s, "s1", "helios_show", map[string]interface{}{"view": "diff", "base": "main"})
+	callTool(t, s, "s1", "helios_show", map[string]interface{}{
+		"view": "diff", "commit": "70f5ab0", "path": "/repo/internal/mcp/tools.go",
+	})
+
+	if notify.sent[0]["base"] != "main" {
+		t.Errorf("base lost: %+v", notify.sent[0])
+	}
+	if _, carried := notify.sent[0]["commit"]; carried {
+		t.Error("a branch diff carried a commit")
+	}
+	if notify.sent[1]["commit"] != "70f5ab0" || notify.sent[1]["path"] != "/repo/internal/mcp/tools.go" {
+		t.Errorf("commit or path lost: %+v", notify.sent[1])
 	}
 }
 

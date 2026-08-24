@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
+import { useStore } from '../store.ts'
 import { DiffView } from './diff-view.tsx'
 import { Chevron } from './icons.tsx'
 import { PathLabel } from './path-label.tsx'
@@ -347,6 +348,7 @@ export function CommitChanges({
   const [file, setFile] = useState<string | null>(null)
   const [diff, setDiff] = useState<GitDiff | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const wanted = useStore((s) => s.diffTarget)
 
   useEffect(() => {
     let cancelled = false
@@ -358,7 +360,11 @@ export function CommitChanges({
       .then((result) => {
         if (cancelled) return
         setChanges(result)
-        setFile(result.files[0]?.path ?? null)
+        // An agent that named a file meant that file, not the first one in the
+        // commit. It says so absolutely; git lists paths from the repo root.
+        const asked = wanted?.path && relativeToRoot(root, wanted.path)
+        const match = asked && result.files.some((f) => f.path === asked) ? asked : null
+        setFile(match ?? result.files[0]?.path ?? null)
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
@@ -366,7 +372,7 @@ export function CommitChanges({
     return () => {
       cancelled = true
     }
-  }, [hostId, root, scope.to, scope.from])
+  }, [hostId, root, scope.to, scope.from, wanted?.seq])
 
   useEffect(() => {
     if (!file) {
@@ -449,6 +455,15 @@ export function CommitChanges({
       </div>
     </>
   )
+}
+
+/**
+ * An absolute path as git would list it, or null when it is outside the repo.
+ * An agent names files absolutely; git lists them from the repository root.
+ */
+function relativeToRoot(root: string, absolute: string): string | null {
+  const base = root.replace(/\/+$/, '')
+  return absolute.startsWith(`${base}/`) ? absolute.slice(base.length + 1) : null
 }
 
 /** Endpoints of a range are selected; what lies between them is merely in it. */

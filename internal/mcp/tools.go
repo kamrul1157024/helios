@@ -55,13 +55,16 @@ func (s *Server) registry() map[string]tool {
 				"Paths are absolute, the same form your own file tools use. " +
 				"view=file needs path. view=diff takes an optional path; omit it " +
 				"for the whole change. view=terminal and view=agent take neither. " +
+				"A diff is the uncommitted change by default; pass base for a branch " +
+				"against it, or commit for a single commit. " +
 				"Use this rarely, when the human must actually look at something.",
 			schema: obj(map[string]interface{}{
-				"view": str("file | diff | terminal | agent"),
-				"path": str("absolute file path, for view=file and optionally view=diff"),
-				"line": map[string]interface{}{"type": "integer", "description": "line to scroll to, view=file only"},
-				"base": str("revision to diff against, view=diff only"),
-				"note": str("one line saying why the human should look at this"),
+				"view":   str("file | diff | terminal | agent"),
+				"path":   str("absolute file path, for view=file and optionally view=diff"),
+				"line":   map[string]interface{}{"type": "integer", "description": "line to scroll to, view=file only"},
+				"base":   str("branch to diff against, e.g. main. view=diff only, and not with commit"),
+				"commit": str("one commit to show. view=diff only, and not with base"),
+				"note":   str("one line saying why the human should look at this"),
 			}, "view"),
 			call: s.callShow,
 		},
@@ -123,14 +126,25 @@ func (s *Server) callShow(sessionID string, args map[string]interface{}) (string
 		return "", fmt.Errorf("path must be absolute, not %q", path)
 	}
 
+	base, commit := argString(args, "base"), argString(args, "commit")
+	if view != "diff" && (base != "" || commit != "") {
+		return "", fmt.Errorf("base and commit are for view=diff, not view=%s", view)
+	}
+	// A branch range and a single commit are different questions, and honouring
+	// one while ignoring the other would be worse than refusing.
+	if base != "" && commit != "" {
+		return "", fmt.Errorf("pass base or commit, not both")
+	}
+
 	payload := map[string]interface{}{
 		"session_id": sessionID,
 		"view":       view,
 	}
 	for key, value := range map[string]string{
-		"path": path,
-		"base": argString(args, "base"),
-		"note": argString(args, "note"),
+		"path":   path,
+		"base":   base,
+		"commit": commit,
+		"note":   argString(args, "note"),
 	} {
 		if value != "" {
 			payload[key] = value
