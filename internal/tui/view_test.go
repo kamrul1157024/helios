@@ -86,14 +86,17 @@ func TestMainReportsMissingTunnel(t *testing.T) {
 // The summary screen, not the dashboard, is what a fully set-up install shows:
 // it sits on "enter continue" and most people never press it. An offer only the
 // dashboard carries is an offer nobody sees.
+// The summary screen, not the dashboard, is what a fully set-up install shows:
+// it sits on "enter continue" and most people never press it. An offer only the
+// dashboard carries is an offer nobody sees.
 func TestLoadingScreenAlsoOffersMCPRegistration(t *testing.T) {
 	m := StartModel{screen: screenLoading, daemonOK: true, hooksOK: true}
 	rendered := stripANSI(m.viewLoading())
 
-	if !strings.Contains(rendered, "Helios MCP not registered") {
-		t.Fatal("summary screen says nothing about an unregistered MCP server")
+	if !strings.Contains(rendered, "not registered") {
+		t.Fatal("summary screen says nothing about unregistered agent tools")
 	}
-	if !strings.Contains(rendered, "m register MCP") {
+	if !strings.Contains(rendered, "m agent tools") {
 		t.Error("the m key is not advertised on the summary screen")
 	}
 
@@ -105,12 +108,51 @@ func TestLoadingScreenAlsoOffersMCPRegistration(t *testing.T) {
 	}
 }
 
+// Setup asks once. It must be skippable, and skipping must be an offer rather
+// than a dead end.
+func TestMCPSetupIsSkippable(t *testing.T) {
+	rendered := stripANSI(StartModel{screen: screenMCPSetup}.viewMCPSetup())
+
+	if !strings.Contains(rendered, "tab skip") {
+		t.Error("no way offered to skip")
+	}
+	if !strings.Contains(rendered, "enter register") {
+		t.Error("no way offered to register")
+	}
+	// Skipping has to look survivable, or it reads as breaking Helios.
+	if !strings.Contains(rendered, "works without it") {
+		t.Error("does not say the rest of Helios works without it")
+	}
+}
+
+// Declining during setup must stop the nagging, and must still leave a way in.
+func TestDeclinedMCPStopsNaggingButStaysReachable(t *testing.T) {
+	for name, rendered := range map[string]string{
+		"summary": stripANSI(StartModel{
+			screen: screenLoading, daemonOK: true, hooksOK: true, mcpDeclined: true,
+		}.viewLoading()),
+		"dashboard": stripANSI(StartModel{screen: screenMain, mcpDeclined: true}.viewMain()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(rendered, "~") && strings.Contains(rendered, "Agent tools not registered") {
+				t.Error("still warning after the user declined")
+			}
+			if !strings.Contains(rendered, "Press m to turn them on") {
+				t.Error("no way back in after declining")
+			}
+			if !strings.Contains(rendered, "m agent tools") {
+				t.Error("the key is not advertised, so opting in later is undiscoverable")
+			}
+		})
+	}
+}
+
 func TestMainOffersMCPRegistrationWithoutTreatingItAsAFault(t *testing.T) {
 	rendered := stripANSI(StartModel{screen: screenMain}.viewMain())
 
-	line := lineWith(rendered, "Helios MCP not registered")
+	line := lineWith(rendered, "Agent tools not registered")
 	if line == "" {
-		t.Fatal("main screen says nothing about an unregistered MCP server")
+		t.Fatal("main screen says nothing about unregistered agent tools")
 	}
 	// Unregistered is a suggestion. Rendering it with the cross used for real
 	// problems would read as something being broken.
@@ -121,7 +163,7 @@ func TestMainOffersMCPRegistrationWithoutTreatingItAsAFault(t *testing.T) {
 		t.Error("no way offered to register")
 	}
 
-	if !strings.Contains(rendered, "m register MCP") {
+	if !strings.Contains(rendered, "m agent tools") {
 		t.Error("the m key is not advertised in the key bar")
 	}
 
@@ -130,7 +172,7 @@ func TestMainOffersMCPRegistrationWithoutTreatingItAsAFault(t *testing.T) {
 		t.Error("still nagging after registration")
 	}
 	// A binding that does nothing should not sit in the bar.
-	if strings.Contains(registered, "m register MCP") {
+	if strings.Contains(registered, "m agent tools") {
 		t.Error("the m key is still advertised after registration")
 	}
 }

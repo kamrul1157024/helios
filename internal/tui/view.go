@@ -68,6 +68,8 @@ func (m StartModel) View() string {
 		return m.viewHooksUpdate()
 	case screenShellSetup:
 		return m.viewShellSetup()
+	case screenMCPSetup:
+		return m.viewMCPSetup()
 	case screenTunnelSelect:
 		return m.viewTunnelSelect()
 	case screenBinaryMissing:
@@ -112,10 +114,15 @@ func (m StartModel) viewLoading() string {
 		}
 
 		if m.mcpRegistered {
-			b.WriteString(check("Helios MCP registered with Claude Code"))
+			b.WriteString(check("Agent tools registered with Claude Code"))
+		} else if m.mcpDeclined {
+			// Opted out during setup. Still reachable, but it stops asking:
+			// a suggestion that survives being declined is a nag.
+			b.WriteString(dimStyle.Render("  · Agent tools are off. Press m to turn them on."))
+			b.WriteString("\n")
 		} else {
-			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Helios MCP not registered with Claude Code"))
-			b.WriteString(dimStyle.Render("  · Lets agents build walkthroughs in the Learn panel. Press m to register, or ignore this."))
+			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Agent tools not registered with Claude Code"))
+			b.WriteString(dimStyle.Render("  · Lets an agent open a file or a diff in Helios. Press m to register."))
 			b.WriteString("\n")
 		}
 		if m.mcpMsg != "" {
@@ -154,7 +161,7 @@ func (m StartModel) viewLoading() string {
 
 		keys := "  enter continue  t change tunnel  N notifications  s settings  q quit"
 		if !m.mcpRegistered {
-			keys = "  m register MCP" + keys
+			keys = "  m agent tools" + keys
 		}
 		b.WriteString(helpStyle.Render(keys))
 	}
@@ -190,6 +197,31 @@ func (m StartModel) viewHooksUpdate() string {
 	b.WriteString(subtitleStyle.Render("  Update to ensure all hooks work correctly."))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  enter update  tab skip  q quit"))
+
+	return b.String()
+}
+
+// The setup step for the MCP server. Optional and explicitly skippable: it
+// gives agents tools they did not have, which is a decision rather than a
+// formality, and skipping is remembered so it is asked once.
+func (m StartModel) viewMCPSetup() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — Agent Tools"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Helios MCP is not registered with Claude Code"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  Lets an agent open a file, a diff or a tab in Helios,"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  so it can show you what it is talking about."))
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render("  Everything else in Helios works without it."))
+	b.WriteString("\n")
+	if m.mcpMsg != "" {
+		b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
+		b.WriteString("\n")
+	}
+	b.WriteString(helpStyle.Render("  enter register  tab skip  q quit"))
 
 	return b.String()
 }
@@ -398,11 +430,16 @@ func (m StartModel) viewMain() string {
 		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
 	}
 	if m.mcpRegistered {
-		b.WriteString(check("Helios MCP registered with Claude Code"))
+		b.WriteString(check("Agent tools registered with Claude Code"))
+	} else if m.mcpDeclined {
+		// Opted out during setup. Still reachable, but it stops asking:
+		// a suggestion that survives being declined is a nag.
+		b.WriteString(dimStyle.Render("  · Agent tools are off. Press m to turn them on."))
+		b.WriteString("\n")
 	} else {
 		// A suggestion, not a fault: everything else works without it.
-		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Helios MCP not registered with Claude Code"))
-		b.WriteString(dimStyle.Render("  · Lets agents build walkthroughs in the Learn panel. Press m to register, or ignore this."))
+		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Agent tools not registered with Claude Code"))
+		b.WriteString(dimStyle.Render("  · Lets an agent open a file or a diff in Helios. Press m to register."))
 		b.WriteString("\n")
 	}
 	if m.mcpMsg != "" {
@@ -516,7 +553,7 @@ func (m StartModel) viewMain() string {
 	// so the bar does not carry a permanently dead binding.
 	keys := "  t change tunnel  N notifications  s settings  q quit"
 	if !m.mcpRegistered {
-		keys = "  m register MCP" + keys
+		keys = "  m agent tools" + keys
 	}
 	b.WriteString(helpStyle.Render(keys))
 
