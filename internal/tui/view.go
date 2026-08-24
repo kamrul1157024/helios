@@ -111,6 +111,18 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Claude hooks not installed"))
 		}
 
+		if m.mcpRegistered {
+			b.WriteString(check("Helios MCP registered with Claude Code"))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Helios MCP not registered with Claude Code"))
+			b.WriteString(dimStyle.Render("  · Lets agents build walkthroughs in the Learn panel. Press m to register, or ignore this."))
+			b.WriteString("\n")
+		}
+		if m.mcpMsg != "" {
+			b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
+			b.WriteString("\n")
+		}
+
 		if m.shellInstalled {
 			b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
 		} else if m.shellInfo.RCPath != "" {
@@ -140,7 +152,11 @@ func (m StartModel) viewLoading() string {
 			b.WriteString("\n")
 		}
 
-		b.WriteString(helpStyle.Render("  enter continue  t change tunnel  N notifications  s settings  q quit"))
+		keys := "  enter continue  t change tunnel  N notifications  s settings  q quit"
+		if !m.mcpRegistered {
+			keys = "  m register MCP" + keys
+		}
+		b.WriteString(helpStyle.Render(keys))
 	}
 
 	return b.String()
@@ -381,6 +397,18 @@ func (m StartModel) viewMain() string {
 	} else if m.hooksOK {
 		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
 	}
+	if m.mcpRegistered {
+		b.WriteString(check("Helios MCP registered with Claude Code"))
+	} else {
+		// A suggestion, not a fault: everything else works without it.
+		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Helios MCP not registered with Claude Code"))
+		b.WriteString(dimStyle.Render("  · Lets agents build walkthroughs in the Learn panel. Press m to register, or ignore this."))
+		b.WriteString("\n")
+	}
+	if m.mcpMsg != "" {
+		b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
+		b.WriteString("\n")
+	}
 	if m.shellInstalled {
 		b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
 	} else if m.shellInfo.RCPath != "" {
@@ -484,7 +512,13 @@ func (m StartModel) viewMain() string {
 		b.WriteString(fmt.Sprintf("  Generating pairing code... %s\n", m.spinner.View()))
 	}
 
-	b.WriteString(helpStyle.Render("  t change tunnel  N notifications  s settings  q quit"))
+	// The MCP key is advertised only while there is something to do with it,
+	// so the bar does not carry a permanently dead binding.
+	keys := "  t change tunnel  N notifications  s settings  q quit"
+	if !m.mcpRegistered {
+		keys = "  m register MCP" + keys
+	}
+	b.WriteString(helpStyle.Render(keys))
 
 	return b.String()
 }

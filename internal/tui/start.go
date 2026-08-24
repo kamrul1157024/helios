@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -78,6 +80,7 @@ type statusCheckDone struct {
 	daemonOK       bool
 	hooksOK        bool
 	hooksOutdated  bool
+	mcpRegistered  bool
 	shellInfo      daemon.ShellInfo
 	shellInstalled bool
 	tunnelOK       bool
@@ -86,6 +89,10 @@ type statusCheckDone struct {
 	deviceCount    int
 	devices        []deviceInfo
 	err            error
+}
+
+type mcpRegisterDone struct {
+	err error
 }
 
 type tunnelStarted struct {
@@ -142,16 +149,23 @@ type generalSettingSaved struct {
 
 // Model
 type StartModel struct {
-	screen     screen
-	client     *client
-	spinner    spinner.Model
-	textInput  textinput.Model
-	publicPort int
+	screen       screen
+	client       *client
+	spinner      spinner.Model
+	textInput    textinput.Model
+	publicPort   int
+	internalPort int
 
 	// Status check results
 	daemonOK      bool
 	hooksOK       bool
 	hooksOutdated bool
+	// mcpRegistered reports whether Claude Code knows about the Helios MCP
+	// server. Unregistered is a suggestion, never a blocker: the explain panel
+	// is one feature, and a user who does not want it should not be nagged past
+	// a single line.
+	mcpRegistered bool
+	mcpMsg        string
 	tunnelOK      bool
 	tunnelURL     string
 	tunnelProv    string
@@ -219,11 +233,12 @@ func NewStartModel(internalPort, publicPort int) StartModel {
 	ti.Width = 50
 
 	return StartModel{
-		screen:     screenLoading,
-		client:     newClient(internalPort),
-		spinner:    s,
-		textInput:  ti,
-		publicPort: publicPort,
+		screen:       screenLoading,
+		client:       newClient(internalPort),
+		spinner:      s,
+		textInput:    ti,
+		publicPort:   publicPort,
+		internalPort: internalPort,
 	}
 }
 
@@ -262,6 +277,15 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case devicePollResult:
 		return m.handleDevicePoll(msg)
+
+	case mcpRegisterDone:
+		if msg.err != nil {
+			m.mcpMsg = fmt.Sprintf("Could not register: %v", msg.err)
+			return m, nil
+		}
+		m.mcpRegistered = true
+		m.mcpMsg = ""
+		return m, nil
 
 	case hooksInstallDone:
 		if msg.err != nil {
@@ -408,6 +432,14 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, loadGeneralSettings(m.client)
 		}
 
+	case "m":
+		// The summary screen is where this is usually read: a set-up install
+		// sits there waiting on enter, and never reaches the dashboard.
+		if (m.screen == screenMain || (m.screen == screenLoading && m.daemonOK)) && !m.mcpRegistered {
+			m.mcpMsg = "Registering..."
+			return m, registerMCPCmd(m.internalPort)
+		}
+
 	case "tab":
 		switch m.screen {
 		case screenHooksInstall, screenHooksUpdate:
@@ -538,6 +570,7 @@ func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) 
 	m.hooksOutdated = msg.hooksOutdated
 	m.shellInfo = msg.shellInfo
 	m.shellInstalled = msg.shellInstalled
+	m.mcpRegistered = msg.mcpRegistered
 	m.tunnelOK = msg.tunnelOK
 	m.tunnelURL = msg.tunnelURL
 	m.tunnelProv = msg.tunnelProv
@@ -707,6 +740,8 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 			result.hooksOutdated = daemon.HooksOutdated()
 		}
 
+		result.mcpRegistered = mcpRegistered()
+
 		// Check shell wrapper
 		result.shellInfo = daemon.DetectShell()
 		result.shellInstalled = daemon.ShellWrapperInstalled(result.shellInfo)
@@ -840,6 +875,44 @@ func installShellWrapperCmd(info daemon.ShellInfo) tea.Cmd {
 			}
 		}
 		return shellSetupDone{installed: true}
+	}
+}
+
+// mcpRegistered reports whether Claude Code has the Helios MCP server in its
+// user-scope config. `claude mcp add --scope user` writes it to the top-level
+// mcpServers map in ~/.claude.json.
+func mcpRegistered() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		return false
+	}
+	var config struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return false
+	}
+	_, ok := config.MCPServers["helios"]
+	return ok
+}
+
+// registerMCPCmd adds the Helios MCP server to Claude Code. Registration is
+// offered, never performed on the user's behalf: an agent gaining a new set of
+// tools is their call to make.
+func registerMCPCmd(internalPort int) tea.Cmd {
+	return func() tea.Msg {
+		url := fmt.Sprintf("http://127.0.0.1:%d/mcp", internalPort)
+		cmd := exec.Command("claude", "mcp", "add",
+			"--transport", "http", "--scope", "user", "helios", url)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return mcpRegisterDone{err: fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))}
+		}
+		return mcpRegisterDone{}
 	}
 }
 

@@ -83,6 +83,58 @@ func TestMainReportsMissingTunnel(t *testing.T) {
 	}
 }
 
+// The summary screen, not the dashboard, is what a fully set-up install shows:
+// it sits on "enter continue" and most people never press it. An offer only the
+// dashboard carries is an offer nobody sees.
+func TestLoadingScreenAlsoOffersMCPRegistration(t *testing.T) {
+	m := StartModel{screen: screenLoading, daemonOK: true, hooksOK: true}
+	rendered := stripANSI(m.viewLoading())
+
+	if !strings.Contains(rendered, "Helios MCP not registered") {
+		t.Fatal("summary screen says nothing about an unregistered MCP server")
+	}
+	if !strings.Contains(rendered, "m register MCP") {
+		t.Error("the m key is not advertised on the summary screen")
+	}
+
+	registered := stripANSI(StartModel{
+		screen: screenLoading, daemonOK: true, hooksOK: true, mcpRegistered: true,
+	}.viewLoading())
+	if strings.Contains(registered, "not registered") {
+		t.Error("still nagging after registration")
+	}
+}
+
+func TestMainOffersMCPRegistrationWithoutTreatingItAsAFault(t *testing.T) {
+	rendered := stripANSI(StartModel{screen: screenMain}.viewMain())
+
+	line := lineWith(rendered, "Helios MCP not registered")
+	if line == "" {
+		t.Fatal("main screen says nothing about an unregistered MCP server")
+	}
+	// Unregistered is a suggestion. Rendering it with the cross used for real
+	// problems would read as something being broken.
+	if strings.Contains(line, "✗") {
+		t.Errorf("unregistered MCP rendered as a failure: %q", line)
+	}
+	if !strings.Contains(rendered, "Press m to register") {
+		t.Error("no way offered to register")
+	}
+
+	if !strings.Contains(rendered, "m register MCP") {
+		t.Error("the m key is not advertised in the key bar")
+	}
+
+	registered := stripANSI(StartModel{screen: screenMain, mcpRegistered: true}.viewMain())
+	if strings.Contains(registered, "not registered") {
+		t.Error("still nagging after registration")
+	}
+	// A binding that does nothing should not sit in the bar.
+	if strings.Contains(registered, "m register MCP") {
+		t.Error("the m key is still advertised after registration")
+	}
+}
+
 func TestTunnelSelectShowsCurrentURL(t *testing.T) {
 	url := "http://host.tailnet.ts.net:7655"
 	m := StartModel{
