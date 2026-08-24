@@ -717,7 +717,9 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
       <>
         <KeyValues entries={entries.filter(([key]) => !coded.has(key))} />
         <div className="tool-diff">
-          <DiffView diff={diff} />
+          {/* Unified, not the default split: a tool call's diff sits inline in
+              the transcript, which is far too narrow for two columns. */}
+          <DiffView diff={diff} layout="unified" />
         </div>
       </>
     )
