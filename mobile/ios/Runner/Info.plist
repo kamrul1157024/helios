@@ -47,6 +47,10 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Helios uses the camera to scan the pairing QR code and to attach photos to a session.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Helios needs photo access to attach images from your library to a session.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Helios uses the microphone for voice input to send prompts.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
