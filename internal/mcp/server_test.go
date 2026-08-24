@@ -153,7 +153,7 @@ func TestShow_BroadcastsWhatTheAgentAskedFor(t *testing.T) {
 
 	got := callTool(t, s, "s1", "helios_show", map[string]interface{}{
 		"view": "file",
-		"path": "internal/oauth/registration.go",
+		"path": "/repo/internal/oauth/registration.go",
 		"line": 190,
 		"note": "the 400 came from here",
 	})
@@ -168,7 +168,7 @@ func TestShow_BroadcastsWhatTheAgentAskedFor(t *testing.T) {
 	if sent["session_id"] != "s1" {
 		t.Errorf("session_id = %v; it must come from the header, not the agent", sent["session_id"])
 	}
-	if sent["view"] != "file" || sent["path"] != "internal/oauth/registration.go" {
+	if sent["view"] != "file" || sent["path"] != "/repo/internal/oauth/registration.go" {
 		t.Errorf("wrong payload: %+v", sent)
 	}
 	if sent["line"] != 190 {
@@ -190,7 +190,8 @@ func TestShow_ValidationCorrectsTheAgent(t *testing.T) {
 		want string
 	}{
 		{"file without path", map[string]interface{}{"view": "file"}, "needs a path"},
-		{"terminal with a path", map[string]interface{}{"view": "terminal", "path": "x.go"}, "does not take a path"},
+		{"terminal with a path", map[string]interface{}{"view": "terminal", "path": "/repo/x.go"}, "does not take a path"},
+		{"relative path", map[string]interface{}{"view": "file", "path": "internal/x.go"}, "must be absolute"},
 		{"unknown view", map[string]interface{}{"view": "sidebar"}, "unknown view"},
 	}
 	for _, tc := range cases {
@@ -216,7 +217,7 @@ func TestShow_DiffTakesAnOptionalPath(t *testing.T) {
 	s, notify, _ := setup(t)
 
 	callTool(t, s, "s1", "helios_show", map[string]interface{}{"view": "diff"})
-	callTool(t, s, "s1", "helios_show", map[string]interface{}{"view": "diff", "path": "a.go", "base": "main"})
+	callTool(t, s, "s1", "helios_show", map[string]interface{}{"view": "diff", "path": "/repo/a.go", "base": "main"})
 
 	if len(notify.sent) != 2 {
 		t.Fatalf("broadcast %d times, want 2", len(notify.sent))
