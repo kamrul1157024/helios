@@ -185,6 +185,12 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
               },
               styleSheet: MarkdownStyleSheet(
                   p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+                  a: TextStyle(
+                    fontSize: 14,
+                    color: theme.colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                    decorationColor: theme.colorScheme.primary,
+                  ),
                   code: TextStyle(
                     fontSize: 12,
                     fontFamily: 'monospace',
