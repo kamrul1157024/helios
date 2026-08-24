@@ -93,11 +93,17 @@ export function FilesPanel({
       at?: { line: number; column: number },
       /** True when the caller has another path to try if this one is missing. */
       quiet = false,
+      /**
+       * False while reopening the tabs a session had last time. Those must not
+       * take the front, or a file asked for as the panel mounts loses it to
+       * whatever was open before.
+       */
+      activate = true,
     ): Promise<boolean> => {
-      setReveal(path)
+      if (activate) setReveal(path)
       const existing = filesRef.current.find((file) => file.path === path)
       if (existing) {
-        setActivePath(path)
+        if (activate) setActivePath(path)
         if (at) {
           setFiles((current) =>
             current.map((file) =>
@@ -126,7 +132,7 @@ export function FilesPanel({
             cursor: at ? { ...at, seq: 1 } : null,
           },
         ])
-        setActivePath(path)
+        if (activate) setActivePath(path)
         return true
       } catch (err) {
         // A path from the transcript is as likely to be a directory as a file;
@@ -147,9 +153,15 @@ export function FilesPanel({
   // every time makes the panel a viewer rather than a place to work.
   const memory = `helios.files.${hostId}.${sessionId}`
   const restored = useRef<string | null>(null)
+  // Set when something asked for a specific file while the restore below was
+  // still running. Opening the panel *by* asking for a file is the common case
+  // — an agent's helios_show mounts it — and the restore finishes last, so
+  // without this it puts the previous session's file back in front.
+  const claimed = useRef(false)
 
   useEffect(() => {
     restored.current = null
+    claimed.current = false
     setFiles([])
     setActivePath(null)
     setReveal(null)
@@ -164,10 +176,10 @@ export function FilesPanel({
         if (cancelled) return
         // Quiet: the agent may have deleted a file since it was last open, and
         // a toast per missing tab is not news the user asked for.
-        await openFile(path, undefined, true)
+        await openFile(path, undefined, true, false)
       }
       if (cancelled) return
-      if (saved?.active) setActivePath(saved.active)
+      if (saved?.active && !claimed.current) setActivePath(saved.active)
       restored.current = memory
     })()
     return () => {
@@ -278,6 +290,7 @@ export function FilesPanel({
 
   useEffect(() => {
     if (!target || target.hostId !== hostId) return
+    claimed.current = true
     const path = target.path
     if (target.mode === 'find') {
       setQuickOpenQuery(basename(path))
