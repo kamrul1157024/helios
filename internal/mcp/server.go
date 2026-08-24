@@ -32,7 +32,10 @@ type Notifier interface {
 type Server struct {
 	sessions Sessions
 	notify   Notifier
-	tools    map[string]tool
+	// review is nil when the daemon cannot answer, which the tool reports
+	// rather than pretending nothing has been read.
+	review Review
+	tools  map[string]tool
 }
 
 type tool struct {
@@ -43,8 +46,8 @@ type tool struct {
 	call func(sessionID string, args map[string]interface{}) (string, error)
 }
 
-func New(sessions Sessions, notify Notifier) *Server {
-	s := &Server{sessions: sessions, notify: notify}
+func New(sessions Sessions, notify Notifier, review Review) *Server {
+	s := &Server{sessions: sessions, notify: notify, review: review}
 	s.tools = s.registry()
 	return s
 }

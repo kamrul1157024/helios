@@ -279,6 +279,12 @@ export class HostApi {
   gitWorktrees(path: string): Promise<Worktree[]> {
     return this.call('gitWorktrees', path)
   }
+  reviewedFiles(path: string, base: string): Promise<string[]> {
+    return this.call('reviewedFiles', path, base)
+  }
+  setReviewed(path: string, base: string, file: string, reviewed: boolean): Promise<unknown> {
+    return this.call('setReviewed', path, base, file, reviewed)
+  }
   listFiles(path: string): Promise<{ path: string; entries: FileEntry[] }> {
     return this.call('listFiles', path)
   }

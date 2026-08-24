@@ -23,6 +23,19 @@ func (f *fakeNotifier) Show(payload map[string]interface{}) int {
 	return f.clients
 }
 
+type fakeReview struct {
+	root     string
+	changed  []string
+	reviewed []string
+	err      error
+}
+
+func (f fakeReview) Root(string) (string, error)              { return f.root, f.err }
+func (f fakeReview) Changed(string, string) ([]string, error) { return f.changed, nil }
+func (f fakeReview) Reviewed(string, string) ([]string, error) {
+	return f.reviewed, nil
+}
+
 func setup(t *testing.T) (*Server, *fakeNotifier, *store.Store) {
 	t.Helper()
 	db, err := store.Open(":memory:")
@@ -32,7 +45,7 @@ func setup(t *testing.T) (*Server, *fakeNotifier, *store.Store) {
 	t.Cleanup(func() { db.Close() })
 
 	notify := &fakeNotifier{clients: 1}
-	return New(db, notify), notify, db
+	return New(db, notify, fakeReview{root: "/repo"}), notify, db
 }
 
 // post sends one JSON-RPC request. session goes in the header, as Helios
@@ -262,7 +275,7 @@ func TestShow_ReportsWhenNobodyIsWatching(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := New(db, &fakeNotifier{clients: 0})
+	s := New(db, &fakeNotifier{clients: 0}, fakeReview{root: "/repo"})
 
 	got := callTool(t, s, "s1", "helios_show", map[string]interface{}{"view": "terminal"})
 	if got["shown"] != false {
@@ -314,5 +327,54 @@ func TestSessions_OmitsDeadSessionsUnlessAsked(t *testing.T) {
 	withAll := callTool(t, s, "s1", "helios_sessions", map[string]interface{}{"all": true})
 	if all, _ := withAll["sessions"].([]interface{}); len(all) != 2 {
 		t.Fatalf("all=true returned %d, want 2", len(all))
+	}
+}
+
+// The point of this tool is to let an agent skip what the human already read,
+// so the split between seen and unseen is the whole answer.
+func TestReviewState_SeparatesSeenFromUnseen(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	s := New(db, &fakeNotifier{clients: 1}, fakeReview{
+		root:     "/repo",
+		changed:  []string{"a.go", "b.go", "c.go"},
+		reviewed: []string{"b.go"},
+	})
+
+	got := callTool(t, s, "s1", "helios_review_state", map[string]interface{}{"base": "main"})
+	if got["remaining"] != float64(2) {
+		t.Fatalf("remaining = %v, want 2", got["remaining"])
+	}
+
+	files, _ := got["files"].([]interface{})
+	if len(files) != 3 {
+		t.Fatalf("got %d files, want 3", len(files))
+	}
+	seen := map[string]bool{}
+	for _, entry := range files {
+		row, _ := entry.(map[string]interface{})
+		seen[row["path"].(string)], _ = row["reviewed"].(bool)
+	}
+	if !seen["b.go"] {
+		t.Error("b.go was read but is not reported as reviewed")
+	}
+	if seen["a.go"] || seen["c.go"] {
+		t.Error("an unread file is reported as reviewed")
+	}
+}
+
+func TestReviewState_NeedsABase(t *testing.T) {
+	s, _, _ := setup(t)
+
+	text, isErr := callRaw(t, s, "s1", "helios_review_state", map[string]interface{}{})
+	if !isErr {
+		t.Fatal("accepted a review with no base")
+	}
+	if !strings.Contains(text, "base is required") {
+		t.Fatalf("unhelpful message: %s", text)
 	}
 }

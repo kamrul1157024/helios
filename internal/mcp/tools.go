@@ -15,10 +15,23 @@ type Sessions interface {
 	GetSession(sessionID string) (*store.Session, error)
 }
 
+// Review reports what the human has already read. It is the one thing here
+// that flows the other way: every other tool tells Helios something, and this
+// asks Helios what happened.
+type Review interface {
+	// Root is the repository the session sits in.
+	Root(sessionID string) (string, error)
+	// Changed lists the files a branch touches, against base.
+	Changed(root, base string) ([]string, error)
+	// Reviewed lists the files already read for that same range.
+	Reviewed(root, base string) ([]string, error)
+}
+
 // toolOrder fixes the order tools/list reports, so the agent meets the tool it
 // needs most first rather than in map order.
 var toolOrder = []string{
 	"helios_show",
+	"helios_review_state",
 	"helios_sessions",
 }
 
@@ -68,6 +81,16 @@ func (s *Server) registry() map[string]tool {
 				"note":   str("one line saying why the human should look at this"),
 			}, "view"),
 			call: s.callShow,
+		},
+
+		"helios_review_state": {
+			description: "What the human has already read of a branch review. " +
+				"Call this before walking someone through a diff: skip what they " +
+				"have seen and say how much is left, rather than starting again.",
+			schema: obj(map[string]interface{}{
+				"base": str("branch the review is against, e.g. main"),
+			}, "base"),
+			call: s.callReviewState,
 		},
 
 		"helios_sessions": {
@@ -175,6 +198,51 @@ func (s *Server) callShow(sessionID string, args map[string]interface{}) (string
 		})
 	}
 	return encode(map[string]interface{}{"shown": true, "clients": clients})
+}
+
+func (s *Server) callReviewState(sessionID string, args map[string]interface{}) (string, error) {
+	if sessionID == "" {
+		return "", fmt.Errorf("this session was not started by Helios, so it has no review to report")
+	}
+	if s.review == nil {
+		return "", fmt.Errorf("this daemon cannot report review state")
+	}
+	base := argString(args, "base")
+	if base == "" {
+		return "", fmt.Errorf("base is required, e.g. main")
+	}
+
+	root, err := s.review.Root(sessionID)
+	if err != nil {
+		return "", err
+	}
+	changed, err := s.review.Changed(root, base)
+	if err != nil {
+		return "", fmt.Errorf("list changed files: %w", err)
+	}
+	seen, err := s.review.Reviewed(root, base)
+	if err != nil {
+		return "", fmt.Errorf("list reviewed files: %w", err)
+	}
+
+	read := make(map[string]bool, len(seen))
+	for _, path := range seen {
+		read[path] = true
+	}
+	files := make([]map[string]interface{}, 0, len(changed))
+	remaining := 0
+	for _, path := range changed {
+		files = append(files, map[string]interface{}{"path": path, "reviewed": read[path]})
+		if !read[path] {
+			remaining++
+		}
+	}
+
+	return encode(map[string]interface{}{
+		"base":      base,
+		"files":     files,
+		"remaining": remaining,
+	})
 }
 
 func (s *Server) callSessions(_ string, args map[string]interface{}) (string, error) {

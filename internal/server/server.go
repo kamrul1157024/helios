@@ -152,7 +152,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	// MCP lives here rather than on the public server because this listener is
 	// already what it needs to be: loopback only, no auth. Agents reach it with
 	// a session id from their prompt; see docs/specs/39-agent-driven-explain-ui.md.
-	mux.Handle("/mcp", mcp.New(shared.DB, shared))
+	mux.Handle("/mcp", mcp.New(shared.DB, shared, shared))
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
@@ -198,6 +198,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/git/log", s.handleGitLog)
 	protectedMux.HandleFunc("GET /api/git/changes", s.handleGitChanges)
 	protectedMux.HandleFunc("GET /api/git/worktrees", s.handleGitWorktrees)
+	protectedMux.HandleFunc("GET /api/git/reviewed", s.handleGetReviewed)
+	protectedMux.HandleFunc("POST /api/git/reviewed", s.handleSetReviewed)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
 	protectedMux.Handle("GET /api/events", shared.SSE)
