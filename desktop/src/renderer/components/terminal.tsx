@@ -8,7 +8,7 @@ import { silenceDeviceReports } from './deviceReports.ts'
 import { linkHandler, webLinkActivate } from './links.ts'
 import { bridge } from '../bridge.ts'
 import { currentTab, store, terminalId, useStore, type Tab } from '../store.ts'
-import { canResume, hasTerminal, type Session } from '../../shared/models.ts'
+import { canResume, hasTerminal, needsRecovery, type Session } from '../../shared/models.ts'
 
 /**
  * Output arrives on one channel for every tab, so it is dispatched here rather
@@ -50,9 +50,18 @@ export function TerminalPanes({
   useEffect(() => {
     if (!visible || agent || isDetached || !hostId || !session) return
     // Warm sessions attach as soon as the panel is shown: the host is already
-    // running, so opening the tab is the whole of the request. A cold one waits
-    // for the button below, because attaching would start an agent.
+    // running, so opening the tab is the whole of the request.
+    //
+    // A cold one is now woken rather than waiting for a button. The daemon lets
+    // idle sessions go cold on its own, so most cold sessions are ones Helios
+    // took away rather than ones the user closed — and making the user click to
+    // undo that is friction Helios created. Opening the terminal is a clear
+    // enough request.
+    //
+    // Terminated is different and still needs the button: the daemon refuses
+    // prompts for one, so attaching would give a terminal that cannot be used.
     if (hasTerminal(session)) void store.openTerminal(hostId, session, false)
+    else if (needsRecovery(session)) void store.openTerminal(hostId, session, true)
   }, [visible, agent, isDetached, hostId, session])
 
   return (

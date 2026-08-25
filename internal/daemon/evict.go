@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
-	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/sysinfo"
@@ -148,7 +147,7 @@ func budgetBytes(fraction float64, memoryTotal uint64) int64 {
 // lost is the host's 1 MiB scrollback ring, which is a rendering of the
 // transcript. See docs/specs/42-cold-sessions.md, which argues that trade
 // against the two commits that removed eviction before.
-func evictOverBudget(db *store.Store, be backend.Backend, mgr *notifications.Manager, sse *server.SSEBroadcaster) {
+func evictOverBudget(db *store.Store, be backend.Backend, sse *server.SSEBroadcaster) {
 	if !db.EvictionEnabled() {
 		return
 	}
@@ -194,39 +193,34 @@ func evictOverBudget(db *store.Store, be backend.Backend, mgr *notifications.Man
 			Type: "session_updated",
 			Data: map[string]interface{}{"session_id": c.SessionID},
 		})
-		announceEviction(db, mgr, c)
+		announceEviction(db, sse, c)
 	}
 }
 
-// announceEviction tells the user what happened and why.
+// announceEviction tells attached clients what just happened.
 //
-// A session that quietly goes cold and then takes seconds to answer reads as
-// Helios being slow, and an empty terminal tab reads as lost work. One line
-// prevents both readings.
-func announceEviction(db *store.Store, mgr *notifications.Manager, c candidate) {
-	if mgr == nil {
-		return
+// A live event rather than a stored notification. The notification table is for
+// things awaiting an answer — clients only surface `pending` ones, and a
+// non-actionable row there would either sit unresolved in the approvals list or
+// be filtered out entirely, which is what an earlier version of this did.
+//
+// It has to be said somehow: a session that quietly goes cold and then takes
+// seconds to answer reads as Helios being slow, and an empty terminal tab reads
+// as lost work.
+func announceEviction(db *store.Store, sse *server.SSEBroadcaster, c candidate) {
+	project := ""
+	if sess, err := db.GetSession(c.SessionID); err == nil && sess != nil {
+		project = sess.Project
 	}
-	sess, err := db.GetSession(c.SessionID)
-	if err != nil || sess == nil {
-		return
-	}
-	title := fmt.Sprintf("%s went cold — freed %s", sess.Project, humanBytes(c.RSS))
-	detail := fmt.Sprintf("Not opened for %s. Your next prompt wakes it.",
-		humanDuration(c.Unread))
-
-	if err := mgr.CreateNotification(&store.Notification{
-		ID:            notifications.GenerateNotificationID(),
-		Source:        sess.Source,
-		SourceSession: c.SessionID,
-		CWD:           sess.CWD,
-		Type:          "helios.evicted",
-		Status:        "dismissed",
-		Title:         &title,
-		Detail:        &detail,
-	}); err != nil {
-		log.Printf("evict: announce %s: %v", c.SessionID, err)
-	}
+	sse.Broadcast(server.SSEEvent{
+		Type: "session_evicted",
+		Data: map[string]interface{}{
+			"session_id": c.SessionID,
+			"project":    project,
+			"freed":      c.RSS,
+			"unread":     humanDuration(c.Unread),
+		},
+	})
 }
 
 func humanBytes(b int64) string {

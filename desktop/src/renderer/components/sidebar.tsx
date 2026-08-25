@@ -547,28 +547,37 @@ function shortMode(mode: string): string {
  * What this host is carrying: its warm terminals, then the machine behind
  * them.
  *
- * The daemon reclaims nothing on its own any more, so this is the only thing
- * that tells the user the pool has grown. It belongs to the host and not the
- * window: memory is a machine's to run out of, and a session on the laptop
- * says nothing about the one on the VM.
+ * The daemon lets idle sessions go cold once the pool passes the budget, so
+ * this reads as consumed against allowed rather than against the machine. The
+ * machine's own figure stays as context: the budget is a share of it.
+ *
+ * It belongs to the host and not the window — memory is a machine's to run out
+ * of, and a session on the laptop says nothing about the one on the VM.
  */
 function HostMeter({ stats }: { stats?: HostStats }): JSX.Element | null {
   if (!stats || stats.warm === 0) return null
-  const heavy = stats.budget > 0 && stats.warm_rss > stats.budget
+  const metered = stats.budget > 0
+  const heavy = metered && stats.warm_rss > stats.budget
   const machine = stats.memory_total > 0
   return (
     <div
       className={heavy ? 'host-meter heavy' : 'host-meter'}
       title={
         heavy
-          ? `${stats.warm} warm terminals holding ${formatBytes(stats.warm_rss)} — terminate the ones you are done with to free memory`
-          : `${stats.warm} warm terminals holding ${formatBytes(stats.warm_rss)}`
+          ? `${stats.warm} warm sessions holding ${formatBytes(stats.warm_rss)} of ${formatBytes(stats.budget)} allowed — the ones you have not opened lately will go cold`
+          : metered
+            ? `${stats.warm} warm sessions holding ${formatBytes(stats.warm_rss)} of ${formatBytes(stats.budget)} allowed`
+            : `${stats.warm} warm sessions holding ${formatBytes(stats.warm_rss)} — no limit set, nothing is evicted`
       }
     >
       <Memory />
-      <span>{formatBytes(stats.warm_rss)}</span>
+      {metered ? (
+        <span>{formatPair(stats.warm_rss, stats.budget)}</span>
+      ) : (
+        <span>{formatBytes(stats.warm_rss)}</span>
+      )}
       {machine && (
-        <span className="host-machine">of {formatPair(stats.memory_used, stats.memory_total)}</span>
+        <span className="host-machine">machine {formatPair(stats.memory_used, stats.memory_total)}</span>
       )}
       <Cpu />
       <span>{Math.round(stats.load * 100)}%</span>

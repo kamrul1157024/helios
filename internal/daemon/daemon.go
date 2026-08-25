@@ -257,7 +257,7 @@ func startDaemon(cfg *Config) error {
 			select {
 			case <-ticker.C:
 				reapStaleSessions(db, term, shared.SSE)
-				evictOverBudget(db, term, mgr, shared.SSE)
+				evictOverBudget(db, term, shared.SSE)
 			case <-ctx.Done():
 				return
 			}
