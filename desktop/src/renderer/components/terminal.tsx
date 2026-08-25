@@ -245,7 +245,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
 function describe(tab: Tab): string {
   switch (tab.status.state) {
     case 'connecting':
-      return 'Connecting…'
+      return tab.status.detail ? `Waking — ${tab.status.detail}…` : 'Connecting…'
     case 'reconnecting':
       return tab.status.detail ? `Reconnecting — ${tab.status.detail}` : 'Reconnecting…'
     case 'closed':

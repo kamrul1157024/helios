@@ -455,7 +455,7 @@ class Store {
         const unread = str(event.data.unread)
         this.notify(
           `${project} went cold${freed > 0 ? ` — freed ${megabytes(freed)}` : ''}` +
-            `${unread ? `, not opened for ${unread}` : ''}. Your next prompt wakes it.`,
+            `${unread ? `, not opened for ${unread}` : ''}. Open it to bring it back.`,
           'info',
         )
         void this.refreshHost(hostId)
@@ -744,7 +744,10 @@ class Store {
       termId: session.session_id,
       kind: 'agent',
       title: session.title ?? session.project ?? session.session_id.slice(0, 8),
-      status: { state: 'connecting' },
+      // A wake restarts the agent and reloads its transcript, which takes
+      // seconds rather than milliseconds. Saying only "Connecting" for that
+      // long reads as a hang.
+      status: wake ? { state: 'connecting', detail: 'starting the agent' } : { state: 'connecting' },
     }
     this.set((s) => ({ tabs: [...s.tabs, tab] }))
 
