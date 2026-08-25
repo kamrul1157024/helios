@@ -65,11 +65,12 @@ const MODES: { value: AppearancePrefs['mode']; label: string; detail: string }[]
  * theme pickers pushed the notification toggles out of sight — and the two have
  * nothing to do with each other.
  */
-type SectionId = 'appearance' | 'titles' | 'notifications'
+type SectionId = 'appearance' | 'titles' | 'memory' | 'notifications'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'titles', label: 'Session titles' },
+  { id: 'memory', label: 'Memory' },
   { id: 'notifications', label: 'Notifications' },
 ]
 
@@ -190,6 +191,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           )}
 
           {section === 'titles' && <SessionTitles />}
+          {section === 'memory' && <MemoryBudget />}
 
           {section === 'notifications' && (
             <>
@@ -260,6 +262,105 @@ interface TitlePrefs {
  * written per host, and a host that cannot be reached is left out rather than
  * shown a toggle that would fail to save.
  */
+/** The fractions offered. Free text invites a typo in a memory budget. */
+const BUDGET_CHOICES: { fraction: number; label: string; note?: string }[] = [
+  { fraction: 0.25, label: 'Quarter of RAM', note: 'recommended' },
+  { fraction: 0.5, label: 'Half of RAM' },
+  { fraction: 0.75, label: 'Three quarters' },
+  { fraction: 0, label: 'No limit', note: 'nothing is ever evicted' },
+]
+
+function gigabytes(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+}
+
+/**
+ * How much memory a daemon's warm sessions may hold before idle ones are let
+ * go cold.
+ *
+ * A share of the machine rather than a number of megabytes: the same install
+ * runs on a 16 GB laptop and a 64 GB desktop. The resolved size is shown beside
+ * each choice, because "a quarter" means nothing until it says 8 GB.
+ */
+function MemoryBudget(): JSX.Element {
+  const hosts = useStore((s) => s.hosts)
+  const stats = useStore((s) => s.stats)
+  const [fraction, setFraction] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    for (const host of hosts) {
+      api(host.id)
+        .settings()
+        .then((values) => {
+          const raw = Number(values['memory.budget_fraction'])
+          setFraction((all) => ({
+            ...all,
+            [host.id]: Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.25,
+          }))
+        })
+        .catch(() => {
+          // Offline, or a daemon too old to know the setting.
+        })
+    }
+  }, [hosts])
+
+  const change = async (hostId: string, next: number): Promise<void> => {
+    const before = fraction[hostId]
+    setFraction((all) => ({ ...all, [hostId]: next }))
+    try {
+      await api(hostId).updateSettings({ 'memory.budget_fraction': String(next) })
+    } catch (err) {
+      setFraction((all) => ({ ...all, [hostId]: before ?? 0.25 }))
+      store.fail(err)
+    }
+  }
+
+  const reachable = hosts.filter((host) => fraction[host.id] !== undefined)
+
+  return (
+    <section className="settings-group">
+      <h3>Warm session memory</h3>
+      <p className="modal-note">
+        Each running session holds an agent in memory. Past this share of the machine, the sessions nobody
+        has opened for a while are let go cold — the conversation is kept and your next prompt wakes them,
+        but the terminal tab loses its scrollback.
+      </p>
+
+      {reachable.length === 0 ? (
+        <p className="modal-note">No host reachable to read this from.</p>
+      ) : (
+        reachable.map((host) => {
+          const total = stats[host.id]?.memory_total ?? 0
+          const current = fraction[host.id] as number
+          return (
+            <div key={host.id} className="settings-host">
+              {reachable.length > 1 && <span className="theme-picker-label">{host.name}</span>}
+              {BUDGET_CHOICES.map((choice) => (
+                <label key={choice.fraction} className="check">
+                  <input
+                    type="radio"
+                    name={`budget-${host.id}`}
+                    checked={current === choice.fraction}
+                    onChange={() => void change(host.id, choice.fraction)}
+                  />
+                  <span>
+                    {choice.label}
+                    <small>
+                      {choice.fraction > 0 && total > 0 ? gigabytes(total * choice.fraction) : ''}
+                      {choice.fraction > 0 && total > 0 && choice.note ? ' · ' : ''}
+                      {choice.note ?? ''}
+                    </small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )
+        })
+      )}
+    </section>
+  )
+}
+
 function SessionTitles(): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const [prefs, setPrefs] = useState<Record<string, TitlePrefs>>({})

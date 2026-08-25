@@ -1,10 +1,16 @@
 package daemon
 
 import (
+	"fmt"
+	"log"
 	"sort"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
+	"github.com/kamrul1157024/helios/internal/sysinfo"
 )
 
 // minIdleBeforeEvict keeps a session that was just woken from being taken
@@ -132,4 +138,115 @@ func budgetBytes(fraction float64, memoryTotal uint64) int64 {
 		return 0
 	}
 	return int64(float64(memoryTotal) * fraction)
+}
+
+// evictOverBudget lets idle sessions go cold until the warm pool fits the
+// configured budget.
+//
+// Going cold is not the same as ending: the conversation is in the transcript,
+// the permission mode is on the session, and the next prompt wakes it. What is
+// lost is the host's 1 MiB scrollback ring, which is a rendering of the
+// transcript. See docs/specs/42-cold-sessions.md, which argues that trade
+// against the two commits that removed eviction before.
+func evictOverBudget(db *store.Store, be backend.Backend, mgr *notifications.Manager, sse *server.SSEBroadcaster) {
+	if !db.EvictionEnabled() {
+		return
+	}
+	budget := budgetBytes(db.MemoryBudgetFraction(), uint64(sysinfo.MemoryTotal()))
+	if budget <= 0 {
+		return
+	}
+
+	// Usage is optional on the interface, as injectTerminal also assumes. A
+	// backend that cannot report per-session memory cannot be metered, so it is
+	// left alone rather than guessed at.
+	usager, ok := be.(backend.Usager)
+	if !ok {
+		return
+	}
+	usage := usager.Usage()
+	var warmTotal int64
+	for _, rss := range usage {
+		warmTotal += rss
+	}
+	if warmTotal <= budget {
+		return
+	}
+
+	sessions, err := db.ListSessions()
+	if err != nil {
+		log.Printf("evict: list sessions: %v", err)
+		return
+	}
+
+	taken := chooseEvictions(evictionCandidates(sessions, usage, time.Now()), warmTotal, budget)
+	for _, c := range taken {
+		if err := be.Kill(c.SessionID); err != nil {
+			log.Printf("evict: %s: %v", c.SessionID, err)
+			continue
+		}
+		// Status is deliberately untouched. The tmux-era reaper marked an
+		// evicted session terminated, which was a dead end; only the SessionEnd
+		// hook ends a session.
+		log.Printf("evict: %s went cold, freed %s, unread %s",
+			c.SessionID, humanBytes(c.RSS), c.Unread.Round(time.Minute))
+		sse.Broadcast(server.SSEEvent{
+			Type: "session_updated",
+			Data: map[string]interface{}{"session_id": c.SessionID},
+		})
+		announceEviction(db, mgr, c)
+	}
+}
+
+// announceEviction tells the user what happened and why.
+//
+// A session that quietly goes cold and then takes seconds to answer reads as
+// Helios being slow, and an empty terminal tab reads as lost work. One line
+// prevents both readings.
+func announceEviction(db *store.Store, mgr *notifications.Manager, c candidate) {
+	if mgr == nil {
+		return
+	}
+	sess, err := db.GetSession(c.SessionID)
+	if err != nil || sess == nil {
+		return
+	}
+	title := fmt.Sprintf("%s went cold — freed %s", sess.Project, humanBytes(c.RSS))
+	detail := fmt.Sprintf("Not opened for %s. Your next prompt wakes it.",
+		humanDuration(c.Unread))
+
+	if err := mgr.CreateNotification(&store.Notification{
+		ID:            notifications.GenerateNotificationID(),
+		Source:        sess.Source,
+		SourceSession: c.SessionID,
+		CWD:           sess.CWD,
+		Type:          "helios.evicted",
+		Status:        "dismissed",
+		Title:         &title,
+		Detail:        &detail,
+	}); err != nil {
+		log.Printf("evict: announce %s: %v", c.SessionID, err)
+	}
+}
+
+func humanBytes(b int64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%d MB", b/(1<<20))
+	default:
+		return fmt.Sprintf("%d KB", b/(1<<10))
+	}
+}
+
+func humanDuration(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
 }

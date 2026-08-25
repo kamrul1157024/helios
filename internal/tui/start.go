@@ -141,8 +141,9 @@ type tickMsg time.Time
 type tokenTickMsg time.Time
 
 type generalSettingsLoaded struct {
-	values map[string]bool
-	err    error
+	values  map[string]bool
+	choices map[string]string
+	err     error
 }
 
 type generalSettingSaved struct {
@@ -182,6 +183,8 @@ type StartModel struct {
 	// General settings screen
 	settingsCursor int
 	settingsValues map[string]bool
+	// Rows that cycle through named choices rather than toggling.
+	settingsChoices map[string]string
 
 	// Shell setup
 	shellInfo      daemon.ShellInfo
@@ -341,6 +344,7 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case generalSettingsLoaded:
 		if msg.err == nil && msg.values != nil {
 			m.settingsValues = msg.values
+			m.settingsChoices = msg.choices
 		}
 		return m, nil
 
