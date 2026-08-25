@@ -83,9 +83,11 @@ func (sh *Shared) hostStats() map[string]interface{} {
 	status := sh.Backend.Status()
 	machine := sysinfo.Read()
 	return map[string]interface{}{
-		"warm":         status.Warm,
-		"warm_rss":     status.WarmRSS,
-		"budget":       machine.MemoryTotal / 4,
+		"warm":     status.Warm,
+		"warm_rss": status.WarmRSS,
+		// The configured share, not a fixed quarter: the same number now
+		// decides what gets evicted, so what clients display has to be it.
+		"budget":       uint64(float64(machine.MemoryTotal) * sh.DB.MemoryBudgetFraction()),
 		"load":         machine.Load,
 		"memory_used":  machine.MemoryUsed,
 		"memory_total": machine.MemoryTotal,

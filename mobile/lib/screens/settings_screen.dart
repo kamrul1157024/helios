@@ -26,6 +26,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoTitleEnabled = false;
   bool _autoTitleEmoji = true;
 
+  /// Share of the host's memory its warm sessions may hold. The budget belongs
+  /// to the daemon rather than to this device, so it is worth being able to
+  /// change it from here — otherwise you can watch a session go cold from the
+  /// phone and have to walk to the machine to adjust it.
+  double _memoryBudgetFraction = 0.25;
+
   // Update check
   String _currentVersion = '';
   UpdateInfo? _updateInfo;
@@ -56,6 +62,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Off unless turned on: Flutter ships no Nerd Font, so the glyphs
           // render as empty boxes on the phone.
           _autoTitleEmoji = (settings['autotitle.emoji'] as String?) == 'true';
+          final budget = double.tryParse(
+            (settings['memory.budget_fraction'] as String?) ?? '',
+          );
+          _memoryBudgetFraction =
+              (budget != null && budget >= 0 && budget <= 1) ? budget : 0.25;
           _settingsLoaded = true;
         });
       }
@@ -91,6 +102,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _updateDownloading = false);
   }
 
+  /// The budget choices. A free-text field invites a typo in a memory limit,
+  /// and the useful range is narrow.
+  static const _budgetChoices = <(double, String, String?)>[
+    (0.25, 'Quarter of RAM', 'Recommended'),
+    (0.5, 'Half of RAM', null),
+    (0.75, 'Three quarters', null),
+    (0, 'No limit', 'Nothing is ever evicted'),
+  ];
+
+  List<Widget> _buildMemoryBudgetTiles() {
+    return [
+      const Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Text(
+          'Past this share of the host, sessions nobody has opened for a while '
+          'go cold. The conversation is kept and your next prompt wakes them.',
+          style: TextStyle(fontSize: 12),
+        ),
+      ),
+      RadioGroup<double>(
+        groupValue: _memoryBudgetFraction,
+        onChanged: (value) {
+          if (value == null) return;
+          setState(() => _memoryBudgetFraction = value);
+          _updateSetting('memory.budget_fraction', value.toString());
+        },
+        child: Column(
+          children: [
+            for (final (fraction, label, note) in _budgetChoices)
+              RadioListTile<double>(
+                value: fraction,
+                title: Text(label),
+                subtitle: note == null ? null : Text(note),
+              ),
+          ],
+        ),
+      ),
+    ];
+  }
+
   Future<void> _updateSetting(String key, String value) async {
     final hm = context.read<HostManager>();
     for (final host in hm.hosts) {
@@ -124,6 +175,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const _SectionHeader('Appearance'),
               _buildThemeTile(context),
+              const _SectionHeader('Memory'),
+              ..._buildMemoryBudgetTiles(),
               const _SectionHeader('Notifications'),
               SwitchListTile(
                 title: const Text('Sound'),
