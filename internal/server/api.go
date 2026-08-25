@@ -462,6 +462,20 @@ var (
 	promptAckTimeout = 8 * time.Second
 )
 
+// handleSessionTouch records that a human is looking at this session.
+//
+// Deliberately cheap and fire-and-forget: clients call it on selection and on a
+// heartbeat, and a failure means one missed sample rather than anything the
+// user should hear about.
+func (s *PublicServer) handleSessionTouch(w http.ResponseWriter, r *http.Request) {
+	id := extractSessionID(r.URL.Path, "/touch")
+	if err := s.shared.DB.TouchSession(id); err != nil {
+		jsonError(w, "failed to record interaction", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 	id := extractSessionID(r.URL.Path, "/send")
 

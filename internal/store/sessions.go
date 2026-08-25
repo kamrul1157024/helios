@@ -9,18 +9,22 @@ import (
 )
 
 type Session struct {
-	SessionID       string  `json:"session_id"`
-	Source          string  `json:"source"`
-	CWD             string  `json:"cwd"`
-	Project         string  `json:"project"`
-	Title           *string `json:"title,omitempty"`
-	TranscriptPath  *string `json:"transcript_path,omitempty"`
-	Model           *string `json:"model,omitempty"`
-	Status          string  `json:"status"`
-	LastEvent       *string `json:"last_event,omitempty"`
-	LastEventAt     *string `json:"last_event_at,omitempty"`
-	LastUserMessage *string `json:"last_user_message,omitempty"`
-	Pinned          bool    `json:"pinned"`
+	SessionID      string  `json:"session_id"`
+	Source         string  `json:"source"`
+	CWD            string  `json:"cwd"`
+	Project        string  `json:"project"`
+	Title          *string `json:"title,omitempty"`
+	TranscriptPath *string `json:"transcript_path,omitempty"`
+	Model          *string `json:"model,omitempty"`
+	Status         string  `json:"status"`
+	LastEvent      *string `json:"last_event,omitempty"`
+	LastEventAt    *string `json:"last_event_at,omitempty"`
+	// LastInteractedAt is when a human last looked at this session, which is a
+	// different question from when its agent last ran. A session read a minute
+	// ago and one untouched for a day both go quiet in last_event_at.
+	LastInteractedAt *string `json:"last_interacted_at,omitempty"`
+	LastUserMessage  *string `json:"last_user_message,omitempty"`
+	Pinned           bool    `json:"pinned"`
 	// SortOrder is the session's place in a hand-arranged list. Lower sorts
 	// first and the scale is arbitrary — only the relative order is meaningful,
 	// and it is ignored entirely unless the list is set to sort manually.
@@ -141,6 +145,19 @@ func (s *Store) UpdateSessionStatus(sessionID, status, event string) error {
 	return err
 }
 
+// TouchSession records that a human just looked at this session.
+//
+// Separate from last_event_at on purpose: that one moves whenever the agent
+// does anything, including while nobody is watching, so it cannot answer "is
+// anyone still interested in this".
+func (s *Store) TouchSession(sessionID string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET last_interacted_at = ? WHERE session_id = ?`,
+		time.Now().UTC().Format(time.RFC3339), sessionID,
+	)
+	return err
+}
+
 // UpdateSessionLastUserMessage stores the last user prompt for a session.
 func (s *Store) UpdateSessionLastUserMessage(sessionID, message string) error {
 	_, err := s.db.Exec(
@@ -174,12 +191,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-		        last_event, last_event_at, last_user_message, pinned, archived, sort_order,
+		        last_event, last_event_at, last_interacted_at, last_user_message, pinned, archived, sort_order,
 		        permission_mode, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-		&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
+		&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
 		&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -233,7 +250,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-	        last_event, last_event_at, last_user_message, pinned, archived, sort_order,
+	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, archived, sort_order,
 	        permission_mode, created_at, ended_at
 	 FROM sessions`
 	if len(where) > 0 {
@@ -252,7 +269,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
 			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}

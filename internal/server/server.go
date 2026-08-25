@@ -245,6 +245,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleListSubagents(w, r)
 		case r.Method == "GET" && strings.HasSuffix(path, "/transcript"):
 			s.handleSessionTranscript(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/touch"):
+			s.handleSessionTouch(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/send"):
 			s.handleSessionSend(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/files"):

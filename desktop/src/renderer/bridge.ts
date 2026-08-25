@@ -200,6 +200,9 @@ export class HostApi {
   sendPrompt(id: string, message: string): Promise<{ success: boolean; queued?: boolean }> {
     return this.call('sendPrompt', id, message)
   }
+  touchSession(id: string): Promise<unknown> {
+    return this.call('touchSession', id)
+  }
   /** The bytes cross to the main process, which does the multipart POST. */
   uploadFiles(id: string, files: UploadPart[]): Promise<UploadedFile[]> {
     return this.call('uploadFiles', id, files)

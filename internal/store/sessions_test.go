@@ -253,3 +253,37 @@ func TestUpsertSession_UpdateKeepsItsPlace(t *testing.T) {
 		t.Errorf("an update moved it to %d, want 0", sess.SortOrder)
 	}
 }
+
+// last_interacted_at answers "is anyone still interested", which last_event_at
+// cannot: the agent moves that one while nobody is watching.
+func TestTouchSessionIsSeparateFromAgentActivity(t *testing.T) {
+	s := setupTestStore(t)
+
+	sess := &Session{SessionID: "s1", Source: "claude", CWD: "/tmp", Status: "idle"}
+	if err := s.UpsertSession(sess); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, _ := s.GetSession("s1")
+	if got.LastInteractedAt != nil {
+		t.Fatalf("a session nobody opened has been interacted with: %v", *got.LastInteractedAt)
+	}
+
+	if err := s.TouchSession("s1"); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	got, _ = s.GetSession("s1")
+	if got.LastInteractedAt == nil {
+		t.Fatal("touch did not record anything")
+	}
+
+	// Agent activity must not count as a human looking.
+	touched := *got.LastInteractedAt
+	if err := s.UpdateSessionStatus("s1", "active", "PreToolUse:Read"); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	got, _ = s.GetSession("s1")
+	if *got.LastInteractedAt != touched {
+		t.Error("agent activity moved last_interacted_at")
+	}
+}

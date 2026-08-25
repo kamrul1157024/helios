@@ -217,6 +217,15 @@ function byActivity(a: Session, b: Session, pending: Map<string, number>): numbe
 const REFRESH_DEBOUNCE = 500
 
 /**
+ * How often a focused window re-reports the session it is showing.
+ *
+ * Two minutes against an eviction pass that runs every twenty: frequent enough
+ * that the daemon never thinks a session being read is unattended, rare enough
+ * to be invisible.
+ */
+const TOUCH_INTERVAL = 2 * 60 * 1000
+
+/**
  * A single mutable store with manual subscription.
  *
  * The app's state is small, mostly server-owned, and updated from three
@@ -265,6 +274,7 @@ class Store {
       if (status.state === 'online') void this.refreshHost(status.id)
     })
     bridge.hosts.onEvent(({ hostId, event }) => this.onServerEvent(hostId, event))
+    this.startTouchHeartbeat()
 
     bridge.term.onStatus(({ tabId, status }) => {
       this.set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, status } : t)) }))
@@ -530,6 +540,38 @@ class Store {
 
   select(hostId: string, sessionId: string): void {
     this.set({ selection: { hostId, sessionId } })
+    this.touch(hostId, sessionId)
+  }
+
+  /**
+   * Tells the daemon a human is looking at this session.
+   *
+   * The daemon decides which sessions to let go cold when memory is tight, and
+   * without this it can only see when the *agent* last ran — so a session being
+   * read right now looks the same as one nobody has opened in a day.
+   *
+   * Fire and forget. A missed sample costs one interval of accuracy.
+   */
+  touch(hostId: string, sessionId: string): void {
+    void api(hostId)
+      .touchSession(sessionId)
+      .catch(() => {
+        // Older daemon, or offline. Neither is worth telling the user about.
+      })
+  }
+
+  /**
+   * Keeps the selected session marked as watched while the window has focus.
+   *
+   * Focus is the point. A viewer count would say a socket is open, so a desktop
+   * left running overnight would pin whatever it happened to be showing.
+   */
+  private startTouchHeartbeat(): void {
+    setInterval(() => {
+      if (!document.hasFocus()) return
+      const selection = this.state.selection
+      if (selection) this.touch(selection.hostId, selection.sessionId)
+    }, TOUCH_INTERVAL)
   }
 
   setPanel(panel: RightPanel): void {
