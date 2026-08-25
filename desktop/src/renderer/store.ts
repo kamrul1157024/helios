@@ -225,6 +225,13 @@ const REFRESH_DEBOUNCE = 500
  */
 const TOUCH_INTERVAL = 2 * 60 * 1000
 
+/** Rounded hard: this lands in a toast, not in a memory readout. */
+function megabytes(bytes: number): string {
+  return bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+    : `${Math.round(bytes / 1024 ** 2)} MB`
+}
+
 /**
  * A single mutable store with manual subscription.
  *
@@ -436,6 +443,22 @@ class Store {
     switch (event.type) {
       case 'show': {
         this.applyShow(hostId, event.data)
+        return
+      }
+
+      case 'session_evicted': {
+        // Say it out loud. A session that goes cold in silence and then takes
+        // seconds to answer reads as Helios being slow, and its terminal tab
+        // coming back empty reads as lost work.
+        const project = str(event.data.project) || 'A session'
+        const freed = typeof event.data.freed === 'number' ? event.data.freed : 0
+        const unread = str(event.data.unread)
+        this.notify(
+          `${project} went cold${freed > 0 ? ` — freed ${megabytes(freed)}` : ''}` +
+            `${unread ? `, not opened for ${unread}` : ''}. Your next prompt wakes it.`,
+          'info',
+        )
+        void this.refreshHost(hostId)
         return
       }
       case 'session_status': {
