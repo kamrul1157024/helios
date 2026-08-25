@@ -157,6 +157,10 @@ func (s *Store) migrate() error {
 		// than the smallest, which puts it on top without renumbering the rest.
 		{"add_sessions_sort_order", `ALTER TABLE sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`},
 		{"drop_sessions_managed", `ALTER TABLE sessions DROP COLUMN managed`},
+		// When a human last looked at the session, as opposed to when its agent
+		// last did something. Eviction needs the first, and last_event_at only
+		// answers the second.
+		{"add_sessions_last_interacted_at", `ALTER TABLE sessions ADD COLUMN last_interacted_at TEXT`},
 	}
 
 	for _, cm := range columnMigrations {

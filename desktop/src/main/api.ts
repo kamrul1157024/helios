@@ -182,6 +182,11 @@ export class ApiClient {
    * Sends a prompt. A 409 is not a failure but an answer: the session is busy
    * and does not queue, or it is terminated. Callers need the code to say which.
    */
+  /** Records that a human is looking at this session. Fire and forget. */
+  touchSession(id: string): Promise<unknown> {
+    return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/touch`)
+  }
+
   sendPrompt(id: string, message: string): Promise<{ success: boolean; queued?: boolean }> {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/send`, { message })
   }

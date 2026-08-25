@@ -25,6 +25,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'transcriptSince',
   'subagents',
   'sendPrompt',
+  'touchSession',
   'setSessionOrder',
   'uploadFiles',
   'stop',
