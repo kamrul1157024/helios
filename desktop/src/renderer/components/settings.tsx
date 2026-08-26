@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 import { api, bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
@@ -134,11 +135,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           {section === 'appearance' && (
             <>
       <section className="settings-group">
-        <h3>Appearance</h3>
-        <p className="modal-note">
-          Themes are VS Code colour themes. Drop any theme JSON into <code>~/.helios/themes</code> to add your
-          own.
-        </p>
+        <h3>
+          Appearance
+          <Info>
+            Themes are VS Code colour themes. Drop any theme JSON into <code>~/.helios/themes</code> to add
+            your own.
+          </Info>
+        </h3>
 
         <div className="mode-row">
           {MODES.map((mode) => (
@@ -189,19 +192,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
             </>
           )}
 
-          {section === 'sessions' && (
-            <>
-              <SessionTitles />
-              <MemoryBudget />
-            </>
-          )}
+          {section === 'sessions' && <SessionsPane />}
 
           {section === 'notifications' && (
             <>
-      <h3>Notifications</h3>
-      <p className="modal-note">
-        Requests always appear — on screen and on the tray. These toggles decide whether they also make a sound.
-      </p>
+      <h3>
+        Notifications
+        <Info>
+          Requests always appear — on screen and on the tray. These toggles decide whether they also make a
+          sound.
+        </Info>
+      </h3>
 
       <label className="check">
         <input
@@ -215,8 +216,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
 
       {GROUPS.map((group) => (
         <section key={group.heading} className="settings-group">
-          <h3>{group.heading}</h3>
-          <p className="modal-note">{group.note}</p>
+          <h3>
+            {group.heading}
+            <Info>{group.note}</Info>
+          </h3>
           {group.types.map(({ type, label, detail }) => (
             <label key={type} className="check">
               <input
@@ -225,10 +228,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
                 disabled={!prefs || !prefs.sound}
                 onChange={(event) => void apply(bridge.prefs.setAlert(type, event.target.checked))}
               />
-              <span>
-                {label}
-                <small>{detail}</small>
-              </span>
+              <span>{label}</span>
+              <Info>{detail}</Info>
             </label>
           ))}
         </section>
@@ -249,6 +250,100 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
   )
 }
 
+/**
+ * Everything on this pane belongs to a daemon rather than to this window, and
+ * every daemon has its own answer. One host at a time, picked at the top:
+ * stacking all of them meant scrolling past three copies of the same four
+ * toggles to reach the one machine you meant.
+ */
+function SessionsPane(): JSX.Element {
+  const hosts = useStore((s) => s.hosts)
+  const [hostId, setHostId] = useState<string | null>(null)
+  const selected = hosts.find((host) => host.id === hostId) ?? hosts[0]
+
+  if (!selected) return <p className="modal-note">No host paired.</p>
+
+  return (
+    <>
+      {hosts.length > 1 && (
+        <div className="settings-hostpick">
+          <span className="theme-picker-label">Host</span>
+          <select value={selected.id} onChange={(event) => setHostId(event.target.value)}>
+            {hosts.map((host) => (
+              <option key={host.id} value={host.id}>
+                {host.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <SessionTitles hostId={selected.id} />
+      <MemoryBudget hostId={selected.id} />
+    </>
+  )
+}
+
+/**
+ * The explanation behind a setting, on a hovered icon rather than under its
+ * label. Spelled out in place, every row cost three lines and the pane read as
+ * prose with checkboxes in it; the toggles are what you came to find.
+ *
+ * Portalled and positioned in script because the panel scrolls, and an absolute
+ * bubble anchored inside it is clipped at the edge — which is exactly where a
+ * long explanation wants to go.
+ */
+function Info({ children }: { children: ReactNode }): JSX.Element {
+  const anchor = useRef<HTMLSpanElement | null>(null)
+  const closing = useRef<number | undefined>(undefined)
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
+
+  const open = (): void => {
+    window.clearTimeout(closing.current)
+    const box = anchor.current?.getBoundingClientRect()
+    if (!box) return
+    setAt({ top: box.bottom + 6, left: Math.min(box.left, window.innerWidth - INFO_WIDTH - 12) })
+  }
+
+  // Delayed, so the pointer can cross the gap into the bubble. One explanation
+  // holds a link, and a bubble that vanishes on the way to it is a link that
+  // cannot be clicked.
+  const close = (): void => {
+    closing.current = window.setTimeout(() => setAt(null), 120)
+  }
+
+  useEffect(() => () => window.clearTimeout(closing.current), [])
+
+  return (
+    <span
+      className="info"
+      ref={anchor}
+      tabIndex={0}
+      role="button"
+      aria-label="What this does"
+      onMouseEnter={open}
+      onMouseLeave={close}
+      onFocus={open}
+      onBlur={close}
+    >
+      i
+      {at &&
+        createPortal(
+          <span
+            className="info-bubble"
+            style={{ top: at.top, left: at.left, width: INFO_WIDTH }}
+            onMouseEnter={open}
+            onMouseLeave={close}
+          >
+            {children}
+          </span>,
+          document.body,
+        )}
+    </span>
+  )
+}
+
+const INFO_WIDTH = 280
+
 /** What the daemon knows about titling, which is not this window's to keep. */
 interface TitlePrefs {
   enabled: boolean
@@ -265,13 +360,17 @@ interface TitlePrefs {
  * written per host, and a host that cannot be reached is left out rather than
  * shown a toggle that would fail to save.
  */
-/** The fractions offered. Free text invites a typo in a memory budget. */
-const BUDGET_CHOICES: { fraction: number; label: string; note?: string }[] = [
-  { fraction: 0.25, label: 'Quarter of RAM', note: 'recommended' },
-  { fraction: 0.5, label: 'Half of RAM' },
-  { fraction: 0.75, label: 'Three quarters' },
-  { fraction: 0, label: 'No limit', note: 'nothing is ever evicted' },
-]
+/**
+ * The slider's travel, as a share of physical memory.
+ *
+ * It stops short of the whole machine on both ends: a budget under a twentieth
+ * cannot hold even one agent, and one at 100% would only start evicting once
+ * the machine was already swapping.
+ */
+const BUDGET_MIN = 0.05
+const BUDGET_MAX = 0.9
+const BUDGET_STEP = 0.05
+const DEFAULT_BUDGET = 0.25
 
 function gigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`
@@ -290,144 +389,145 @@ interface BudgetPrefs {
   fraction: number
 }
 
-function MemoryBudget(): JSX.Element {
-  const hosts = useStore((s) => s.hosts)
-  const stats = useStore((s) => s.stats)
-  const [prefs, setPrefs] = useState<Record<string, BudgetPrefs>>({})
+function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
+  const total = useStore((s) => s.stats[hostId]?.memory_total ?? 0)
+  const [prefs, setPrefs] = useState<BudgetPrefs | null>(null)
 
   useEffect(() => {
-    for (const host of hosts) {
-      api(host.id)
-        .settings()
-        .then((values) => {
-          const raw = Number(values['memory.budget_fraction'])
-          setPrefs((all) => ({
-            ...all,
-            [host.id]: {
-              enabled: values['memory.evict'] === 'true',
-              fraction: Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.25,
-            },
-          }))
+    setPrefs(null)
+    api(hostId)
+      .settings()
+      .then((values) => {
+        const raw = Number(values['memory.budget_fraction'])
+        setPrefs({
+          enabled: values['memory.evict'] === 'true',
+          // Clamped rather than trusted: the setting predates the slider, so a
+          // stored value can sit outside its travel and leave the thumb pinned
+          // at an end while the label says something else.
+          fraction: Number.isFinite(raw) ? Math.min(BUDGET_MAX, Math.max(BUDGET_MIN, raw)) : DEFAULT_BUDGET,
         })
-        .catch(() => {
-          // Offline, or a daemon too old to know the setting.
-        })
-    }
-  }, [hosts])
+      })
+      .catch(() => {
+        // Offline, or a daemon too old to know the setting.
+      })
+  }, [hostId])
 
-  const change = async (hostId: string, next: Partial<BudgetPrefs>): Promise<void> => {
-    const before = prefs[hostId]
+  // Dragging the slider moves the label without writing anything: a drag from a
+  // quarter to a half passes through every step in between, and each one would
+  // otherwise be a request the daemon has to answer.
+  const drag = (fraction: number): void => {
+    setPrefs((before) => (before ? { ...before, fraction } : before))
+  }
+
+  const change = async (next: Partial<BudgetPrefs>): Promise<void> => {
+    const before = prefs
     if (!before) return
     const after = { ...before, ...next }
-    setPrefs((all) => ({ ...all, [hostId]: after }))
+    setPrefs(after)
     try {
       await api(hostId).updateSettings({
         'memory.evict': String(after.enabled),
         'memory.budget_fraction': String(after.fraction),
       })
     } catch (err) {
-      setPrefs((all) => ({ ...all, [hostId]: before }))
+      setPrefs(before)
       store.fail(err)
     }
   }
 
-  const reachable = hosts.filter((host) => prefs[host.id] !== undefined)
+  if (!prefs) {
+    return (
+      <section className="settings-group">
+        <h3>Save memory</h3>
+        <p className="modal-note">This host is not reachable.</p>
+      </section>
+    )
+  }
 
   return (
     <section className="settings-group">
-      <h3>Save memory</h3>
-      <p className="modal-note">
-        Each running session holds an agent in memory. Turn this on and Helios stops the ones you have not
-        opened for a while once they pass the limit below. The conversation is kept and opening a session
-        starts it again; only the terminal tab's scrollback is lost.
-      </p>
+      <h3>
+        Save memory
+        <Info>
+          Each running session holds an agent in memory. Turn this on and Helios stops the ones you have not
+          opened for a while once they pass the limit below. The conversation is kept and opening a session
+          starts it again; only the terminal tab&apos;s scrollback is lost.
+        </Info>
+      </h3>
 
-      {reachable.length === 0 ? (
-        <p className="modal-note">No host reachable to read this from.</p>
-      ) : (
-        reachable.map((host) => {
-          const total = stats[host.id]?.memory_total ?? 0
-          const current = prefs[host.id] as BudgetPrefs
-          return (
-            <div key={host.id} className="settings-host">
-              {reachable.length > 1 && <span className="theme-picker-label">{host.name}</span>}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={prefs.enabled}
+          onChange={(event) => void change({ enabled: event.target.checked })}
+        />
+        <span>Save memory</span>
+        <Info>
+          Stops the agents you have not opened lately. Opening one starts it again, with the conversation
+          intact.
+        </Info>
+      </label>
 
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={current.enabled}
-                  onChange={(event) => void change(host.id, { enabled: event.target.checked })}
-                />
-                <span>
-                  Save memory
-                  <small>
-                    Stops the agents you have not opened lately. Opening one starts it again, with the
-                    conversation intact.
-                  </small>
-                </span>
-              </label>
-
-              {BUDGET_CHOICES.map((choice) => (
-                <label key={choice.fraction} className="check">
-                  <input
-                    type="radio"
-                    name={`budget-${host.id}`}
-                    disabled={!current.enabled}
-                    checked={current.fraction === choice.fraction}
-                    onChange={() => void change(host.id, { fraction: choice.fraction })}
-                  />
-                  <span>
-                    {choice.label}
-                    <small>
-                      {choice.fraction > 0 && total > 0 ? gigabytes(total * choice.fraction) : ''}
-                      {choice.fraction > 0 && total > 0 && choice.note ? ' · ' : ''}
-                      {choice.note ?? ''}
-                    </small>
-                  </span>
-                </label>
-              ))}
-            </div>
-          )
-        })
-      )}
+      <div className={prefs.enabled ? 'budget-slider' : 'budget-slider disabled'}>
+        <div className="budget-readout">
+          <span>
+            Memory limit
+            <Info>
+              How much the warm sessions on this host may hold between them. Past it, the ones nobody has
+              opened for a while are stopped, largest and longest unread first.
+            </Info>
+          </span>
+          <strong>{total > 0 ? gigabytes(total * prefs.fraction) : `${Math.round(prefs.fraction * 100)}%`}</strong>
+        </div>
+        <input
+          type="range"
+          min={BUDGET_MIN}
+          max={BUDGET_MAX}
+          step={BUDGET_STEP}
+          value={prefs.fraction}
+          disabled={!prefs.enabled}
+          onChange={(event) => drag(Number(event.target.value))}
+          onPointerUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
+          onKeyUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
+        />
+        <div className="budget-scale">
+          <span>{total > 0 ? gigabytes(total * BUDGET_MIN) : `${BUDGET_MIN * 100}%`}</span>
+          <span>{total > 0 ? `${gigabytes(total)} installed` : ''}</span>
+          <span>{total > 0 ? gigabytes(total * BUDGET_MAX) : `${BUDGET_MAX * 100}%`}</span>
+        </div>
+      </div>
     </section>
   )
 }
 
-function SessionTitles(): JSX.Element {
-  const hosts = useStore((s) => s.hosts)
-  const [prefs, setPrefs] = useState<Record<string, TitlePrefs>>({})
+function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
+  const [prefs, setPrefs] = useState<TitlePrefs | null>(null)
 
   useEffect(() => {
-    for (const host of hosts) {
-      void api(host.id)
-        .settings()
-        .then((body) => {
-          const values = (body as { settings?: Record<string, string> }).settings ?? {}
-          setPrefs((current) => ({
-            ...current,
-            [host.id]: {
-              enabled: values['autotitle.enabled'] === 'true',
-              // Only an explicit false turns the icon off, which is how the
-              // daemon reads it (claude/autotitle.go).
-              // Off unless turned on: without a Nerd Font every category
-              // renders as the same missing-character box.
-              emoji: values['autotitle.emoji'] === 'true',
-              prompt: values['autotitle.prompt'] ?? '',
-            },
-          }))
+    setPrefs(null)
+    void api(hostId)
+      .settings()
+      .then((body) => {
+        const values = (body as { settings?: Record<string, string> }).settings ?? {}
+        setPrefs({
+          enabled: values['autotitle.enabled'] === 'true',
+          // Only an explicit false turns the icon off, which is how the daemon
+          // reads it (claude/autotitle.go). Off unless turned on: without a Nerd
+          // Font every category renders as the same missing-character box.
+          emoji: values['autotitle.emoji'] === 'true',
+          prompt: values['autotitle.prompt'] ?? '',
         })
-        .catch(() => {
-          // Offline. Nothing to show for it, and nowhere to save to.
-        })
-    }
-  }, [hosts])
+      })
+      .catch(() => {
+        // Offline. Nothing to show for it, and nowhere to save to.
+      })
+  }, [hostId])
 
-  const change = async (hostId: string, next: Partial<TitlePrefs>): Promise<void> => {
-    const before = prefs[hostId]
+  const change = async (next: Partial<TitlePrefs>): Promise<void> => {
+    const before = prefs
     if (!before) return
     const after = { ...before, ...next }
-    setPrefs((all) => ({ ...all, [hostId]: after }))
+    setPrefs(after)
     try {
       await api(hostId).updateSettings({
         'autotitle.enabled': String(after.enabled),
@@ -435,70 +535,63 @@ function SessionTitles(): JSX.Element {
         'autotitle.prompt': after.prompt,
       })
     } catch (err) {
-      setPrefs((all) => ({ ...all, [hostId]: before }))
+      setPrefs(before)
       store.fail(err)
     }
   }
 
-  const reachable = hosts.filter((host) => prefs[host.id])
+  if (!prefs) {
+    return (
+      <section className="settings-group">
+        <h3>Session titles</h3>
+        <p className="modal-note">This host is not reachable.</p>
+      </section>
+    )
+  }
 
   return (
     <section className="settings-group">
-      <h3>Session titles</h3>
-      <p className="modal-note">
-        The daemon names a session from its first exchange, using Haiku. It leaves greetings and test messages
-        alone, and never renames a session you have titled yourself.
-      </p>
+      <h3>
+        Session titles
+        <Info>
+          The daemon names a session from its first exchange, using Haiku. It leaves greetings and test
+          messages alone, and never renames a session you have titled yourself.
+        </Info>
+      </h3>
 
-      {reachable.length === 0 ? (
-        <p className="modal-note">No host reachable to read this from.</p>
-      ) : (
-        reachable.map((host) => {
-          const value = prefs[host.id] as TitlePrefs
-          return (
-            <div key={host.id} className="settings-host">
-              {/* Named only when there is a choice of host to be confused about. */}
-              {reachable.length > 1 && <span className="theme-picker-label">{host.name}</span>}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={prefs.enabled}
+          onChange={(event) => void change({ enabled: event.target.checked })}
+        />
+        <span>Generate titles automatically</span>
+        <Info>Off by default. Costs a Haiku call per session, about a tenth of a cent.</Info>
+      </label>
 
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={value.enabled}
-                  onChange={(event) => void change(host.id, { enabled: event.target.checked })}
-                />
-                <span>
-                  Generate titles automatically
-                  <small>Off by default. Costs a Haiku call per session, about a tenth of a cent.</small>
-                </span>
-              </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={prefs.emoji}
+          disabled={!prefs.enabled}
+          onChange={(event) => void change({ emoji: event.target.checked })}
+        />
+        <span>Icon prefix</span>
+        <Info>
+          A glyph per category —  [FIX] rather than [FIX]. Off by default: the glyphs come from a patched{' '}
+          <a href="https://www.nerdfonts.com" target="_blank" rel="noreferrer noopener">
+            Nerd Font
+          </a>
+          , and without one installed every category shows the same empty box. The phone has no Nerd Font, so
+          titles made here appear boxed there.
+        </Info>
+      </label>
 
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={value.emoji}
-                  disabled={!value.enabled}
-                  onChange={(event) => void change(host.id, { emoji: event.target.checked })}
-                />
-                <span>
-                  Icon prefix
-                  <small>
-                    A glyph per category —  [FIX] rather than [FIX]. Off by default: the glyphs come from a
-                    patched <a href="https://www.nerdfonts.com" target="_blank" rel="noreferrer noopener">Nerd
-                    Font</a>, and without one installed every category shows the same empty box. The phone has no
-                    Nerd Font, so titles made here appear boxed there.
-                  </small>
-                </span>
-              </label>
-
-              <CustomPrompt
-                value={value.prompt}
-                disabled={!value.enabled}
-                onSave={(prompt) => void change(host.id, { prompt })}
-              />
-            </div>
-          )
-        })
-      )}
+      <CustomPrompt
+        value={prefs.prompt}
+        disabled={!prefs.enabled}
+        onSave={(prompt) => void change({ prompt })}
+      />
     </section>
   )
 }
@@ -526,11 +619,13 @@ function CustomPrompt({
 
   return (
     <div className="title-prompt">
-      <span className="theme-picker-label">Custom prompt</span>
-      <p className="modal-note">
-        Replaces the built-in instructions entirely, so the format, the categories and the rule that skips
-        greetings all become yours to state. Leave it empty to use the built-in one.
-      </p>
+      <span className="theme-picker-label">
+        Custom prompt
+        <Info>
+          Replaces the built-in instructions entirely, so the format, the categories and the rule that skips
+          greetings all become yours to state. Leave it empty to use the built-in one.
+        </Info>
+      </span>
       <textarea
         rows={5}
         disabled={disabled}

@@ -407,6 +407,16 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case "left", "h":
+		if m.screen == screenSettings {
+			return m.adjustGeneralSetting(-budgetStep)
+		}
+
+	case "right", "l":
+		if m.screen == screenSettings {
+			return m.adjustGeneralSetting(budgetStep)
+		}
+
 	case " ":
 		if m.screen == screenSettings {
 			return m.toggleGeneralSetting()

@@ -69,8 +69,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final budget = double.tryParse(
             (settings['memory.budget_fraction'] as String?) ?? '',
           );
+          // Clamped rather than trusted: the setting predates the slider, so a
+          // stored value can sit outside its travel.
           _memoryBudgetFraction =
-              (budget != null && budget >= 0 && budget <= 1) ? budget : 0.25;
+              budget == null ? 0.25 : budget.clamp(_budgetMin, _budgetMax);
           _evictEnabled = (settings['memory.evict'] as String?) == 'true';
           _settingsLoaded = true;
         });
@@ -107,14 +109,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _updateDownloading = false);
   }
 
-  /// The budget choices. A free-text field invites a typo in a memory limit,
-  /// and the useful range is narrow.
-  static const _budgetChoices = <(double, String, String?)>[
-    (0.25, 'Quarter of RAM', 'Recommended'),
-    (0.5, 'Half of RAM', null),
-    (0.75, 'Three quarters', null),
-    (0, 'No limit', 'Nothing is ever evicted'),
-  ];
+  /// The slider's travel, as a share of the host's memory. It stops short of
+  /// the whole machine at both ends: below a twentieth the budget cannot hold
+  /// one agent, and at 100% eviction would only begin once the host was already
+  /// swapping.
+  static const _budgetMin = 0.05;
+  static const _budgetMax = 0.9;
+  static const _budgetDivisions = 17;
 
   List<Widget> _buildMemoryBudgetTiles() {
     return [
@@ -131,34 +132,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _updateSetting('memory.evict', value ? 'true' : 'false');
         },
       ),
-      if (_evictEnabled) ...[
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Text(
-            'Use up to this share of the host. Past it, the sessions nobody '
-            'has opened for a while are stopped.',
-            style: TextStyle(fontSize: 12),
-          ),
-        ),
-        RadioGroup<double>(
-          groupValue: _memoryBudgetFraction,
-          onChanged: (value) {
-            if (value == null) return;
-            setState(() => _memoryBudgetFraction = value);
-            _updateSetting('memory.budget_fraction', value.toString());
-          },
-          child: Column(
+      if (_evictEnabled)
+        ListTile(
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              for (final (fraction, label, note) in _budgetChoices)
-                RadioListTile<double>(
-                  value: fraction,
-                  title: Text(label),
-                  subtitle: note == null ? null : Text(note),
-                ),
+              const Text('Memory limit'),
+              Text(
+                '${(_memoryBudgetFraction * 100).round()}% of host RAM',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ],
           ),
+          subtitle: Slider(
+            value: _memoryBudgetFraction.clamp(_budgetMin, _budgetMax),
+            min: _budgetMin,
+            max: _budgetMax,
+            divisions: _budgetDivisions,
+            label: '${(_memoryBudgetFraction * 100).round()}%',
+            // Dragging moves the label only. Each step the thumb passes through
+            // would otherwise be a request the daemon has to answer.
+            onChanged: (value) => setState(() => _memoryBudgetFraction = value),
+            onChangeEnd: (value) => _updateSetting(
+              'memory.budget_fraction',
+              value.toStringAsFixed(2),
+            ),
+          ),
         ),
-      ],
     ];
   }
 
