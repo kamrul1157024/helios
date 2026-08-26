@@ -22,9 +22,9 @@ var generalSettingsKeys = []struct {
 	// one and wraps. Nil means the row is a plain on/off.
 	choices []settingChoice
 }{
-	{key: "autotitle.enabled", label: "Auto title generation", section: "Auto Title"},
+	{key: "autotitle.enabled", label: "Auto title generation", section: "Sessions"},
 	{key: "autotitle.emoji", label: "Title icon prefix (needs a Nerd Font)", section: ""},
-	{key: "memory.evict", label: "Save memory", section: "Memory"},
+	{key: "memory.evict", label: "Save memory", section: ""},
 	{key: "memory.budget_fraction", label: "Use up to", section: "", choices: budgetChoices},
 }
 

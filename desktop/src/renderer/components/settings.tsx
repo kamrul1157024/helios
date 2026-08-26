@@ -65,12 +65,11 @@ const MODES: { value: AppearancePrefs['mode']; label: string; detail: string }[]
  * theme pickers pushed the notification toggles out of sight — and the two have
  * nothing to do with each other.
  */
-type SectionId = 'appearance' | 'titles' | 'memory' | 'notifications'
+type SectionId = 'appearance' | 'sessions' | 'notifications'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
-  { id: 'titles', label: 'Session titles' },
-  { id: 'memory', label: 'Save memory' },
+  { id: 'sessions', label: 'Sessions' },
   { id: 'notifications', label: 'Notifications' },
 ]
 
@@ -190,8 +189,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
             </>
           )}
 
-          {section === 'titles' && <SessionTitles />}
-          {section === 'memory' && <MemoryBudget />}
+          {section === 'sessions' && (
+            <>
+              <SessionTitles />
+              <MemoryBudget />
+            </>
+          )}
 
           {section === 'notifications' && (
             <>

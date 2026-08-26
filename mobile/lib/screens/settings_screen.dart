@@ -195,8 +195,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const _SectionHeader('Appearance'),
               _buildThemeTile(context),
-              const _SectionHeader('Memory'),
-              ..._buildMemoryBudgetTiles(),
               const _SectionHeader('Notifications'),
               SwitchListTile(
                 title: const Text('Sound'),
@@ -229,7 +227,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
               ),
-              const _SectionHeader('Session Titles'),
+              const _SectionHeader('Sessions'),
               if (!_settingsLoaded)
                 const ListTile(
                   leading: SizedBox(
@@ -260,6 +258,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _updateSetting('autotitle.emoji', value ? 'true' : 'false');
                     },
                   ),
+                ..._buildMemoryBudgetTiles(),
               ],
             ],
           ),
