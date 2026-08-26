@@ -156,12 +156,19 @@ candidate it could.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `memory.budget_fraction` | `0.25` | Share of total RAM the warm pool may hold |
-| `memory.evict` | `true` | Turn eviction off entirely |
+| `memory.evict` | `false` | **Opt-in.** Nothing is evicted until this is turned on |
 
 A fraction, not megabytes: the same install runs on a 16 GB laptop and a 64 GB
 desktop.
 
+**Eviction is off until asked for.** It kills a running agent and takes its
+scrollback, and it reverses a decision made twice before. Upgrading should not
+start doing that to somebody's machine — they should choose it, having read
+what it costs. The budget only takes effect once the switch is on.
+
 ```
+[ ] Let idle sessions go cold        off by default
+
 Warm session memory
   ( ) Quarter of RAM   8.0 GB      recommended
   ( ) Half of RAM      16.0 GB
@@ -231,8 +238,9 @@ machine explain itself.
 - **Reversing a recent decision.** Two commits removed this. If the ratio above
   ever stops holding — a much larger ring, or scrollback that stops duplicating
   the transcript — the argument collapses and this should go again.
-- **The budget becoming real on upgrade.** Nobody has felt this number. Hence
-  `memory.evict`, and hence the notification.
+- **The budget becoming real on upgrade.** Nobody has felt this number, so
+  nothing happens until `memory.evict` is turned on — and the eviction event is
+  announced when it does.
 - **A status that means "idle but mid-something".** If one is ever added and not
   put on the never-evict list, work is lost.
 
@@ -246,7 +254,8 @@ machine explain itself.
 - equal size: the longer-unread session is chosen
 - equal time: the larger session is chosen
 - no `last_interacted_at` falls back to `last_event_at`, not to "just now"
-- `memory.evict=false` evicts nothing under any pressure
+- `memory.evict` unset evicts nothing under any pressure, and only the exact
+  string "true" enables it
 - an evicted session keeps its status; nothing writes `terminated`
 - `TouchSession` moves a session out of the candidate set
 - the fraction round-trips, and an absent setting resolves to `0.25`

@@ -282,10 +282,15 @@ function gigabytes(bytes: number): string {
  * runs on a 16 GB laptop and a 64 GB desktop. The resolved size is shown beside
  * each choice, because "a quarter" means nothing until it says 8 GB.
  */
+interface BudgetPrefs {
+  enabled: boolean
+  fraction: number
+}
+
 function MemoryBudget(): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const stats = useStore((s) => s.stats)
-  const [fraction, setFraction] = useState<Record<string, number>>({})
+  const [prefs, setPrefs] = useState<Record<string, BudgetPrefs>>({})
 
   useEffect(() => {
     for (const host of hosts) {
@@ -293,9 +298,12 @@ function MemoryBudget(): JSX.Element {
         .settings()
         .then((values) => {
           const raw = Number(values['memory.budget_fraction'])
-          setFraction((all) => ({
+          setPrefs((all) => ({
             ...all,
-            [host.id]: Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.25,
+            [host.id]: {
+              enabled: values['memory.evict'] === 'true',
+              fraction: Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.25,
+            },
           }))
         })
         .catch(() => {
@@ -304,18 +312,23 @@ function MemoryBudget(): JSX.Element {
     }
   }, [hosts])
 
-  const change = async (hostId: string, next: number): Promise<void> => {
-    const before = fraction[hostId]
-    setFraction((all) => ({ ...all, [hostId]: next }))
+  const change = async (hostId: string, next: Partial<BudgetPrefs>): Promise<void> => {
+    const before = prefs[hostId]
+    if (!before) return
+    const after = { ...before, ...next }
+    setPrefs((all) => ({ ...all, [hostId]: after }))
     try {
-      await api(hostId).updateSettings({ 'memory.budget_fraction': String(next) })
+      await api(hostId).updateSettings({
+        'memory.evict': String(after.enabled),
+        'memory.budget_fraction': String(after.fraction),
+      })
     } catch (err) {
-      setFraction((all) => ({ ...all, [hostId]: before ?? 0.25 }))
+      setPrefs((all) => ({ ...all, [hostId]: before }))
       store.fail(err)
     }
   }
 
-  const reachable = hosts.filter((host) => fraction[host.id] !== undefined)
+  const reachable = hosts.filter((host) => prefs[host.id] !== undefined)
 
   return (
     <section className="settings-group">
@@ -331,17 +344,34 @@ function MemoryBudget(): JSX.Element {
       ) : (
         reachable.map((host) => {
           const total = stats[host.id]?.memory_total ?? 0
-          const current = fraction[host.id] as number
+          const current = prefs[host.id] as BudgetPrefs
           return (
             <div key={host.id} className="settings-host">
               {reachable.length > 1 && <span className="theme-picker-label">{host.name}</span>}
+
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={current.enabled}
+                  onChange={(event) => void change(host.id, { enabled: event.target.checked })}
+                />
+                <span>
+                  Let idle sessions go cold
+                  <small>
+                    Off by default. Killing a running agent and losing its terminal scrollback is your
+                    call to make.
+                  </small>
+                </span>
+              </label>
+
               {BUDGET_CHOICES.map((choice) => (
                 <label key={choice.fraction} className="check">
                   <input
                     type="radio"
                     name={`budget-${host.id}`}
-                    checked={current === choice.fraction}
-                    onChange={() => void change(host.id, choice.fraction)}
+                    disabled={!current.enabled}
+                    checked={current.fraction === choice.fraction}
+                    onChange={() => void change(host.id, { fraction: choice.fraction })}
                   />
                   <span>
                     {choice.label}
