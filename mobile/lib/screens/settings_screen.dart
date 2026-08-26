@@ -32,6 +32,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// phone and have to walk to the machine to adjust it.
   double _memoryBudgetFraction = 0.25;
 
+  /// Off unless asked for. Eviction kills a running agent, so upgrading must
+  /// not start doing it to somebody's machine.
+  bool _evictEnabled = false;
+
   // Update check
   String _currentVersion = '';
   UpdateInfo? _updateInfo;
@@ -67,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           );
           _memoryBudgetFraction =
               (budget != null && budget >= 0 && budget <= 1) ? budget : 0.25;
+          _evictEnabled = (settings['memory.evict'] as String?) == 'true';
           _settingsLoaded = true;
         });
       }
@@ -113,32 +118,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   List<Widget> _buildMemoryBudgetTiles() {
     return [
-      const Padding(
-        padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: Text(
-          'Past this share of the host, sessions nobody has opened for a while '
-          'go cold. The conversation is kept and your next prompt wakes them.',
-          style: TextStyle(fontSize: 12),
+      SwitchListTile(
+        secondary: const Icon(Icons.memory),
+        title: const Text('Let idle sessions go cold'),
+        subtitle: const Text(
+          'Off by default. Frees memory by stopping agents you have not '
+          'opened lately; opening one starts it again.',
         ),
-      ),
-      RadioGroup<double>(
-        groupValue: _memoryBudgetFraction,
+        value: _evictEnabled,
         onChanged: (value) {
-          if (value == null) return;
-          setState(() => _memoryBudgetFraction = value);
-          _updateSetting('memory.budget_fraction', value.toString());
+          setState(() => _evictEnabled = value);
+          _updateSetting('memory.evict', value ? 'true' : 'false');
         },
-        child: Column(
-          children: [
-            for (final (fraction, label, note) in _budgetChoices)
-              RadioListTile<double>(
-                value: fraction,
-                title: Text(label),
-                subtitle: note == null ? null : Text(note),
-              ),
-          ],
-        ),
       ),
+      if (_evictEnabled) ...[
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            'Past this share of the host, sessions nobody has opened for a '
+            'while go cold. The conversation is kept and opening one brings '
+            'it back.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ),
+        RadioGroup<double>(
+          groupValue: _memoryBudgetFraction,
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() => _memoryBudgetFraction = value);
+            _updateSetting('memory.budget_fraction', value.toString());
+          },
+          child: Column(
+            children: [
+              for (final (fraction, label, note) in _budgetChoices)
+                RadioListTile<double>(
+                  value: fraction,
+                  title: Text(label),
+                  subtitle: note == null ? null : Text(note),
+                ),
+            ],
+          ),
+        ),
+      ],
     ];
   }
 

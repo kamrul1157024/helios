@@ -103,11 +103,15 @@ func (s *Store) MemoryBudgetFraction() float64 {
 }
 
 // EvictionEnabled reports whether the daemon may let idle sessions go cold.
-// On unless explicitly turned off.
+//
+// Off unless asked for. Eviction kills a running agent and takes its terminal
+// scrollback, and it reverses a decision made twice before — see
+// docs/specs/42-cold-sessions.md. That is not something to start doing to
+// somebody's machine because they upgraded.
 func (s *Store) EvictionEnabled() bool {
 	raw, err := s.GetSetting(SettingEvictEnabled)
 	if err != nil || raw == "" {
-		return true
+		return false
 	}
-	return raw != "false"
+	return raw == "true"
 }

@@ -33,16 +33,26 @@ func TestMemoryBudgetFraction(t *testing.T) {
 	}
 }
 
+// Opt-in. Upgrading must not start killing agents on somebody's machine.
 func TestEvictionEnabled(t *testing.T) {
 	s := setupTestStore(t)
 
-	if !s.EvictionEnabled() {
-		t.Error("eviction is off by default; it should be on")
+	if s.EvictionEnabled() {
+		t.Error("eviction is on by default; it must be opt-in")
 	}
-	if err := s.SetSetting(SettingEvictEnabled, "false"); err != nil {
+	if err := s.SetSetting(SettingEvictEnabled, "true"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	if s.EvictionEnabled() {
-		t.Error("eviction stayed on after being turned off")
+	if !s.EvictionEnabled() {
+		t.Error("eviction stayed off after being turned on")
+	}
+	// Anything unrecognised means off, so a malformed value cannot enable it.
+	for _, raw := range []string{"false", "yes", "1", ""} {
+		if err := s.SetSetting(SettingEvictEnabled, raw); err != nil {
+			t.Fatalf("set %q: %v", raw, err)
+		}
+		if s.EvictionEnabled() {
+			t.Errorf("%q enabled eviction", raw)
+		}
 	}
 }
