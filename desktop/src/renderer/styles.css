@@ -3762,6 +3762,132 @@ hr {
   margin-top: 16px;
 }
 
+/* Which daemon this pane is talking to. */
+.settings-hostpick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.settings-hostpick select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The "i" beside a setting. It carries the explanation that used to sit under
+   the label, so it has to be reachable by keyboard as well as hover. */
+.info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--on-surface) 14%, transparent);
+  color: var(--on-surface);
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  /* Not part of the sentence it follows: the label is what gets read. */
+  user-select: none;
+  vertical-align: middle;
+}
+
+.info:hover,
+.info:focus-visible {
+  background: var(--primary);
+  color: var(--on-primary);
+  outline: none;
+}
+
+/* Portalled to the body and placed in script, so the scrolling settings pane
+   cannot clip it. */
+.info-bubble {
+  position: fixed;
+  z-index: 1000;
+  padding: 8px 10px;
+  border: 1px solid var(--outline);
+  border-radius: var(--r-md);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* The memory budget. A share of the machine, so the readout above the track
+   spends it in gigabytes — "a quarter" means nothing until it says 8 GB. */
+.budget-slider {
+  margin: 14px 0 4px 26px;
+}
+
+.budget-slider.disabled {
+  opacity: 0.45;
+}
+
+.budget-readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.budget-readout strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-slider input[type='range'] {
+  width: 100%;
+  height: 20px;
+  margin: 4px 0 0;
+  padding: 0;
+  background: transparent;
+  /* The platform control cannot be recoloured, and its default blue is the one
+     thing in the dialog that ignores the theme. */
+  appearance: none;
+}
+
+.budget-slider input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--on-surface) 18%, transparent);
+}
+
+.budget-slider input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  /* Half the thumb above the 4px track, so it rides centred on it. */
+  margin-top: -6px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.budget-slider input[type='range']:enabled::-webkit-slider-thumb {
+  cursor: grab;
+}
+
+.budget-slider input[type='range']:active::-webkit-slider-thumb {
+  cursor: grabbing;
+}
+
+.budget-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
 .title-prompt {
   margin-top: 14px;
 }
@@ -3792,18 +3918,11 @@ hr {
   font-weight: 600;
 }
 
+/* One line per setting: the explanation lives on the info icon, so nothing
+   below the label pushes the next row down. */
 .settings-group .check {
-  align-items: flex-start;
+  align-items: center;
   margin-top: 10px;
-}
-
-.settings-group .check span {
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-group .check small {
-  color: var(--on-surface-variant);
 }
 
 /* ─── Theme picker ──────────────────────────────────────────────────────── */
@@ -3824,7 +3943,8 @@ hr {
 }
 
 .theme-picker-label {
-  display: block;
+  display: flex;
+  align-items: center;
   font-size: 12px;
   color: var(--on-surface-variant);
   margin-bottom: 6px;
