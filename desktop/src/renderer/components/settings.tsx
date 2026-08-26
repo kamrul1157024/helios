@@ -70,7 +70,7 @@ type SectionId = 'appearance' | 'titles' | 'memory' | 'notifications'
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'titles', label: 'Session titles' },
-  { id: 'memory', label: 'Memory' },
+  { id: 'memory', label: 'Save memory' },
   { id: 'notifications', label: 'Notifications' },
 ]
 
@@ -332,11 +332,11 @@ function MemoryBudget(): JSX.Element {
 
   return (
     <section className="settings-group">
-      <h3>Warm session memory</h3>
+      <h3>Save memory</h3>
       <p className="modal-note">
-        Each running session holds an agent in memory. Past this share of the machine, the sessions nobody
-        has opened for a while are let go cold — the conversation is kept and your next prompt wakes them,
-        but the terminal tab loses its scrollback.
+        Each running session holds an agent in memory. Turn this on and Helios stops the ones you have not
+        opened for a while once they pass the limit below. The conversation is kept and opening a session
+        starts it again; only the terminal tab's scrollback is lost.
       </p>
 
       {reachable.length === 0 ? (
@@ -356,10 +356,10 @@ function MemoryBudget(): JSX.Element {
                   onChange={(event) => void change(host.id, { enabled: event.target.checked })}
                 />
                 <span>
-                  Let idle sessions go cold
+                  Save memory
                   <small>
-                    Off by default. Killing a running agent and losing its terminal scrollback is your
-                    call to make.
+                    Stops the agents you have not opened lately. Opening one starts it again, with the
+                    conversation intact.
                   </small>
                 </span>
               </label>

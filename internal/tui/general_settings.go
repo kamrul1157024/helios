@@ -24,8 +24,8 @@ var generalSettingsKeys = []struct {
 }{
 	{key: "autotitle.enabled", label: "Auto title generation", section: "Auto Title"},
 	{key: "autotitle.emoji", label: "Title icon prefix (needs a Nerd Font)", section: ""},
-	{key: "memory.evict", label: "Let idle sessions go cold", section: "Memory"},
-	{key: "memory.budget_fraction", label: "Warm session memory", section: "", choices: budgetChoices},
+	{key: "memory.evict", label: "Save memory", section: "Memory"},
+	{key: "memory.budget_fraction", label: "Use up to", section: "", choices: budgetChoices},
 }
 
 // settingChoice is one step of a cycling row.

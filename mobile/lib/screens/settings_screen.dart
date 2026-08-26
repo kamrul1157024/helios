@@ -120,10 +120,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       SwitchListTile(
         secondary: const Icon(Icons.memory),
-        title: const Text('Let idle sessions go cold'),
+        title: const Text('Save memory'),
         subtitle: const Text(
-          'Off by default. Frees memory by stopping agents you have not '
-          'opened lately; opening one starts it again.',
+          'Stops the agents you have not opened lately. Opening one starts '
+          'it again, with the conversation intact.',
         ),
         value: _evictEnabled,
         onChanged: (value) {
@@ -135,9 +135,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
           child: Text(
-            'Past this share of the host, sessions nobody has opened for a '
-            'while go cold. The conversation is kept and opening one brings '
-            'it back.',
+            'Use up to this share of the host. Past it, the sessions nobody '
+            'has opened for a while are stopped.',
             style: TextStyle(fontSize: 12),
           ),
         ),

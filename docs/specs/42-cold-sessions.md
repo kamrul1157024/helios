@@ -167,14 +167,20 @@ start doing that to somebody's machine — they should choose it, having read
 what it costs. The budget only takes effect once the switch is on.
 
 ```
-[ ] Let idle sessions go cold        off by default
+Save memory                          [ ]  off by default
+  Stops the agents you have not opened lately.
 
-Warm session memory
+Use up to
   ( ) Quarter of RAM   8.0 GB      recommended
   ( ) Half of RAM      16.0 GB
   ( ) Three quarters   24.0 GB
   ( ) No limit                     nothing is ever evicted
 ```
+
+The setting is named for what it does for the user, not for the mechanism.
+"Cold", "evict" and "warm pool" are how this is discussed in the code and in
+this spec; the switch says **Save memory**, because that is the reason somebody
+would turn it on.
 
 The resolved size is shown beside each option. "A quarter" means nothing until
 it says 8 GB.
