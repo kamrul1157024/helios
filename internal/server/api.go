@@ -912,10 +912,9 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		Pinned   *bool   `json:"pinned"`
-		Archived *bool   `json:"archived"`
-		Title    *string `json:"title"`
-		Status   *string `json:"status"`
+		Pinned *bool   `json:"pinned"`
+		Title  *string `json:"title"`
+		Status *string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -923,15 +922,11 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	}
 
 	pinned := session.Pinned
-	archived := session.Archived
 	if req.Pinned != nil {
 		pinned = *req.Pinned
 	}
-	if req.Archived != nil {
-		archived = *req.Archived
-	}
 
-	if err := s.shared.DB.UpdateSessionFlags(id, pinned, archived); err != nil {
+	if err := s.shared.DB.UpdateSessionPinned(id, pinned); err != nil {
 		jsonError(w, "failed to update session", http.StatusInternalServerError)
 		return
 	}
@@ -959,14 +954,12 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 		Data: map[string]interface{}{
 			"session_id": id,
 			"pinned":     pinned,
-			"archived":   archived,
 		},
 	})
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"success":  true,
-		"pinned":   pinned,
-		"archived": archived,
+		"success": true,
+		"pinned":  pinned,
 	})
 }
 

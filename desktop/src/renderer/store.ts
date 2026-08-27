@@ -144,7 +144,6 @@ export interface State {
   promptDraft: PromptDraft | null
   /** Sidebar filter, matched against title, project and cwd. */
   query: string
-  showArchived: boolean
   /**
    * How each host's session list is ordered, by host id.
    *
@@ -182,7 +181,6 @@ const initial: State = {
   showNote: null,
   promptDraft: null,
   query: '',
-  showArchived: false,
   sortMode: {},
   loading: true,
   terminalTheme: bridge.theme.boot().terminal,
@@ -706,10 +704,6 @@ class Store {
 
   setQuery(query: string): void {
     this.set({ query })
-  }
-
-  setShowArchived(showArchived: boolean): void {
-    this.set({ showArchived })
   }
 
   setPairingLink(pairingLink: string | null): void {

@@ -46,7 +46,7 @@ func evictionCandidates(sessions []store.Session, usage map[string]int64, now ti
 		if !warm || rss <= 0 {
 			continue
 		}
-		if !evictableStatuses[sess.Status] || sess.Archived {
+		if !evictableStatuses[sess.Status] {
 			continue
 		}
 		// Pinning already means "I am coming back to this".

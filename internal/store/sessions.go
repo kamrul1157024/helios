@@ -28,8 +28,7 @@ type Session struct {
 	// SortOrder is the session's place in a hand-arranged list. Lower sorts
 	// first and the scale is arbitrary — only the relative order is meaningful,
 	// and it is ignored entirely unless the list is set to sort manually.
-	SortOrder int  `json:"sort_order"`
-	Archived  bool `json:"archived"`
+	SortOrder int `json:"sort_order"`
 	// PermissionMode is the agent's permission mode. It is stored because the
 	// mode is a per-invocation flag rather than conversation state: without a
 	// record of it, a session that goes cold comes back in the default mode
@@ -197,12 +196,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	sess := &Session{}
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-		        last_event, last_event_at, last_interacted_at, last_user_message, pinned, archived, sort_order,
+		        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
 		        permission_mode, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-		&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
+		&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
 		&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -210,7 +209,7 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	return sess, err
 }
 
-// ListSessions returns all non-archived sessions ordered by most recent activity.
+// ListSessions returns all sessions ordered by most recent activity.
 func (s *Store) ListSessions() ([]Session, error) {
 	return s.SearchSessions("", "", "", "")
 }
@@ -218,7 +217,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 // SearchSessions returns sessions matching the given filters.
 // query: free-text search (tokenized by spaces, all tokens must match).
 // status: exact match on session status (empty = no filter).
-// filter: "all" (default, excludes archived), "pinned", "archived".
+// filter: "all" (default, no flag filter), "pinned", "terminated".
 // cwd: exact match on session CWD (empty = no filter).
 func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, error) {
 	var where []string
@@ -239,14 +238,14 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		args = append(args, status)
 	}
 
-	// Flag-based filter
+	// Flag-based filter. Terminated is the archival state: there is no separate
+	// archived flag to exclude here, and asking for the archive means asking
+	// for what has ended.
 	switch filter {
 	case "pinned":
-		where = append(where, `pinned = 1 AND archived = 0`)
-	case "archived":
-		where = append(where, `archived = 1`)
-	default: // "all" or empty
-		where = append(where, `archived = 0`)
+		where = append(where, `pinned = 1`)
+	case "terminated":
+		where = append(where, `status = 'terminated'`)
 	}
 
 	// CWD filter
@@ -256,7 +255,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
-	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, archived, sort_order,
+	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
 	        permission_mode, created_at, ended_at
 	 FROM sessions`
 	if len(where) > 0 {
@@ -275,7 +274,7 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 		var sess Session
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
-			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.Archived, &sess.SortOrder,
+			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
 			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt); err != nil {
 			return nil, err
 		}
@@ -391,11 +390,11 @@ func (s *Store) ResetAutoTitleAttempts(sessionID string) error {
 	return err
 }
 
-// UpdateSessionFlags updates the pinned and archived flags for a session.
-func (s *Store) UpdateSessionFlags(sessionID string, pinned, archived bool) error {
+// UpdateSessionPinned updates the pinned flag for a session.
+func (s *Store) UpdateSessionPinned(sessionID string, pinned bool) error {
 	_, err := s.db.Exec(
-		`UPDATE sessions SET pinned = ?, archived = ? WHERE session_id = ?`,
-		pinned, archived, sessionID,
+		`UPDATE sessions SET pinned = ? WHERE session_id = ?`,
+		pinned, sessionID,
 	)
 	return err
 }

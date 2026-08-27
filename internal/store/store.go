@@ -69,7 +69,6 @@ func (s *Store) migrate() error {
 			last_event_at TEXT,
 			last_user_message TEXT,
 			pinned INTEGER NOT NULL DEFAULT 0,
-			archived INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			ended_at TEXT
 		)`,
@@ -133,6 +132,16 @@ func (s *Store) migrate() error {
 		}
 	}
 
+	// Terminated is the one archival state now, so every archived session has
+	// to be filed as terminated before the drop below takes the column away.
+	//
+	// Deliberately not an entry in the loop underneath, which throws away every
+	// error: an UPDATE that failed there would still be recorded as done, and
+	// the drop on the next line would destroy the rows it was meant to save.
+	if err := s.promoteArchivedToTerminated(); err != nil {
+		return fmt.Errorf("promote archived sessions: %w", err)
+	}
+
 	// Column migrations for existing DBs
 	columnMigrations := []struct {
 		id  string
@@ -161,6 +170,7 @@ func (s *Store) migrate() error {
 		// last did something. Eviction needs the first, and last_event_at only
 		// answers the second.
 		{"add_sessions_last_interacted_at", `ALTER TABLE sessions ADD COLUMN last_interacted_at TEXT`},
+		{"drop_sessions_archived", `ALTER TABLE sessions DROP COLUMN archived`},
 	}
 
 	for _, cm := range columnMigrations {
@@ -175,4 +185,40 @@ func (s *Store) migrate() error {
 	}
 
 	return nil
+}
+
+// promoteArchivedToTerminated files every archived session as terminated, which
+// is what archiving always meant. It does nothing once the column is gone, and
+// running it twice changes nothing the first run did not already change.
+func (s *Store) promoteArchivedToTerminated() error {
+	has, err := s.hasColumn("sessions", "archived")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	_, err = s.db.Exec(`UPDATE sessions
+		   SET status = 'terminated',
+		       ended_at = COALESCE(ended_at, datetime('now'))
+		 WHERE archived = 1`)
+	return err
+}
+
+func (s *Store) hasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, fmt.Errorf("read %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, fmt.Errorf("scan %s column: %w", table, err)
+		}
+		if name == column {
+			return true, rows.Err()
+		}
+	}
+	return false, rows.Err()
 }

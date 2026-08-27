@@ -750,7 +750,6 @@ class DaemonAPIService extends ChangeNotifier {
   Future<bool> patchSession(
     String sessionId, {
     bool? pinned,
-    bool? archived,
     String? title,
   }) async {
     // Optimistically update the local session list for instant UI feedback.
@@ -763,7 +762,6 @@ class DaemonAPIService extends ChangeNotifier {
       original = _sessions[idx];
       _sessions[idx] = original.copyWith(
         pinned: pinned ?? original.pinned,
-        archived: archived ?? original.archived,
         title: title,
       );
       Future.microtask(() => notifyListeners());
@@ -772,7 +770,6 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final body = <String, dynamic>{};
       if (pinned != null) body['pinned'] = pinned;
-      if (archived != null) body['archived'] = archived;
       if (title != null) body['title'] = title;
       final resp = await _api.patch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) {

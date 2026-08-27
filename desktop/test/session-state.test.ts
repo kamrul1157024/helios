@@ -15,7 +15,6 @@ function session(patch: Partial<Session>): Session {
     project: 'repo',
     status: 'idle',
     pinned: false,
-    archived: false,
     created_at: '2026-01-01T00:00:00Z',
     supports_prompt_queue: true,
     ...patch,
