@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { bridge } from '../bridge.ts'
+import { api, bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -19,6 +19,7 @@ import {
 } from '../../shared/models.ts'
 import { Chevron, Console, Cpu, Memory, MultiLine, Plus, Search, SingleLine, Sort } from './icons.tsx'
 import { placeOf, tintOf } from './projects.ts'
+import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
  *  session list taking half the window from the session itself. */
@@ -107,6 +108,12 @@ export function Sidebar({
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
   const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
+  // The session a right-click named, and where the pointer was. Held for the
+  // whole list rather than per row, so a second right-click moves the one menu
+  // instead of opening another beside it.
+  const [menu, setMenu] = useState<{ hostId: string; session: Session; x: number; y: number } | null>(
+    null,
+  )
   const aside = useRef<HTMLElement | null>(null)
 
   // The width is a CSS variable rather than state: the value is read by the
@@ -353,6 +360,7 @@ export function Sidebar({
                                 })
                               }
                               onDragEnd={() => setDragging(null)}
+                              onContextMenu={(x, y) => setMenu({ hostId: host.id, session, x, y })}
                               onDropBefore={(draggedId) => {
                                 // The id off the drag itself, not React state: the
                                 // drop can arrive in the same tick as the drag
@@ -423,6 +431,15 @@ export function Sidebar({
         <AppMenu onSettings={onSettings} />
       </footer>
 
+      {menu && (
+        <SelectionMenu
+          x={menu.x}
+          y={menu.y}
+          actions={sessionActions(menu.hostId, menu.session)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
       {/* The panel's own edge, not a bar between the panels: the list is what
           the pointer is already near, and a gutter belongs to neither side. */}
       <div
@@ -438,6 +455,75 @@ export function Sidebar({
       />
     </aside>
   )
+}
+
+/**
+ * What can be done to a session, as the right-click on its row offers it.
+ *
+ * These were buttons in the detail header, where they applied to whichever
+ * session happened to be open: acting on any other one meant selecting it
+ * first and reading the header to check it had changed. On the row they name
+ * the session under the pointer, which is the one being pointed at.
+ */
+function sessionActions(hostId: string, session: Session): MenuAction[] {
+  const run = async (fn: () => Promise<unknown>): Promise<void> => {
+    try {
+      await fn()
+      await store.refreshSessions(hostId)
+    } catch (err) {
+      store.fail(err)
+    }
+  }
+
+  const actions: MenuAction[] = [
+    {
+      label: 'Regenerate title',
+      // The daemon waits for the model before answering, so this can sit for
+      // several seconds. Saying what came back is the difference between a
+      // slow menu item and a broken one.
+      run: () =>
+        void run(async () => {
+          store.notify('Naming the session…')
+          const result = await api(hostId).generateTitle(session.session_id)
+          if (result.title) store.notify(result.title)
+          else store.notify('The model did not return a usable title', 'error')
+        }),
+    },
+    {
+      label: session.pinned ? 'Unpin' : 'Pin',
+      run: () =>
+        void run(() => api(hostId).patchSession(session.session_id, { pinned: !session.pinned })),
+    },
+  ]
+
+  // Nothing to end when it has already ended, and the row itself carries the
+  // Resume that a terminated session is waiting for.
+  if (!canResume(session)) {
+    actions.push({
+      label: 'Terminate',
+      danger: true,
+      run: () => {
+        if (confirm('Terminate this session? The agent stops, and only Resume brings it back.')) {
+          void run(() => api(hostId).terminate(session.session_id))
+        }
+      },
+    })
+  }
+
+  actions.push({
+    label: 'Delete',
+    danger: true,
+    run: () => {
+      // Deleting drops the daemon's record; the agent's own transcript on disk
+      // is untouched, which is worth saying before the click.
+      if (confirm('Remove this session from Helios? The transcript file stays on disk.')) {
+        store.closeTab(`${hostId}:${session.session_id}`)
+        void run(() => api(hostId).deleteSession(session.session_id))
+      }
+    },
+  })
+
+  return actions
 }
 
 /**
@@ -507,6 +593,7 @@ function SessionRow({
   accepts,
   onDragStart,
   onDragEnd,
+  onContextMenu,
   onDropBefore,
 }: {
   hostId: string
@@ -520,6 +607,7 @@ function SessionRow({
   accepts: boolean
   onDragStart: () => void
   onDragEnd: () => void
+  onContextMenu: (x: number, y: number) => void
   onDropBefore: (draggedId: string) => void
 }): JSX.Element {
   const live = hasTerminal(session)
@@ -558,6 +646,13 @@ function SessionRow({
         onDropBefore(event.dataTransfer.getData('text/plain'))
       }}
       onClick={() => store.select(hostId, session.session_id)}
+      // Selected as well as pointed at: the menu acts on this session, and the
+      // panel beside it should be showing the one that is about to change.
+      onContextMenu={(event) => {
+        event.preventDefault()
+        store.select(hostId, session.session_id)
+        onContextMenu(event.clientX, event.clientY)
+      }}
       // A terminated session has to be resumed before it has a terminal worth
       // opening, so the shortcut resumes instead of waking one it will refuse.
       onDoubleClick={() =>

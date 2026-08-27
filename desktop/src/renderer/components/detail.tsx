@@ -344,30 +344,9 @@ function ShellTab({ tab, active }: { tab: Tab; active: boolean }): JSX.Element {
 function SessionHeader({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(session.title ?? '')
-  const overflow = useRef<HTMLDetailsElement | null>(null)
   const busy = BUSY_STATUSES.has(session.status)
   const terminated = canResume(session)
   const cold = needsRecovery(session)
-
-  // <details> only closes on its own summary, so a menu left open stays open
-  // over whatever the user clicks next.
-  useEffect(() => {
-    const close = (event: Event): void => {
-      const element = overflow.current
-      if (!element?.open) return
-      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
-      if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
-      element.open = false
-    }
-    window.addEventListener('mousedown', close)
-    window.addEventListener('keydown', close)
-    window.addEventListener('blur', close)
-    return () => {
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('keydown', close)
-      window.removeEventListener('blur', close)
-    }
-  }, [])
 
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
@@ -460,67 +439,12 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
 
         {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
 
-        {/* Out of the overflow menu: ending a session is a thing done often
-            enough to be one click, and the confirm is what guards it. */}
-        {!terminated && (
-          <button
-            className="ghost danger"
-            title="End the agent — only Resume brings it back"
-            onClick={() => {
-              if (confirm('Terminate this session? The agent stops, and only Resume brings it back.')) {
-                void run(() => api(hostId).terminate(session.session_id))
-              }
-            }}
-          >
-            Terminate
-          </button>
-        )}
-
-        <details className="menu" ref={overflow}>
-          <summary>⋯</summary>
-          <div
-            className="menu-body"
-            onClick={() => {
-              if (overflow.current) overflow.current.open = false
-            }}
-          >
-            {/* The daemon waits for the model before answering, so this can sit
-                for several seconds. Saying what came back is the difference
-                between a slow button and a broken one. */}
-            <button
-              onClick={() =>
-                void run(async () => {
-                  store.notify('Naming the session…')
-                  const result = await api(hostId).generateTitle(session.session_id)
-                  if (result.title) store.notify(result.title)
-                  else store.notify('The model did not return a usable title', 'error')
-                })
-              }
-            >
-              Regenerate title
-            </button>
-            <button
-              onClick={() =>
-                void run(() => api(hostId).patchSession(session.session_id, { pinned: !session.pinned }))
-              }
-            >
-              {session.pinned ? 'Unpin' : 'Pin'}
-            </button>
-            <button
-              className="danger"
-              onClick={() => {
-                // Deleting drops the daemon's record; the agent's own transcript
-                // on disk is untouched, which is worth saying before the click.
-                if (confirm('Remove this session from Helios? The transcript file stays on disk.')) {
-                  store.closeTab(`${hostId}:${session.session_id}`)
-                  void run(() => api(hostId).deleteSession(session.session_id))
-                }
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        </details>
+        {/* Terminate, Pin, Delete and Regenerate title are on the row's own
+            right-click menu. They were here as a button and an overflow beside
+            it, which put the actions for one session at the far corner from
+            the list of them — and made acting on any other session a matter of
+            selecting it first and re-reading the header to be sure it had
+            changed. See sessionActions in sidebar.tsx. */}
       </div>
     </header>
   )

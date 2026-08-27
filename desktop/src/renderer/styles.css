@@ -2697,6 +2697,10 @@ small {
   background: var(--surface-highest);
 }
 
+.line-menu button.danger {
+  color: var(--error);
+}
+
 .git-diff pre,
 .ws-plain {
   flex: 1;
