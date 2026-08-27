@@ -132,7 +132,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         </nav>
 
         <div className="settings-panel">
-          {section === 'appearance' && (
+          {section === 'appearance' && !appearance && <Loading title="Appearance" />}
+
+          {section === 'appearance' && appearance && (
             <>
       <section className="settings-group">
         <h3>
@@ -143,22 +145,24 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           </Info>
         </h3>
 
-        <div className="mode-row">
-          {MODES.map((mode) => (
-            <label key={mode.value} className="check" title={mode.detail}>
-              <input
-                type="radio"
-                name="theme-mode"
-                checked={appearance?.mode === mode.value}
-                disabled={!appearance}
-                onChange={() => void setTheme({ mode: mode.value })}
-              />
-              {mode.label}
-            </label>
-          ))}
-        </div>
+        <Row
+          label="Mode"
+          info={MODES.map((mode) => `${mode.label} — ${mode.detail}`).join(' ')}
+        >
+          <select
+            value={appearance?.mode ?? 'system'}
+            disabled={!appearance}
+            onChange={(event) => void setTheme({ mode: event.target.value as AppearancePrefs['mode'] })}
+          >
+            {MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </Row>
 
-        {/* Both slots stay visible on a pinned mode: they are what 'System'
+        {/* Both slots stay listed on a pinned mode: they are what 'System'
             will switch between, and hiding the other one makes it look as
             though the choice was lost. */}
         <ThemePicker
@@ -175,6 +179,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         />
         <ThemePicker
           label="Terminal"
+          info="The colours inside the terminal panes. Match UI theme follows whichever of the two above is showing."
           themes={themes}
           value={appearance?.terminalTheme}
           match="Match UI theme"
@@ -194,7 +199,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
 
           {section === 'sessions' && <SessionsPane />}
 
-          {section === 'notifications' && (
+          {section === 'notifications' && !prefs && <Loading title="Notifications" />}
+
+          {section === 'notifications' && prefs && (
             <>
       <h3>
         Notifications
@@ -344,6 +351,27 @@ function Info({ children }: { children: ReactNode }): JSX.Element {
 
 const INFO_WIDTH = 280
 
+/**
+ * What a section shows before its host has answered.
+ *
+ * Distinct from the unreachable message on purpose: both used to be the same
+ * blank, so a daemon that was merely slow read as one that was down.
+ */
+function Loading({ title }: { title: string }): JSX.Element {
+  return (
+    <section className="settings-group">
+      <h3>{title}</h3>
+      <p className="settings-loading">
+        <span className="spinner" />
+        Reading from the host…
+      </p>
+    </section>
+  )
+}
+
+/** Loaded, still loading, or asked and refused. */
+type Loaded<T> = { state: 'loading' } | { state: 'failed' } | { state: 'ready'; value: T }
+
 /** What the daemon knows about titling, which is not this window's to keep. */
 interface TitlePrefs {
   enabled: boolean
@@ -391,54 +419,63 @@ interface BudgetPrefs {
 
 function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
   const total = useStore((s) => s.stats[hostId]?.memory_total ?? 0)
-  const [prefs, setPrefs] = useState<BudgetPrefs | null>(null)
+  const [loaded, setLoaded] = useState<Loaded<BudgetPrefs>>({ state: 'loading' })
 
   useEffect(() => {
-    setPrefs(null)
+    setLoaded({ state: 'loading' })
     api(hostId)
       .settings()
       .then((values) => {
         const raw = Number(values['memory.budget_fraction'])
-        setPrefs({
-          enabled: values['memory.evict'] === 'true',
-          // Clamped rather than trusted: the setting predates the slider, so a
-          // stored value can sit outside its travel and leave the thumb pinned
-          // at an end while the label says something else.
-          fraction: Number.isFinite(raw) ? Math.min(BUDGET_MAX, Math.max(BUDGET_MIN, raw)) : DEFAULT_BUDGET,
+        setLoaded({
+          state: 'ready',
+          value: {
+            enabled: values['memory.evict'] === 'true',
+            // Clamped rather than trusted: the setting predates the slider, so
+            // a stored value can sit outside its travel and leave the thumb
+            // pinned at an end while the label says something else.
+            fraction: Number.isFinite(raw) ? Math.min(BUDGET_MAX, Math.max(BUDGET_MIN, raw)) : DEFAULT_BUDGET,
+          },
         })
       })
       .catch(() => {
         // Offline, or a daemon too old to know the setting.
+        setLoaded({ state: 'failed' })
       })
   }, [hostId])
+
+  const prefs = loaded.state === 'ready' ? loaded.value : null
 
   // Dragging the slider moves the label without writing anything: a drag from a
   // quarter to a half passes through every step in between, and each one would
   // otherwise be a request the daemon has to answer.
   const drag = (fraction: number): void => {
-    setPrefs((before) => (before ? { ...before, fraction } : before))
+    setLoaded((before) =>
+      before.state === 'ready' ? { state: 'ready', value: { ...before.value, fraction } } : before,
+    )
   }
 
   const change = async (next: Partial<BudgetPrefs>): Promise<void> => {
     const before = prefs
     if (!before) return
     const after = { ...before, ...next }
-    setPrefs(after)
+    setLoaded({ state: 'ready', value: after })
     try {
       await api(hostId).updateSettings({
         'memory.evict': String(after.enabled),
         'memory.budget_fraction': String(after.fraction),
       })
     } catch (err) {
-      setPrefs(before)
+      setLoaded({ state: 'ready', value: before })
       store.fail(err)
     }
   }
 
+  if (loaded.state === 'loading') return <Loading title="Memory" />
   if (!prefs) {
     return (
       <section className="settings-group">
-        <h3>Save memory</h3>
+        <h3>Memory</h3>
         <p className="modal-note">This host is not reachable.</p>
       </section>
     )
@@ -447,7 +484,7 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
   return (
     <section className="settings-group">
       <h3>
-        Save memory
+        Memory
         <Info>
           Each running session holds an agent in memory. Turn this on and Helios stops the ones you have not
           opened for a while once they pass the limit below. The conversation is kept and opening a session
@@ -501,33 +538,40 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
 }
 
 function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
-  const [prefs, setPrefs] = useState<TitlePrefs | null>(null)
+  const [loaded, setLoaded] = useState<Loaded<TitlePrefs>>({ state: 'loading' })
 
   useEffect(() => {
-    setPrefs(null)
+    setLoaded({ state: 'loading' })
     void api(hostId)
       .settings()
       .then((body) => {
         const values = (body as { settings?: Record<string, string> }).settings ?? {}
-        setPrefs({
-          enabled: values['autotitle.enabled'] === 'true',
-          // Only an explicit false turns the icon off, which is how the daemon
-          // reads it (claude/autotitle.go). Off unless turned on: without a Nerd
-          // Font every category renders as the same missing-character box.
-          emoji: values['autotitle.emoji'] === 'true',
-          prompt: values['autotitle.prompt'] ?? '',
+        setLoaded({
+          state: 'ready',
+          value: {
+            enabled: values['autotitle.enabled'] === 'true',
+            // Only an explicit false turns the icon off, which is how the
+            // daemon reads it (claude/autotitle.go). Off unless turned on:
+            // without a Nerd Font every category renders as the same
+            // missing-character box.
+            emoji: values['autotitle.emoji'] === 'true',
+            prompt: values['autotitle.prompt'] ?? '',
+          },
         })
       })
       .catch(() => {
         // Offline. Nothing to show for it, and nowhere to save to.
+        setLoaded({ state: 'failed' })
       })
   }, [hostId])
+
+  const prefs = loaded.state === 'ready' ? loaded.value : null
 
   const change = async (next: Partial<TitlePrefs>): Promise<void> => {
     const before = prefs
     if (!before) return
     const after = { ...before, ...next }
-    setPrefs(after)
+    setLoaded({ state: 'ready', value: after })
     try {
       await api(hostId).updateSettings({
         'autotitle.enabled': String(after.enabled),
@@ -535,11 +579,12 @@ function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
         'autotitle.prompt': after.prompt,
       })
     } catch (err) {
-      setPrefs(before)
+      setLoaded({ state: 'ready', value: before })
       store.fail(err)
     }
   }
 
+  if (loaded.state === 'loading') return <Loading title="Session titles" />
   if (!prefs) {
     return (
       <section className="settings-group">
@@ -642,54 +687,82 @@ function CustomPrompt({
 }
 
 /**
- * A theme list with a swatch each, because a name is not much to choose from —
- * "Gruvbox Dark Medium" and "Gruvbox Dark Hard" are the same words and quite
- * different rooms to sit in.
+ * A label, its control, and the explanation on an icon beside the label.
+ *
+ * Every setting on the Appearance pane is one choice, and laying them out as a
+ * column of grids rather than a stack of blocks is what lets the pane be read
+ * down the labels.
+ */
+function Row({
+  label,
+  info,
+  children,
+}: {
+  label: string
+  info?: ReactNode
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div className="setting-row">
+      <span className="setting-row-label">
+        {label}
+        {info && <Info>{info}</Info>}
+      </span>
+      <div className="setting-row-control">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * One theme, chosen from a list.
+ *
+ * A grid of chips before, one per installed theme, which was the tallest thing
+ * in the dialog by a wide margin and grew with every theme dropped into
+ * ~/.helios/themes. The swatch that justified the chips is kept beside the
+ * closed dropdown, and picking applies immediately — so arrowing through the
+ * list previews each theme on the whole window, which no swatch could.
  */
 function ThemePicker({
   label,
+  info,
   themes,
   value,
   match,
   onPick,
 }: {
   label: string
+  info?: ReactNode
   themes: ThemeSummary[]
   value: string | undefined
   /** Present on the terminal picker, whose first option is to follow the UI. */
   match?: string
   onPick: (id: string) => void
 }): JSX.Element {
+  const current = themes.find((theme) => theme.id === value)
   return (
-    <div className="theme-picker">
-      <span className="theme-picker-label">{label}</span>
-      <div className="theme-grid">
-        {match && (
-          <button
-            className={value === 'match' ? 'theme-chip selected' : 'theme-chip'}
-            onClick={() => onPick('match')}
-          >
-            <span className="theme-swatch inherit" />
-            {match}
-          </button>
-        )}
+    <Row label={label} info={info}>
+      {value === 'match' || !current ? (
+        <span className="theme-swatch inherit" />
+      ) : (
+        <span className="theme-swatch">
+          {current.swatch.map((colour, index) => (
+            <i key={index} style={{ background: colour }} />
+          ))}
+        </span>
+      )}
+      <select value={value ?? ''} onChange={(event) => onPick(event.target.value)}>
+        {/* Nothing is chosen until the preferences land, and a select with no
+            matching option would otherwise show the first theme as though it
+            were the active one. */}
+        {value === undefined && <option value="">Loading…</option>}
+        {match && <option value="match">{match}</option>}
         {themes.map((theme) => (
-          <button
-            key={theme.id}
-            className={value === theme.id ? 'theme-chip selected' : 'theme-chip'}
-            onClick={() => onPick(theme.id)}
-            title={theme.id}
-          >
-            <span className="theme-swatch">
-              {theme.swatch.map((colour, index) => (
-                <i key={index} style={{ background: colour }} />
-              ))}
-            </span>
+          <option key={theme.id} value={theme.id}>
             {theme.name}
-          </button>
+          </option>
         ))}
-      </div>
-    </div>
+      </select>
+    </Row>
   )
 }
 
@@ -811,29 +884,50 @@ function Backdrop(): JSX.Element | null {
   const palette = picking ?? state.palette
 
   return (
-    <div className="theme-picker">
-      <span className="theme-picker-label">Backdrop</span>
-      <div className="theme-grid">
-        {styles.map((style) => (
-          <button
-            key={style}
-            className={state.style === style ? 'theme-chip selected' : 'theme-chip'}
-            // Choosing the image style means choosing an image: a chip that
-            // selected an empty one and left the user to find a second control
-            // would be a chip that appears to do nothing.
-            onClick={() => (style === 'image' ? void chooseImage() : void save({ style }))}
-            title={CHIP_HINTS[style]}
-          >
-            <span
-              className={style === 'desktop' ? 'backdrop-swatch desktop' : 'backdrop-swatch'}
-              style={
-                style === 'desktop' ? undefined : { background: swatchOf(theme, style, intensity, palette, state.image) }
-              }
-            />
-            {BACKDROP_LABELS[style]}
+    <>
+      <Row
+        label="Backdrop"
+        info={
+          <>
+            What sits behind the glass. {CHIP_HINTS[state.style]}. Saved in {state.themeName} rather than in
+            this window, so the choice travels with the theme whose colours draw it.
+          </>
+        }
+      >
+        <span
+          className={state.style === 'desktop' ? 'backdrop-swatch desktop' : 'backdrop-swatch'}
+          style={
+            state.style === 'desktop'
+              ? undefined
+              : { background: swatchOf(theme, state.style, intensity, palette, state.image) }
+          }
+        />
+        <select
+          value={state.style}
+          // Choosing the image style means choosing an image: an option that
+          // selected an empty one and left the user to find a second control
+          // would be an option that appears to do nothing.
+          onChange={(event) => {
+            const style = event.target.value as BackdropStyle
+            if (style === 'image') void chooseImage()
+            else void save({ style })
+          }}
+        >
+          {styles.map((style) => (
+            <option key={style} value={style}>
+              {BACKDROP_LABELS[style]}
+            </option>
+          ))}
+        </select>
+        {/* Offered again once an image is showing: the option that opened the
+            file dialog is the one already selected, so re-picking it fires no
+            change event. */}
+        {state.style === 'image' && (
+          <button className="ghost" onClick={() => void chooseImage()}>
+            Change…
           </button>
-        ))}
-      </div>
+        )}
+      </Row>
       {state.style !== 'desktop' && (
         <Slider
           label={state.style === 'image' ? 'Dim' : 'Colour'}
@@ -858,31 +952,29 @@ function Backdrop(): JSX.Element | null {
         onSettle={() => commit('blur')}
       />
       {state.style !== 'desktop' && state.style !== 'image' && (
-        <div className="backdrop-colours">
-          {palette.map((colour, index) => (
-            <input
-              key={index}
-              type="color"
-              value={colour}
-              // Four wells whichever style is showing: Wash draws two of them
-              // and Mesh all four, and switching between the two should not
-              // throw away a colour that was chosen.
-              title={`Backdrop colour ${index + 1}`}
-              onChange={(event) => pick(index, event.target.value)}
-            />
-          ))}
-          {state.custom && (
-            <button
-              className="ghost"
-              onClick={() => void save({ style: state.style, intensity: state.intensity })}
-            >
-              Use theme colours
-            </button>
-          )}
-        </div>
+        <Row label="Colours" info="Wash draws the first two and Mesh all four, so switching between them keeps whatever was chosen here.">
+          <div className="backdrop-colours">
+            {palette.map((colour, index) => (
+              <input
+                key={index}
+                type="color"
+                value={colour}
+                title={`Backdrop colour ${index + 1}`}
+                onChange={(event) => pick(index, event.target.value)}
+              />
+            ))}
+            {state.custom && (
+              <button
+                className="ghost"
+                onClick={() => void save({ style: state.style, intensity: state.intensity })}
+              >
+                Use theme colours
+              </button>
+            )}
+          </div>
+        </Row>
       )}
-      <span className="modal-note">Saved in {state.themeName}.</span>
-    </div>
+    </>
   )
 }
 
@@ -898,6 +990,7 @@ const CHIP_HINTS: Record<BackdropStyle, string> = {
 /** A labelled range that reports while it moves and again when it is let go. */
 function Slider({
   label,
+  info,
   min,
   max,
   step,
@@ -906,6 +999,7 @@ function Slider({
   onSettle,
 }: {
   label: string
+  info?: ReactNode
   min: number
   max: number
   step: number
@@ -914,9 +1008,9 @@ function Slider({
   onSettle: () => void
 }): JSX.Element {
   return (
-    <label className="backdrop-slider">
-      <span>{label}</span>
+    <Row label={label} info={info}>
       <input
+        className="wide-range"
         type="range"
         min={min}
         max={max}
@@ -929,7 +1023,7 @@ function Slider({
         onKeyUp={onSettle}
         onBlur={onSettle}
       />
-    </label>
+    </Row>
   )
 }
 
@@ -975,8 +1069,7 @@ function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: 
   }
 
   return (
-    <div className="theme-picker">
-      <span className="theme-picker-label">Text size</span>
+    <Row label="Text size" info="In pixels, between 10 and 28. Sets the size of rendered markdown — the transcript and the file previews both. It does not touch the terminal.">
       <input
         className="prose-size"
         type="number"
@@ -991,7 +1084,7 @@ function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: 
           if (event.key === 'Enter') event.currentTarget.blur()
         }}
       />
-      <span className="modal-note">px — chat and file previews.</span>
-    </div>
+      <span className="setting-row-unit">px</span>
+    </Row>
   )
 }
