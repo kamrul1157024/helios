@@ -12,7 +12,6 @@ class Session {
   final String? lastEventAt;
   final String? lastUserMessage;
   final bool pinned;
-  final bool archived;
 
   /// The agent's permission mode, or null for a session that has not reported
   /// one yet. Switching it restarts the agent, so it is only offered when the
@@ -48,7 +47,6 @@ class Session {
     this.lastEventAt,
     this.lastUserMessage,
     this.pinned = false,
-    this.archived = false,
     this.permissionMode,
     this.terminal,
     this.memoryBytes,
@@ -73,7 +71,6 @@ class Session {
       lastEventAt: json['last_event_at'] as String?,
       lastUserMessage: json['last_user_message'] as String?,
       pinned: json['pinned'] == true || json['pinned'] == 1,
-      archived: json['archived'] == true || json['archived'] == 1,
       permissionMode: json['permission_mode'] as String?,
       terminal: json['terminal'] as String?,
       memoryBytes: (json['memory_bytes'] as num?)?.toInt(),
@@ -132,7 +129,6 @@ class Session {
   Session copyWith({
     String? title,
     bool? pinned,
-    bool? archived,
     String? permissionMode,
     int? sortOrder,
   }) {
@@ -150,7 +146,6 @@ class Session {
       lastEventAt: lastEventAt,
       lastUserMessage: lastUserMessage,
       pinned: pinned ?? this.pinned,
-      archived: archived ?? this.archived,
       permissionMode: permissionMode ?? this.permissionMode,
       terminal: terminal,
       memoryBytes: memoryBytes,
@@ -187,6 +182,15 @@ class Session {
     }
   }
 }
+
+/// Whether terminating [sessions] is worth stopping to ask about.
+///
+/// Only a turn in flight is lost. An idle session gives up its terminal, and
+/// Resume brings the agent back to the same transcript, so a dialog about one
+/// would be a dialog with no decision in it. Mobile terminates by swipe, and a
+/// confirm on every swipe teaches people to dismiss confirms.
+bool needsTerminateConfirm(Iterable<Session> sessions) =>
+    sessions.any((s) => s.isActive);
 
 class Subagent {
   final String agentId;

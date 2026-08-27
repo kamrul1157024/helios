@@ -54,17 +54,18 @@ func TestCandidates_OnlyIdle(t *testing.T) {
 	}
 }
 
-func TestCandidates_SkipsPinnedArchivedAndCold(t *testing.T) {
+func TestCandidates_SkipsPinnedTerminatedAndCold(t *testing.T) {
 	pinned := session("pinned", "idle", time.Hour)
 	pinned.Pinned = true
-	archived := session("archived", "idle", time.Hour)
-	archived.Archived = true
+	// Terminated is the archival state, and a session someone put away is not
+	// one to take memory from behind their back.
+	terminated := session("terminated", "terminated", time.Hour)
 	cold := session("cold", "idle", time.Hour)
 
-	sessions := []store.Session{pinned, archived, cold, session("ok", "idle", time.Hour)}
+	sessions := []store.Session{pinned, terminated, cold, session("ok", "idle", time.Hour)}
 	// cold has no entry in usage, which is how a session with no live terminal
 	// presents itself.
-	usage := map[string]int64{"pinned": 100, "archived": 100, "ok": 100}
+	usage := map[string]int64{"pinned": 100, "terminated": 100, "ok": 100}
 
 	got := evictionCandidates(sessions, usage, now)
 	if len(got) != 1 || got[0].SessionID != "ok" {

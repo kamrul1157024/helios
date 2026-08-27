@@ -48,6 +48,43 @@ void main() {
     });
   });
 
+  // The right-swipe terminates, and a confirm on every swipe is a confirm
+  // people learn to tap through. It has to appear only where work is lost.
+  group('needsTerminateConfirm', () {
+    test('an idle session goes without asking', () {
+      expect(needsTerminateConfirm([sessionWithStatus('idle')]), isFalse);
+    });
+
+    test('a terminated or errored session goes without asking', () {
+      expect(needsTerminateConfirm([sessionWithStatus('terminated')]), isFalse);
+      expect(needsTerminateConfirm([sessionWithStatus('error')]), isFalse);
+    });
+
+    test('every mid-turn state asks first', () {
+      for (final status in ['active', 'waiting_permission', 'compacting', 'starting']) {
+        expect(needsTerminateConfirm([sessionWithStatus(status)]), isTrue,
+            reason: status);
+      }
+    });
+
+    // A batch hides what it holds: the user picked a dozen rows and cannot see
+    // which of them is still working.
+    test('one busy session in a batch is enough', () {
+      expect(
+        needsTerminateConfirm([
+          sessionWithStatus('idle'),
+          sessionWithStatus('terminated'),
+          sessionWithStatus('active'),
+        ]),
+        isTrue,
+      );
+    });
+
+    test('an empty selection asks nothing', () {
+      expect(needsTerminateConfirm([]), isFalse);
+    });
+  });
+
   // The daemon reclaims no memory on its own, so this label is what tells the
   // user which session is worth closing.
   group('memoryLabel', () {

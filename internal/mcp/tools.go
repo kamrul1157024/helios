@@ -97,7 +97,7 @@ func (s *Server) registry() map[string]tool {
 			description: "List Helios sessions. Dead sessions are omitted unless all=true.",
 			schema: obj(map[string]interface{}{
 				"project": str("optional substring match on project or cwd"),
-				"all":     map[string]interface{}{"type": "boolean", "description": "include terminated and archived sessions"},
+				"all":     map[string]interface{}{"type": "boolean", "description": "include terminated sessions"},
 			}),
 			call: s.callSessions,
 		},
@@ -258,7 +258,7 @@ func (s *Server) callSessions(_ string, args map[string]interface{}) (string, er
 	for _, sess := range sessions {
 		// A long-lived install accumulates hundreds of dead sessions, nearly
 		// all untitled. Listing them buries the handful worth addressing.
-		if !all && (sess.Status == "terminated" || sess.Archived) {
+		if !all && sess.Status == "terminated" {
 			continue
 		}
 		if match != "" &&

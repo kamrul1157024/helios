@@ -8,7 +8,7 @@ import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
-enum SessionFilter { all, pinned, archived }
+enum SessionFilter { all, pinned, terminated }
 
 class SessionsScreen extends StatefulWidget {
   const SessionsScreen({super.key});
@@ -28,11 +28,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
   String? _cwdFilter;
   String? _cwdFilterProject;
 
-  /// Whether finished sessions are listed. Off by default: a machine that has
-  /// run a few hundred agents is mostly finished ones, and they are history
-  /// rather than work.
-  bool _showTerminated = false;
-
   @override
   void dispose() {
     _searchController.dispose();
@@ -44,12 +39,14 @@ class _SessionsScreenState extends State<SessionsScreen> {
   String _compositeKey(Session s) => '${s.hostId}:${s.sessionId}';
 
   /// A search or a directory filter is a request for particular sessions, and
-  /// answering it while holding some of them back would be a lie. The archive
-  /// tab is left alone too: it exists to show what was put away.
+  /// answering it while holding some of them back would be a lie. The
+  /// Terminated tab is left alone too: showing what has ended is its whole job.
+  ///
+  /// Off by default everywhere else: a machine that has run a few hundred
+  /// agents is mostly finished ones, and they are history rather than work.
   bool get _hidingTerminated =>
-      !_showTerminated &&
       _cwdFilter == null &&
-      _filter != SessionFilter.archived &&
+      _filter != SessionFilter.terminated &&
       !(_searchExpanded && _searchController.text.trim().isNotEmpty);
 
   List<Session> _filterSessions(List<Session> sessions) {
@@ -59,11 +56,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
     }
     switch (_filter) {
       case SessionFilter.all:
-        return sessions.where((s) => !s.archived).toList();
+        return sessions;
       case SessionFilter.pinned:
-        return sessions.where((s) => s.pinned && !s.archived).toList();
-      case SessionFilter.archived:
-        return sessions.where((s) => s.archived).toList();
+        return sessions.where((s) => s.pinned).toList();
+      case SessionFilter.terminated:
+        return sessions.where((s) => s.isTerminated).toList();
     }
   }
 
@@ -71,8 +68,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
     if (s.isActive) return 0;
     if (s.isIdle) return 1;
     if (s.pinned) return 2;
-    if (s.isTerminated) return 3;
-    if (s.archived) return 4;
     return 3;
   }
 
@@ -122,8 +117,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         return 'all';
       case SessionFilter.pinned:
         return 'pinned';
-      case SessionFilter.archived:
-        return 'archived';
+      case SessionFilter.terminated:
+        return 'terminated';
     }
   }
 
@@ -266,12 +261,44 @@ class _SessionsScreenState extends State<SessionsScreen> {
     _exitMultiSelect();
   }
 
-  Future<void> _batchArchive(bool archive) async {
-    final hm = context.read<HostManager>();
+  Future<bool> _confirmTerminate(List<Session> sessions) async {
+    if (!needsTerminateConfirm(sessions)) return true;
+    final busy = sessions.where((s) => s.isActive).length;
+    final many = sessions.length > 1;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(many ? 'Terminate sessions' : 'Terminate session'),
+        content: Text(
+          many
+              ? '$busy of ${sessions.length} are mid-turn. Terminating loses the work in flight. Resume starts them again.'
+              : 'The agent is mid-turn. Terminating loses the work in flight. Resume starts it again.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Terminate')),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _batchTerminate(HostManager hm) async {
+    final chosen = hm.filteredSessions
+        .where((s) => _selected.contains(_compositeKey(s)))
+        .toList();
+    if (!await _confirmTerminate(chosen)) return;
+    for (final session in chosen) {
+      hm.serviceFor(session.hostId)?.terminateSession(session.sessionId);
+    }
+    if (mounted) _exitMultiSelect();
+  }
+
+  Future<void> _batchResume(HostManager hm) async {
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        hm.serviceFor(parts[0])?.patchSession(parts[1], archived: archive);
+        hm.serviceFor(parts[0])?.resumeSession(parts[1]);
       }
     }
     _exitMultiSelect();
@@ -334,8 +361,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
         final manual = hm.manualOrder;
         final orderable = manual ? _orderableService(hm) : null;
         final matching = _filterSessions(sessions);
-        final hiddenTerminated =
-            _hidingTerminated ? matching.where((s) => s.isTerminated).length : 0;
         final filtered = _sortSessions(
           _hidingTerminated ? matching.where((s) => !s.isTerminated).toList() : matching,
           manual: manual,
@@ -343,14 +368,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
         return Column(
           children: [
-            if (_multiSelect) _buildMultiSelectBar(),
+            if (_multiSelect) _buildMultiSelectBar(hm),
             _buildFilterRow(sessions, hm, filtered),
             if (_cwdFilter != null) _buildActiveFiltersRow(),
-            // Above the list rather than below it: revealed sessions are
-            // appended, so a control under them walks further down the screen
-            // with every use.
-            if (hiddenTerminated > 0 || (_showTerminated && _filter != SessionFilter.archived))
-              _buildTerminatedToggle(hiddenTerminated),
             Expanded(
               child: filtered.isEmpty
                   ? _buildEmptyFilterState()
@@ -384,36 +404,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  /// The way back to the finished sessions, and the way out of them.
-  Widget _buildTerminatedToggle(int hidden) {
+  Widget _buildMultiSelectBar(HostManager hm) {
     final theme = Theme.of(context);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-        child: TextButton.icon(
-          onPressed: () => setState(() => _showTerminated = !_showTerminated),
-          icon: Icon(
-            _showTerminated ? Icons.visibility_off_outlined : Icons.history,
-            size: 16,
-          ),
-          label: Text(
-            _showTerminated ? 'Hide terminated' : 'Show $hidden terminated',
-            style: const TextStyle(fontSize: 12),
-          ),
-          style: TextButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            foregroundColor: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMultiSelectBar() {
-    final theme = Theme.of(context);
-    final isArchiveTab = _filter == SessionFilter.archived;
+    final isTerminatedTab = _filter == SessionFilter.terminated;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -423,12 +416,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
           IconButton(icon: const Icon(Icons.close), onPressed: _exitMultiSelect),
           Text('${_selected.length} selected', style: const TextStyle(fontWeight: FontWeight.w600)),
           const Spacer(),
-          if (!isArchiveTab)
+          if (!isTerminatedTab)
             IconButton(icon: const Icon(Icons.push_pin_outlined), tooltip: 'Pin', onPressed: () => _batchPin(true)),
           IconButton(
-            icon: Icon(isArchiveTab ? Icons.unarchive_outlined : Icons.archive_outlined),
-            tooltip: isArchiveTab ? 'Unarchive' : 'Archive',
-            onPressed: () => _batchArchive(!isArchiveTab),
+            icon: Icon(isTerminatedTab ? Icons.play_arrow_outlined : Icons.stop_circle_outlined),
+            tooltip: isTerminatedTab ? 'Resume' : 'Terminate',
+            onPressed: () =>
+                isTerminatedTab ? _batchResume(hm) : _batchTerminate(hm),
           ),
           IconButton(
             icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
@@ -454,12 +448,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   Widget _buildFilterChips(List<Session> allSessions, HostManager hm, List<Session> visible) {
     // Counting what the tab would show, not what exists: a chip reading 155
-    // over a list of twelve is a chip that has to be explained. The archive is
-    // its own tab and holds terminated sessions on purpose.
-    bool counted(Session s) => !s.archived && !(_hidingTerminated && s.isTerminated);
+    // over a list of twelve is a chip that has to be explained. Terminated
+    // sessions have their own tab, and it holds them on purpose.
+    bool counted(Session s) => !(_hidingTerminated && s.isTerminated);
     final allCount = allSessions.where(counted).length;
     final pinnedCount = allSessions.where((s) => s.pinned && counted(s)).length;
-    final archivedCount = allSessions.where((s) => s.archived).length;
+    final terminatedCount = allSessions.where((s) => s.isTerminated).length;
 
     return Row(
       children: [
@@ -467,7 +461,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
         const SizedBox(width: 8),
         _filterChip('Pinned', pinnedCount, SessionFilter.pinned),
         const SizedBox(width: 8),
-        _filterChip('Archived', archivedCount, SessionFilter.archived),
+        _filterChip('Terminated', terminatedCount, SessionFilter.terminated),
         const Spacer(),
         IconButton(
           icon: Icon(
@@ -579,7 +573,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
   /// being moved.
   Widget _buildSwipeableCard(Session session, HostManager hm, {int? reorderIndex}) {
     final theme = Theme.of(context);
-    final isArchived = session.archived;
+    // Terminated is the archival state: putting a session away is ending it,
+    // and the way back out is Resume rather than an unarchive.
+    final isTerminated = session.isTerminated;
     final service = hm.serviceFor(session.hostId);
 
     return Dismissible(
@@ -587,17 +583,17 @@ class _SessionsScreenState extends State<SessionsScreen> {
       background: Container(
         margin: const EdgeInsets.only(bottom: 8),
         decoration: BoxDecoration(
-          color: isArchived ? Colors.green : Colors.teal,
+          color: isTerminated ? Colors.green : Colors.teal,
           borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.only(left: 20),
         child: Row(
           children: [
-            Icon(isArchived ? Icons.unarchive : Icons.archive, color: Colors.white),
+            Icon(isTerminated ? Icons.play_arrow : Icons.stop_circle_outlined, color: Colors.white),
             const SizedBox(width: 8),
             Text(
-              isArchived ? 'Unarchive' : 'Archive',
+              isTerminated ? 'Resume' : 'Terminate',
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
             ),
           ],
@@ -619,7 +615,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
       ),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
-          service?.patchSession(session.sessionId, archived: !isArchived);
+          if (isTerminated) {
+            service?.resumeSession(session.sessionId);
+          } else if (await _confirmTerminate([session])) {
+            service?.terminateSession(session.sessionId);
+          }
           return false;
         } else {
           final confirmed = await showDialog<bool>(
@@ -824,7 +824,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   void _showContextMenu(Session session, HostManager hm) {
     final theme = Theme.of(context);
-    final isArchived = session.archived;
+    final isTerminated = session.isTerminated;
     final hostId = session.hostId;
     final sessionId = session.sessionId;
     final service = hm.serviceFor(hostId);
@@ -895,11 +895,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 },
               ),
               ListTile(
-                leading: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined),
-                title: Text(isArchived ? 'Unarchive' : 'Archive'),
-                onTap: () {
+                leading: Icon(
+                  isTerminated ? Icons.play_arrow_outlined : Icons.stop_circle_outlined,
+                ),
+                title: Text(isTerminated ? 'Resume' : 'Terminate'),
+                onTap: () async {
                   Navigator.pop(ctx);
-                  service?.patchSession(sessionId, archived: !isArchived);
+                  if (!mounted) return;
+                  if (isTerminated) {
+                    service?.resumeSession(sessionId);
+                  } else if (await _confirmTerminate([session])) {
+                    service?.terminateSession(sessionId);
+                  }
                 },
               ),
               ListTile(
@@ -1048,15 +1055,17 @@ class _SessionsScreenState extends State<SessionsScreen> {
     } else {
       label = switch (_filter) {
         SessionFilter.pinned => 'No pinned sessions.',
-        SessionFilter.archived => 'No archived sessions.',
+        SessionFilter.terminated => 'No terminated sessions.',
         SessionFilter.all => 'No sessions.',
       };
       hint = switch (_filter) {
         SessionFilter.pinned => 'Long-press a session to pin it.',
-        SessionFilter.archived => 'Swipe right on a session to archive it.',
+        SessionFilter.terminated => 'Swipe right on a session to terminate it.',
         SessionFilter.all => '',
       };
-      icon = _filter == SessionFilter.pinned ? Icons.push_pin_outlined : Icons.archive_outlined;
+      icon = _filter == SessionFilter.pinned
+          ? Icons.push_pin_outlined
+          : Icons.stop_circle_outlined;
     }
 
     return Center(

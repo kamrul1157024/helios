@@ -507,15 +507,6 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
               {session.pinned ? 'Unpin' : 'Pin'}
             </button>
             <button
-              onClick={() =>
-                void run(() =>
-                  api(hostId).patchSession(session.session_id, { archived: !session.archived }),
-                )
-              }
-            >
-              {session.archived ? 'Unarchive' : 'Archive'}
-            </button>
-            <button
               className="danger"
               onClick={() => {
                 // Deleting drops the daemon's record; the agent's own transcript

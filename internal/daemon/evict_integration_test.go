@@ -87,7 +87,7 @@ func (h *evictHarness) add(t *testing.T, id, status string, unread time.Duration
 		t.Fatalf("insert %s: %v", id, err)
 	}
 	if pinned {
-		if err := h.db.UpdateSessionFlags(id, true, false); err != nil {
+		if err := h.db.UpdateSessionPinned(id, true); err != nil {
 			t.Fatalf("pin %s: %v", id, err)
 		}
 	}

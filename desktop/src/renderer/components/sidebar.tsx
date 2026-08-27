@@ -73,7 +73,6 @@ export function Sidebar({
   const notifications = useStore((s) => s.notifications)
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
-  const showArchived = useStore((s) => s.showArchived)
   const sortMode = useStore((s) => s.sortMode)
   const density = useStore((s) => s.density)
   // The card being dragged, so the row under the pointer can show where it
@@ -119,14 +118,12 @@ export function Sidebar({
         pendingByCwd.set(notif.source_session, (pendingByCwd.get(notif.source_session) ?? 0) + 1)
       }
 
-      const visible = (sessions[host.id] ?? [])
-        .filter((session) => showArchived || !session.archived)
-        .filter((session) => {
-          if (!needle) return true
-          return `${session.title ?? ''} ${session.project} ${session.cwd} ${session.last_user_message ?? ''}`
-            .toLowerCase()
-            .includes(needle)
-        })
+      const visible = (sessions[host.id] ?? []).filter((session) => {
+        if (!needle) return true
+        return `${session.title ?? ''} ${session.project} ${session.cwd} ${session.last_user_message ?? ''}`
+          .toLowerCase()
+          .includes(needle)
+      })
 
       // A terminated session the user searched for is a session they asked to
       // see, so the filter yields to an explicit query.
@@ -143,7 +140,7 @@ export function Sidebar({
       const loading = sessions[host.id] === undefined
       return { host, rows, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showArchived, showTerminated, sortMode])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -308,14 +305,6 @@ export function Sidebar({
       </div>
 
       <footer className="sidebar-foot">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(event) => store.setShowArchived(event.target.checked)}
-          />
-          Show archived
-        </label>
         <button className="link" onClick={onAddHost}>
           Add host
         </button>
