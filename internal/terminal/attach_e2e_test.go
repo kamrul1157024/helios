@@ -74,11 +74,26 @@ func (u *userTerminal) typeKeys(t *testing.T, s string) {
 //
 // Waiting for the output instead means the bytes reached the host, the shell
 // ran them, and the reply came back — an ordering barrier rather than a guess.
+//
+// Retyped until it lands, as the resize test does, because there is no moment
+// at which the shell is known to be listening. Attach may not have finished
+// switching the pty to raw, and ClearOverlay is fire-and-forget — a line typed
+// immediately after it can reach the host while the overlay is still up, where
+// it is swallowed as overlay input rather than passed to the child.
 func (u *userTerminal) runEcho(t *testing.T, word string, d time.Duration) bool {
 	t.Helper()
 	half := len(word) / 2
-	u.typeKeys(t, fmt.Sprintf("echo '%s''%s'\r", word[:half], word[half:]))
-	return u.waitForText(word, d)
+	line := fmt.Sprintf("echo '%s''%s'\r", word[:half], word[half:])
+	deadline := time.Now().Add(d)
+	for {
+		u.typeKeys(t, line)
+		if u.waitForText(word, 500*time.Millisecond) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
 }
 
 func (u *userTerminal) waitForText(want string, d time.Duration) bool {
