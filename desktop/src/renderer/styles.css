@@ -3824,7 +3824,7 @@ hr {
 
 /* The "i" beside a setting. It carries the explanation that used to sit under
    the label, so it has to be reachable by keyboard as well as hover. */
-.info {
+.info-dot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3845,8 +3845,8 @@ hr {
   vertical-align: middle;
 }
 
-.info:hover,
-.info:focus-visible {
+.info-dot:hover,
+.info-dot:focus-visible {
   background: var(--primary);
   color: var(--on-primary);
   outline: none;
@@ -3854,7 +3854,7 @@ hr {
 
 /* Portalled to the body and placed in script, so the scrolling settings pane
    cannot clip it. */
-.info-bubble {
+.info-tip {
   position: fixed;
   z-index: 1000;
   padding: 8px 10px;
