@@ -397,11 +397,39 @@ interface TitlePrefs {
  */
 const BUDGET_MIN = 0.05
 const BUDGET_MAX = 0.9
-const BUDGET_STEP = 0.05
 const DEFAULT_BUDGET = 0.25
 
+const GIB = 1024 ** 3
+
+/**
+ * The slider moves in half-gigabytes when the host has told us how much memory
+ * it has.
+ *
+ * Stepping the fraction instead gave a limit of 8.3 GB on one machine and 6.4
+ * on another, which reads as a measurement rather than a decision. The daemon
+ * is still sent a fraction — the same install runs on a 16 GB laptop and a 64
+ * GB desktop — but the number the user aims at is a round one.
+ */
+const STEP_GIB = 0.5
+const MIN_GIB = 2
+
+/** Drops a trailing zero, so the scale reads 2, 2.5, 3 rather than 2.0, 2.5. */
 function gigabytes(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  const gib = bytes / GIB
+  return `${Number.isInteger(gib) ? gib : gib.toFixed(1)} GB`
+}
+
+/** The travel of the slider on a host of this size, in whole steps. */
+function budgetRange(total: number): { min: number; max: number } {
+  const max = Math.floor((total * BUDGET_MAX) / GIB / STEP_GIB) * STEP_GIB
+  // A machine too small for the usual floor still gets a slider that moves,
+  // rather than one whose ends have crossed over.
+  return max <= MIN_GIB ? { min: STEP_GIB, max: Math.max(STEP_GIB, max) } : { min: MIN_GIB, max }
+}
+
+function snapToStep(gib: number, range: { min: number; max: number }): number {
+  const snapped = Math.round(gib / STEP_GIB) * STEP_GIB
+  return Math.min(range.max, Math.max(range.min, snapped))
 }
 
 /**
@@ -471,6 +499,12 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
     }
   }
 
+  const range = budgetRange(total)
+  // Snapped for display as well as for saving, so a fraction stored by the
+  // phone or the TUI — neither of which knows the host's size — still lands the
+  // thumb on a step rather than between two.
+  const gib = prefs ? snapToStep((total * prefs.fraction) / GIB, range) : 0
+
   if (loaded.state === 'loading') return <Loading title="Memory" />
   if (!prefs) {
     return (
@@ -514,23 +548,39 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
               opened for a while are stopped, largest and longest unread first.
             </Info>
           </span>
-          <strong>{total > 0 ? gigabytes(total * prefs.fraction) : `${Math.round(prefs.fraction * 100)}%`}</strong>
+          <strong>{total > 0 ? gigabytes(gib * GIB) : `${Math.round(prefs.fraction * 100)}%`}</strong>
         </div>
-        <input
-          type="range"
-          min={BUDGET_MIN}
-          max={BUDGET_MAX}
-          step={BUDGET_STEP}
-          value={prefs.fraction}
-          disabled={!prefs.enabled}
-          onChange={(event) => drag(Number(event.target.value))}
-          onPointerUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
-          onKeyUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
-        />
+        {/* In gigabytes when the host has reported its size, and in the raw
+            fraction when it has not: the daemon takes a fraction either way. */}
+        {total > 0 ? (
+          <input
+            type="range"
+            min={range.min}
+            max={range.max}
+            step={STEP_GIB}
+            value={gib}
+            disabled={!prefs.enabled}
+            onChange={(event) => drag((Number(event.target.value) * GIB) / total)}
+            onPointerUp={(event) => void change({ fraction: (Number(event.currentTarget.value) * GIB) / total })}
+            onKeyUp={(event) => void change({ fraction: (Number(event.currentTarget.value) * GIB) / total })}
+          />
+        ) : (
+          <input
+            type="range"
+            min={BUDGET_MIN}
+            max={BUDGET_MAX}
+            step={0.05}
+            value={prefs.fraction}
+            disabled={!prefs.enabled}
+            onChange={(event) => drag(Number(event.target.value))}
+            onPointerUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
+            onKeyUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
+          />
+        )}
         <div className="budget-scale">
-          <span>{total > 0 ? gigabytes(total * BUDGET_MIN) : `${BUDGET_MIN * 100}%`}</span>
+          <span>{total > 0 ? gigabytes(range.min * GIB) : `${BUDGET_MIN * 100}%`}</span>
           <span>{total > 0 ? `${gigabytes(total)} installed` : ''}</span>
-          <span>{total > 0 ? gigabytes(total * BUDGET_MAX) : `${BUDGET_MAX * 100}%`}</span>
+          <span>{total > 0 ? gigabytes(range.max * GIB) : `${BUDGET_MAX * 100}%`}</span>
         </div>
       </div>
     </section>
