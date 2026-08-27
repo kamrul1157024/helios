@@ -61,6 +61,23 @@ model that must hold:
 That fix is **not** why eviction was removed. Reinstating eviction must not
 reinstate the bug.
 
+**Not writing `terminated` is not enough on its own.** The quotation above reads
+like a safeguard and is in fact the hole. Killing the host kills the agent, and
+the agent runs its own exit hook on the way down: for Claude, `SessionEnd` calls
+`UpdateSessionStatus(id, "terminated", "SessionEnd")`, and the store stamps
+`ended_at` whenever the status becomes terminated. So an eviction that touches
+nothing still ends up filed as archived, by a path one call removed from itself.
+This was not theoretical — it happened on a real machine to five sessions before
+it was caught.
+
+The exit therefore has to carry intent. `backend.Evicter` marks the session
+before the kill; `SessionEnd` consumes the mark and, finding it, drops the
+terminal mapping and leaves the status, `ended_at` and the `session_end` report
+alone. The mark is consumed rather than merely read, so a session evicted, woken
+and later quit for real still terminates properly.
+
+Terminated is the archival state a person chooses. Cold is not a kind of ended.
+
 ## Problem
 
 A session holds a `helios ptyhost`, which holds a running `claude`. Nothing

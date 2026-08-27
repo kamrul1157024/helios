@@ -44,10 +44,28 @@ type fakeBackend struct {
 	kills   []string
 	keys    []string // "sessionID:key"
 	texts   []string // "sessionID:text"
+	evicted map[string]bool
 }
 
 func newFakeBackend() *fakeBackend {
-	return &fakeBackend{handles: map[string]string{}}
+	return &fakeBackend{handles: map[string]string{}, evicted: map[string]bool{}}
+}
+
+// Evict and EvictedRecently mirror the host backend: a mark set before the kill
+// and consumed by the first caller to ask.
+func (f *fakeBackend) Evict(sessionID string) error {
+	f.mu.Lock()
+	f.evicted[sessionID] = true
+	f.mu.Unlock()
+	return f.Kill(sessionID)
+}
+
+func (f *fakeBackend) EvictedRecently(sessionID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	was := f.evicted[sessionID]
+	delete(f.evicted, sessionID)
+	return was
 }
 
 // live registers a session as having a terminal.
@@ -711,6 +729,53 @@ func TestSessionEnd_SetsEndedAt(t *testing.T) {
 	if sess.EndedAt == nil || *sess.EndedAt == "" {
 		t.Error("ended_at not set after SessionEnd")
 	}
+}
+
+// A session helios stopped to reclaim memory has not ended. Killing the host
+// kills the agent, which runs this very hook on the way down — so without the
+// eviction mark every cold session was filed as terminated, the archival state
+// a person chooses. That is the bug this pins.
+func TestSessionEnd_LeavesAnEvictedSessionAlone(t *testing.T) {
+	ctx, db, sseEvents := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "idle")
+	be := terminalOf(ctx)
+	be.live("sess-1")
+
+	if err := be.Evict("sess-1"); err != nil {
+		t.Fatalf("evict: %v", err)
+	}
+	callHook(handleSessionEnd, ctx, hookInput{SessionID: "sess-1", CWD: "/tmp/proj"})
+
+	assertStatus(t, db, "sess-1", "idle")
+	sess, _ := db.GetSession("sess-1")
+	if sess.EndedAt != nil && *sess.EndedAt != "" {
+		t.Errorf("ended_at = %q; a cold session has not ended", *sess.EndedAt)
+	}
+	for _, e := range *sseEvents {
+		if e == "session_status" {
+			t.Error("broadcast a status change for a session that only went cold")
+		}
+	}
+}
+
+// The mark answers one exit. A session evicted, woken, and later quit by the
+// user must still end properly.
+func TestSessionEnd_TerminatesNormallyAfterAnEviction(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "idle")
+	be := terminalOf(ctx)
+	be.live("sess-1")
+
+	if err := be.Evict("sess-1"); err != nil {
+		t.Fatalf("evict: %v", err)
+	}
+	callHook(handleSessionEnd, ctx, hookInput{SessionID: "sess-1", CWD: "/tmp/proj"})
+
+	// Woken again, then really quit.
+	be.live("sess-1")
+	callHook(handleSessionEnd, ctx, hookInput{SessionID: "sess-1", CWD: "/tmp/proj"})
+
+	assertStatus(t, db, "sess-1", "terminated")
 }
 
 func TestSessionEnd_ForgetsTerminal(t *testing.T) {

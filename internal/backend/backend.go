@@ -101,6 +101,24 @@ type Usager interface {
 	Usage() map[string]int64
 }
 
+// Evicter is implemented by backends that can take a session's terminal away
+// without ending the session.
+//
+// Kill does the same thing to the process, but the difference has to survive
+// the kill: the agent runs its own exit hook on the way down, and Claude's
+// marks the session terminated and stamps ended_at. Terminated is the archival
+// state a person chooses; a session going cold has not ended and must come back
+// as itself. Evict records the intent so the hook can tell the two apart. See
+// docs/specs/42-cold-sessions.md.
+type Evicter interface {
+	// Evict stops the terminal, having first recorded that helios did it.
+	Evict(sessionID string) error
+
+	// EvictedRecently reports whether this session's terminal was taken by
+	// Evict rather than closed by the user, and consumes the mark.
+	EvictedRecently(sessionID string) bool
+}
+
 // Waker is implemented by backends that can bring a cold session back
 // without losing conversation state. The host backend re-runs
 // `claude --resume`; tmux cannot do this, so it does not implement it.

@@ -16,8 +16,9 @@ import (
 // whole eviction pass can be driven without a real terminal host.
 type meteredBackend struct {
 	*fakeBackend
-	usage  map[string]int64
-	killed []string
+	usage   map[string]int64
+	killed  []string
+	evicted map[string]bool
 }
 
 func newMeteredBackend(usage map[string]int64) *meteredBackend {
@@ -25,7 +26,7 @@ func newMeteredBackend(usage map[string]int64) *meteredBackend {
 	for id := range usage {
 		ids = append(ids, id)
 	}
-	return &meteredBackend{fakeBackend: newFakeBackend(ids...), usage: usage}
+	return &meteredBackend{fakeBackend: newFakeBackend(ids...), usage: usage, evicted: map[string]bool{}}
 }
 
 func (m *meteredBackend) Usage() map[string]int64 { return m.usage }
@@ -35,6 +36,20 @@ func (m *meteredBackend) Kill(sessionID string) error {
 	delete(m.usage, sessionID)
 	m.live[sessionID] = false
 	return nil
+}
+
+// Evict is what the pass must call rather than Kill: the mark is the only thing
+// standing between a cold session and the agent's exit hook filing it as
+// terminated.
+func (m *meteredBackend) Evict(sessionID string) error {
+	m.evicted[sessionID] = true
+	return m.Kill(sessionID)
+}
+
+func (m *meteredBackend) EvictedRecently(sessionID string) bool {
+	was := m.evicted[sessionID]
+	delete(m.evicted, sessionID)
+	return was
 }
 
 // evictHarness wires a real store and broadcaster to a metered backend, so the
@@ -162,6 +177,12 @@ func TestEvictE2E_KeepsTheSessionAlive(t *testing.T) {
 	}
 	if h.be.Alive("big") {
 		t.Error("the terminal survived the eviction")
+	}
+	// The mark is what the agent's exit hook reads to know this was helios
+	// reclaiming memory rather than the user quitting. Without it the hook
+	// files the session as terminated and stamps ended_at.
+	if !h.be.EvictedRecently("big") {
+		t.Error("the pass killed the terminal without marking it evicted")
 	}
 }
 
