@@ -727,19 +727,17 @@ small {
   margin-right: 2px;
 }
 
+/* The link and the menu stay together on the right, rather than each drifting
+   to its own third of the bar. The slack used to belong to a checkbox that
+   carried `margin-right: auto`; with the checkbox gone the bar owns it. */
 .sidebar-foot {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   padding: 8px 8px 8px 16px;
   color: var(--on-surface-variant);
   font-size: 12px;
-}
-
-/* The checkbox takes the slack so the link and the menu stay together on the
-   right, rather than each drifting to its own third of the bar. */
-.sidebar-foot .check {
-  margin-right: auto;
 }
 
 /* Smaller than the one in the session header: this bar is 12px text, and a
