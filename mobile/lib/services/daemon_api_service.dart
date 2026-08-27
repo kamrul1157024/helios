@@ -884,6 +884,121 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
+  // ==================== Host settings ====================
+
+  /// Settings the daemon owns rather than this device. They live in this
+  /// host's database, so each paired host holds its own and a phone with two
+  /// hosts cannot set one and mean the other. Reading them from "whichever
+  /// host answered first" is how they came to look like app settings.
+  static const settingAutoTitle = 'autotitle.enabled';
+  static const settingAutoTitleEmoji = 'autotitle.emoji';
+  static const settingEvict = 'memory.evict';
+  static const settingBudgetFraction = 'memory.budget_fraction';
+
+  /// The budget slider's travel, as a share of the host's memory. It stops
+  /// short of the whole machine at both ends: below a twentieth the budget
+  /// cannot hold one agent, and at 100% eviction would only begin once the
+  /// host was already swapping.
+  static const budgetMin = 0.05;
+  static const budgetMax = 0.9;
+  static const budgetDefault = 0.25;
+
+  bool _autoTitleEnabled = false;
+  bool _autoTitleEmoji = false;
+  bool _evictEnabled = false;
+  double _budgetFraction = budgetDefault;
+  bool _hostSettingsLoaded = false;
+
+  bool get autoTitleEnabled => _autoTitleEnabled;
+  bool get autoTitleEmoji => _autoTitleEmoji;
+  bool get evictEnabled => _evictEnabled;
+  double get budgetFraction => _budgetFraction;
+
+  /// False until this host has answered once. A host that has never been read
+  /// shows nothing, rather than a default that is probably not its value.
+  bool get hostSettingsLoaded => _hostSettingsLoaded;
+
+  /// Reads every daemon-owned setting in one request. The sort mode arrives in
+  /// the same response, so fetching it on its own would ask the host the same
+  /// question twice.
+  Future<void> fetchHostSettings() async {
+    final body = await getSettings();
+    if (body == null) return;
+    final settings = (body['settings'] as Map<String, dynamic>?) ?? const {};
+    _manualOrder = settings[_sortModeSetting] == 'manual';
+    _autoTitleEnabled = settings[settingAutoTitle] == 'true';
+    // Off unless turned on: Flutter ships no Nerd Font, so the glyphs render
+    // as empty boxes on the phone.
+    _autoTitleEmoji = settings[settingAutoTitleEmoji] == 'true';
+    _evictEnabled = settings[settingEvict] == 'true';
+    // Clamped rather than trusted: the setting predates the slider, so a
+    // stored value can sit outside its travel.
+    final budget = double.tryParse('${settings[settingBudgetFraction] ?? ''}');
+    _budgetFraction =
+        budget == null ? budgetDefault : budget.clamp(budgetMin, budgetMax);
+    _hostSettingsLoaded = true;
+    notifyListeners();
+  }
+
+  Future<bool> setAutoTitleEnabled(bool value) {
+    final previous = _autoTitleEnabled;
+    return _writeHostSetting(
+      settingAutoTitle,
+      value ? 'true' : 'false',
+      () => _autoTitleEnabled = value,
+      () => _autoTitleEnabled = previous,
+    );
+  }
+
+  Future<bool> setAutoTitleEmoji(bool value) {
+    final previous = _autoTitleEmoji;
+    return _writeHostSetting(
+      settingAutoTitleEmoji,
+      value ? 'true' : 'false',
+      () => _autoTitleEmoji = value,
+      () => _autoTitleEmoji = previous,
+    );
+  }
+
+  Future<bool> setEvictEnabled(bool value) {
+    final previous = _evictEnabled;
+    return _writeHostSetting(
+      settingEvict,
+      value ? 'true' : 'false',
+      () => _evictEnabled = value,
+      () => _evictEnabled = previous,
+    );
+  }
+
+  Future<bool> setBudgetFraction(double value) {
+    final previous = _budgetFraction;
+    final clamped = value.clamp(budgetMin, budgetMax);
+    return _writeHostSetting(
+      settingBudgetFraction,
+      clamped.toStringAsFixed(2),
+      () => _budgetFraction = clamped,
+      () => _budgetFraction = previous,
+    );
+  }
+
+  /// Paints the new value first so the control answers the tap, and puts the
+  /// old one back if the host refuses or cannot be reached. Returning the
+  /// verdict is the point: a switch that flips and then quietly did nothing is
+  /// worse than one that says it failed.
+  Future<bool> _writeHostSetting(
+    String key,
+    String value,
+    void Function() apply,
+    void Function() revert,
+  ) async {
+    apply();
+    notifyListeners();
+    if (await updateSettings({key: value})) return true;
+    revert();
+    notifyListeners();
+    return false;
+  }
+
   // ==================== Session order ====================
 
   /// The daemon owns the mode, so every client of this host agrees on it.
@@ -891,15 +1006,9 @@ class DaemonAPIService extends ChangeNotifier {
   bool _manualOrder = false;
   bool get manualOrder => _manualOrder;
 
-  Future<void> fetchSortMode() async {
-    final body = await getSettings();
-    if (body == null) return;
-    final settings = body['settings'] as Map<String, dynamic>?;
-    final manual = settings?[_sortModeSetting] == 'manual';
-    if (manual == _manualOrder) return;
-    _manualOrder = manual;
-    notifyListeners();
-  }
+  /// The name the session list calls. The mode comes back with the rest of the
+  /// host's settings.
+  Future<void> fetchSortMode() => fetchHostSettings();
 
   /// Switching to manual freezes [visibleOrder] as it stands, so the list does
   /// not jump the moment it stops sorting itself.

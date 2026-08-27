@@ -1,8 +1,8 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/host_connection.dart';
 import '../providers/theme_provider.dart';
+import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
@@ -20,21 +20,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late bool _soundEnabled;
   late bool _vibrationEnabled;
-  bool _settingsLoaded = false;
-
-  // Auto title settings
-  bool _autoTitleEnabled = false;
-  bool _autoTitleEmoji = true;
-
-  /// Share of the host's memory its warm sessions may hold. The budget belongs
-  /// to the daemon rather than to this device, so it is worth being able to
-  /// change it from here — otherwise you can watch a session go cold from the
-  /// phone and have to walk to the machine to adjust it.
-  double _memoryBudgetFraction = 0.25;
-
-  /// Off unless asked for. Eviction kills a running agent, so upgrading must
-  /// not start doing it to somebody's machine.
-  bool _evictEnabled = false;
 
   // Update check
   String _currentVersion = '';
@@ -48,36 +33,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _soundEnabled = NotificationService.instance.soundEnabled;
     _vibrationEnabled = NotificationService.instance.vibrationEnabled;
-    _loadSettings();
+    _loadHostSettings();
     _loadVersionAndCheckUpdate();
   }
 
-  Future<void> _loadSettings() async {
+  /// Asks every reachable host what it is set to, so each row can summarise
+  /// itself. These settings live in the daemon, so there are as many answers
+  /// as there are hosts — reading one host and showing it as the app's
+  /// settings is what this replaces.
+  void _loadHostSettings() {
     final hm = context.read<HostManager>();
-    // Use the first connected host for settings
     for (final host in hm.hosts) {
       final service = hm.serviceFor(host.id);
       if (service == null || !service.connected) continue;
-      final data = await service.getSettings();
-      if (data != null && mounted) {
-        final settings = (data['settings'] as Map<String, dynamic>?) ?? {};
-        setState(() {
-          _autoTitleEnabled = (settings['autotitle.enabled'] as String?) == 'true';
-          // Off unless turned on: Flutter ships no Nerd Font, so the glyphs
-          // render as empty boxes on the phone.
-          _autoTitleEmoji = (settings['autotitle.emoji'] as String?) == 'true';
-          final budget = double.tryParse(
-            (settings['memory.budget_fraction'] as String?) ?? '',
-          );
-          // Clamped rather than trusted: the setting predates the slider, so a
-          // stored value can sit outside its travel.
-          _memoryBudgetFraction =
-              budget == null ? 0.25 : budget.clamp(_budgetMin, _budgetMax);
-          _evictEnabled = (settings['memory.evict'] as String?) == 'true';
-          _settingsLoaded = true;
-        });
-      }
-      break;
+      service.fetchHostSettings();
     }
   }
 
@@ -107,69 +76,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) setState(() => _updateProgress = p);
     });
     if (mounted) setState(() => _updateDownloading = false);
-  }
-
-  /// The slider's travel, as a share of the host's memory. It stops short of
-  /// the whole machine at both ends: below a twentieth the budget cannot hold
-  /// one agent, and at 100% eviction would only begin once the host was already
-  /// swapping.
-  static const _budgetMin = 0.05;
-  static const _budgetMax = 0.9;
-  static const _budgetDivisions = 17;
-
-  List<Widget> _buildMemoryBudgetTiles() {
-    return [
-      SwitchListTile(
-        secondary: const Icon(Icons.memory),
-        title: const Text('Save memory'),
-        subtitle: const Text(
-          'Stops the agents you have not opened lately. Opening one starts '
-          'it again, with the conversation intact.',
-        ),
-        value: _evictEnabled,
-        onChanged: (value) {
-          setState(() => _evictEnabled = value);
-          _updateSetting('memory.evict', value ? 'true' : 'false');
-        },
-      ),
-      if (_evictEnabled)
-        ListTile(
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Memory limit'),
-              Text(
-                '${(_memoryBudgetFraction * 100).round()}% of host RAM',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-          subtitle: Slider(
-            value: _memoryBudgetFraction.clamp(_budgetMin, _budgetMax),
-            min: _budgetMin,
-            max: _budgetMax,
-            divisions: _budgetDivisions,
-            label: '${(_memoryBudgetFraction * 100).round()}%',
-            // Dragging moves the label only. Each step the thumb passes through
-            // would otherwise be a request the daemon has to answer.
-            onChanged: (value) => setState(() => _memoryBudgetFraction = value),
-            onChangeEnd: (value) => _updateSetting(
-              'memory.budget_fraction',
-              value.toStringAsFixed(2),
-            ),
-          ),
-        ),
-    ];
-  }
-
-  Future<void> _updateSetting(String key, String value) async {
-    final hm = context.read<HostManager>();
-    for (final host in hm.hosts) {
-      final service = hm.serviceFor(host.id);
-      if (service == null || !service.connected) continue;
-      await service.updateSettings({key: value});
-      break;
-    }
   }
 
   @override
@@ -227,39 +133,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
               ),
-              const _SectionHeader('Sessions'),
-              if (!_settingsLoaded)
-                const ListTile(
-                  leading: SizedBox(
-                    width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  title: Text('Loading settings...'),
-                ),
-              if (_settingsLoaded) ...[
-                SwitchListTile(
-                  secondary: const Icon(Icons.title),
-                  title: const Text('Auto title'),
-                  subtitle: const Text('Generate session titles automatically'),
-                  value: _autoTitleEnabled,
-                  onChanged: (value) {
-                    setState(() => _autoTitleEnabled = value);
-                    _updateSetting('autotitle.enabled', value ? 'true' : 'false');
-                  },
-                ),
-                if (_autoTitleEnabled)
-                  SwitchListTile(
-                    secondary: const Icon(Icons.emoji_emotions_outlined),
-                    title: const Text('Title icon'),
-                    subtitle: const Text('Needs a Nerd Font — boxes without one'),
-                    value: _autoTitleEmoji,
-                    onChanged: (value) {
-                      setState(() => _autoTitleEmoji = value);
-                      _updateSetting('autotitle.emoji', value ? 'true' : 'false');
-                    },
-                  ),
-                ..._buildMemoryBudgetTiles(),
-              ],
             ],
           ),
         );
@@ -341,8 +214,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// What a host is set to, in one line, so the list says it without a tap.
+  /// Null until the host has answered: a default shown here would be a claim
+  /// about a machine nobody has asked yet.
+  String? _hostSettingsSummary(DaemonAPIService? service) {
+    if (service == null || !service.hostSettingsLoaded) return null;
+    final title = service.autoTitleEnabled ? 'Auto title on' : 'Auto title off';
+    final memory = service.evictEnabled
+        ? 'Save memory ${(service.budgetFraction * 100).round()}%'
+        : 'Save memory off';
+    return '$title · $memory';
+  }
+
   Widget _buildHostTile(HostConnection host, HostManager hm) {
-    final isConnected = hm.serviceFor(host.id)?.connected == true;
+    final service = hm.serviceFor(host.id);
+    final isConnected = service?.connected == true;
+    final summary = _hostSettingsSummary(service);
 
     return ListTile(
       leading: Container(
@@ -354,10 +241,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       title: Text(host.label),
-      subtitle: Text(
-        host.serverUrl,
-        style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        overflow: TextOverflow.ellipsis,
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            host.serverUrl,
+            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (summary != null)
+            Text(
+              summary,
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant
+                    .withValues(alpha: isConnected ? 1.0 : 0.5),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+        ],
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
