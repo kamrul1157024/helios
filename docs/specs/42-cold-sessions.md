@@ -93,9 +93,15 @@ were about to return to while the machine has twenty gigabytes free, and charges
 a context reload for nothing. Under pressure the question is not "is this old?"
 but "which can I most afford to lose?".
 
-It runs on the existing 20-minute pass. The machine may therefore sit over
-budget for up to twenty minutes, which is acceptable: this reclaims memory, it
-does not prevent an out-of-memory condition.
+It runs on a 2-minute pass of its own, not on the 20-minute stale-terminal
+reaper. Sharing that tick left the machine sitting over budget for up to
+nineteen minutes while the user watched it swap. The check itself is a map the
+host already keeps and one query, so it is cheap enough to run often; the
+reaper is slow because it probes sockets and re-reads transcripts.
+
+Evicting more often does not make it flappy: a session must have gone unread for
+`minIdleBeforeEvict` before it is a candidate at all, so one just woken is out of
+reach for five minutes regardless of how often the pass runs.
 
 ### The signal is when *you* last looked
 

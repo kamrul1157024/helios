@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -61,6 +62,25 @@ func (u *userTerminal) typeKeys(t *testing.T, s string) {
 	}
 }
 
+// runEcho types `echo <word>` and waits for the word to come back as output.
+//
+// The word is typed in two quoted halves so that it appears whole *only* in the
+// command's output. Typing it plainly, the terminal's own line-discipline echo
+// puts it on screen before anything has read it — and waiting on that is
+// waiting on nothing: the attach may not have switched the pty to raw yet, so
+// the line sits in the canonical buffer and is delivered much later, after the
+// test has moved on to set an overlay or press the detach key. That is the race
+// behind two long-standing flakes in this file.
+//
+// Waiting for the output instead means the bytes reached the host, the shell
+// ran them, and the reply came back — an ordering barrier rather than a guess.
+func (u *userTerminal) runEcho(t *testing.T, word string, d time.Duration) bool {
+	t.Helper()
+	half := len(word) / 2
+	u.typeKeys(t, fmt.Sprintf("echo '%s''%s'\r", word[:half], word[half:]))
+	return u.waitForText(word, d)
+}
+
 func (u *userTerminal) waitForText(want string, d time.Duration) bool {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
@@ -99,8 +119,7 @@ func TestE2EAttachRoundTripsAndDetaches(t *testing.T) {
 		done <- res
 	}()
 
-	ut.typeKeys(t, "echo attach-roundtrip\r")
-	if !ut.waitForText("attach-roundtrip", 10*time.Second) {
+	if !ut.runEcho(t, "attach-roundtrip", 10*time.Second) {
 		t.Fatal("keystrokes did not round-trip through attach")
 	}
 
@@ -203,8 +222,7 @@ func TestE2EOverlayOnAnAttachedTerminal(t *testing.T) {
 		Socket: sock, Name: "e2e-overlay", In: ut.slave, Out: ut.slave,
 	})
 
-	ut.typeKeys(t, "echo before-overlay\r")
-	if !ut.waitForText("before-overlay", 10*time.Second) {
+	if !ut.runEcho(t, "before-overlay", 10*time.Second) {
 		t.Fatal("the attach never reached the shell")
 	}
 
@@ -239,8 +257,7 @@ func TestE2EOverlayOnAnAttachedTerminal(t *testing.T) {
 		t.Fatalf("ClearOverlay: %v", err)
 	}
 	// Proof the keyboard went back to the shell, not just that the box left.
-	ut.typeKeys(t, "echo after-overlay\r")
-	if !ut.waitForText("after-overlay", 10*time.Second) {
+	if !ut.runEcho(t, "after-overlay", 10*time.Second) {
 		t.Error("input never returned to the child after the overlay cleared")
 	}
 }

@@ -247,9 +247,8 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
-	// Periodic stale terminal reaper. Twenty minutes, not ten seconds: it
-	// evicts nothing on a timer any more, and its remaining work — probing
-	// sockets and re-reading transcripts — costs more the more sessions exist.
+	// Periodic stale terminal reaper. Twenty minutes, not ten seconds: probing
+	// sockets and re-reading transcripts costs more the more sessions exist.
 	go func() {
 		ticker := time.NewTicker(20 * time.Minute)
 		defer ticker.Stop()
@@ -257,6 +256,22 @@ func startDaemon(cfg *Config) error {
 			select {
 			case <-ticker.C:
 				reapStaleSessions(db, term, shared.SSE)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// The memory budget is checked on its own, faster clock. It reads a map the
+	// host already keeps and one query, so it costs nothing next to the reaper
+	// above — and sharing the reaper's tick meant the machine could sit nineteen
+	// minutes over budget while the user watched it swap.
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
 				evictOverBudget(db, term, shared.SSE)
 			case <-ctx.Done():
 				return

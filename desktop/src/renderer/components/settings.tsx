@@ -322,7 +322,7 @@ function Info({ children }: { children: ReactNode }): JSX.Element {
 
   return (
     <span
-      className="info"
+      className="info-dot"
       ref={anchor}
       tabIndex={0}
       role="button"
@@ -336,7 +336,7 @@ function Info({ children }: { children: ReactNode }): JSX.Element {
       {at &&
         createPortal(
           <span
-            className="info-bubble"
+            className="info-tip"
             style={{ top: at.top, left: at.left, width: INFO_WIDTH }}
             onMouseEnter={open}
             onMouseLeave={close}
