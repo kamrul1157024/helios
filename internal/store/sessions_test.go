@@ -287,3 +287,28 @@ func TestTouchSessionIsSeparateFromAgentActivity(t *testing.T) {
 		t.Error("agent activity moved last_interacted_at")
 	}
 }
+
+// Claude Code moves a transcript when the session's cwd moves, so the path a
+// session was registered with is not the last word on where its transcript is.
+func TestUpdateSessionTranscriptPath_FollowsAMovedTranscript(t *testing.T) {
+	s := setupTestStore(t)
+	if err := s.UpsertSession(&Session{
+		SessionID:      "a",
+		Source:         "claude",
+		CWD:            "/tmp/repo",
+		Status:         "idle",
+		TranscriptPath: strPtr("/projects/-tmp-repo/a.jsonl"),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	moved := "/projects/-tmp-repo--worktrees-feature/a.jsonl"
+	if err := s.UpdateSessionTranscriptPath("a", moved); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	sess, _ := s.GetSession("a")
+	if sess.TranscriptPath == nil || *sess.TranscriptPath != moved {
+		t.Errorf("transcript path = %v, want %q", sess.TranscriptPath, moved)
+	}
+}
