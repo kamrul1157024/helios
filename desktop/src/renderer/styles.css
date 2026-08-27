@@ -3762,6 +3762,53 @@ hr {
   margin-top: 16px;
 }
 
+/* A label, its control, and the info icon — one line per setting, so the pane
+   can be read down the left edge. */
+.setting-row {
+  display: grid;
+  grid-template-columns: 116px 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.setting-row-label {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.setting-row-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The control takes the row; a swatch or a unit beside it does not. */
+.setting-row-control select,
+.setting-row-control .wide-range {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-row-unit {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+/* Reading a setting from a daemon is a round trip, and a section that is blank
+   until it lands is indistinguishable from one whose host is down. */
+.settings-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
 /* Which daemon this pane is talking to. */
 .settings-hostpick {
   display: flex;
@@ -3811,11 +3858,15 @@ hr {
   position: fixed;
   z-index: 1000;
   padding: 8px 10px;
-  border: 1px solid var(--outline);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--r-md);
-  background: var(--surface-container-high);
+  /* Opaque in two layers. A theme's surface may carry alpha — the window is
+     glass — and a tooltip reading through to the settings behind it is the one
+     place that cannot be lived with. */
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--surface-high), var(--surface-high));
   color: var(--on-surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  box-shadow: 0 8px 24px var(--shadow-strong);
   font-size: 12px;
   font-style: normal;
   font-weight: 400;
@@ -3955,41 +4006,8 @@ hr {
   margin-right: 8px;
 }
 
-.theme-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 6px;
-}
-
-.theme-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--r-sm);
-  background: var(--surface-container);
-  color: var(--on-surface);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.theme-chip:hover {
-  background: var(--surface-high);
-}
-
-.theme-chip.selected {
-  border-color: var(--primary);
-  background: var(--primary-container);
-  color: var(--on-primary-container);
-}
-
-/* A slice of the theme itself — a name alone does not distinguish two
-   variants of the same palette. */
+/* A slice of the theme itself, beside the closed dropdown — a name alone does
+   not distinguish two variants of the same palette. */
 .theme-swatch {
   display: flex;
   flex: 0 0 auto;
@@ -4004,10 +4022,6 @@ hr {
   flex: 1;
 }
 
-.theme-picker + .ghost {
-  margin-top: 14px;
-}
-
 .theme-swatch.inherit {
   background: repeating-linear-gradient(
     45deg,
@@ -4016,13 +4030,13 @@ hr {
   );
 }
 
-/* Wider than a theme swatch and in the window's own proportions: these are
-   scale models of the backdrop, and a gradient judged in a 40px strip is not
-   the one that ends up behind the app. */
+/* Wider than a theme swatch and in the window's own proportions: this is a
+   scale model of the backdrop, and a gradient judged in a 40px strip is not the
+   one that ends up behind the app. */
 .backdrop-swatch {
   flex: 0 0 auto;
-  width: 52px;
-  height: 30px;
+  width: 44px;
+  height: 22px;
   border-radius: 4px;
   border: 1px solid var(--outline-variant);
 }
@@ -4037,21 +4051,7 @@ hr {
   );
 }
 
-.backdrop-slider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--on-surface-variant);
-}
-
-.backdrop-slider > span {
-  flex: 0 0 46px;
-}
-
-.backdrop-slider input {
-  flex: 1;
+.wide-range {
   accent-color: var(--primary);
 }
 
@@ -4059,7 +4059,6 @@ hr {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
 }
 
 /* The platform draws the swatch inside a colour input and will not be told
