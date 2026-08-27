@@ -59,3 +59,70 @@ export function Cpu({ className = '' }: { className?: string }): JSX.Element {
     </svg>
   )
 }
+
+/**
+ * The sidebar's toolbar and list glyphs.
+ *
+ * These were typed characters — ⌕ ⇅ ▤ ▦ + — which is why they never lined up:
+ * each one is a different fraction of its em box in a different font, so four
+ * buttons of the same size held four glyphs of four sizes. A path fills the box
+ * it is given, and `ui-icon` gives them all the same one.
+ */
+
+/** The magnifier on the search field. */
+export function Search({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5" />
+    </svg>
+  )
+}
+
+/** Two arrows facing apart: the sort-order toggle. */
+export function Sort({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8 20V4M8 4L4.5 7.5M8 4l3.5 3.5" />
+      <path d="M16 4v16M16 20l3.5-3.5M16 20l-3.5-3.5" />
+    </svg>
+  )
+}
+
+/** Three even lines — one line a session. */
+export function SingleLine({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 6.5h16M4 12h16M4 17.5h16" />
+    </svg>
+  )
+}
+
+/** Two sessions, each a title with a shorter line under it. */
+export function MultiLine({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 5.5h16M4 9.5h9" />
+      <path d="M4 15h16M4 19h9" />
+    </svg>
+  )
+}
+
+/** New session. */
+export function Plus({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+/** A terminal, for the one action a row offers under the pointer. */
+export function Console({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+      <path d="M7.5 10l2.5 2.5-2.5 2.5M13 15h3.5" />
+    </svg>
+  )
+}

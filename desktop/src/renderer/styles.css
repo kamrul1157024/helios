@@ -323,11 +323,11 @@ small {
 }
 
 .show-terminated {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 2px 16px 8px;
-  font-size: 12px;
+  flex: none;
+  margin-left: auto;
+  padding: 0 2px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .error-text {
@@ -605,12 +605,12 @@ small {
   background: transparent;
 }
 
-/* Cards carry the surface they sit on down with them. Left opaque they read as
-   pasted onto the panel rather than part of it — the mismatch is far more
-   obvious than the transparency itself. */
-[data-glass='on'] .session-card {
+/* Only the selected row paints, so only the selected row has a surface to
+   carry down. Left opaque it would read as pasted onto the panel rather than
+   part of it — the mismatch is far more obvious than the transparency. */
+[data-glass='on'] .session-row.selected {
   background: var(--glass-container);
-  /* Half the panel's blur. A card is a sheet on a sheet, and blurring it as
+  /* Half the panel's blur. A row is a sheet on a sheet, and blurring it as
      hard again flattens the difference between the two. */
   backdrop-filter: var(--glass-frost-soft);
 }
@@ -626,8 +626,22 @@ small {
 .sidebar-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px;
+  gap: 6px;
+  padding: 12px 12px 10px;
+}
+
+/* One size for every drawn glyph in the sidebar, so four buttons of the same
+   size hold four icons of the same size — which is not what four typed
+   characters gave. */
+.ui-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .search-field {
@@ -635,23 +649,34 @@ small {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  height: 36px;
+  padding: 0 5px 0 11px;
   background: var(--surface-high);
   border-radius: 999px;
-  padding-left: 12px;
+  /* Drawn always and coloured only on focus, so taking the caret does not move
+     the text inside by a pixel. */
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 120ms ease;
+}
+
+.search-field:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent);
 }
 
 .search-icon {
+  width: 15px;
+  height: 15px;
   color: var(--on-surface-variant);
-  font-size: 15px;
 }
 
 .search {
   flex: 1;
   min-width: 0;
+  height: 100%;
   background: none;
   border: none;
-  padding: 9px 12px 9px 0;
+  padding: 0;
   font-size: 13px;
 }
 
@@ -659,39 +684,77 @@ small {
   border-color: transparent;
 }
 
-/* Small FAB. */
-.fab {
-  width: 40px;
-  height: 40px;
+.search-clear {
   flex: none;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  border-radius: var(--r-md);
-  background: var(--primary-container);
-  color: var(--on-primary-container);
-  font-size: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--on-surface-variant);
+  font-size: 16px;
   line-height: 1;
 }
 
-.fab:hover:not(:disabled) {
+.search-clear:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  color: var(--on-surface);
+}
+
+/* Toolbar buttons. Outlined rather than filled: three filled tiles beside a
+   search field read as three equal invitations, and only one of them is one.
+   The button that starts a session keeps the fill; the two that change how the
+   list is shown are quieter until they are the one holding it. */
+.tool {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  box-shadow: inset 0 0 0 1px var(--outline-variant);
+}
+
+.tool:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+}
+
+.tool.on,
+.tool.primary {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  box-shadow: none;
+}
+
+.tool.on:hover:not(:disabled),
+.tool.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--primary-container) 88%, white);
+  color: var(--on-primary-container);
 }
 
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 12px;
+  padding: 0 8px 8px;
+  /* A row measures itself against this panel, not the window: what it can
+     afford to show depends on how far the user has dragged the sidebar out. */
+  container-type: inline-size;
+  container-name: sidebar;
 }
 
-/* Under the host it belongs to: what that machine's warm terminals hold, and
-   what the machine itself has left. One line, because it is a reading and not
-   a message — the advice lives in its tooltip. */
+/* What a host's warm terminals hold, and what the machine behind them has
+   left. One line, because it is a reading and not a message — the advice lives
+   in its tooltip. */
 .host-meter {
   display: flex;
   align-items: center;
-  gap: 4px;
-  /* Left edge on the host head's, so the reading starts under the dot rather
-     than floating in from the session cards. */
-  padding: 0 4px 6px;
+  gap: 5px;
+  min-width: 0;
   color: var(--on-surface-variant);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -701,13 +764,6 @@ small {
 
 .host-meter.heavy {
   color: var(--s-waiting);
-}
-
-/* The machine's own figure is context for the pool's, not a thing to act on. */
-.host-machine {
-  opacity: 0.7;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Sized in em like the chevron, so the glyph follows the row's font size. */
@@ -722,9 +778,14 @@ small {
   stroke-linejoin: round;
 }
 
+/* The machine's own figure is context for the pool's, not a thing to act on. */
+.host-machine {
+  opacity: 0.7;
+}
+
 /* The second icon in the row starts a new reading; a little air marks that. */
-.host-meter .meter-icon + span {
-  margin-right: 2px;
+.host-meter .meter-icon:not(:first-child) {
+  margin-left: 4px;
 }
 
 /* The link and the menu stay together on the right, rather than each drifting
@@ -748,28 +809,41 @@ small {
 }
 
 .host-group {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
+/* The list's one header: the machine on the first line, what it costs on the
+   second. Ruled off rather than spaced off, and bled out past the list's own
+   padding, so the rule reads as the edge of a band the sessions below belong
+   to rather than a line drawn near them. */
 .host-head {
+  padding: 8px 14px 9px;
+  margin: 0 -8px 10px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.host-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  padding: 6px 4px;
-  border-radius: var(--r-sm);
-  color: var(--on-surface-variant);
-  font-size: 11px;
-  font-weight: 600;
+  padding: 1px 0;
+  border-radius: 0;
+  background: none;
+  color: var(--on-surface);
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
 }
 
-.host-head:hover {
-  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+.host-title:hover:not(:disabled),
+.host-title:active:not(:disabled) {
+  background: none;
+  color: var(--on-surface);
 }
 
-.host-head .dot {
+.host-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -777,16 +851,19 @@ small {
   flex: none;
 }
 
-.host-head .dot.online {
+/* A halo only while it is online: the state worth showing at a glance is the
+   good one, because the others already say so in the sessions underneath. */
+.host-dot.online {
   background: var(--s-active);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-active) 18%, transparent);
 }
 
-.host-head .dot.connecting {
+.host-dot.connecting {
   background: var(--s-waiting);
 }
 
-.host-head .dot.offline,
-.host-head .dot.unpaired {
+.host-dot.offline,
+.host-dot.unpaired {
   background: var(--error);
 }
 
@@ -798,7 +875,28 @@ small {
   white-space: nowrap;
 }
 
-.host-count,
+/* Counted in words, not digits: a bare 12 beside a machine name is a number
+   the reader has to guess the unit of. */
+.host-count {
+  flex: none;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+
+/* Wraps rather than clips. The reading and the toggle are both whole things —
+   an ellipsis through "37.6/48.0 GB" says less than nothing — so on a sidebar
+   too narrow for both, the toggle takes a line of its own. */
+.host-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+
 /* Drawn, so it fills its box: sized in em to follow the row it sits in rather
    than pinning a size of its own. See components/icons.tsx. */
 .chevron-icon {
@@ -816,116 +914,372 @@ small {
   opacity: 0.7;
 }
 
-/* Quieter than the new-session button beside it, and filled only while it is
-   the one holding the list still. */
-.sort-toggle,
-.density-toggle {
-  background: transparent;
+/* ── Projects ───────────────────────────────────────────────────────────────
+   The daemon lists sessions; people keep them by repository. The header is the
+   thing the sessions under it have in common — which checkout, how many, and
+   what they are holding between them — so the rows themselves no longer have
+   to each repeat a directory. */
+
+.project {
+  margin-bottom: 18px;
+}
+
+/* Indented under the header, so the eye can run down one project's rows
+   without the next project's header pulling it back to the margin. */
+.project-rows {
+  padding-left: 8px;
+}
+
+.project-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+  border-radius: var(--r-sm);
+  padding-right: 4px;
+}
+
+.project-head:hover {
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+}
+
+.project-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 5px;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--on-surface);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.project-title:hover:not(:disabled),
+.project-title:active:not(:disabled) {
+  background: none;
+}
+
+/* The initial on a tinted tile. Colour is the fastest way back to a project
+   once there are six of them, and it costs no width. */
+.project-badge {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--tint) 20%, transparent);
+  color: var(--tint);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-count,
+.project-sep,
+.project-ram {
+  flex: none;
   color: var(--on-surface-variant);
-  font-size: 16px;
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.sort-toggle:hover:not(:disabled),
-.density-toggle:hover:not(:disabled) {
-  background: var(--surface-container);
+.project-sep {
+  opacity: 0.5;
 }
 
-.sort-toggle.on,
-.density-toggle.on {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+/* Out of the way until the pointer is on the row — and back for good once it
+   is the thing holding a project shut. */
+.project-chevron {
+  margin-left: auto;
+  padding-left: 6px;
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 
-/* Only in manual mode: a card that offers to be dragged in a list that
+.project-head:hover .project-chevron,
+.project-head.folded .project-chevron {
+  opacity: 0.55;
+}
+
+.project-add {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--on-surface-variant);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.project-head:hover .project-add,
+.project-add:focus-visible {
+  opacity: 1;
+}
+
+.project-add:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  color: var(--on-surface);
+}
+
+.project-add .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* ── Session rows ───────────────────────────────────────────────────────────
+   One session, one line, read left to right as a sentence: how it is doing,
+   what it is called, which worktree it is in, and what it costs. Everything
+   after the title is a trail of fixed pieces the title yields to, so a long
+   title takes the room the trail does not need and the trail still lines up
+   down the whole list.
+
+   No card: at this size a rounded, filled tile per session turns a list into a
+   grid of twelve objects to count. Rows butted together are one list, and the
+   only things that paint are the pointer and the selection. */
+
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 8px 7px 9px;
+  margin-bottom: 2px;
+  border-radius: var(--r-sm);
+  color: var(--on-surface);
+  cursor: default;
+  transition: background-color 120ms ease;
+}
+
+/* Identity: status, title, the one action, how long ago. */
+.row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Configuration, in small print, indented to start under the title rather
+   than under the status dot — it describes the session the title names, and a
+   second line that begins in the margin reads as a second row. */
+.row-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 16px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+}
+
+/* Only in manual mode: a row that offers to be dragged in a list that
    rearranges itself would be lying about what the drag achieves. */
-.session-card.movable {
+.session-row.movable {
   cursor: grab;
 }
 
-.session-card.dragging {
+.session-row.dragging {
   opacity: 0.4;
   cursor: grabbing;
 }
 
-/* Session card — the mobile list item, one column narrower. */
-.session-card {
-  position: relative;
-  margin-bottom: 8px;
-  border-radius: var(--r-md);
-  background: var(--surface-container);
-  border: 1px solid transparent;
-  overflow: hidden;
-  cursor: default;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease;
+.session-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 7%, transparent);
 }
 
-.session-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--s-off);
-  opacity: 0.5;
-}
-
-.session-card.active::before {
-  background: var(--s-active);
-}
-
-.session-card.starting::before {
-  background: var(--s-starting);
-}
-
-.session-card.compacting::before {
-  background: var(--s-compacting);
-}
-
-.session-card.waiting_permission::before,
-.session-card.waiting_input::before {
-  background: var(--s-waiting);
-}
-
-.session-card.idle::before {
-  background: var(--s-idle);
-}
-
-.session-card.error::before {
-  background: var(--error);
-}
-
-.session-card:hover {
+.session-row.selected {
   background: var(--surface-high);
 }
 
-.session-card.selected {
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, var(--surface-container));
+.row-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--s-off);
 }
 
-.card-inner {
-  padding: 10px 12px 8px 14px;
+.row-dot.active {
+  background: var(--s-active);
 }
 
-.card-top {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.row-dot.starting {
+  background: var(--s-starting);
 }
 
-.card-top .time {
-  font-size: 11px;
+.row-dot.compacting {
+  background: var(--s-compacting);
+}
+
+.row-dot.waiting_permission,
+.row-dot.waiting_input {
+  background: var(--s-waiting);
+}
+
+.row-dot.idle {
+  background: var(--s-idle);
+}
+
+.row-dot.error {
+  background: var(--s-error);
+}
+
+/* Hollow, for the two states that are over: a filled dot says something is
+   there, and for these there is not. */
+.row-dot.ended,
+.row-dot.terminated {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--s-off);
+}
+
+.row-title {
+  flex: 1;
+  min-width: 0;
+  /* The glyph font is first, but only claims the Private Use Area — the words
+     fall through to the stack behind it. */
+  font-family: 'Helios Glyphs', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A session that has ended is still worth listing and no longer worth reading
+   first. */
+.session-row.terminated .row-title,
+.session-row.ended .row-title {
   color: var(--on-surface-variant);
 }
 
+.row-provider,
+.row-mode,
+.row-model,
+.row-ram {
+  flex: none;
+  white-space: nowrap;
+}
+
+.row-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+
+/* The agent that is running, which is the thing the line is for. Carried at
+   full strength while the rest of the line is dimmed, because it is the one
+   part of it that is read rather than checked. */
+.row-provider {
+  color: var(--on-surface);
+  font-weight: 500;
+}
+
+/* Set apart by a rule rather than a bullet: at this size a middot between
+   every pair is more ink than the words. */
+.row-model,
+.row-mode {
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.8;
+}
+
+/* Permissions are a state to notice, not a label to read past. */
+.row-mode {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--on-surface) 9%, transparent);
+  opacity: 1;
+}
+
+.row-ram {
+  font-variant-numeric: tabular-nums;
+}
+
+.row-time {
+  min-width: 2.3em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .pin {
+  flex: none;
   color: var(--primary);
+  font-size: 11px;
+}
+
+.badge {
+  flex: none;
+}
+
+/* No live host behind the status: the row says idle, this says it will take a
+   moment to prove it. */
+.cold-mark {
+  flex: none;
+  color: var(--s-waiting);
   font-size: 12px;
 }
 
-/* What the session's terminal is holding. Only warm sessions have one, so the
-   slot is simply absent the rest of the time. */
+/* Held in the layout whether or not it is showing, and faded rather than
+   switched. A button that appears into the row pushes the title it is next to,
+   so the words move under the pointer that came to read them — which is what
+   made hovering feel jarring. Nothing in a row moves now; only the ink
+   changes. It also sets the row's height, and so the list's rhythm. */
+.row-act {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--on-surface-variant);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.session-row:hover .row-act,
+.session-row.selected .row-act,
+.row-act:focus-visible {
+  opacity: 1;
+}
+
+.row-act:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  color: var(--on-surface);
+}
+
+.row-act .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* The word, not the glyph: resuming is the only move a terminated session has
+   left, so it says so without being hovered — and being always-on, it never
+   moves anything either. */
+.row-btn {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+}
+
+/* What a session's terminal is holding. Also the detail header's, which is why
+   it outlives the card it was named for. */
 .card-ram {
   font-size: 11px;
   color: var(--on-surface-variant);
@@ -933,160 +1287,63 @@ small {
   white-space: nowrap;
 }
 
-/* No live host behind the status: the card says idle, this says it will take a
-   moment to prove it. */
-.cold-mark {
-  color: var(--s-waiting);
-  font-size: 12px;
+/* ── Narrow ─────────────────────────────────────────────────────────────────
+   Dragged in, a row gives things up in the order they matter least: the
+   worktree, then the model, then the memory. The title and the time never go.
+   Measured against the list rather than the window, because the list is what
+   was resized. */
+@container sidebar (max-width: 430px) {
+  /* Context for the pool's figure, not a thing to act on, and the first thing
+     to go when the header has to choose between it and the toggle beside it. */
+  .host-machine {
+    display: none;
+  }
 }
 
-.card-title {
-  margin-top: 8px;
-  /* The glyph font is first, but only claims the Private Use Area — the words
-     fall through to the stack behind it. */
-  font-family: 'Helios Glyphs', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+@container sidebar (max-width: 300px) {
+  .row-ram {
+    display: none;
+  }
 }
 
-.card-cwd {
-  margin-top: 5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--on-surface-variant);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* ── Compact ────────────────────────────────────────────────────────────────
+   One line a session: which session, how it is doing, how long ago. What goes
+   is the second line, not the room around the first — that is already a whole
+   line saved, and rows pressed together are harder to pick one out of. */
+
+[data-density='compact'] .session-row {
+  padding: 6px 8px 6px 9px;
+  margin-bottom: 2px;
+  border-radius: 6px;
 }
 
-.card-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+[data-density='compact'] .row-main {
   gap: 8px;
-  margin-top: 4px;
-  min-height: 28px;
 }
 
-.card-meta {
-  font-size: 11px;
-  color: var(--on-surface-variant);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-btn {
-  padding: 3px 10px;
-  font-size: 12px;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.session-card:hover .row-btn,
-.session-card.selected .row-btn,
-/* The only move a terminated session has left, so it does not wait for a
-   hover to admit it exists. */
-.row-btn.resume {
-  opacity: 1;
-}
-
-/* ── Compact sidebar ────────────────────────────────────────────────────────
-   One line a session: the status dot, the title, and how long ago. Text stays
-   the size it is elsewhere — the space saved is the working directory, the
-   model line and the padding around them, not the reading. */
-
-/* Square, and touching. At this height a rounded card reads as a tile, and a
-   column of tiles reads as a grid rather than a list; square rows butted
-   together read as one list, which is what compact is for. Nothing separates
-   them but the hover and the selection, so the eye follows the pointer instead
-   of counting edges. */
-[data-density='compact'] .session-card {
-  margin-bottom: 0;
-  border-radius: 0;
-}
-
-/* The selected row is the one place a border would show, and on a row with no
-   gap around it the border shifts the text by a pixel. The background says it
-   without moving anything. */
-[data-density='compact'] .session-card.selected {
-  border-color: transparent;
-}
-
-[data-density='compact'] .card-inner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px 8px 14px;
-}
-
-/* The status row's children become the row's children, so the title can sit
-   among them rather than under them. */
-[data-density='compact'] .card-top {
-  display: contents;
-}
-
-/* The chip keeps its dot and loses its word: the colour already says it, and
-   the stripe down the card says it again. */
-[data-density='compact'] .chip {
-  order: 1;
-  height: auto;
-  padding: 0;
-  background: none;
-  font-size: 0;
-  gap: 0;
-}
-
-[data-density='compact'] .card-title {
-  order: 2;
-  flex: 1;
-  min-width: 0;
-  margin-top: 0;
-  font-size: 14px;
-  line-height: 1.4;
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-[data-density='compact'] .cold-mark {
-  order: 3;
-}
-
-[data-density='compact'] .pin {
-  order: 4;
-}
-
-/* Kept in the row: a session waiting on an answer should not need a hover to
-   say so. */
-[data-density='compact'] .badge {
-  order: 5;
-}
-
-/* The compact card is one line of status and time; the memory reading belongs
-   to the roomier layout, and to the detail header. */
-[data-density='compact'] .card-ram {
+/* The second line is what comfortable buys. Compact is the same row without
+   it, which is a difference worth a button. */
+[data-density='compact'] .row-sub {
   display: none;
 }
 
-[data-density='compact'] .card-top .grow {
-  display: none;
+[data-density='compact'] .row-act {
+  width: 18px;
+  height: 18px;
 }
 
-[data-density='compact'] .card-top .time {
-  order: 6;
-  font-size: 11px;
+[data-density='compact'] .project {
+  margin-bottom: 13px;
 }
 
-[data-density='compact'] .card-cwd,
-[data-density='compact'] .card-bottom {
-  display: none;
+[data-density='compact'] .project-title {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+[data-density='compact'] .host-head {
+  padding-top: 6px;
+  padding-bottom: 7px;
 }
 
 .check {
@@ -3627,16 +3884,21 @@ hr {
 }
 
 /* A placeholder shaped like the rows it stands in for, so the list does not
-   jump when they arrive. Its height comes from the card's own elements —
-   card-top, card-title, card-cwd, card-bottom — and follows them if they
-   change; only the bars inside are drawn here. */
-.session-card.skeleton {
+   jump when they arrive. Its height comes from the row's own elements — the
+   dot and the title — and follows them if they change; only the bars inside
+   are drawn here. */
+.session-row.skeleton {
   cursor: default;
   pointer-events: none;
 }
 
-.session-card.skeleton::before {
-  opacity: 0.15;
+.session-row.skeleton .row-dot {
+  opacity: 0.25;
+}
+
+.row-sub .skeleton-line {
+  width: 34%;
+  height: 0.9em;
 }
 
 .skeleton-line {
@@ -3653,34 +3915,14 @@ hr {
   animation: shimmer 1.4s ease infinite;
 }
 
-.card-title .skeleton-line {
-  width: 72%;
-  height: 1.35em;
-}
-
-.skeleton-line.chip {
-  width: 66px;
-  height: 22px;
+.row-title .skeleton-line {
+  width: 68%;
+  height: 1.05em;
 }
 
 .skeleton-line.time {
-  width: 36px;
+  width: 32px;
   height: 11px;
-}
-
-.skeleton-line.cwd {
-  width: 48%;
-  height: 17px;
-}
-
-.skeleton-line.meta {
-  width: 92px;
-  height: 12px;
-}
-
-.skeleton-line.btn {
-  width: 64px;
-  height: 24px;
 }
 
 @keyframes shimmer {

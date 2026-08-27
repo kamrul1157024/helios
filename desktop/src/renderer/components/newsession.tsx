@@ -1,12 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
 import type { DirectoryInfo, ModelInfo, ProviderInfo } from '../../shared/models.ts'
 
-export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Element {
+export function NewSessionDialog({
+  seed,
+  onClose,
+}: {
+  /** Host and directory the dialog was opened for, from a project's own
+   *  new-session button. Null when it was opened from the toolbar. */
+  seed?: { hostId: string; cwd: string } | null
+  onClose: () => void
+}): JSX.Element {
   const hosts = useStore((s) => s.hosts)
-  const [hostId, setHostId] = useState(hosts[0]?.id ?? '')
+  const [hostId, setHostId] = useState(seed?.hostId ?? hosts[0]?.id ?? '')
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
   const [directories, setDirectories] = useState<DirectoryInfo[]>([])
@@ -16,6 +24,10 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Elem
   const [mode, setMode] = useState('')
   const [prompt, setPrompt] = useState('')
   const [starting, setStarting] = useState(false)
+  // Spent on the first load and not again: switching hosts after that has to
+  // reset the directory, because a path from one machine is not a path on the
+  // next, and the seed was a path on the machine it came from.
+  const seeded = useRef(seed?.cwd ?? '')
 
   useEffect(() => {
     if (!hostId) return
@@ -31,7 +43,8 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }): JSX.Elem
         // Reset rather than preserve: a directory is meaningful only on the
         // host it came from, and carrying one across a host switch starts the
         // session in a path that does not exist there.
-        setCwd(dirs[0]?.cwd ?? '')
+        setCwd(seeded.current || dirs[0]?.cwd || '')
+        seeded.current = ''
       })
       .catch((err: unknown) => store.fail(err))
     return () => {

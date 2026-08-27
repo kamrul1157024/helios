@@ -14,6 +14,10 @@ export function App(): JSX.Element {
   const toast = useStore((s) => s.toast)
   const pairingLink = useStore((s) => s.pairingLink)
   const [dialog, setDialog] = useState<'new' | 'hosts' | 'settings' | null>(null)
+  // Where the new-session dialog should start when it was opened from a
+  // project rather than from the toolbar: the point of the project's own
+  // button is that it does not ask again which project it meant.
+  const [seed, setSeed] = useState<{ hostId: string; cwd: string } | null>(null)
 
   useEffect(() => {
     void store.init()
@@ -31,6 +35,7 @@ export function App(): JSX.Element {
     const onKey = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'n') {
         event.preventDefault()
+        setSeed(null)
         setDialog('new')
       }
       // ⌘W closes the selected session's terminal, not the window: the
@@ -69,7 +74,10 @@ export function App(): JSX.Element {
       <UpdateBanner />
       <div className="body">
         <Sidebar
-          onNewSession={() => setDialog('new')}
+          onNewSession={(from) => {
+            setSeed(from ?? null)
+            setDialog('new')
+          }}
           onAddHost={() => setDialog('hosts')}
           onSettings={() => setDialog('settings')}
         />
@@ -78,7 +86,7 @@ export function App(): JSX.Element {
         </main>
       </div>
 
-      {dialog === 'new' && <NewSessionDialog onClose={() => setDialog(null)} />}
+      {dialog === 'new' && <NewSessionDialog seed={seed} onClose={() => setDialog(null)} />}
       {dialog === 'hosts' && <HostsDialog onClose={() => setDialog(null)} />}
       {dialog === 'settings' && <SettingsDialog onClose={() => setDialog(null)} />}
 
