@@ -177,11 +177,17 @@ func (s *Store) UpdateSessionPermissionMode(sessionID, mode string) error {
 	return err
 }
 
-// UpdateSessionTranscriptPath sets the transcript path if not already set.
+// UpdateSessionTranscriptPath records where a session's transcript lives now.
+//
+// Deliberately not write-once. Claude Code names a transcript's directory after
+// the session's cwd, so moving into a git worktree moves the file, and the path
+// recorded at SessionStart is left pointing at nothing. Every hook carries the
+// current path, so the last one to speak wins.
 func (s *Store) UpdateSessionTranscriptPath(sessionID, path string) error {
 	_, err := s.db.Exec(
-		`UPDATE sessions SET transcript_path = ? WHERE session_id = ? AND transcript_path IS NULL`,
-		path, sessionID,
+		`UPDATE sessions SET transcript_path = ?
+		 WHERE session_id = ? AND (transcript_path IS NULL OR transcript_path != ?)`,
+		path, sessionID, path,
 	)
 	return err
 }

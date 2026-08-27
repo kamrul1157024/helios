@@ -151,6 +151,62 @@ func TestTranscriptEndpointResetsOnStaleEpoch(t *testing.T) {
 	}
 }
 
+// Entering a git worktree moves a session's cwd, and Claude Code moves the
+// transcript with it. The path recorded at SessionStart then points at nothing,
+// and the session's messages have to be found where they actually are.
+func TestTranscriptEndpointFollowsAMovedTranscript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	e := newTranscriptEnv(t)
+	e.append("one", "two")
+
+	moved := filepath.Join(home, ".claude", "projects", "-tmp--claude-worktrees-feature")
+	if err := os.MkdirAll(moved, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body, err := os.ReadFile(e.path)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	movedPath := filepath.Join(moved, "s1.jsonl")
+	if err := os.WriteFile(movedPath, body, 0o600); err != nil {
+		t.Fatalf("write moved transcript: %v", err)
+	}
+	if err := os.Remove(e.path); err != nil {
+		t.Fatalf("remove old transcript: %v", err)
+	}
+
+	if got := texts(e.get("?limit=50").Messages); fmt.Sprint(got) != "[one two]" {
+		t.Fatalf("messages = %v, want [one two]", got)
+	}
+
+	// And the new path is recorded, so the next read does not go looking again.
+	sess, err := e.srv.shared.DB.GetSession("s1")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if sess.TranscriptPath == nil || *sess.TranscriptPath != movedPath {
+		t.Errorf("recorded path = %v, want %q", sess.TranscriptPath, movedPath)
+	}
+}
+
+// A transcript that is simply gone is an empty one, not a failed request: the
+// client polls this endpoint, and there is nothing for it to retry.
+func TestTranscriptEndpointEmptyWhenTheFileIsGone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	e := newTranscriptEnv(t)
+	e.append("one")
+	if err := os.Remove(e.path); err != nil {
+		t.Fatalf("remove transcript: %v", err)
+	}
+
+	if got := e.get("?limit=50"); got.Total != 0 {
+		t.Errorf("total = %d, want 0", got.Total)
+	}
+}
+
 func TestTranscriptEndpointEmptyForSessionWithoutTranscript(t *testing.T) {
 	e := newTranscriptEnv(t)
 	if err := e.srv.shared.DB.UpsertSession(&store.Session{

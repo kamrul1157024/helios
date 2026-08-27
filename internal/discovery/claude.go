@@ -94,6 +94,46 @@ func DiscoverClaudeSessions(db *store.Store) {
 	}
 }
 
+// FindClaudeTranscript looks a session's transcript up by ID, wherever Claude
+// Code keeps it now. The project directory is named after the session's cwd, so
+// a session that enters a git worktree leaves its old directory behind; callers
+// use this when the path they recorded no longer resolves.
+//
+// Returns "" when nothing matches. When several directories hold a file for the
+// same session the newest wins, that being the one still being written to.
+func FindClaudeTranscript(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	projectDirs, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return ""
+	}
+
+	best := ""
+	var newest int64
+	for _, pd := range projectDirs {
+		if !pd.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(projectsDir, pd.Name(), sessionID+".jsonl")
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if best == "" || info.ModTime().UnixNano() > newest {
+			best, newest = candidate, info.ModTime().UnixNano()
+		}
+	}
+	return best
+}
+
 // parseSessionFromJSONL reads the first few lines of a .jsonl file to extract
 // session metadata: sessionId, cwd, timestamp, model.
 func parseSessionFromJSONL(path, sessionID string) *store.Session {

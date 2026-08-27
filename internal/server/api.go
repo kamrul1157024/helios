@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	claudeprovider "github.com/kamrul1157024/helios/internal/provider/claude"
@@ -373,6 +374,38 @@ func (s *PublicServer) handleGetSession(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// resolveTranscriptPath returns a transcript path that exists, or "" when the
+// session has none to read.
+//
+// The recorded path can go stale: Claude Code keeps a transcript in a directory
+// named after the session's cwd, so entering a git worktree moves the file out
+// from under whatever was recorded when the session started. Sessions running
+// under current hooks re-record the path themselves; this catches the ones that
+// moved before, and writes the new path back so the walk happens once.
+func (s *PublicServer) resolveTranscriptPath(session *store.Session) string {
+	recorded := ""
+	if session.TranscriptPath != nil {
+		recorded = *session.TranscriptPath
+	}
+	if recorded != "" {
+		if _, err := os.Stat(recorded); err == nil {
+			return recorded
+		}
+	}
+	if session.Source != "claude" {
+		return ""
+	}
+
+	found := discovery.FindClaudeTranscript(session.SessionID)
+	if found == "" {
+		return ""
+	}
+	if err := s.shared.DB.UpdateSessionTranscriptPath(session.SessionID, found); err != nil {
+		log.Printf("api: record relocated transcript for %s: %v", session.SessionID, err)
+	}
+	return found
+}
+
 func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Request) {
 	// Path: /api/sessions/<id>/transcript
 	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
@@ -388,7 +421,8 @@ func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if session.TranscriptPath == nil || *session.TranscriptPath == "" {
+	transcriptPath := s.resolveTranscriptPath(session)
+	if transcriptPath == "" {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"messages": []interface{}{},
 			"total":    0,
@@ -416,9 +450,9 @@ func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Re
 	if a := r.URL.Query().Get("after_seq"); a != "" {
 		afterSeq := -1
 		fmt.Sscanf(a, "%d", &afterSeq)
-		result, err = transcript.Delta(*session.TranscriptPath, r.URL.Query().Get("epoch"), afterSeq, limit)
+		result, err = transcript.Delta(transcriptPath, r.URL.Query().Get("epoch"), afterSeq, limit)
 	} else {
-		result, err = transcript.Page(*session.TranscriptPath, limit, offset)
+		result, err = transcript.Page(transcriptPath, limit, offset)
 	}
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to read transcript: %v", err), http.StatusInternalServerError)
@@ -989,10 +1023,7 @@ func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http
 		return
 	}
 
-	transcriptPath := ""
-	if session.TranscriptPath != nil {
-		transcriptPath = *session.TranscriptPath
-	}
+	transcriptPath := s.resolveTranscriptPath(session)
 
 	notify := func(eventType string, data interface{}) {
 		s.shared.SSE.Broadcast(SSEEvent{Type: eventType, Data: data})
