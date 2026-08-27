@@ -822,6 +822,19 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	if ctx.Terminal != nil {
 		ctx.Terminal.Forget(input.SessionID)
 	}
+
+	// Unless helios stopped the agent itself to reclaim memory. The exit is
+	// then ours, not the user's, and the session is cold rather than over:
+	// leaving the status alone is what lets the next prompt wake it as itself.
+	// Terminated stamps ended_at and reads as archived. See
+	// docs/specs/42-cold-sessions.md.
+	if evicter, ok := ctx.Terminal.(backend.Evicter); ok && evicter.EvictedRecently(input.SessionID) {
+		ctx.Notify("session_updated", map[string]interface{}{"session_id": input.SessionID})
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{}`)
+		return
+	}
+
 	ctx.DB.UpdateSessionStatus(input.SessionID, "terminated", "SessionEnd")
 	ctx.Notify("session_status", map[string]interface{}{
 		"session_id": input.SessionID,

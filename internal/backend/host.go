@@ -28,6 +28,11 @@ type Host struct {
 	// touched holds the last time each session's activity reached the
 	// registry, as unix nanos. See markActive.
 	touched sync.Map
+
+	// evicted holds the time each session's terminal was taken by Evict, so
+	// the agent's exit hook can tell a session that went cold from one that
+	// ended. See Evict.
+	evicted sync.Map
 }
 
 // touchInterval bounds how often screen activity reaches the registry.
@@ -331,6 +336,40 @@ func (h *Host) Interrupt(sessionID string) error { return h.SendKey(sessionID, K
 func (h *Host) Kill(sessionID string) error {
 	h.dropMirror(sessionID)
 	return h.reg.Evict(sessionID)
+}
+
+// evictMarkTTL bounds how long an eviction mark is believed.
+//
+// The agent's exit hook is an HTTP call from a dying process, so it lands in a
+// moment or not at all. The window only has to outlast that; holding the mark
+// longer risks swallowing a genuine SessionEnd from a session the user really
+// did quit soon afterwards.
+const evictMarkTTL = 2 * time.Minute
+
+// Evict takes a session's terminal, having first recorded that helios did it.
+//
+// Marked before the kill, not after: the agent's exit hook can reach the daemon
+// while Kill is still returning.
+func (h *Host) Evict(sessionID string) error {
+	h.evicted.Store(sessionID, time.Now())
+	if err := h.Kill(sessionID); err != nil {
+		h.evicted.Delete(sessionID)
+		return err
+	}
+	return nil
+}
+
+// EvictedRecently consumes the mark Evict left.
+//
+// Consumed rather than merely read: it answers one question, asked by the exit
+// hook of the agent just stopped. Left set, a later and genuine end of the same
+// session would be mistaken for this one.
+func (h *Host) EvictedRecently(sessionID string) bool {
+	at, ok := h.evicted.LoadAndDelete(sessionID)
+	if !ok {
+		return false
+	}
+	return time.Since(at.(time.Time)) < evictMarkTTL
 }
 
 // Capture returns the visible screen as text, with trailing blank lines

@@ -178,15 +178,23 @@ func evictOverBudget(db *store.Store, be backend.Backend, sse *server.SSEBroadca
 		return
 	}
 
+	// Evict rather than Kill: it records that helios took the terminal, which
+	// is what stops the agent's own exit hook from filing the session as
+	// terminated on the way down.
+	evicter, ok := be.(backend.Evicter)
+	if !ok {
+		return
+	}
+
 	taken := chooseEvictions(evictionCandidates(sessions, usage, time.Now()), warmTotal, budget)
 	for _, c := range taken {
-		if err := be.Kill(c.SessionID); err != nil {
+		if err := evicter.Evict(c.SessionID); err != nil {
 			log.Printf("evict: %s: %v", c.SessionID, err)
 			continue
 		}
-		// Status is deliberately untouched. The tmux-era reaper marked an
-		// evicted session terminated, which was a dead end; only the SessionEnd
-		// hook ends a session.
+		// Status is deliberately untouched here, and the SessionEnd hook is
+		// taught to leave it alone too. Terminated is the archival state a
+		// person chooses; a session that went cold has not ended.
 		log.Printf("evict: %s went cold, freed %s, unread %s",
 			c.SessionID, humanBytes(c.RSS), c.Unread.Round(time.Minute))
 		sse.Broadcast(server.SSEEvent{
