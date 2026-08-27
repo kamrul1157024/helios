@@ -453,7 +453,12 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
     setLoaded({ state: 'loading' })
     api(hostId)
       .settings()
-      .then((values) => {
+      .then((body) => {
+        // The daemon answers with the settings under a key, alongside personas
+        // and event types. Reading the envelope as though it were the map gives
+        // undefined for every setting, which is indistinguishable from a fresh
+        // install — the toggle saved and then read back off.
+        const values = (body as { settings?: Record<string, string> }).settings ?? {}
         const raw = Number(values['memory.budget_fraction'])
         setLoaded({
           state: 'ready',
