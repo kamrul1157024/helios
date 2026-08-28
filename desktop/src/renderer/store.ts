@@ -9,6 +9,7 @@ import type {
   HostStatus,
   Notification,
   Session,
+  SessionGroup,
   SSEEvent,
   TabStatus,
   HostStats,
@@ -163,6 +164,44 @@ export interface State {
    * which way it is set.
    */
   density: Density
+  /**
+   * Every group the daemon knows, by host id, in display order.
+   *
+   * Held apart from the sessions because a group outlives the sessions in it:
+   * an empty one still has a place in the arrangement, and the picker has to
+   * offer it.
+   */
+  groups: Record<string, SessionGroup[]>
+  /**
+   * Whether the sidebar nests sessions under their groups.
+   *
+   * Client-side and off by default: the arrangement belongs to the daemon, but
+   * how you look at it is this window's business — a phone and a wide monitor
+   * want different answers.
+   */
+  grouping: boolean
+  /** Adds a derived level under the innermost group, one node per directory.
+   *  Costs no storage: the cwd is already on the session. */
+  splitDirectories: boolean
+}
+
+const GROUPING_KEY = 'helios.grouping'
+const SPLIT_DIRS_KEY = 'helios.splitDirectories'
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeFlag(key: string, on: boolean): void {
+  try {
+    localStorage.setItem(key, on ? '1' : '0')
+  } catch {
+    // A full or unavailable store costs the preference, not the setting.
+  }
 }
 
 const initial: State = {
@@ -187,6 +226,9 @@ const initial: State = {
   density: bridge.theme.boot().density,
   toast: null,
   pairingLink: null,
+  groups: {},
+  grouping: readFlag(GROUPING_KEY),
+  splitDirectories: readFlag(SPLIT_DIRS_KEY),
 }
 
 type Listener = () => void
@@ -324,7 +366,12 @@ class Store {
   // ─── Data ──────────────────────────────────────────────────────────────
 
   async refreshHost(hostId: string): Promise<void> {
-    await Promise.all([this.refreshSessions(hostId), this.refreshNotifications(hostId), this.refreshSortMode(hostId)])
+    await Promise.all([
+      this.refreshSessions(hostId),
+      this.refreshNotifications(hostId),
+      this.refreshSortMode(hostId),
+      this.refreshGroups(hostId),
+    ])
   }
 
   /** The daemon owns the sort mode, so a second window opens on the same one. */
@@ -404,9 +451,104 @@ class Store {
     }
   }
 
+  /**
+   * Turns nesting on or off for this window.
+   *
+   * Asking the daemon to resolve groups costs a lookup it should not do for a
+   * client that will not render them, so the flag rides on the fetch and the
+   * list is refetched when it changes.
+   */
+  async setGrouping(on: boolean): Promise<void> {
+    this.set({ grouping: on })
+    writeFlag(GROUPING_KEY, on)
+    await Promise.all(this.state.hosts.map((host) => this.refreshHost(host.id)))
+  }
+
+  /** Purely a view change — the cwd is already on every session, so nothing is
+   *  refetched. */
+  setSplitDirectories(on: boolean): void {
+    this.set({ splitDirectories: on })
+    writeFlag(SPLIT_DIRS_KEY, on)
+  }
+
+  async refreshGroups(hostId: string): Promise<void> {
+    try {
+      const groups = await api(hostId).listGroups()
+      this.set((s) => ({ groups: { ...s.groups, [hostId]: groups } }))
+    } catch (err) {
+      this.failHost(hostId, err)
+    }
+  }
+
+  async createGroup(hostId: string, name: string): Promise<SessionGroup | null> {
+    try {
+      const group = await api(hostId).createGroup(name)
+      await this.refreshGroups(hostId)
+      return group
+    } catch (err) {
+      this.fail(err)
+      return null
+    }
+  }
+
+  async renameGroup(hostId: string, key: string, name: string): Promise<void> {
+    try {
+      await api(hostId).renameGroup(key, name)
+      await this.refreshGroups(hostId)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  async deleteGroup(hostId: string, key: string): Promise<void> {
+    try {
+      await api(hostId).deleteGroup(key)
+      await Promise.all([this.refreshGroups(hostId), this.refreshSessions(hostId)])
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Moves a group, and every session under it with it.
+   *
+   * Applied here first for the same reason a dragged session is: a header that
+   * snaps back while the daemon answers reads as a drag that failed.
+   */
+  async reorderGroups(hostId: string, orderedKeys: string[]): Promise<void> {
+    const before = this.state.groups[hostId] ?? []
+    const byKey = new Map(before.map((group) => [group.key, group]))
+    const next: SessionGroup[] = []
+    orderedKeys.forEach((key, index) => {
+      const group = byKey.get(key)
+      if (group) next.push({ ...group, position: index })
+    })
+    this.set((s) => ({ groups: { ...s.groups, [hostId]: next } }))
+
+    try {
+      await api(hostId).setGroupOrder(orderedKeys)
+      await this.refreshSessions(hostId)
+    } catch (err) {
+      this.set((s) => ({ groups: { ...s.groups, [hostId]: before } }))
+      this.fail(err)
+    }
+  }
+
+  /** Replaces a session's groups, outermost first. An empty list clears them. */
+  async setSessionGroups(hostId: string, sessionId: string, keys: string[]): Promise<void> {
+    try {
+      await api(hostId).setSessionGroups(sessionId, keys)
+      await this.refreshSessions(hostId)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
   async refreshSessions(hostId: string): Promise<void> {
     try {
-      const { sessions, host } = await api(hostId).listSessions()
+      const { sessions, host } = await api(hostId).listSessions(
+        this.state.grouping ? { grouped: '1' } : {},
+      )
       const before = this.state.sessions[hostId]
       this.set((s) => ({
         sessions: { ...s.sessions, [hostId]: sessions },

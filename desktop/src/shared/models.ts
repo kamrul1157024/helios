@@ -29,6 +29,18 @@ export interface Session {
   created_at: string
   ended_at?: string
   supports_prompt_queue: boolean
+  /** Groups this session belongs to, outermost first, each already carrying its
+   *  name and position. Absent unless the request asked for grouping, so a
+   *  client that does not group is served what it always was. */
+  groups?: SessionGroup[]
+}
+
+/** One group. Position is its place among all groups, wherever it happens to be
+ *  nested — a group has one position, not one per parent. */
+export interface SessionGroup {
+  key: string
+  name: string
+  position: number
 }
 
 export type SessionStatus =

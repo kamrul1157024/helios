@@ -44,6 +44,10 @@ type Session struct {
 	CreatedAt           string  `json:"created_at"`
 	EndedAt             *string `json:"ended_at,omitempty"`
 	SupportsPromptQueue bool    `json:"supports_prompt_queue"`
+	// Groups the session belongs to, outermost first, each resolved to its name
+	// and position. Only filled when the caller asked for grouping, so a client
+	// that does not group is served exactly what it was served before.
+	Groups []SessionGroup `json:"groups,omitempty"`
 }
 
 // Label returns the session's display label: title, or truncated last user message, or "".
@@ -90,9 +94,20 @@ func (s *Store) UpsertSession(sess *Session) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	_, err := s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1)
+	// A session inherits the groups of the newest session in the same
+	// directory. Assigning a directory once is then enough: every later agent
+	// started there joins on its own, including every worktree session, which
+	// is what keeps manual grouping from needing an action per session.
+	// Inherited on insert only — a later reorganisation does not reach back and
+	// rewrite the sessions that already ran.
+	inherited, err := s.groupsForCWD(sess.CWD)
+	if err != nil {
+		return fmt.Errorf("inherit groups for %s: %w", sess.CWD, err)
+	}
+
+	_, err = s.db.Exec(
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, groups)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -103,7 +118,7 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   last_event = excluded.last_event,
 		   last_event_at = excluded.last_event_at`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
-		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now,
+		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now, inherited,
 	)
 	return err
 }
@@ -209,23 +224,39 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	return sess, err
 }
 
-// ListSessions returns all sessions ordered by most recent activity.
-func (s *Store) ListSessions() ([]Session, error) {
-	return s.SearchSessions("", "", "", "")
+// SessionQuery is what a caller is asking the session list for. A struct
+// rather than a row of positional strings: there are six of them now, and four
+// were already the same type.
+type SessionQuery struct {
+	// Query is free-text, tokenized by spaces; every token must match.
+	Query string
+	// Status matches exactly. Empty means any.
+	Status string
+	// Filter is "all" (default), "pinned" or "terminated".
+	Filter string
+	// CWD matches exactly. Empty means any.
+	CWD string
+	// Grouped asks for each session's groups, resolved to names and positions.
+	// Off by default, so a caller that does not group is served what it always
+	// was.
+	Grouped bool
+	// GroupKey narrows to sessions holding that group at any depth.
+	GroupKey string
 }
 
-// SearchSessions returns sessions matching the given filters.
-// query: free-text search (tokenized by spaces, all tokens must match).
-// status: exact match on session status (empty = no filter).
-// filter: "all" (default, no flag filter), "pinned", "terminated".
-// cwd: exact match on session CWD (empty = no filter).
-func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, error) {
+// ListSessions returns all sessions ordered by most recent activity.
+func (s *Store) ListSessions() ([]Session, error) {
+	return s.SearchSessions(SessionQuery{})
+}
+
+// SearchSessions returns sessions matching the query.
+func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 	var where []string
 	var args []interface{}
 
 	// Tokenized text search
-	if query != "" {
-		for _, token := range strings.Fields(query) {
+	if sq.Query != "" {
+		for _, token := range strings.Fields(sq.Query) {
 			pattern := "%" + token + "%"
 			where = append(where, `(COALESCE(title,'') || ' ' || COALESCE(last_user_message,'') || ' ' || project || ' ' || cwd || ' ' || session_id) LIKE ?`)
 			args = append(args, pattern)
@@ -233,15 +264,15 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 
 	// Status filter
-	if status != "" {
+	if sq.Status != "" {
 		where = append(where, `status = ?`)
-		args = append(args, status)
+		args = append(args, sq.Status)
 	}
 
 	// Flag-based filter. Terminated is the archival state: there is no separate
 	// archived flag to exclude here, and asking for the archive means asking
 	// for what has ended.
-	switch filter {
+	switch sq.Filter {
 	case "pinned":
 		where = append(where, `pinned = 1`)
 	case "terminated":
@@ -249,14 +280,21 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 
 	// CWD filter
-	if cwd != "" {
+	if sq.CWD != "" {
 		where = append(where, `cwd = ?`)
-		args = append(args, cwd)
+		args = append(args, sq.CWD)
+	}
+
+	// Membership at any depth. json_each rather than a LIKE over the raw array:
+	// a substring match would find "g_work" inside "g_workshop".
+	if sq.GroupKey != "" {
+		where = append(where, `EXISTS (SELECT 1 FROM json_each(sessions.groups) WHERE value = ?)`)
+		args = append(args, sq.GroupKey)
 	}
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-	        permission_mode, created_at, ended_at
+	        permission_mode, created_at, ended_at, groups
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -269,18 +307,66 @@ func (s *Store) SearchSessions(query, status, filter, cwd string) ([]Session, er
 	}
 	defer rows.Close()
 
+	// Read the raw arrays alongside the rows and resolve them afterwards, from
+	// one read of a table with a handful of rows in it. Joining per level would
+	// mean generating SQL from the requested depth to answer the same question.
 	var result []Session
+	var raw []sql.NullString
 	for rows.Next() {
 		var sess Session
+		var held sql.NullString
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
-			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt); err != nil {
+			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt, &held); err != nil {
 			return nil, err
 		}
 		result = append(result, sess)
+		raw = append(raw, held)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if sq.Grouped {
+		if err := s.attachGroups(result, raw); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+// attachGroups resolves each session's stored keys into names and positions.
+// A key naming a group that no longer exists is dropped rather than rendered
+// as a blank header.
+func (s *Store) attachGroups(sessions []Session, raw []sql.NullString) error {
+	groups, err := s.ListGroups()
+	if err != nil {
+		return fmt.Errorf("list groups: %w", err)
+	}
+	byKey := make(map[string]Group, len(groups))
+	for _, g := range groups {
+		byKey[g.Key] = g
+	}
+
+	for i := range sessions {
+		keys := decodeGroups(raw[i])
+		if len(keys) == 0 {
+			continue
+		}
+		held := make([]SessionGroup, 0, len(keys))
+		for _, key := range keys {
+			g, ok := byKey[key]
+			if !ok {
+				continue
+			}
+			held = append(held, SessionGroup{Key: g.Key, Name: g.Name, Position: g.Position})
+		}
+		if len(held) > 0 {
+			sessions[i].Groups = held
+		}
+	}
+	return nil
 }
 
 // DirectoryInfo holds aggregated info about sessions in a given CWD.

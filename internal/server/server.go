@@ -191,6 +191,11 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	// Registered before the /api/sessions/ catch-all below, which would take
 	// "order" for a session id.
 	protectedMux.HandleFunc("POST /api/sessions/order", s.handleSessionOrder)
+	protectedMux.HandleFunc("GET /api/groups", s.handleListGroups)
+	protectedMux.HandleFunc("POST /api/groups", s.handleCreateGroup)
+	// Before the /api/groups/ catch-all, which would take "order" for a key.
+	protectedMux.HandleFunc("POST /api/groups/order", s.handleSetGroupOrder)
+	protectedMux.HandleFunc("/api/groups/{key}", s.handleGroup)
 	protectedMux.HandleFunc("GET /api/files", s.handleListFiles)
 	protectedMux.HandleFunc("GET /api/files/search", s.handleSearchFiles)
 	protectedMux.HandleFunc("GET /api/files/grep", s.handleGrepFiles)

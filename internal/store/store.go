@@ -171,6 +171,16 @@ func (s *Store) migrate() error {
 		// answers the second.
 		{"add_sessions_last_interacted_at", `ALTER TABLE sessions ADD COLUMN last_interacted_at TEXT`},
 		{"drop_sessions_archived", `ALTER TABLE sessions DROP COLUMN archived`},
+		{"create_groups_table", `CREATE TABLE IF NOT EXISTS groups (
+			key      TEXT PRIMARY KEY,
+			name     TEXT NOT NULL,
+			position INTEGER NOT NULL
+		)`},
+		// A JSON array of group keys, outermost first: '["g_work","g_opal"]'.
+		// An array rather than fixed columns because the depth limit belongs to
+		// the picker, not to the database: a fourth level should not cost a
+		// migration on the busiest table.
+		{"add_sessions_groups", `ALTER TABLE sessions ADD COLUMN groups TEXT`},
 	}
 
 	for _, cm := range columnMigrations {

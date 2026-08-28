@@ -15,10 +15,19 @@ import {
   timeAgo,
   type HostRecord,
   type Session,
+  type SessionGroup,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Console, Cpu, Memory, MultiLine, Plus, Search, SingleLine, Sort } from './icons.tsx'
-import { placeOf, tintOf } from './projects.ts'
+import { Chevron, Console, Cpu, Memory, Plus, Search, Sort } from './icons.tsx'
+import {
+  buildTree,
+  byRank,
+  depthOf,
+  rankOf,
+  isDirectoryNode,
+  type GroupNode,
+} from './grouping.ts'
+import { GroupPicker } from './group-picker.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
@@ -50,22 +59,16 @@ interface Row {
   pending: number
 }
 
-/** One directory, and every session the host is running in it. */
-interface Project {
-  /** The project's name, folded — what its sessions are gathered on. */
-  key: string
-  name: string
-  /** Where a new session in this project starts. */
-  cwd: string
-  rows: Row[]
-  /** What this project's warm terminals hold, summed over its rows. */
-  memory: number
-}
-
 interface Group {
   host: HostRecord
-  projects: Project[]
-  /** Sessions shown, across every project — what the host head counts. */
+  /** Every session shown, in render order — the flat list, and what a reorder
+   *  posts. Used directly when grouping is off. */
+  rows: Row[]
+  /** The same sessions nested, when grouping is on. Empty when it is off. */
+  nodes: GroupNode[]
+  /** Approvals waiting on each session, by session id. */
+  pending: Map<string, number>
+  /** Sessions shown, across every group — what the host head counts. */
   count: number
   /** Terminated sessions withheld from rows, so the host can offer them. */
   hidden: number
@@ -73,11 +76,20 @@ interface Group {
   loading: boolean
 }
 
-/** A session being dragged, and the project it may be dropped back into. */
+/** A session being dragged, and the group it may be dropped back into. Held as
+ *  the whole path rather than one key: a drop is legal only inside the node the
+ *  drag started in, and at three levels deep the innermost key is not enough to
+ *  say which node that was. */
 interface Drag {
   hostId: string
-  projectKey: string
+  path: string
   sessionId: string
+}
+
+/** A group header being dragged, to reorder the groups themselves. */
+interface GroupDrag {
+  hostId: string
+  key: string
 }
 
 export function Sidebar({
@@ -97,14 +109,20 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
   const sortMode = useStore((s) => s.sortMode)
-  const density = useStore((s) => s.density)
+  const grouping = useStore((s) => s.grouping)
+  const groupsByHost = useStore((s) => s.groups)
+  const splitDirectories = useStore((s) => s.splitDirectories)
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
   const [dragging, setDragging] = useState<Drag | null>(null)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  // Folded projects, keyed by host and path together: two machines can hold
-  // checkouts at the same path, and folding one should not fold the other.
+  // Folded groups, keyed by host and the group's whole path: the same group can
+  // appear at two depths, and folding it in one place should not fold the
+  // other.
   const [folded, setFolded] = useState<Record<string, boolean>>({})
+  // A group header on the move. Separate from a session drag: they reorder
+  // different things and a drop on one is never a drop on the other.
+  const [groupDrag, setGroupDrag] = useState<GroupDrag | null>(null)
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
   const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
@@ -114,6 +132,7 @@ export function Sidebar({
   const [menu, setMenu] = useState<{ hostId: string; session: Session; x: number; y: number } | null>(
     null,
   )
+  const [picker, setPicker] = useState(false)
   const aside = useRef<HTMLElement | null>(null)
 
   // The width is a CSS variable rather than state: the value is read by the
@@ -165,29 +184,26 @@ export function Sidebar({
         .map((session) => ({ session, pending: pendingByCwd.get(session.session_id) ?? 0 }))
         .sort(sortMode[host.id] === 'manual' ? byHand : compareRows)
 
-      // Projects take the position of their best session rather than an order
-      // of their own: grouping arranges the list, it does not re-rank it, so a
-      // session that wants attention still carries its project to the top.
-      const byProject = new Map<string, Project>()
-      for (const row of ordered) {
-        const place = placeOf(row.session)
-        let project = byProject.get(place.key)
-        if (!project) {
-          project = { key: place.key, name: place.name, cwd: place.cwd, rows: [], memory: 0 }
-          byProject.set(place.key, project)
-        }
-        project.rows.push(row)
-        project.memory += row.session.memory_bytes ?? 0
-      }
+      // Sorted first, then nested. The rank vector decides where a session
+      // hangs; the comparators above decide the order it hangs in. Keeping them
+      // apart is what lets a group move without re-ranking anything inside it.
+      const depth = grouping ? depthOf(ordered.map((row) => row.session)) : 0
+      const sorted = grouping
+        ? [...ordered].sort((a, b) =>
+            byRank(rankOf(a.session, depth), rankOf(b.session, depth)),
+          )
+        : ordered
+      const nodes = grouping ? buildTree(sorted.map((row) => row.session), splitDirectories) : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
       // An unfetched host has no entry at all, an empty one has []. Without the
       // distinction a daemon that is slow to answer looks like a daemon with
       // nothing on it.
       const loading = sessions[host.id] === undefined
-      return { host, projects: [...byProject.values()], count: ordered.length, hidden, loading }
+      const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
+      return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, splitDirectories])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -213,34 +229,32 @@ export function Sidebar({
             </button>
           )}
         </div>
-        <button
-          className={manual ? 'tool sort-toggle on' : 'tool sort-toggle'}
-          aria-label={manual ? 'Sorting by hand' : 'Sorting by activity'}
-          aria-pressed={manual}
-          title={
-            manual
-              ? 'Sort: Manual — drag a session to move it.\nClick to sort by activity instead.'
-              : 'Sort: Activity — approvals first, then live, then most recent.\nClick to arrange them by hand instead.'
-          }
-          onClick={() => void store.setSortModeEverywhere(manual ? 'activity' : 'manual')}
-        >
-          <Sort />
-        </button>
-        {/* Beside the sort toggle because it is the same kind of control: not
-            a preference set once, but a way of looking at the list, changed
-            while looking at it. Shows the state it is in, as the sort does. */}
-        <button
-          className="tool density-toggle"
-          aria-label={density === 'compact' ? 'Compact list' : 'Comfortable list'}
-          title={
-            density === 'compact'
-              ? 'Compact — one line a session, title and time.\nClick for the second line back.'
-              : 'Comfortable — a second line with the agent, model and memory.\nClick to fit more on screen.'
-          }
-          onClick={() => void store.setDensity(density === 'compact' ? 'comfortable' : 'compact')}
-        >
-          {density === 'compact' ? <SingleLine /> : <MultiLine />}
-        </button>
+        <div className="picker-anchor">
+          <button
+            className={grouping || manual ? 'tool sort-toggle on' : 'tool sort-toggle'}
+            aria-label="Arrange the list"
+            aria-expanded={picker}
+            title={'Arrange — grouping, and what each level sorts by.'}
+            onClick={() => setPicker((open) => !open)}
+          >
+            <Sort />
+          </button>
+          {picker && (
+            <GroupPicker
+              // Groups belong to a daemon, so the picker has to name one: the
+              // host of the session being looked at, falling back to the first.
+              // It says which one in its own header, because a silent guess
+              // with several paired would manage a machine nobody is watching.
+              hostId={selection?.hostId ?? hosts[0]?.id ?? null}
+              hostName={
+                hosts.find((h) => h.id === (selection?.hostId ?? hosts[0]?.id))?.name ?? ''
+              }
+              showHostName={hosts.length > 1}
+              manual={manual}
+              onClose={() => setPicker(false)}
+            />
+          )}
+        </div>
         <button
           className="tool primary"
           aria-label="New session"
@@ -252,31 +266,129 @@ export function Sidebar({
       </header>
 
       <div className="sidebar-list">
-        {grouped.map(({ host, projects, count, hidden, loading }) => {
+        {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
           const revealed = showTerminated[host.id] ?? false
           // The whole host in display order, which is what a reorder posts.
-          const order = projects.flatMap((project) => project.rows.map((row) => row.session.session_id))
+          const order = rows.map((row) => row.session.session_id)
+          // One machine needs no header saying which machine: the rule that
+          // hides a level splitting nothing survives here, where it started.
+          const showHost = hosts.length > 1
+          const draggable = sortMode[host.id] === 'manual'
+
+          const renderRow = (session: Session, path: string): JSX.Element => (
+            <SessionRow
+              key={session.session_id}
+              hostId={host.id}
+              session={session}
+              pending={pending.get(session.session_id) ?? 0}
+              selected={selection?.hostId === host.id && selection.sessionId === session.session_id}
+              draggable={draggable}
+              dragging={dragging?.sessionId === session.session_id}
+              // Only inside the node it started in: the daemon holds one flat
+              // order per host, so a card dropped across a divide would drag
+              // its whole group with it.
+              accepts={dragging?.hostId === host.id && dragging.path === path}
+              onDragStart={() => setDragging({ hostId: host.id, path, sessionId: session.session_id })}
+              onDragEnd={() => setDragging(null)}
+              onContextMenu={(x, y) => setMenu({ hostId: host.id, session, x, y })}
+              onDropBefore={(draggedId) => {
+                // The id off the drag itself, not React state: the drop can
+                // arrive in the same tick as the drag start, before a setState
+                // has committed, and then nothing moves.
+                const ids = [...order]
+                const from = ids.indexOf(draggedId)
+                const to = ids.indexOf(session.session_id)
+                setDragging(null)
+                if (from === -1 || to === -1 || from === to) return
+                ids.splice(to, 0, ids.splice(from, 1)[0] as string)
+                void store.reorderSessions(host.id, ids)
+              }}
+            />
+          )
+
+          const renderNode = (node: GroupNode): JSX.Element => {
+            const path = node.path.join('/')
+            const foldKey = `${host.id}:${path}`
+            const isFolded = folded[foldKey] ?? false
+            // Ungrouped is synthetic. It has no key to reorder and no name to
+            // rename, so it is a header and nothing else.
+            const real = node.key !== '' && !isDirectoryNode(node)
+            return (
+              <div className="group" key={path || 'ungrouped'}>
+                <div className={isFolded ? 'group-head folded' : 'group-head'}>
+                  <button
+                    className="group-title"
+                    aria-expanded={!isFolded}
+                    draggable={real}
+                    onDragStart={(event) => {
+                      event.stopPropagation()
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', node.key)
+                      setGroupDrag({ hostId: host.id, key: node.key })
+                    }}
+                    onDragEnd={() => setGroupDrag(null)}
+                    onDragOver={(event) => {
+                      if (!real || groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'move'
+                    }}
+                    // The key comes off the transfer, and the guard with it: a
+                    // drop can arrive in the same tick as the drag start,
+                    // before setGroupDrag has committed, and a handler that
+                    // read that state would decide nothing was being dragged.
+                    onDrop={(event) => {
+                      if (!real) return
+                      event.preventDefault()
+                      const dragged = event.dataTransfer.getData('text/plain')
+                      setGroupDrag(null)
+                      const keys = (groupsByHost[host.id] ?? []).map((group) => group.key)
+                      const from = keys.indexOf(dragged)
+                      const to = keys.indexOf(node.key)
+                      if (from === -1 || to === -1 || from === to) return
+                      keys.splice(to, 0, keys.splice(from, 1)[0] as string)
+                      void store.reorderGroups(host.id, keys)
+                    }}
+                    onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
+                  >
+                    <span className="group-name">{node.name}</span>
+                    <span className="group-count">{node.total}</span>
+                    <Chevron className="chevron group-chevron" open={!isFolded} />
+                  </button>
+                </div>
+
+                {!isFolded && (
+                  <div className="group-rows">
+                    {node.children.map((child) => renderNode(child))}
+                    {node.sessions.map((session) => renderRow(session, path))}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
           return (
             <section key={host.id} className="host-group">
               <div className="host-head">
-                <button
-                  className="host-title"
-                  aria-expanded={!isCollapsed}
-                  onClick={() => setCollapsed((c) => ({ ...c, [host.id]: !isCollapsed }))}
-                >
-                  <span className={`host-dot ${status}`} title={hostStatus[host.id]?.error ?? status} />
-                  <span className="host-name">{host.name}</span>
-                  {/* No count until there is one: a 0 that turns into 12 reads
-                      as an answer, and it was not one. */}
-                  {!loading && (
-                    <span className="host-count">
-                      {count} {count === 1 ? 'session' : 'sessions'}
-                    </span>
-                  )}
-                  <Chevron className="chevron" open={!isCollapsed} />
-                </button>
+                {showHost && (
+                  <button
+                    className="host-title"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => setCollapsed((c) => ({ ...c, [host.id]: !isCollapsed }))}
+                  >
+                    <span className={`host-dot ${status}`} title={hostStatus[host.id]?.error ?? status} />
+                    <span className="host-name">{host.name}</span>
+                    {/* No count until there is one: a 0 that turns into 12 reads
+                        as an answer, and it was not one. */}
+                    {!loading && (
+                      <span className="host-count">
+                        {count} {count === 1 ? 'session' : 'sessions'}
+                      </span>
+                    )}
+                    <Chevron className="chevron" open={!isCollapsed} />
+                  </button>
+                )}
 
                 {/* One line under the host: what its terminals cost on the
                     left, and the sessions it is not showing on the right. Both
@@ -300,87 +412,9 @@ export function Sidebar({
               </div>
 
               {!isCollapsed &&
-                projects.map((project) => {
-                  const foldKey = `${host.id}:${project.key}`
-                  const isFolded = folded[foldKey] ?? false
-                  return (
-                    <div className="project" key={project.key}>
-                      <div className={isFolded ? 'project-head folded' : 'project-head'}>
-                        <button
-                          className="project-title"
-                          title={project.cwd}
-                          aria-expanded={!isFolded}
-                          onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
-                        >
-                          <span className="project-badge" style={{ '--tint': tintOf(project.key) } as React.CSSProperties}>
-                            {project.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <span className="project-name">{project.name}</span>
-                          <span className="project-count">{project.rows.length}</span>
-                          {project.memory > 0 && (
-                            <>
-                              <span className="project-sep">·</span>
-                              <span className="project-ram">{formatBytes(project.memory)}</span>
-                            </>
-                          )}
-                          <Chevron className="chevron project-chevron" open={!isFolded} />
-                        </button>
-                        <button
-                          className="project-add"
-                          aria-label={`New session in ${project.name}`}
-                          title={`New session in ${project.name}`}
-                          onClick={() => onNewSession({ hostId: host.id, cwd: project.cwd })}
-                        >
-                          <Plus />
-                        </button>
-                      </div>
-
-                      {!isFolded && (
-                        <div className="project-rows">
-                          {project.rows.map(({ session, pending }) => (
-                            <SessionRow
-                              key={session.session_id}
-                              hostId={host.id}
-                              session={session}
-                              pending={pending}
-                              selected={
-                                selection?.hostId === host.id && selection.sessionId === session.session_id
-                              }
-                              draggable={sortMode[host.id] === 'manual'}
-                              dragging={dragging?.sessionId === session.session_id}
-                              // Only inside its own project: the daemon holds one
-                              // flat order per host, so a card dropped across the
-                              // divide would drag its whole project with it.
-                              accepts={dragging?.hostId === host.id && dragging.projectKey === project.key}
-                              onDragStart={() =>
-                                setDragging({
-                                  hostId: host.id,
-                                  projectKey: project.key,
-                                  sessionId: session.session_id,
-                                })
-                              }
-                              onDragEnd={() => setDragging(null)}
-                              onContextMenu={(x, y) => setMenu({ hostId: host.id, session, x, y })}
-                              onDropBefore={(draggedId) => {
-                                // The id off the drag itself, not React state: the
-                                // drop can arrive in the same tick as the drag
-                                // start, before a setState has committed, and then
-                                // nothing moves.
-                                const ids = [...order]
-                                const from = ids.indexOf(draggedId)
-                                const to = ids.indexOf(session.session_id)
-                                setDragging(null)
-                                if (from === -1 || to === -1 || from === to) return
-                                ids.splice(to, 0, ids.splice(from, 1)[0] as string)
-                                void store.reorderSessions(host.id, ids)
-                              }}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                (grouping
+                  ? nodes.map((node) => renderNode(node))
+                  : rows.map((row) => renderRow(row.session, '')))}
 
               {/* Skeletons rather than a spinner: the list is about to be a
                   list, and showing its shape keeps the sidebar from resizing
@@ -394,7 +428,6 @@ export function Sidebar({
                 [0, 1, 2].map((index) => (
                   <div key={index} className="session-row skeleton" aria-hidden="true">
                     <div className="row-main">
-                      <span className="row-dot" />
                       <span className="row-title">
                         <span className="skeleton-line" />
                       </span>
@@ -435,7 +468,7 @@ export function Sidebar({
         <SelectionMenu
           x={menu.x}
           y={menu.y}
-          actions={sessionActions(menu.hostId, menu.session)}
+          actions={sessionActions(menu.hostId, menu.session, groupsByHost[menu.hostId] ?? [])}
           onClose={() => setMenu(null)}
         />
       )}
@@ -465,7 +498,7 @@ export function Sidebar({
  * first and reading the header to check it had changed. On the row they name
  * the session under the pointer, which is the one being pointed at.
  */
-function sessionActions(hostId: string, session: Session): MenuAction[] {
+function sessionActions(hostId: string, session: Session, groups: SessionGroup[]): MenuAction[] {
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       await fn()
@@ -475,7 +508,36 @@ function sessionActions(hostId: string, session: Session): MenuAction[] {
     }
   }
 
-  const actions: MenuAction[] = [
+  const held = (session.groups ?? []).map((group) => group.key)
+
+  // One entry per group, ticked when the session is in it. A submenu would be
+  // tidier past a dozen groups, but a flat list is what this menu already knows
+  // how to draw, and it makes membership readable without a hover.
+  const actions: MenuAction[] = groups.map((group) => {
+    const inside = held.includes(group.key)
+    return {
+      label: `${inside ? '✓ ' : '\u2003'}${group.name}`,
+      run: () =>
+        void store.setSessionGroups(
+          hostId,
+          session.session_id,
+          inside ? held.filter((key) => key !== group.key) : [...held, group.key],
+        ),
+    }
+  })
+
+  actions.push({
+    label: 'New group…',
+    run: () => {
+      const name = window.prompt('Name the group')?.trim()
+      if (!name) return
+      void store.createGroup(hostId, name).then((group) => {
+        if (group) void store.setSessionGroups(hostId, session.session_id, [...held, group.key])
+      })
+    },
+  })
+
+  actions.push(
     {
       label: 'Regenerate title',
       // The daemon waits for the model before answering, so this can sit for
@@ -494,7 +556,7 @@ function sessionActions(hostId: string, session: Session): MenuAction[] {
       run: () =>
         void run(() => api(hostId).patchSession(session.session_id, { pinned: !session.pinned })),
     },
-  ]
+  )
 
   // Nothing to end when it has already ended, and the row itself carries the
   // Resume that a terminated session is waiting for.
@@ -646,11 +708,11 @@ function SessionRow({
         onDropBefore(event.dataTransfer.getData('text/plain'))
       }}
       onClick={() => store.select(hostId, session.session_id)}
-      // Selected as well as pointed at: the menu acts on this session, and the
-      // panel beside it should be showing the one that is about to change.
+      // Pointed at, not opened. A right-click is a question about a session,
+      // and answering it by loading that session into the panel throws away
+      // whatever the user was reading — the one thing they did not ask for.
       onContextMenu={(event) => {
         event.preventDefault()
-        store.select(hostId, session.session_id)
         onContextMenu(event.clientX, event.clientY)
       }}
       // A terminated session has to be resumed before it has a terminal worth
@@ -662,10 +724,6 @@ function SessionRow({
       }
     >
       <div className="row-main">
-        <span
-          className={`row-dot ${session.status}${busy ? ' pulse' : ''}`}
-          title={statusLabel(session.status)}
-        />
         <span className="row-title" title={label}>
           {label}
         </span>
@@ -721,8 +779,14 @@ function SessionRow({
       {/* What the session is, under what it is called. Kept off the title's
           line so the title gets the whole width — a long one is the common
           case, and it was losing half its room to a trail of small print. */}
+      {/* The status was a coloured dot with a tooltip, which is the least
+          legible thing a row can say about the thing that matters most. In
+          words, and first, it reads without being hovered — and the provider it
+          replaces was "claude" on every row until a second one ships. */}
       <div className="row-sub">
-        <span className="row-provider">{session.source}</span>
+        <span className={`row-status ${session.status}${busy ? ' pulse' : ''}`}>
+          {statusLabel(session.status)}
+        </span>
         {session.model !== undefined && (
           <span className="row-model" title={session.model}>
             {shortModel(session.model, session.source)}
