@@ -14,6 +14,7 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/discovery"
+	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/server"
@@ -118,8 +119,14 @@ func startDaemon(cfg *Config) error {
 	mgr := notifications.NewManager(db)
 	mgr.StartCleanup()
 
-	// Register providers
-	claude.Register(cfg.Server.InternalPort)
+	// Register providers. A zero port is how the provider is told to leave
+	// --mcp-config off the argv, which is what the flag being off means for a
+	// session Helios launches itself.
+	mcpPort := 0
+	if featureflag.MCP() {
+		mcpPort = cfg.Server.InternalPort
+	}
+	claude.Register(mcpPort)
 
 	// Terminal hosts are separate processes, so any that survived the last
 	// daemon are still serving; adopt them before anything else looks at

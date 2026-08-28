@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -462,7 +463,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "m":
 		// The summary screen is where this is usually read: a set-up install
 		// sits there waiting on enter, and never reaches the dashboard.
-		if (m.screen == screenMain || (m.screen == screenLoading && m.daemonOK)) && !m.mcpRegistered {
+		if featureflag.MCP() && (m.screen == screenMain || (m.screen == screenLoading && m.daemonOK)) && !m.mcpRegistered {
 			m.mcpDeclined = false
 			m.mcpMsg = "Registering..."
 			return m, registerMCPCmd(m.internalPort)
@@ -582,7 +583,7 @@ func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 func (m StartModel) proceedAfterShell() (tea.Model, tea.Cmd) {
 	// Asked once, and only once. Registering gives agents tools they did not
 	// have, which is the user's call rather than a step to get past.
-	if !m.mcpRegistered && !m.mcpDeclined {
+	if featureflag.MCP() && !m.mcpRegistered && !m.mcpDeclined {
 		m.screen = screenMCPSetup
 		return m, nil
 	}

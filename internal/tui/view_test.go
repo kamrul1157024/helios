@@ -90,6 +90,7 @@ func TestMainReportsMissingTunnel(t *testing.T) {
 // it sits on "enter continue" and most people never press it. An offer only the
 // dashboard carries is an offer nobody sees.
 func TestLoadingScreenAlsoOffersMCPRegistration(t *testing.T) {
+	t.Setenv("HELIOS_EXPERIMENTAL_MCP", "1")
 	m := StartModel{screen: screenLoading, daemonOK: true, hooksOK: true}
 	rendered := stripANSI(m.viewLoading())
 
@@ -105,6 +106,26 @@ func TestLoadingScreenAlsoOffersMCPRegistration(t *testing.T) {
 	}.viewLoading())
 	if strings.Contains(registered, "not registered") {
 		t.Error("still nagging after registration")
+	}
+}
+
+// Behind the flag the tools do not exist, so neither should the offer: a key
+// advertised in the bar that answers nothing is worse than no key at all.
+func TestAgentToolsAreInvisibleWithoutTheFlag(t *testing.T) {
+	for name, rendered := range map[string]string{
+		"summary": stripANSI(StartModel{
+			screen: screenLoading, daemonOK: true, hooksOK: true,
+		}.viewLoading()),
+		"dashboard": stripANSI(StartModel{screen: screenMain}.viewMain()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(rendered, "Agent tools") {
+				t.Error("agent tools mentioned while the flag is off")
+			}
+			if strings.Contains(rendered, "m agent tools") {
+				t.Error("the m key is advertised while the flag is off")
+			}
+		})
 	}
 }
 
@@ -127,6 +148,7 @@ func TestMCPSetupIsSkippable(t *testing.T) {
 
 // Declining during setup must stop the nagging, and must still leave a way in.
 func TestDeclinedMCPStopsNaggingButStaysReachable(t *testing.T) {
+	t.Setenv("HELIOS_EXPERIMENTAL_MCP", "1")
 	for name, rendered := range map[string]string{
 		"summary": stripANSI(StartModel{
 			screen: screenLoading, daemonOK: true, hooksOK: true, mcpDeclined: true,
@@ -148,6 +170,7 @@ func TestDeclinedMCPStopsNaggingButStaysReachable(t *testing.T) {
 }
 
 func TestMainOffersMCPRegistrationWithoutTreatingItAsAFault(t *testing.T) {
+	t.Setenv("HELIOS_EXPERIMENTAL_MCP", "1")
 	rendered := stripANSI(StartModel{screen: screenMain}.viewMain())
 
 	line := lineWith(rendered, "Agent tools not registered")

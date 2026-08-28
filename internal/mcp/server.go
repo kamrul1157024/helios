@@ -46,9 +46,15 @@ type tool struct {
 	call func(sessionID string, args map[string]interface{}) (string, error)
 }
 
-func New(sessions Sessions, notify Notifier, review Review) *Server {
-	s := &Server{sessions: sessions, notify: notify, review: review}
-	s.tools = s.registry()
+// New builds the server. When enabled is false it serves the protocol but
+// registers no tools, rather than refusing the connection: a client that
+// already has "helios" in its own config would otherwise report a failing
+// server on every session start.
+func New(sessions Sessions, notify Notifier, review Review, enabled bool) *Server {
+	s := &Server{sessions: sessions, notify: notify, review: review, tools: map[string]tool{}}
+	if enabled {
+		s.tools = s.registry()
+	}
 	return s
 }
 
@@ -126,7 +132,10 @@ func (s *Server) dispatch(req request, sessionID string, resp *response) interfa
 	case "tools/list":
 		listed := make([]map[string]interface{}, 0, len(s.tools))
 		for _, name := range toolOrder {
-			t := s.tools[name]
+			t, ok := s.tools[name]
+			if !ok {
+				continue
+			}
 			listed = append(listed, map[string]interface{}{
 				"name":        name,
 				"description": t.description,

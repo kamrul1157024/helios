@@ -45,7 +45,7 @@ func setup(t *testing.T) (*Server, *fakeNotifier, *store.Store) {
 	t.Cleanup(func() { db.Close() })
 
 	notify := &fakeNotifier{clients: 1}
-	return New(db, notify, fakeReview{root: "/repo"}), notify, db
+	return New(db, notify, fakeReview{root: "/repo"}, true), notify, db
 }
 
 // post sends one JSON-RPC request. session goes in the header, as Helios
@@ -123,6 +123,30 @@ func TestHandshake(t *testing.T) {
 		if entry["name"] != want {
 			t.Fatalf("tool %d = %v, want %s", i, entry["name"], want)
 		}
+	}
+}
+
+// Disabled has to look like a server with nothing to offer, not a broken one:
+// a client with "helios" already in its own config still connects here, and a
+// refusal would surface as a failing MCP server on every session start.
+func TestDisabledServesTheProtocolWithNoTools(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	s := New(db, &fakeNotifier{clients: 1}, fakeReview{root: "/repo"}, false)
+
+	init := post(t, s, "", "initialize", map[string]interface{}{})
+	if result, _ := init["result"].(map[string]interface{}); result["protocolVersion"] != protocolVersion {
+		t.Fatalf("protocolVersion = %v, want %s", result["protocolVersion"], protocolVersion)
+	}
+
+	list := post(t, s, "", "tools/list", nil)
+	listResult, _ := list["result"].(map[string]interface{})
+	if tools, _ := listResult["tools"].([]interface{}); len(tools) != 0 {
+		t.Fatalf("got %d tools, want none", len(tools))
 	}
 }
 
@@ -275,7 +299,7 @@ func TestShow_ReportsWhenNobodyIsWatching(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := New(db, &fakeNotifier{clients: 0}, fakeReview{root: "/repo"})
+	s := New(db, &fakeNotifier{clients: 0}, fakeReview{root: "/repo"}, true)
 
 	got := callTool(t, s, "s1", "helios_show", map[string]interface{}{"view": "terminal"})
 	if got["shown"] != false {
@@ -343,7 +367,7 @@ func TestReviewState_SeparatesSeenFromUnseen(t *testing.T) {
 		root:     "/repo",
 		changed:  []string{"a.go", "b.go", "c.go"},
 		reviewed: []string{"b.go"},
-	})
+	}, true)
 
 	got := callTool(t, s, "s1", "helios_review_state", map[string]interface{}{"base": "main"})
 	if got["remaining"] != float64(2) {
