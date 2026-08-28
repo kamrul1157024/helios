@@ -477,7 +477,11 @@ export function Sidebar({
 
                 {!isFolded && (
                   <div className="group-rows">
-                    {creatingIn === `${host.id}:${node.key}` && (
+                    {/* `real`, because Ungrouped's key is "" — the same string
+                        the host's own "+ Group" sets. Without this the one
+                        click mounts two fields, the second steals focus from
+                        the first, and the first's blur cancels both. */}
+                    {real && creatingIn === `${host.id}:${node.key}` && (
                       <NewGroupField
                         onCancel={() => setCreatingIn(null)}
                         onCommit={(name) => {
@@ -747,6 +751,10 @@ function NewGroupField({
 }): JSX.Element {
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLInputElement | null>(null)
+  // Enter commits and the parent unmounts this input, which fires blur — so
+  // without a latch the same name is submitted twice, or a commit races the
+  // cancel that follows it.
+  const done = useRef(false)
   // autoFocus does not fire reliably for an input mounted into a tree that is
   // already on screen — the button that opened it keeps focus, so the keystrokes
   // go nowhere and the field looks like a button that did nothing.
@@ -758,6 +766,8 @@ function NewGroupField({
   // writes straight to the DOM node, and a handler reading React's idea of it
   // sees an empty string.
   const commit = (typed: string): void => {
+    if (done.current) return
+    done.current = true
     const name = typed.trim()
     if (name) onCommit(name)
     else onCancel()
@@ -771,7 +781,10 @@ function NewGroupField({
       onChange={(event) => setDraft(event.target.value)}
       onKeyDown={(event) => {
         if (event.key === 'Enter') commit(event.currentTarget.value)
-        if (event.key === 'Escape') onCancel()
+        if (event.key === 'Escape') {
+          done.current = true
+          onCancel()
+        }
       }}
       onBlur={(event) => commit(event.target.value)}
     />

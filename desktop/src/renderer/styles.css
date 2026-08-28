@@ -1923,7 +1923,11 @@ small {
 
 /* ─── Tool calls ────────────────────────────────────────────────────────── */
 
-.msg.tool {
+/* "tool-call", not "tool": `.tool` is the 36px square toolbar button, and a
+   bare `.tool` here inherited its width, its fixed 36px height and its
+   `place-items: center` — which clipped the expanded row to the height of a
+   button and centred the overflow so the left of every line was cut off. */
+.msg.tool-call {
   background: var(--surface-container);
   border-radius: var(--r-md);
   overflow: hidden;

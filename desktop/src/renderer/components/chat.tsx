@@ -684,7 +684,7 @@ function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
   const [open, setOpen] = useState(WRITING_TOOLS.has(tool))
 
   return (
-    <div className="msg tool">
+    <div className="msg tool-call">
       <button className="tool-head" onClick={() => setOpen(!open)}>
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
         <span className="tool-name">{tool}</span>

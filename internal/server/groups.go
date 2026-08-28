@@ -41,9 +41,13 @@ func (s *PublicServer) handleCreateGroup(w http.ResponseWriter, r *http.Request)
 
 	group, err := s.shared.DB.CreateGroup(req.Name, req.Parent)
 	if err != nil {
+		log.Printf("groups: create %q under %q: %v", req.Name, req.Parent, err)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Logged on the way out as well as on failure: without this a click that
+	// never sent and one that worked leave the same trace, which is no trace.
+	log.Printf("groups: created %s %q under %q", group.Key, group.Name, req.Parent)
 	s.notifyGroups()
 	jsonResponse(w, http.StatusOK, group)
 }
