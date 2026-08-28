@@ -529,7 +529,7 @@ const THEME_DIR = path.join(import.meta.dirname, '..', '..', 'themes')
 /** Text roles and the floor each is held to, against every surface it lands on. */
 const TEXT_FLOORS: [string, number][] = [
   ['on-surface', 4.5],
-  ['on-surface-variant', 3.5],
+  ['on-surface-variant', 4.5],
   ['primary', 3],
   // Status and error are drawn as words, not only as dots: the "Active" label
   // on a session row is 10.5px and the tick on a tool result is 11.5px.

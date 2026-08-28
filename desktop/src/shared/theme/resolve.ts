@@ -200,6 +200,14 @@ export function resolveTheme(
   }
 
   const resolved = new Map<string, Rgb>()
+  /**
+   * The same roles before the contrast floor moved them.
+   *
+   * Only the backdrop reads these. A mesh painted behind glass carries no text,
+   * so nudging its colours towards white to make them legible buys nothing and
+   * costs the theme the palette it was designed around.
+   */
+  const stated = new Map<string, Rgb>()
   const ctx: DeriveContext = {
     bg,
     fg,
@@ -213,9 +221,11 @@ export function resolveTheme(
   for (const [name, spec] of UI_ROLES) {
     const against = spec.against ? spec.against(ctx) : bg
     let value: Rgb | null = null
+    let declared: Rgb | null = null
     for (const key of spec.keys) {
       const candidate = colour(key)
       if (!candidate) continue
+      declared ??= candidate
       // Prefer a key that already works over nudging one that does not.
       if (spec.minContrast && contrast(candidate, against) < spec.minContrast) continue
       value = candidate
@@ -224,6 +234,7 @@ export function resolveTheme(
     const chosen = value ?? spec.derive(ctx)
     const final = spec.minContrast ? ensureContrast(chosen, against, spec.minContrast) : chosen
     resolved.set(name, final)
+    stated.set(name, declared ?? chosen)
     vars[`--${name}`] = toHex(final)
   }
 
@@ -271,7 +282,7 @@ export function resolveTheme(
   // Only meaningful under glass: the backdrop is what the translucent surfaces
   // are translucent onto, and painting one behind an opaque app would be work
   // no pixel ever shows.
-  const palette = derivedStops(resolved.get('primary') ?? bg, ansi.magenta, ansi.cyan, mode === 'dark')
+  const palette = derivedStops(stated.get('primary') ?? bg, ansi.magenta, ansi.cyan, mode === 'dark')
   const spec = glass ? theme['helios.backdrop'] : undefined
   const style = styleOf(spec)
 

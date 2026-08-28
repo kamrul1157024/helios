@@ -211,7 +211,9 @@ export const UI_ROLES: [string, RoleSpec][] = [
     'on-surface-variant',
     {
       keys: ['descriptionForeground'],
-      minContrast: 3.5,
+      // Secondary, but still text, and the app sets it at 10.5px on the
+      // session rows and 11.5px on every tool summary.
+      minContrast: SMALL_TEXT,
       against: onRaised,
       derive: (c) => mix(c.fg, c.bg, 0.28),
     },
