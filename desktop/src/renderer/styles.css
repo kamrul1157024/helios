@@ -1931,6 +1931,7 @@ small {
 
 .tool-head {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -1956,6 +1957,11 @@ small {
 
 .tool-summary {
   flex: 1;
+  /* Without this the ellipsis never fires: a flex child defaults to
+     min-width:auto, so a long summary keeps its full intrinsic width, the head
+     overflows the card, and what shows is an arbitrary window into the middle
+     of the text rather than its start. */
+  min-width: 0;
   color: var(--on-surface-variant);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;

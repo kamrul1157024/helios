@@ -660,6 +660,17 @@ const CODE_FIELDS: { key: string; label?: string }[] = [
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
 
 /**
+ * A summary is one line by definition, but the thing it summarises often is
+ * not — a heredoc, a multi-line command. Collapsing the whitespace here rather
+ * than leaving it to `white-space: nowrap` keeps the ellipsis honest: the
+ * browser would otherwise measure the untouched string and decide the row
+ * needs a width no sidebar has.
+ */
+function oneLine(text: string | undefined): string {
+  return (text ?? '').replace(/\s+/g, ' ').trim()
+}
+
+/**
  * A tool call: one line collapsed, the input expanded. The expansion is
  * tool-aware because a Bash command and an Edit's replacement text want
  * different treatment, and a raw JSON dump serves neither.
@@ -677,7 +688,7 @@ function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
       <button className="tool-head" onClick={() => setOpen(!open)}>
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
         <span className="tool-name">{tool}</span>
-        <span className="tool-summary">{message.summary ?? ''}</span>
+        <span className="tool-summary">{oneLine(message.summary)}</span>
         <Chevron className="chevron" open={open} />
       </button>
       {open && (
