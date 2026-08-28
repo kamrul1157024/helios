@@ -180,7 +180,7 @@ export function GroupPicker({
                 const to = keys.indexOf(group.key)
                 if (from === -1 || to === -1) return
                 keys.splice(to, 0, keys.splice(from, 1)[0] as string)
-                void store.reorderGroups(hostId, keys)
+                void store.reorderGroups(hostId, '', keys)
               }}
             >
               <span className="picker-handle" aria-hidden="true">

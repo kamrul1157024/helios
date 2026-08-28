@@ -1,4 +1,4 @@
-# Grouping: Manual Groups, One JSON Column, One Rank Vector
+# Grouping: A Tree of Manual Groups
 
 ## The claim
 
@@ -11,9 +11,9 @@ it — "projects take the position of their best session rather than an order of
 their own". That gives a group no order of its own, hard-codes one grouping, and
 turns it on for everybody.
 
-This spec replaces it with manual groups, a depth the picker caps at three, and
-a rank vector that makes a group's position one row rather than a rewrite of
-every session inside it.
+This spec replaces it with a tree of groups a person makes. A group knows its
+own parent, a session hangs off one node, and moving a group is one row written
+rather than a rewrite of every session inside it.
 
 ## Where we are
 
@@ -78,201 +78,142 @@ in `newsession.tsx` is kept unchanged.
 
 ## The model
 
-### Groups are manual, and a session holds an ordered list of them
+### Groups are a tree, and a session hangs off one node
 
-A group is something a person makes. It has a key, a name, and a position.
-Nothing is derived, nothing is guessed, and there is no folding rule to get
-wrong.
-
-A session carries an ordered list of group keys. **Position in the list is the
-nesting level** — first is outermost — and which key goes where is the person's
-choice at the moment they assign it. A group is not born at a level and is not
-pinned to one.
+A group is something a person makes, and it knows its own parent. Nesting is a
+property of the group, not of the session: a session attaches to exactly one
+node, and its path is whatever walking that node's parents gives.
 
 ```
-  session          groups
-  ───────────      ─────────────────────────────────
-  fix ingest       ["work", "opal-app"]
-  schema bump      ["work", "opal-app", "backend"]
-  wire group-by    ["work", "helios"]
-  personal spike   NULL                                ← ungrouped
+  groups                                  sessions
+  key        name      parent    pos      id    group_key
+  ─────────  ────────  ────────  ───      ────  ─────────
+  g_work     Work      —         0        7f3a  g_opal
+  g_opal     opal-app  g_work    0        91bc  g_opal
+  g_be1      backend   g_opal    0        a4d1  g_be1
+  g_helios   helios    g_work    1        c2e9  g_be2
+  g_be2      backend   g_helios  0        f7aa  NULL
 ```
 
-Two invariants, both enforced in the handler rather than by a constraint:
+**A name may repeat.** Identity is the key, so `backend` under `opal-app` and
+`backend` under `helios` are two nodes that happen to share a label. An earlier
+draft keyed nesting off an ordered list on each session, which forced those two
+into one group and let a single group render at two different depths. Both
+problems were the same mistake: nesting stored in the wrong place.
 
-- **The list is dense.** No holes and no nulls inside it; assignment fills the
-  next free position. `json_array_length` is therefore the session's depth,
-  which makes "render only when it splits" a length check.
-- **The keys are distinct.** A session belongs to a group once.
+**Position is among siblings**, not global. A group's place is a number
+alongside the others under its parent, which is what makes moving one a single
+row write.
+
+### Creating and moving
+
+Creating is one insert with a parent — "New group under Work" needs no
+rearranging of anything that already exists. Moving a subtree is one
+`UPDATE parent_key`, and everything beneath it follows because nothing beneath
+it recorded its own depth.
+
+### Deleting reparents
+
+Deleting a node never orphans anything and never deletes work:
+
+```
+  before                     delete opal-app          delete Work
+  ▾ Work                     ▾ Work                   ▾ opal-app
+    ▾ opal-app                 ▾ backend                ▾ backend
+      ▾ backend                · 7f3a                     · a4d1
+        · a4d1                 · 91bc                 ▾ helios
+      · 7f3a                   ▾ helios                 …
+      · 91bc                     …                     · 7f3a  ← unassigned
+    ▾ helios                                           · 91bc  ← unassigned
+```
+
+- **Child groups take the deleted node's parent.** Remove a parent and its
+  subgroups become roots, which is what "the level above is gone" should mean.
+- **Sessions on the deleted node take its parent too**, and fall to unassigned
+  when there was no parent.
+
+Nothing is destroyed but the node itself, so a delete is recoverable by hand
+rather than being a decision about someone's sessions.
 
 ### Levels
 
 How deep the sidebar nests is a client-side choice, and **it is none by
 default** — the list is flat and looks exactly as it does today. Three is the
-limit the picker enforces, and it is a UI rule, not a storage one: nothing in
-the schema caps the list, so a fourth level would be a frontend change and no
-migration.
+depth the picker offers; the tree itself has no limit, because a cap on how deep
+you may build is a UI opinion and not a fact about the data.
 
-A session with one key nests one deep, one with three nests three. The list is
-ragged by construction, and the rendering rule below handles it.
+### Directory
 
-### The rank vector
+`Directory` is a grouping level like any other, and it lives in the same ordered
+list in the picker. Its index there is the depth it nests at: first and it
+gathers, last and it splits. The only thing setting it apart is where its value
+comes from — the session already carries its `cwd`, so the daemon never stores
+this one, and it is client-side configuration rather than a row.
 
-A session's position is a vector: the position of each group it holds, its own
-order last, padded to the depth being rendered. Compare element by element; the
-first difference wins.
+### Ordering
 
-```
-  session          vector                 rendered
-  ───────────      ─────────────────      ────────
-  schema bump      (0, 1, 3, 0)           Work › opal-app › backend
-  fix ingest       (0, 1, ∞, 0)           Work › opal-app
-  retry backoff    (0, 1, ∞, 1)           Work › opal-app
-  wire group-by    (0, 2, ∞, 0)           Work › helios
-  tidy zshrc       (4, ∞, ∞, 0)           Side
-  poke at sqlite   (∞, ∞, ∞, 3)           Ungrouped, last
-
-  grouping off  →  (0) (0) (1) (0) (0) (3)   ← sort_order alone
-```
-
-`∞` is a level the session does not reach. It sorts last, which puts subgroups
-above loose sessions inside the same parent — folders before files — and puts
-ungrouped sessions at the bottom of the list. That ordering is a consequence of
-the padding rather than a separate decision, and it is the conventional one.
-
-```ts
-const UNRANKED = Number.MAX_SAFE_INTEGER
-
-// session.groups arrives as [{key, name, position}], outermost first.
-function rankOf(session: Session, depth: number): number[] {
-  const path = (session.groups ?? []).map((g) => g.position)
-  while (path.length < depth) path.push(UNRANKED)
-  return [...path, session.sort_order]
-}
-
-function byRank(a: number[], b: number[]): number {
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return (a[i] as number) - (b[i] as number)
-  }
-  return 0
-}
-```
-
-### One group, two depths
-
-Because the level is per session, the same group can sit at different depths for
-different sessions, and then it renders in two places with one position:
+A session's place is a vector: its group's position at each level from the root
+down, then its own order last. Compare element by element; the first difference
+wins.
 
 ```
-  session A    ["work", "opal-app"]
-  session B    ["opal-app"]
-
-  ▾ work
-    ▾ opal-app        ← A
-  ▾ opal-app          ← B
+  session   path                        vector
+  ───────   ─────────────────────       ────────────
+  a4d1      Work › opal-app › backend   (0, 0, 0, 0)
+  7f3a      Work › opal-app             (0, 0, ∞, 0)
+  c2e9      Work › helios › backend     (0, 1, 0, 0)
+  f7aa      —                           (∞, ∞, ∞, 3)
 ```
 
-This is allowed. It takes a deliberately odd pair of assignments to produce, the
-result is visible on screen, and preventing it would mean pinning a group to a
-level — which is exactly the thing this design does not store.
+`∞` is a level the session does not reach: it sorts last, so subgroups sit above
+loose sessions and unassigned sessions fall to the bottom. Turning grouping off
+drops the leading elements and leaves `sort_order`, which is what the list
+sorted on before any of this.
+
+Dragging `helios` above `opal-app` writes one row — their positions swap under
+`Work`. Every session beneath both moves, and none of them is written.
 
 ## Storage
 
-One table and one column. Migration entries go in the existing
+Two columns added, one table. Migration entries go in the existing
 `columnMigrations` list in `internal/store/store.go:146`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS groups (
-  key      TEXT PRIMARY KEY,
-  name     TEXT NOT NULL,
-  position INTEGER NOT NULL
+  key        TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  parent_key TEXT REFERENCES groups(key) ON DELETE SET NULL,
+  position   INTEGER NOT NULL
 );
 
-ALTER TABLE sessions ADD COLUMN groups TEXT;   -- '["g_work","g_opal"]'
+ALTER TABLE sessions ADD COLUMN group_key TEXT;
 ```
 
-A JSON array rather than `group1`/`group2`/`group3`, because **three is a
-frontend rule, not a storage fact**. Fixed columns would put a UI decision in
-the schema, and the day the picker allows four it is a migration on the busiest
-table.
-
-JSON1 is available — verified against the driver this project uses,
-`modernc.org/sqlite v1.48.2`, SQLite 3.51.3. All three of the operations this
-needs work:
-
-```sql
--- one join per rendered level, generated from the requested depth
-LEFT JOIN groups g1 ON g1.key = json_extract(s.groups, '$[0]')
-
--- membership at any depth
-WHERE EXISTS (SELECT 1 FROM json_each(s.groups) WHERE value = ?)
-
--- indexable if the 1000-row limit ever stops being enough
-CREATE INDEX idx_sessions_group0 ON sessions(json_extract(groups, '$[0]'))
-```
-
-Not a comma-separated string: that answers "what is in this group" with
-`',' || groups || ',' LIKE '%,g2,%'`, which is unindexable and is the same
-delimiter trap that makes naive path-prefix matching wrong.
-
-**Position lives on the group, never on the session.** One row moves when a
-group moves. Storing it per session would mean updating every session in the
-group, giving them all a chance to disagree, and leaving a quiet group with
-nowhere to keep its place.
+`ON DELETE SET NULL` is the floor, not the rule: the reparenting above is done
+explicitly in one transaction, because a child should rise to its grandparent
+rather than to the root. The constraint only guarantees that a crash between
+statements cannot leave a row pointing at a group that is gone.
 
 No host column. The daemon is per machine, so all of this is scoped to that
 machine already, which is why `sessions` has none either.
 
-`sessions.sort_order` stays as it is. It becomes a position *within* the
-innermost group rather than across the host — see **What this costs**.
+`sessions.sort_order` stays as it is. It becomes a position *within* a group
+rather than across the host — see **What this costs**.
 
-**Membership is a snapshot, not a rule.** A session keeps the groups it was
-assigned even if the person later reorganises. That is deliberate: a session's
-history should not be rewritten under it.
+**Membership is a snapshot.** A session keeps the group it was filed under even
+after the tree around it is rearranged, and a delete moves it exactly one level
+up. A session's history should not be rewritten under it.
 
-**New sessions inherit.** On create, a session copies `groups` from the most
-recent session with the same `cwd`. Assign a directory's first session and every
-later agent started there joins on its own — including every worktree session,
-which is the case that makes manual grouping bearable at all. Exact `cwd` match,
-one query, no surprises.
+**New sessions inherit.** On create, a session copies `group_key` from the most
+recent session with the same `cwd`. File a directory once and every later agent
+started there joins on its own — including every worktree session, which is what
+keeps manual grouping from needing an action per session.
 
-### Sample data
+### Cycles
 
-Everything below was run against SQLite, not written by hand.
-
-```
-  groups                              sessions
-  key        name      position       id    sort_order  groups
-  ─────────  ────────  ────────       ────  ──────────  ──────────────────────────────
-  g_work     Work      0              7f3a  0           ["g_work","g_opal"]
-  g_opal     opal-app  1              91bc  1           ["g_work","g_opal"]
-  g_helios   helios    2              a4d1  0           ["g_work","g_opal","g_backend"]
-  g_backend  backend   3              c2e9  0           ["g_work","g_helios"]
-  g_side     Side      4              d8f0  1           ["g_work","g_helios"]
-                                      e551  0           ["g_side"]
-                                      f7aa  3           NULL
-```
-
-The join, and what it sorts to:
-
-```
-  id    title             lvl1  lvl2      lvl3     vector
-  ────  ────────────────  ────  ────────  ───────  ────────────────
-  a4d1  schema bump       Work  opal-app  backend  (0,1,3,0)
-  7f3a  fix ingest retry  Work  opal-app  —        (0,1,999,0)
-  91bc  retry backoff     Work  opal-app  —        (0,1,999,1)
-  c2e9  wire group-by     Work  helios    —        (0,2,999,0)
-  d8f0  ptyhost race      Work  helios    —        (0,2,999,1)
-  e551  tidy zshrc        Side  —         —        (4,999,999,0)
-  f7aa  poke at sqlite    —     —         —        (999,999,999,3)
-```
-
-Two things to read off it:
-
-- `a4d1` and `7f3a` both have `sort_order = 0` and do not collide, because
-  `sort_order` is now a position *within* the innermost group.
-- Dragging `helios` above `opal-app` is `UPDATE groups SET position` on two
-  rows. Five sessions move, and none of them is written.
+Moving a node under its own descendant would make a loop that no walk
+terminates. The move is refused: a parent chain is walked before the write, and
+a `parent_key` that appears in it is rejected.
 
 ## API
 
@@ -287,31 +228,31 @@ GET /api/sessions?grouped=1&group_key=g_work
 
 ```json
 {"sessions": [
-  {"session_id": "7f3a", "sort_order": 0,
-   "groups": [
+  {"session_id": "7f3a", "sort_order": 0, "group_key": "g_opal",
+   "group_path": [
      {"key": "g_work", "name": "Work",     "position": 0},
-     {"key": "g_opal", "name": "opal-app", "position": 1}
+     {"key": "g_opal", "name": "opal-app", "position": 0}
    ]}
 ]}
 ```
 
-One list of objects, outermost first — not three parallel arrays that have to
-stay index-aligned. Normalized in storage, denormalized on the wire: the client
-gets `(key, name, position)` together and needs no lookup table of its own, and
-`rankOf` reads straight off it.
+`group_key` is what the session stores; `group_path` is that node and its
+ancestors, outermost first, resolved by the daemon. Normalized in storage,
+denormalized on the wire — the client walks no parents of its own and `rankOf`
+reads straight off the path.
 
 Omit `grouped` and the field is absent — the default, and every existing caller
-is untouched. `group_key` filters to sessions holding that key at any depth, via
-`json_each`, alongside the existing `cwd` filter on
+is untouched. `group_key` as a query parameter filters to sessions in that group **or any
+group beneath it**, since asking for a branch means asking for what is under it.
+It sits alongside the existing `cwd` filter on
 `SearchSessions(query, status, filter, cwd)` (`internal/store/sessions.go:222`).
 
-Implementation is one `LEFT JOIN groups ON key = json_extract(s.groups,'$[N]')`
-per rendered level, generated from the requested depth rather than hard-coded.
-`SearchSessions` is a plain WHERE-list builder with no existing joins and a
-fixed SELECT (`sessions.go:222-284`), so this is additive.
+Implementation reads the whole `groups` table once — it has a handful of rows —
+and resolves each session's path in Go. A recursive CTE would answer the same
+question in SQL and cost a join per query for a table that fits in a map.
 
-`name` is served rather than derived: only the daemon knows a group's name, and
-the clients should not each keep a copy.
+Names and positions are served rather than derived: only the daemon knows the
+tree, and no client should keep its own copy of it.
 
 **The server does not order the result.** It keeps
 `ORDER BY COALESCE(last_event_at, created_at) DESC` (`sessions.go:264`), which
@@ -327,25 +268,29 @@ side:
 ### Writing
 
 ```
-POST   /api/groups              {"name":"Work"}          → {"key":"g_01H8…"}
+POST   /api/groups              {"name":"backend","parent":"g_opal"}  → {"key":"g_…"}
 PATCH  /api/groups/{key}        {"name":"Client work"}
-DELETE /api/groups/{key}
-POST   /api/groups/order        {"order":["g_work","g_opal","g_helios"]}
-PATCH  /api/sessions/{id}       {"groups":["g_work","g_opal"]}
+PATCH  /api/groups/{key}        {"parent":"g_helios"}    # moves the whole subtree
+DELETE /api/groups/{key}                                 # reparents, never orphans
+POST   /api/groups/order        {"parent":"g_work","order":["g_helios","g_opal"]}
+PATCH  /api/sessions/{id}       {"group":"g_opal"}       # null clears it
 ```
 
-`POST /api/groups/order` writes the whole list in one transaction and renumbers
-it `0..n-1`, mirroring `SetSessionOrder`. The daemon then appends any group the
-client did not mention — one hidden behind the terminated filter would otherwise
-be missing from the client's list and land unranked.
+`POST /api/groups/order` orders **one parent's children**, since position is
+among siblings. It writes them in one transaction and renumbers `0..n-1`,
+mirroring `SetSessionOrder`, then appends any sibling the client did not mention
+— one hidden behind the terminated filter would otherwise land unranked.
+
+A `PATCH` that sets `parent` walks the target's ancestors first and refuses a
+key it finds there: a node moved under its own descendant is a cycle no walk
+terminates.
 
 Session assignment rides on the existing `PATCH /api/sessions/{id}`, which
-already takes `pinned` and `title`. `groups` is the whole ordered list; the
-handler rejects duplicates, unknown keys, nulls inside the array, and anything
-longer than the UI's limit. Passing `[]` or `null` clears the session's groups.
+already takes `pinned` and `title`. `group` is a single key; the handler rejects
+one that names no group, and `null` clears the session.
 
-Deleting a group clears it from every session that holds it, in the same
-transaction.
+Deleting a group reparents its children and its sessions to its own parent, in
+the same transaction — see **Deleting reparents**.
 
 Every write broadcasts, for the reason the session route already gives — every
 client is looking at the same list:
@@ -455,7 +400,7 @@ Three files, not one. Missing the middle one fails silently:
 |---|---|---|
 | Session order | daemon, `sessions.sort_order` | yes |
 | Group order | daemon, `groups.position` | yes |
-| Group membership | daemon, `sessions.groups` | yes |
+| Group membership | daemon, `sessions.group_key` | yes |
 | Sort mode | daemon, `setSortModeEverywhere` | yes |
 | Grouping on/off, density | client | no |
 
@@ -480,7 +425,7 @@ made on the desktop is a group on the phone.
     ┌──────────────────────────────┐                │
     │  daemon (one per machine)    │                │
     │    groups                    │                │
-    │    sessions.groups           │                │
+    │    sessions.group_key        │                │
     └──────────┬───────────────────┘                │
                │  SSE session_updated               │
                └────────────────────────────────────▶ GET /api/sessions?grouped=1
@@ -512,13 +457,15 @@ different sessions. Accepted above.
 
 **Backend**
 
-- `internal/store/store.go` — `create_groups_table`, `add_sessions_groups`.
-- `internal/store/groups.go` (new) — `CreateGroup`, `RenameGroup`, `DeleteGroup`,
-  `SetGroupOrder`, `ListGroups`.
+- `internal/store/store.go` — `create_groups_table` with `parent_key`,
+  `add_sessions_group_key`.
+- `internal/store/groups.go` (new) — `CreateGroup(name, parent)`, `RenameGroup`,
+  `MoveGroup` with the cycle check, `DeleteGroup` reparenting children and
+  sessions, `SetGroupOrder(parent, keys)`, `ListGroups`.
 - `internal/store/sessions.go` — `SearchSessions` grows `grouped bool` and
-  `groupKey string`, three `LEFT JOIN groups`; `Groups`, `GroupPositions`,
-  `GroupNames` on `Session`, all `omitempty`; `SetSessionGroups`; inheritance in
-  `UpsertSession`.
+  `groupKey string`, the latter matching a group or anything beneath it;
+  `GroupKey` and `GroupPath` on `Session`, both `omitempty`; `SetSessionGroup`;
+  inheritance in `UpsertSession`.
 - `internal/server/api.go` — the group handlers, `groups` on
   `handlePatchSession`, `grouped`/`group_key` on `handleListSessions`,
   broadcast on write.

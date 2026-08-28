@@ -29,7 +29,8 @@ function session(id: string, sortOrder: number, ...groups: SessionGroup[]): Sess
     sort_order: sortOrder,
     created_at: '2026-08-28T00:00:00Z',
     supports_prompt_queue: false,
-    groups: groups.length > 0 ? groups : undefined,
+    group_path: groups.length > 0 ? groups : undefined,
+    group_key: groups.length > 0 ? groups[groups.length - 1]!.key : undefined,
   }
 }
 

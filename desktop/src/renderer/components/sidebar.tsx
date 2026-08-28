@@ -348,7 +348,7 @@ export function Sidebar({
                       const to = keys.indexOf(node.key)
                       if (from === -1 || to === -1 || from === to) return
                       keys.splice(to, 0, keys.splice(from, 1)[0] as string)
-                      void store.reorderGroups(host.id, keys)
+                      void store.reorderGroups(host.id, '', keys)
                     }}
                     onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
                   >
@@ -508,21 +508,15 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
     }
   }
 
-  const held = (session.groups ?? []).map((group) => group.key)
+  const held = session.group_key ?? ''
 
-  // One entry per group, ticked when the session is in it. A submenu would be
-  // tidier past a dozen groups, but a flat list is what this menu already knows
-  // how to draw, and it makes membership readable without a hover.
+  // One entry per group, ticked on the one this session is filed under.
+  // Choosing another moves it; choosing the current one takes it out.
   const actions: MenuAction[] = groups.map((group) => {
-    const inside = held.includes(group.key)
+    const inside = held === group.key
     return {
       label: `${inside ? '✓ ' : '\u2003'}${group.name}`,
-      run: () =>
-        void store.setSessionGroups(
-          hostId,
-          session.session_id,
-          inside ? held.filter((key) => key !== group.key) : [...held, group.key],
-        ),
+      run: () => void store.setSessionGroup(hostId, session.session_id, inside ? '' : group.key),
     }
   })
 
@@ -532,7 +526,7 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
       const name = window.prompt('Name the group')?.trim()
       if (!name) return
       void store.createGroup(hostId, name).then((group) => {
-        if (group) void store.setSessionGroups(hostId, session.session_id, [...held, group.key])
+        if (group) void store.setSessionGroup(hostId, session.session_id, group.key)
       })
     },
   })

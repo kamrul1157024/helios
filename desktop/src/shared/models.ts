@@ -29,18 +29,22 @@ export interface Session {
   created_at: string
   ended_at?: string
   supports_prompt_queue: boolean
-  /** Groups this session belongs to, outermost first, each already carrying its
-   *  name and position. Absent unless the request asked for grouping, so a
-   *  client that does not group is served what it always was. */
-  groups?: SessionGroup[]
+  /** The one group this session is filed under. */
+  group_key?: string
+  /** That group and its ancestors, outermost first, resolved by the daemon so
+   *  no client walks the tree itself. Absent unless the request asked for
+   *  grouping, so a client that does not group is served what it always was. */
+  group_path?: SessionGroup[]
 }
 
-/** One group. Position is its place among all groups, wherever it happens to be
- *  nested — a group has one position, not one per parent. */
+/** One node of the grouping tree. Position is its place among its own siblings,
+ *  so two groups under different parents may share a number. */
 export interface SessionGroup {
   key: string
   name: string
   position: number
+  /** Empty for a root. Present on the catalogue, absent on a resolved path. */
+  parent?: string
 }
 
 export type SessionStatus =

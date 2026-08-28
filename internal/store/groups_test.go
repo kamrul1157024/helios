@@ -5,31 +5,29 @@ import (
 	"testing"
 )
 
-// mustGroup creates a group or fails the test, returning its key.
-func mustGroup(t *testing.T, s *Store, name string) string {
+func mustGroup(t *testing.T, s *Store, name, parent string) string {
 	t.Helper()
-	g, err := s.CreateGroup(name)
+	g, err := s.CreateGroup(name, parent)
 	if err != nil {
-		t.Fatalf("create group %q: %v", name, err)
+		t.Fatalf("create group %q under %q: %v", name, parent, err)
 	}
 	return g.Key
 }
 
-// mustSession inserts a session in cwd and gives it groups.
-func mustSession(t *testing.T, s *Store, id, cwd string, keys ...string) {
+func mustSession(t *testing.T, s *Store, id, cwd, group string) {
 	t.Helper()
 	if err := s.UpsertSession(&Session{SessionID: id, Source: "claude", CWD: cwd, Status: "idle"}); err != nil {
 		t.Fatalf("upsert %s: %v", id, err)
 	}
-	if len(keys) > 0 {
-		if err := s.SetSessionGroups(id, keys); err != nil {
-			t.Fatalf("set groups on %s: %v", id, err)
+	if group != "" {
+		if err := s.SetSessionGroup(id, group); err != nil {
+			t.Fatalf("file %s: %v", id, err)
 		}
 	}
 }
 
-// groupsOf returns the keys a session holds, in order.
-func groupsOf(t *testing.T, s *Store, id string) []string {
+// pathNames returns the names of a session's path, outermost first.
+func pathNames(t *testing.T, s *Store, id string) []string {
 	t.Helper()
 	sessions, err := s.SearchSessions(SessionQuery{Grouped: true})
 	if err != nil {
@@ -39,303 +37,360 @@ func groupsOf(t *testing.T, s *Store, id string) []string {
 		if sess.SessionID != id {
 			continue
 		}
-		keys := make([]string, 0, len(sess.Groups))
-		for _, g := range sess.Groups {
-			keys = append(keys, g.Key)
+		names := make([]string, 0, len(sess.GroupPath))
+		for _, g := range sess.GroupPath {
+			names = append(names, g.Name)
 		}
-		return keys
+		return names
 	}
 	t.Fatalf("no session %s", id)
 	return nil
 }
 
-func TestCreateGroup_AppendsToTheOrder(t *testing.T) {
-	s := setupTestStore(t)
+func groupKeyOf(t *testing.T, s *Store, id string) string {
+	t.Helper()
+	sessions, _ := s.SearchSessions(SessionQuery{Grouped: true})
+	for _, sess := range sessions {
+		if sess.SessionID == id {
+			return sess.GroupKey
+		}
+	}
+	t.Fatalf("no session %s", id)
+	return ""
+}
 
-	first := mustGroup(t, s, "Work")
-	second := mustGroup(t, s, "Side")
+func TestCreateGroup_NestsUnderItsParent(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	mustSession(t, s, "s1", "/x/a", opal)
+
+	if got := pathNames(t, s, "s1"); len(got) != 2 || got[0] != "Work" || got[1] != "opal-app" {
+		t.Fatalf("path = %v, want [Work opal-app]", got)
+	}
+}
+
+func TestCreateGroup_RefusesAnUnknownParent(t *testing.T) {
+	s := setupTestStore(t)
+	if _, err := s.CreateGroup("orphan", "g_nope"); err == nil {
+		t.Fatal("accepted a parent that does not exist")
+	}
+}
+
+// Identity is the key, so the same label in two places is two nodes. The
+// earlier model folded them into one.
+func TestCreateGroup_AllowsTheSameNameTwice(t *testing.T) {
+	s := setupTestStore(t)
+	opal := mustGroup(t, s, "opal-app", "")
+	helios := mustGroup(t, s, "helios", "")
+	one := mustGroup(t, s, "backend", opal)
+	two := mustGroup(t, s, "backend", helios)
+
+	if one == two {
+		t.Fatal("two groups named backend share a key")
+	}
+	mustSession(t, s, "s1", "/x/a", one)
+	mustSession(t, s, "s2", "/x/b", two)
+	if got := pathNames(t, s, "s1"); got[0] != "opal-app" {
+		t.Errorf("s1 path = %v", got)
+	}
+	if got := pathNames(t, s, "s2"); got[0] != "helios" {
+		t.Errorf("s2 path = %v", got)
+	}
+}
+
+// Position is among siblings, so two roots and two children can share numbers
+// without meaning anything by it.
+func TestCreateGroup_PositionsAreAmongSiblings(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	side := mustGroup(t, s, "Side", "")
+	child := mustGroup(t, s, "opal-app", work)
+
+	byKey := map[string]Group{}
+	groups, _ := s.ListGroups()
+	for _, g := range groups {
+		byKey[g.Key] = g
+	}
+	if byKey[work].Position != 0 || byKey[side].Position != 1 {
+		t.Errorf("roots = %d,%d want 0,1", byKey[work].Position, byKey[side].Position)
+	}
+	if byKey[child].Position != 0 {
+		t.Errorf("first child = %d, want 0", byKey[child].Position)
+	}
+}
+
+func TestListGroups_ReturnsParentsBeforeChildren(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	mustGroup(t, s, "backend", opal)
+	mustGroup(t, s, "Side", "")
 
 	groups, err := s.ListGroups()
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(groups) != 2 {
-		t.Fatalf("got %d groups, want 2", len(groups))
+	var names []string
+	for _, g := range groups {
+		names = append(names, g.Name)
 	}
-	if groups[0].Key != first || groups[0].Position != 0 {
-		t.Errorf("first = %+v, want %s at 0", groups[0], first)
-	}
-	if groups[1].Key != second || groups[1].Position != 1 {
-		t.Errorf("second = %+v, want %s at 1", groups[1], second)
-	}
-}
-
-func TestCreateGroup_RefusesAnEmptyName(t *testing.T) {
-	s := setupTestStore(t)
-	if _, err := s.CreateGroup("   "); err == nil {
-		t.Fatal("accepted a group with no name")
-	}
-}
-
-// A rename must not disturb the arrangement: the key is what every session and
-// every position refers to.
-func TestRenameGroup_KeepsKeyAndPosition(t *testing.T) {
-	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	mustGroup(t, s, "Side")
-	mustSession(t, s, "s1", "/x/a", work)
-
-	if err := s.RenameGroup(work, "Client work"); err != nil {
-		t.Fatalf("rename: %v", err)
-	}
-
-	groups, _ := s.ListGroups()
-	if groups[0].Key != work || groups[0].Name != "Client work" || groups[0].Position != 0 {
-		t.Errorf("after rename: %+v", groups[0])
-	}
-	if got := groupsOf(t, s, "s1"); len(got) != 1 || got[0] != work {
-		t.Errorf("session lost its group: %v", got)
-	}
-}
-
-func TestSetGroupOrder_RenumbersFromZero(t *testing.T) {
-	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	side := mustGroup(t, s, "Side")
-	spike := mustGroup(t, s, "Spike")
-
-	if err := s.SetGroupOrder([]string{spike, work, side}); err != nil {
-		t.Fatalf("order: %v", err)
-	}
-
-	groups, _ := s.ListGroups()
-	want := []string{spike, work, side}
-	for i, g := range groups {
-		if g.Key != want[i] || g.Position != i {
-			t.Errorf("position %d = %+v, want %s", i, g, want[i])
+	want := []string{"Work", "opal-app", "backend", "Side"}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("order = %v, want %v", names, want)
 		}
 	}
 }
 
-// A group whose sessions are all hidden behind the terminated filter is missing
-// from the list the client posts. Dropping it to the end would lose an
-// arrangement the user never touched, so the daemon completes the list itself.
-func TestSetGroupOrder_KeepsGroupsTheClientDidNotMention(t *testing.T) {
+func TestMoveGroup_TakesTheSubtreeWithIt(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	hidden := mustGroup(t, s, "Hidden")
-	side := mustGroup(t, s, "Side")
+	work := mustGroup(t, s, "Work", "")
+	side := mustGroup(t, s, "Side", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	backend := mustGroup(t, s, "backend", opal)
+	mustSession(t, s, "s1", "/x/a", backend)
 
-	if err := s.SetGroupOrder([]string{side, work}); err != nil {
-		t.Fatalf("order: %v", err)
+	if err := s.MoveGroup(opal, side); err != nil {
+		t.Fatalf("move: %v", err)
 	}
-
-	groups, _ := s.ListGroups()
-	if len(groups) != 3 {
-		t.Fatalf("got %d groups, want 3", len(groups))
-	}
-	if groups[0].Key != side || groups[1].Key != work {
-		t.Errorf("named groups not honoured: %+v", groups)
-	}
-	if groups[2].Key != hidden {
-		t.Errorf("unmentioned group = %s, want %s appended", groups[2].Key, hidden)
+	if got := pathNames(t, s, "s1"); len(got) != 3 || got[0] != "Side" {
+		t.Fatalf("path = %v, want it to start at Side", got)
 	}
 }
 
-func TestSetSessionGroups_RoundTripsInOrder(t *testing.T) {
+func TestMoveGroup_RefusesACycle(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	opal := mustGroup(t, s, "opal-app")
-	mustSession(t, s, "s1", "/x/a", work, opal)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	backend := mustGroup(t, s, "backend", opal)
 
-	got := groupsOf(t, s, "s1")
-	if len(got) != 2 || got[0] != work || got[1] != opal {
-		t.Fatalf("groups = %v, want [%s %s] in that order", got, work, opal)
-	}
-}
-
-func TestSetSessionGroups_Rejects(t *testing.T) {
-	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	a := mustGroup(t, s, "A")
-	b := mustGroup(t, s, "B")
-	mustSession(t, s, "s1", "/x/a")
-
-	cases := map[string]struct {
-		keys []string
-		want string
-	}{
-		"a group twice":      {[]string{work, work}, "once"},
-		"too deep":           {[]string{work, a, b, work}, "3 groups"},
-		"unknown key":        {[]string{"g_nope"}, "no group"},
-		"an empty key":       {[]string{""}, "cannot be empty"},
-		"a hole in the list": {[]string{work, ""}, "cannot be empty"},
-	}
-	for name, tc := range cases {
+	for name, parent := range map[string]string{"itself": work, "its child": opal, "its grandchild": backend} {
 		t.Run(name, func(t *testing.T) {
-			err := s.SetSessionGroups("s1", tc.keys)
-			if err == nil {
-				t.Fatalf("accepted %v", tc.keys)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error %q does not mention %q", err, tc.want)
+			if err := s.MoveGroup(work, parent); err == nil {
+				t.Fatal("accepted a move that makes a loop")
 			}
 		})
 	}
 }
 
-func TestSetSessionGroups_EmptyClears(t *testing.T) {
+func TestMoveGroup_ToRoot(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	mustSession(t, s, "s1", "/x/a", work)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	mustSession(t, s, "s1", "/x/a", opal)
 
-	if err := s.SetSessionGroups("s1", nil); err != nil {
-		t.Fatalf("clear: %v", err)
+	if err := s.MoveGroup(opal, ""); err != nil {
+		t.Fatalf("move: %v", err)
 	}
-	if got := groupsOf(t, s, "s1"); len(got) != 0 {
-		t.Errorf("groups = %v, want none", got)
+	if got := pathNames(t, s, "s1"); len(got) != 1 || got[0] != "opal-app" {
+		t.Fatalf("path = %v, want just [opal-app]", got)
 	}
 }
 
-// Deleting a group has to reach the sessions holding it, or they render under a
-// header that no longer exists.
-func TestDeleteGroup_ClearsItFromSessions(t *testing.T) {
+// The rule the whole delete story rests on: nothing is orphaned, and nothing
+// but the node itself is lost.
+func TestDeleteGroup_LiftsChildrenAndSessionsOneLevel(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	opal := mustGroup(t, s, "opal-app")
-	mustSession(t, s, "s1", "/x/a", work, opal)
-	mustSession(t, s, "s2", "/x/b", opal)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	backend := mustGroup(t, s, "backend", opal)
+	mustSession(t, s, "onNode", "/x/a", opal)
+	mustSession(t, s, "below", "/x/b", backend)
 
 	if err := s.DeleteGroup(opal); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
-	if got := groupsOf(t, s, "s1"); len(got) != 1 || got[0] != work {
-		t.Errorf("s1 groups = %v, want just %s", got, work)
+	if got := pathNames(t, s, "onNode"); len(got) != 1 || got[0] != "Work" {
+		t.Errorf("session on the deleted node = %v, want [Work]", got)
 	}
-	if got := groupsOf(t, s, "s2"); len(got) != 0 {
-		t.Errorf("s2 groups = %v, want none", got)
-	}
-}
-
-// The whole point of manual grouping being bearable: assign a directory once,
-// and every later agent started there joins on its own.
-func TestUpsertSession_InheritsGroupsFromTheSameDirectory(t *testing.T) {
-	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	opal := mustGroup(t, s, "opal-app")
-	mustSession(t, s, "first", "/x/opal", work, opal)
-
-	mustSession(t, s, "second", "/x/opal")
-	if got := groupsOf(t, s, "second"); len(got) != 2 || got[0] != work || got[1] != opal {
-		t.Errorf("second did not inherit: %v", got)
-	}
-
-	mustSession(t, s, "elsewhere", "/x/other")
-	if got := groupsOf(t, s, "elsewhere"); len(got) != 0 {
-		t.Errorf("a new directory inherited %v", got)
+	if got := pathNames(t, s, "below"); len(got) != 2 || got[0] != "Work" || got[1] != "backend" {
+		t.Errorf("session below it = %v, want [Work backend]", got)
 	}
 }
 
-// Membership is a snapshot. Reorganising later must not rewrite the sessions
-// that already ran.
-func TestUpsertSession_DoesNotRewriteGroupsOnUpdate(t *testing.T) {
+func TestDeleteGroup_ARootLeavesEverythingUnassigned(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	side := mustGroup(t, s, "Side")
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	mustSession(t, s, "onRoot", "/x/a", work)
+	mustSession(t, s, "below", "/x/b", opal)
+
+	if err := s.DeleteGroup(work); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	if got := pathNames(t, s, "onRoot"); len(got) != 0 {
+		t.Errorf("session on the deleted root = %v, want unassigned", got)
+	}
+	// Its child became a root, so anything under it keeps one level.
+	if got := pathNames(t, s, "below"); len(got) != 1 || got[0] != "opal-app" {
+		t.Errorf("session below = %v, want [opal-app]", got)
+	}
+}
+
+func TestSetGroupOrder_ArrangesOneParentsChildren(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	a := mustGroup(t, s, "a", work)
+	b := mustGroup(t, s, "b", work)
+	c := mustGroup(t, s, "c", work)
+
+	if err := s.SetGroupOrder(work, []string{c, a, b}); err != nil {
+		t.Fatalf("order: %v", err)
+	}
+	byKey := map[string]int{}
+	groups, _ := s.ListGroups()
+	for _, g := range groups {
+		byKey[g.Key] = g.Position
+	}
+	if byKey[c] != 0 || byKey[a] != 1 || byKey[b] != 2 {
+		t.Errorf("positions = c:%d a:%d b:%d, want 0,1,2", byKey[c], byKey[a], byKey[b])
+	}
+}
+
+// A child hidden behind the terminated filter is missing from the client's
+// list, and dropping it to the end would lose an arrangement nobody touched.
+func TestSetGroupOrder_KeepsSiblingsTheClientDidNotMention(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	a := mustGroup(t, s, "a", work)
+	hidden := mustGroup(t, s, "hidden", work)
+	b := mustGroup(t, s, "b", work)
+
+	if err := s.SetGroupOrder(work, []string{b, a}); err != nil {
+		t.Fatalf("order: %v", err)
+	}
+	byKey := map[string]int{}
+	groups, _ := s.ListGroups()
+	for _, g := range groups {
+		byKey[g.Key] = g.Position
+	}
+	if byKey[b] != 0 || byKey[a] != 1 || byKey[hidden] != 2 {
+		t.Errorf("hidden sibling not appended: b:%d a:%d hidden:%d", byKey[b], byKey[a], byKey[hidden])
+	}
+}
+
+func TestSetSessionGroup_Rejects(t *testing.T) {
+	s := setupTestStore(t)
+	mustSession(t, s, "s1", "/x/a", "")
+	if err := s.SetSessionGroup("s1", "g_nope"); err == nil {
+		t.Fatal("accepted a group that does not exist")
+	}
+	if err := s.SetSessionGroup("nosuch", ""); err == nil {
+		t.Fatal("accepted a session that does not exist")
+	}
+}
+
+func TestSetSessionGroup_EmptyUnassigns(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
 	mustSession(t, s, "s1", "/x/a", work)
 
-	// A later session in the same directory files it differently.
-	mustSession(t, s, "s2", "/x/a")
-	if err := s.SetSessionGroups("s2", []string{side}); err != nil {
-		t.Fatalf("regroup: %v", err)
+	if err := s.SetSessionGroup("s1", ""); err != nil {
+		t.Fatalf("unassign: %v", err)
 	}
-
-	// Updating s1 must leave its own grouping alone.
-	if err := s.UpsertSession(&Session{SessionID: "s1", Source: "claude", CWD: "/x/a", Status: "active"}); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if got := groupsOf(t, s, "s1"); len(got) != 1 || got[0] != work {
-		t.Errorf("s1 groups = %v, want just %s", got, work)
+	if got := pathNames(t, s, "s1"); len(got) != 0 {
+		t.Errorf("path = %v, want none", got)
 	}
 }
 
-// json_each rather than a LIKE over the raw array: a substring match would find
-// a key inside a longer one.
-func TestSearchSessions_GroupKeyMatchesAtAnyDepthAndNotBySubstring(t *testing.T) {
+// Asking for a group means asking for what is under it.
+func TestSearchSessions_GroupKeyCoversTheWholeBranch(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	opal := mustGroup(t, s, "opal-app")
-	mustSession(t, s, "outer", "/x/a", work)
-	mustSession(t, s, "inner", "/x/b", work, opal)
-	mustSession(t, s, "neither", "/x/c")
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	side := mustGroup(t, s, "Side", "")
+	mustSession(t, s, "onWork", "/x/a", work)
+	mustSession(t, s, "deep", "/x/b", opal)
+	mustSession(t, s, "elsewhere", "/x/c", side)
 
-	found, err := s.SearchSessions(SessionQuery{Grouped: true, GroupKey: opal})
+	found, err := s.SearchSessions(SessionQuery{Grouped: true, GroupKey: work})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if len(found) != 1 || found[0].SessionID != "inner" {
-		t.Fatalf("group filter returned %d rows, want just inner", len(found))
+	if len(found) != 2 {
+		t.Fatalf("got %d sessions, want the branch's 2", len(found))
 	}
 
-	// A prefix of a real key must match nothing.
-	short, err := s.SearchSessions(SessionQuery{GroupKey: opal[:len(opal)-2]})
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	if len(short) != 0 {
-		t.Errorf("a truncated key matched %d sessions", len(short))
+	leaf, _ := s.SearchSessions(SessionQuery{GroupKey: opal})
+	if len(leaf) != 1 || leaf[0].SessionID != "deep" {
+		t.Errorf("a leaf returned %d sessions", len(leaf))
 	}
 }
 
-// Ungrouped is not a stored group, so nothing should claim it.
-func TestSearchSessions_UngroupedCarriesNoGroups(t *testing.T) {
+func TestSearchSessions_UngroupedQueryOmitsTheFields(t *testing.T) {
 	s := setupTestStore(t)
-	mustSession(t, s, "s1", "/x/a")
-
-	sessions, err := s.SearchSessions(SessionQuery{Grouped: true})
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	if len(sessions) != 1 || sessions[0].Groups != nil {
-		t.Errorf("groups = %+v, want nil", sessions[0].Groups)
-	}
-}
-
-// A caller that did not ask for grouping is served exactly what it always was.
-func TestSearchSessions_UngroupedQueryOmitsTheField(t *testing.T) {
-	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
+	work := mustGroup(t, s, "Work", "")
 	mustSession(t, s, "s1", "/x/a", work)
 
 	sessions, err := s.SearchSessions(SessionQuery{})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if sessions[0].Groups != nil {
-		t.Errorf("groups served without being asked for: %+v", sessions[0].Groups)
+	if sessions[0].GroupPath != nil || sessions[0].GroupKey != "" {
+		t.Errorf("grouping served without being asked for: %+v", sessions[0].GroupPath)
 	}
 }
 
-// Positions travel with the session so the client needs no lookup table.
-func TestSearchSessions_ResolvesNamesAndPositions(t *testing.T) {
+// Assign a directory once and every later agent started there joins on its own.
+func TestUpsertSession_InheritsTheGroupOfTheSameDirectory(t *testing.T) {
 	s := setupTestStore(t)
-	work := mustGroup(t, s, "Work")
-	opal := mustGroup(t, s, "opal-app")
-	mustSession(t, s, "s1", "/x/a", work, opal)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	mustSession(t, s, "first", "/x/opal", opal)
 
-	sessions, err := s.SearchSessions(SessionQuery{Grouped: true})
-	if err != nil {
-		t.Fatalf("search: %v", err)
+	mustSession(t, s, "second", "/x/opal", "")
+	if got := groupKeyOf(t, s, "second"); got != opal {
+		t.Errorf("second did not inherit: %q", got)
 	}
-	got := sessions[0].Groups
-	if len(got) != 2 {
-		t.Fatalf("groups = %+v, want 2", got)
+	if got := pathNames(t, s, "second"); len(got) != 2 {
+		t.Errorf("inherited path = %v, want two levels", got)
 	}
-	if got[0].Name != "Work" || got[0].Position != 0 {
-		t.Errorf("outermost = %+v, want Work at 0", got[0])
+
+	mustSession(t, s, "elsewhere", "/x/other", "")
+	if got := groupKeyOf(t, s, "elsewhere"); got != "" {
+		t.Errorf("a new directory inherited %q", got)
 	}
-	if got[1].Name != "opal-app" || got[1].Position != 1 {
-		t.Errorf("inner = %+v, want opal-app at 1", got[1])
+}
+
+func TestUpsertSession_DoesNotRefileOnUpdate(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	side := mustGroup(t, s, "Side", "")
+	mustSession(t, s, "s1", "/x/a", work)
+	mustSession(t, s, "s2", "/x/a", side)
+
+	if err := s.UpsertSession(&Session{SessionID: "s1", Source: "claude", CWD: "/x/a", Status: "active"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got := groupKeyOf(t, s, "s1"); got != work {
+		t.Errorf("s1 was refiled to %q", got)
+	}
+}
+
+func TestCreateGroup_RefusesAnEmptyName(t *testing.T) {
+	s := setupTestStore(t)
+	if _, err := s.CreateGroup("   ", ""); err == nil {
+		t.Fatal("accepted a group with no name")
+	}
+}
+
+func TestRenameGroup_KeepsTheKeyAndTheTree(t *testing.T) {
+	s := setupTestStore(t)
+	work := mustGroup(t, s, "Work", "")
+	opal := mustGroup(t, s, "opal-app", work)
+	mustSession(t, s, "s1", "/x/a", opal)
+
+	if err := s.RenameGroup(work, "Client work"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	got := pathNames(t, s, "s1")
+	if len(got) != 2 || got[0] != "Client work" || got[1] != "opal-app" {
+		t.Errorf("path = %v", got)
+	}
+	if err := s.RenameGroup("g_nope", "x"); err == nil || !strings.Contains(err.Error(), "no group") {
+		t.Errorf("renaming a missing group gave %v", err)
 	}
 }

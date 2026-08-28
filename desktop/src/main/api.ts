@@ -159,8 +159,12 @@ export class ApiClient {
     return res.groups ?? []
   }
 
-  async createGroup(name: string): Promise<SessionGroup> {
-    return this.request('POST', '/api/groups', { name })
+  async createGroup(name: string, parent = ''): Promise<SessionGroup> {
+    return this.request('POST', '/api/groups', { name, parent })
+  }
+
+  async moveGroup(key: string, parent: string): Promise<void> {
+    await this.request('PATCH', `/api/groups/${encodeURIComponent(key)}`, { parent })
   }
 
   async renameGroup(key: string, name: string): Promise<void> {
@@ -171,13 +175,13 @@ export class ApiClient {
     await this.request('DELETE', `/api/groups/${encodeURIComponent(key)}`)
   }
 
-  async setGroupOrder(order: string[]): Promise<void> {
-    await this.request('POST', '/api/groups/order', { order })
+  async setGroupOrder(parent: string, order: string[]): Promise<void> {
+    await this.request('POST', '/api/groups/order', { parent, order })
   }
 
-  /** Replaces the session's groups, outermost first. An empty list clears it. */
-  async setSessionGroups(id: string, groups: string[]): Promise<void> {
-    await this.request('PATCH', `/api/sessions/${encodeURIComponent(id)}`, { groups })
+  /** Files the session under one group. An empty key unassigns it. */
+  async setSessionGroup(id: string, group: string): Promise<void> {
+    await this.request('PATCH', `/api/sessions/${encodeURIComponent(id)}`, { group })
   }
 
   async getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {

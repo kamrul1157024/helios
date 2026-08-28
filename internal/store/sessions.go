@@ -44,10 +44,13 @@ type Session struct {
 	CreatedAt           string  `json:"created_at"`
 	EndedAt             *string `json:"ended_at,omitempty"`
 	SupportsPromptQueue bool    `json:"supports_prompt_queue"`
-	// Groups the session belongs to, outermost first, each resolved to its name
-	// and position. Only filled when the caller asked for grouping, so a client
-	// that does not group is served exactly what it was served before.
-	Groups []SessionGroup `json:"groups,omitempty"`
+	// GroupKey is the one group the session is filed under, or empty.
+	GroupKey string `json:"group_key,omitempty"`
+	// GroupPath is that group and its ancestors, outermost first, resolved by
+	// the daemon so no client walks the tree itself. Only filled when the caller
+	// asked for grouping, so one that does not group is served what it always
+	// was.
+	GroupPath []SessionGroup `json:"group_path,omitempty"`
 }
 
 // Label returns the session's display label: title, or truncated last user message, or "".
@@ -100,13 +103,13 @@ func (s *Store) UpsertSession(sess *Session) error {
 	// is what keeps manual grouping from needing an action per session.
 	// Inherited on insert only — a later reorganisation does not reach back and
 	// rewrite the sessions that already ran.
-	inherited, err := s.groupsForCWD(sess.CWD)
+	inherited, err := s.groupForCWD(sess.CWD)
 	if err != nil {
 		return fmt.Errorf("inherit groups for %s: %w", sess.CWD, err)
 	}
 
 	_, err = s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, groups)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, group_key)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
@@ -285,16 +288,22 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 		args = append(args, sq.CWD)
 	}
 
-	// Membership at any depth. json_each rather than a LIKE over the raw array:
-	// a substring match would find "g_work" inside "g_workshop".
+	// Asking for a group means asking for what is under it, so the filter covers
+	// the whole branch rather than the one node.
 	if sq.GroupKey != "" {
-		where = append(where, `EXISTS (SELECT 1 FROM json_each(sessions.groups) WHERE value = ?)`)
-		args = append(args, sq.GroupKey)
+		branch, err := s.descendantsOf(sq.GroupKey)
+		if err != nil {
+			return nil, err
+		}
+		where = append(where, `group_key IN (`+strings.TrimSuffix(strings.Repeat("?,", len(branch)), ",")+`)`)
+		for _, key := range branch {
+			args = append(args, key)
+		}
 	}
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-	        permission_mode, created_at, ended_at, groups
+	        permission_mode, created_at, ended_at, group_key
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -336,9 +345,10 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 	return result, nil
 }
 
-// attachGroups resolves each session's stored keys into names and positions.
-// A key naming a group that no longer exists is dropped rather than rendered
-// as a blank header.
+// attachGroups resolves each session's group into the path from the root down.
+// One read of a table with a handful of rows, rather than a recursive CTE per
+// query. A key naming a group that is gone resolves to nothing rather than to a
+// broken path.
 func (s *Store) attachGroups(sessions []Session, raw []sql.NullString) error {
 	groups, err := s.ListGroups()
 	if err != nil {
@@ -350,21 +360,15 @@ func (s *Store) attachGroups(sessions []Session, raw []sql.NullString) error {
 	}
 
 	for i := range sessions {
-		keys := decodeGroups(raw[i])
-		if len(keys) == 0 {
+		if !raw[i].Valid || raw[i].String == "" {
 			continue
 		}
-		held := make([]SessionGroup, 0, len(keys))
-		for _, key := range keys {
-			g, ok := byKey[key]
-			if !ok {
-				continue
-			}
-			held = append(held, SessionGroup{Key: g.Key, Name: g.Name, Position: g.Position})
+		path := pathOf(raw[i].String, byKey)
+		if len(path) == 0 {
+			continue
 		}
-		if len(held) > 0 {
-			sessions[i].Groups = held
-		}
+		sessions[i].GroupKey = raw[i].String
+		sessions[i].GroupPath = path
 	}
 	return nil
 }

@@ -504,9 +504,10 @@ class Store {
     }
   }
 
-  async createGroup(hostId: string, name: string): Promise<SessionGroup | null> {
+  /** An empty parent makes it a root. */
+  async createGroup(hostId: string, name: string, parent = ''): Promise<SessionGroup | null> {
     try {
-      const group = await api(hostId).createGroup(name)
+      const group = await api(hostId).createGroup(name, parent)
       await this.refreshGroups(hostId)
       return group
     } catch (err) {
@@ -524,6 +525,18 @@ class Store {
     }
   }
 
+  /** Moves a group and everything beneath it. An empty parent makes it a root. */
+  async moveGroup(hostId: string, key: string, parent: string): Promise<void> {
+    try {
+      await api(hostId).moveGroup(key, parent)
+      await Promise.all([this.refreshGroups(hostId), this.refreshSessions(hostId)])
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /** Deleting lifts the group's children and its sessions one level, so both
+   *  the tree and the sessions have to be refetched. */
   async deleteGroup(hostId: string, key: string): Promise<void> {
     try {
       await api(hostId).deleteGroup(key)
@@ -539,7 +552,7 @@ class Store {
    * Applied here first for the same reason a dragged session is: a header that
    * snaps back while the daemon answers reads as a drag that failed.
    */
-  async reorderGroups(hostId: string, orderedKeys: string[]): Promise<void> {
+  async reorderGroups(hostId: string, parent: string, orderedKeys: string[]): Promise<void> {
     const before = this.state.groups[hostId] ?? []
     const byKey = new Map(before.map((group) => [group.key, group]))
     const next: SessionGroup[] = []
@@ -550,7 +563,7 @@ class Store {
     this.set((s) => ({ groups: { ...s.groups, [hostId]: next } }))
 
     try {
-      await api(hostId).setGroupOrder(orderedKeys)
+      await api(hostId).setGroupOrder(parent, orderedKeys)
       await this.refreshSessions(hostId)
     } catch (err) {
       this.set((s) => ({ groups: { ...s.groups, [hostId]: before } }))
@@ -558,10 +571,10 @@ class Store {
     }
   }
 
-  /** Replaces a session's groups, outermost first. An empty list clears them. */
-  async setSessionGroups(hostId: string, sessionId: string, keys: string[]): Promise<void> {
+  /** Files a session under one group. An empty key unassigns it. */
+  async setSessionGroup(hostId: string, sessionId: string, key: string): Promise<void> {
     try {
-      await api(hostId).setSessionGroups(sessionId, keys)
+      await api(hostId).setSessionGroup(sessionId, key)
       await this.refreshSessions(hostId)
     } catch (err) {
       this.fail(err)

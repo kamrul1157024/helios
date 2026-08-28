@@ -176,11 +176,21 @@ func (s *Store) migrate() error {
 			name     TEXT NOT NULL,
 			position INTEGER NOT NULL
 		)`},
-		// A JSON array of group keys, outermost first: '["g_work","g_opal"]'.
-		// An array rather than fixed columns because the depth limit belongs to
-		// the picker, not to the database: a fourth level should not cost a
-		// migration on the busiest table.
 		{"add_sessions_groups", `ALTER TABLE sessions ADD COLUMN groups TEXT`},
+		// Groups became a tree: a group knows its own parent, and a session
+		// hangs off one node rather than carrying the whole path. Storing the
+		// nesting on the session forced two same-named siblings into one group
+		// and let a single group render at two depths. Nothing shipped on the
+		// first shape, so it is replaced rather than migrated.
+		{"drop_groups_flat", `DROP TABLE IF EXISTS groups`},
+		{"create_groups_tree", `CREATE TABLE IF NOT EXISTS groups (
+			key        TEXT PRIMARY KEY,
+			name       TEXT NOT NULL,
+			parent_key TEXT REFERENCES groups(key) ON DELETE SET NULL,
+			position   INTEGER NOT NULL
+		)`},
+		{"add_sessions_group_key", `ALTER TABLE sessions ADD COLUMN group_key TEXT`},
+		{"drop_sessions_groups", `ALTER TABLE sessions DROP COLUMN groups`},
 	}
 
 	for _, cm := range columnMigrations {

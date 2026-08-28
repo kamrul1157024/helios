@@ -193,8 +193,11 @@ export class HostApi {
   listGroups(): Promise<SessionGroup[]> {
     return this.call('listGroups')
   }
-  createGroup(name: string): Promise<SessionGroup> {
-    return this.call('createGroup', name)
+  createGroup(name: string, parent = ''): Promise<SessionGroup> {
+    return this.call('createGroup', name, parent)
+  }
+  moveGroup(key: string, parent: string): Promise<void> {
+    return this.call('moveGroup', key, parent)
   }
   renameGroup(key: string, name: string): Promise<void> {
     return this.call('renameGroup', key, name)
@@ -202,11 +205,11 @@ export class HostApi {
   deleteGroup(key: string): Promise<void> {
     return this.call('deleteGroup', key)
   }
-  setGroupOrder(order: string[]): Promise<void> {
-    return this.call('setGroupOrder', order)
+  setGroupOrder(parent: string, order: string[]): Promise<void> {
+    return this.call('setGroupOrder', parent, order)
   }
-  setSessionGroups(id: string, groups: string[]): Promise<void> {
-    return this.call('setSessionGroups', id, groups)
+  setSessionGroup(id: string, group: string): Promise<void> {
+    return this.call('setSessionGroup', id, group)
   }
   getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {
     return this.call('getSession', id)

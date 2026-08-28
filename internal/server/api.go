@@ -917,18 +917,17 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 		Pinned *bool     `json:"pinned"`
 		Title  *string   `json:"title"`
 		Status *string   `json:"status"`
-		Groups *[]string `json:"groups"`
+		Group  *string   `json:"group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Before anything else is written: the store refuses a list that is too
-	// deep, repeats a group or names one that does not exist, and a rejected
-	// grouping should not leave a half-applied patch behind it.
-	if req.Groups != nil {
-		if err := s.shared.DB.SetSessionGroups(id, *req.Groups); err != nil {
+	// Before anything else is written: the store refuses a key that names no
+	// group, and a rejected grouping should not leave a half-applied patch.
+	if req.Group != nil {
+		if err := s.shared.DB.SetSessionGroup(id, *req.Group); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
