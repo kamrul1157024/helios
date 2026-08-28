@@ -914,10 +914,10 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		Pinned *bool     `json:"pinned"`
-		Title  *string   `json:"title"`
-		Status *string   `json:"status"`
-		Group  *string   `json:"group"`
+		Pinned *bool   `json:"pinned"`
+		Title  *string `json:"title"`
+		Status *string `json:"status"`
+		Group  *string `json:"group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
