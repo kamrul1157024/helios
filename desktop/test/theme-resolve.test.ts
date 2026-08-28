@@ -3,6 +3,8 @@
 // a theme with nothing but a background, one that states no type, one whose
 // colours carry alpha, and one with no syntax rules at all.
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { test } from 'node:test'
 
 import { resolveTheme, mergeThemes, modeFromUiTheme } from '../src/shared/theme/resolve.ts'
@@ -18,6 +20,7 @@ import {
   toHex,
   type BackdropStyle,
   type Rgb,
+  type VSCodeTheme,
 } from '../src/shared/theme/vscode.ts'
 
 test('parseJsonc tolerates comments and trailing commas', () => {
@@ -129,19 +132,21 @@ test('a theme with no tokenColors still gets syntax roles, from its terminal pal
 test('syntax roles match a token scope by its longest prefix', () => {
   const theme = resolveTheme('tokens', {
     colors: { 'editor.background': '#000000', 'editor.foreground': '#ffffff' },
+    // Legible against the code bed, so what is asserted here is the scope
+    // matching rather than the contrast floor that would otherwise move them.
     tokenColors: [
-      { scope: 'keyword', settings: { foreground: '#111111' } },
-      { scope: ['comment', 'punctuation.definition.comment'], settings: { foreground: '#222222' } },
-      { scope: 'string.quoted, string.template', settings: { foreground: '#333333' } },
+      { scope: 'keyword', settings: { foreground: '#aaaaaa' } },
+      { scope: ['comment', 'punctuation.definition.comment'], settings: { foreground: '#bbbbbb' } },
+      { scope: 'string.quoted, string.template', settings: { foreground: '#cccccc' } },
       // A descendant selector keys off its final segment.
-      { scope: 'meta.function entity.name.function', settings: { foreground: '#444444' } },
+      { scope: 'meta.function entity.name.function', settings: { foreground: '#dddddd' } },
     ],
   })
   // `keyword.control` is tried first and is absent, so it falls back to `keyword`.
-  assert.equal(theme.vars['--syn-keyword'], '#111111')
-  assert.equal(theme.vars['--syn-comment'], '#222222')
-  assert.equal(theme.vars['--syn-string'], '#333333')
-  assert.equal(theme.vars['--syn-function'], '#444444')
+  assert.equal(theme.vars['--syn-keyword'], '#aaaaaa')
+  assert.equal(theme.vars['--syn-comment'], '#bbbbbb')
+  assert.equal(theme.vars['--syn-string'], '#cccccc')
+  assert.equal(theme.vars['--syn-function'], '#dddddd')
 })
 
 test('the last rule naming a scope wins', () => {
@@ -512,3 +517,70 @@ test('mix travels the requested fraction', () => {
   assert.equal(toHex(mix(black, white, 1)), '#ffffff')
   assert.equal(toHex(mix(black, white, 0.5)), '#808080')
 })
+
+// Every bundled theme, swept against the surfaces the app actually draws on.
+// The resolver used to measure its floors against `editor.background`, which is
+// the lowest surface in the app and therefore the easiest one — sixteen of the
+// seventeen themes below shipped text under the floor on the raised surfaces
+// nobody was checking. Reading the themes off disk rather than fixturing them
+// is the point: a theme added later is covered without touching this file.
+const THEME_DIR = path.join(import.meta.dirname, '..', '..', 'themes')
+
+/** Text roles and the floor each is held to, against every surface it lands on. */
+const TEXT_FLOORS: [string, number][] = [
+  ['on-surface', 4.5],
+  ['on-surface-variant', 3.5],
+  ['primary', 3],
+  // Status and error are drawn as words, not only as dots: the "Active" label
+  // on a session row is 10.5px and the tick on a tool result is 11.5px.
+  ['error', 4.5],
+  ['s-starting', 4.5],
+  ['s-active', 4.5],
+  ['s-compacting', 4.5],
+  ['s-waiting', 4.5],
+  ['s-idle', 4.5],
+  ['s-error', 4.5],
+  ['s-off', 4.5],
+]
+
+/**
+ * Left as the theme states them: the poles are asked for as fills, or as the
+ * inverse of one, far more often than as text on the terminal's own background.
+ */
+const ANSI_POLES = new Set(['black', 'white', 'brightWhite'])
+
+const SURFACES = ['surface', 'surface-low', 'surface-container', 'surface-high', 'surface-highest']
+
+for (const entry of fs.readdirSync(THEME_DIR).filter((f) => f.endsWith('.json')).sort()) {
+  const id = entry.slice(0, -'.json'.length)
+  test(`${id} keeps its text legible on every surface`, () => {
+    const theme = resolveTheme(id, parseJsonc(fs.readFileSync(path.join(THEME_DIR, entry), 'utf8')) as VSCodeTheme)
+    const colour = (name: string): Rgb => parseColor(theme.vars[name]) as Rgb
+
+    for (const [role, floor] of TEXT_FLOORS) {
+      for (const surface of SURFACES) {
+        const ratio = contrast(colour(`--${role}`), colour(`--${surface}`))
+        assert.ok(ratio >= floor, `--${role} on --${surface} is ${ratio.toFixed(2)}, below ${floor}`)
+      }
+    }
+
+    // Syntax has a bed of its own, and a theme may set it to anything.
+    const codeBg = colour('--code-bg')
+    for (const [name, value] of Object.entries(theme.vars)) {
+      if (!name.startsWith('--syn-')) continue
+      const floor = name === '--syn-fg' ? 4.5 : name === '--syn-comment' ? 3 : 3.5
+      const ratio = contrast(parseColor(value) as Rgb, codeBg)
+      assert.ok(ratio >= floor, `${name} on --code-bg is ${ratio.toFixed(2)}, below ${floor}`)
+    }
+
+    // The terminal palette is text too. A light theme's yellow measures around
+    // 2:1 on a white terminal, which is what a CLI writes its warnings in.
+    const termBg = parseColor(theme.ansi.background.slice(0, 7)) as Rgb
+    for (const [name, value] of Object.entries(theme.ansi)) {
+      if (name === 'background' || name === 'selectionBackground' || name === 'cursor') continue
+      if (ANSI_POLES.has(name)) continue
+      const ratio = contrast(parseColor((value as string).slice(0, 7)) as Rgb, termBg)
+      assert.ok(ratio >= 4.5, `ansi ${name} on the terminal background is ${ratio.toFixed(2)}, below 4.5`)
+    }
+  })
+}

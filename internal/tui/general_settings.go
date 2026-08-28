@@ -11,10 +11,10 @@ import (
 )
 
 var toggleOnStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("42"))
+	Foreground(accentColor)
 
 var toggleOffStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("196"))
+	Foreground(dangerColor)
 
 var generalSettingsKeys = []struct {
 	key     string

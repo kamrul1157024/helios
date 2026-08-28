@@ -95,6 +95,23 @@ const FALLBACK_BG: Record<ThemeMode, Rgb> = { dark: rgb(0x11, 0x13, 0x18), light
 const FALLBACK_FG: Record<ThemeMode, Rgb> = { dark: rgb(0xe2, 0xe2, 0xe6), light: rgb(0x1f, 0x1f, 0x1f) }
 
 /**
+ * The four palette entries left exactly as the theme states them.
+ *
+ * The other twelve are text: a CLI writes its warnings in yellow and its
+ * timestamps in bright black, and a light theme's yellow on a white terminal
+ * measures around 2:1. These four are the poles, and a program that asks for
+ * them is usually asking for a fill or for the inverse of one — forcing
+ * `brightWhite` to stand off a white terminal would turn white-on-blue text
+ * black.
+ */
+const TERMINAL_POLES = new Set<AnsiName>(['black', 'white', 'brightWhite'])
+
+/** The floor for terminal text, which is dense and small. */
+const TERMINAL_CONTRAST = 4.5
+
+const readable = (colour: Rgb, background: Rgb): Rgb => ensureContrast(colour, background, TERMINAL_CONTRAST)
+
+/**
  * `uiTheme` from the extension's `package.json`, for the many themes that omit
  * the top-level `type` field.
  */
@@ -210,8 +227,13 @@ export function resolveTheme(
     vars[`--${name}`] = toHex(final)
   }
 
+  // A theme's token colours are chosen against its editor background, and the
+  // app puts them on a code block that is a rung further up the surface ladder.
+  // Held to the same floor as the rest of the UI, with comments allowed to
+  // recede further because receding is what they are for.
   const tokens = indexTokenColors(theme, bg)
-  vars['--syn-fg'] = toHex(fg)
+  const codeBg = resolved.get('code-bg') ?? bg
+  vars['--syn-fg'] = toHex(ensureContrast(fg, codeBg, 4.5))
   for (const [role, candidates] of Object.entries(SYNTAX_SCOPES)) {
     let value: Rgb | null = null
     for (const scope of candidates) {
@@ -219,7 +241,8 @@ export function resolveTheme(
       if (value) break
     }
     const fallback = SYNTAX_FALLBACK[role]
-    vars[`--syn-${role}`] = toHex(value ?? (fallback ? fallback(ansi, fg, bg) : fg))
+    const chosen = value ?? (fallback ? fallback(ansi, fg, bg) : fg)
+    vars[`--syn-${role}`] = toHex(ensureContrast(chosen, codeBg, role === 'comment' ? 3 : 3.5))
   }
 
   Object.assign(vars, overlayVars(mode === 'dark'))
@@ -284,13 +307,19 @@ export function resolveTheme(
     // Eight-digit hex rather than rgb(): xterm parses this itself, and does
     // not accept the slash form.
     background: glass ? toHexAlpha(terminalBg, glass.terminal) : toHex(terminalBg),
-    foreground: toHex(colour('terminal.foreground') ?? fg),
-    cursor: toHex(colour('terminalCursor.foreground') ?? colour('editorCursor.foreground') ?? fg),
+    foreground: toHex(readable(colour('terminal.foreground') ?? fg, terminalBg)),
+    // A caret is a shape rather than a word, so it is held to the non-text
+    // floor — but it still has to be findable.
+    cursor: toHex(
+      ensureContrast(colour('terminalCursor.foreground') ?? colour('editorCursor.foreground') ?? fg, terminalBg, 3),
+    ),
     selectionBackground: toHex(
       colour('terminal.selectionBackground') ?? colour('editor.selectionBackground') ?? mix(terminalBg, fg, 0.25),
     ),
   } as XtermTheme
-  for (const name of ANSI_NAMES) ansiTheme[name] = toHex(ansi[name])
+  for (const name of ANSI_NAMES) {
+    ansiTheme[name] = toHex(TERMINAL_POLES.has(name) ? ansi[name] : readable(ansi[name], terminalBg))
+  }
 
   return {
     id,
