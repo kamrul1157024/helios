@@ -161,6 +161,39 @@ export interface RoleSpec {
 }
 
 /**
+ * The hardest background a role has to survive.
+ *
+ * `editor.background` is the wrong thing to measure against, and measuring
+ * against it was how sixteen of the seventeen bundled themes shipped text below
+ * the WCAG floor. The app draws on a ladder of raised surfaces, and every rung
+ * is mixed towards the foreground — so the top rung eats the most contrast and
+ * is the only one worth checking. Clearing it clears every rung below.
+ */
+const onRaised = (c: DeriveContext): Rgb => c.role('surface-highest')
+
+/**
+ * The WCAG AA floor for text below 18px.
+ *
+ * The status and error colours were held to 3:1 on the theory that they are
+ * drawn as dots. They are not: they are the "Active" label on a session row and
+ * the tick on every tool result, at 10.5px and 11.5px. A dot at 3:1 beside a
+ * word at 3:1 means the word is the part that fails.
+ */
+const SMALL_TEXT = 4.5
+
+/**
+ * The floor for the colour most of the window is read in.
+ *
+ * AAA rather than AA, because AA is a minimum and this is the one role where
+ * the minimum becomes the actual value. Most themes state a foreground well
+ * clear of it — monokai's is 11:1 — so this only bites on the few that are
+ * deliberately low-contrast, which are the ones that read as grey mush.
+ * Solarized dark resolved to 5.14:1 body text under AA, which passes and is
+ * still tiring on dark teal.
+ */
+const BODY_TEXT = 7
+
+/**
  * The UI roles, in resolution order — later entries may read earlier ones
  * through `ctx.role`.
  *
@@ -177,12 +210,23 @@ export const UI_ROLES: [string, RoleSpec][] = [
   ['surface-high', { keys: [], derive: (c) => c.ladder(0.13) }],
   ['surface-highest', { keys: [], derive: (c) => c.ladder(0.19) }],
 
-  ['on-surface', { keys: ['editor.foreground', 'foreground'], derive: (c) => c.fg }],
+  [
+    'on-surface',
+    {
+      keys: ['editor.foreground', 'foreground'],
+      minContrast: BODY_TEXT,
+      against: onRaised,
+      derive: (c) => c.fg,
+    },
+  ],
   [
     'on-surface-variant',
     {
       keys: ['descriptionForeground'],
-      minContrast: 3,
+      // Secondary, but still text, and the app sets it at 10.5px on the
+      // session rows and 11.5px on every tool summary.
+      minContrast: SMALL_TEXT,
+      against: onRaised,
       derive: (c) => mix(c.fg, c.bg, 0.28),
     },
   ],
@@ -209,7 +253,8 @@ export const UI_ROLES: [string, RoleSpec][] = [
     'primary',
     {
       keys: ['textLink.foreground', 'focusBorder', 'button.background', 'progressBar.background'],
-      minContrast: 3,
+      minContrast: SMALL_TEXT,
+      against: onRaised,
       derive: (c) => c.ansi.blue,
     },
   ],
@@ -217,7 +262,7 @@ export const UI_ROLES: [string, RoleSpec][] = [
     'on-primary',
     {
       keys: ['button.foreground'],
-      minContrast: 4,
+      minContrast: SMALL_TEXT,
       against: (c) => c.role('primary'),
       derive: (c) => pickReadable(c.role('primary'), [c.bg, c.fg]),
     },
@@ -233,7 +278,8 @@ export const UI_ROLES: [string, RoleSpec][] = [
     'on-primary-container',
     {
       keys: ['list.activeSelectionForeground'],
-      minContrast: 4,
+      // The user's own messages are set on this container, at 14px.
+      minContrast: BODY_TEXT,
       against: (c) => c.role('primary-container'),
       derive: (c) => pickReadable(c.role('primary-container'), [c.fg, c.bg, mix(c.role('primary'), c.fg, 0.6)]),
     },
@@ -243,7 +289,8 @@ export const UI_ROLES: [string, RoleSpec][] = [
     'error',
     {
       keys: ['errorForeground', 'editorError.foreground', 'list.errorForeground'],
-      minContrast: 2.2,
+      minContrast: SMALL_TEXT,
+      against: onRaised,
       derive: (c) => c.ansi.red,
     },
   ],
@@ -258,7 +305,7 @@ export const UI_ROLES: [string, RoleSpec][] = [
     'on-error-container',
     {
       keys: ['inputValidation.errorForeground'],
-      minContrast: 4,
+      minContrast: BODY_TEXT,
       against: (c) => c.role('error-container'),
       derive: (c) => pickReadable(c.role('error-container'), [c.fg, c.bg, mix(c.role('error'), c.fg, 0.6)]),
     },
@@ -279,13 +326,13 @@ export const UI_ROLES: [string, RoleSpec][] = [
   // dots and short labels on a panel, and a terminal yellow picked to sit on a
   // light theme's white background is legible as output and invisible as a
   // six-pixel dot.
-  ['s-starting', { keys: [], minContrast: 3, derive: (c) => c.ansi.cyan }],
-  ['s-active', { keys: [], minContrast: 3, derive: (c) => c.ansi.green }],
-  ['s-compacting', { keys: [], minContrast: 3, derive: (c) => c.ansi.magenta }],
-  ['s-waiting', { keys: [], minContrast: 3, derive: (c) => c.ansi.yellow }],
-  ['s-idle', { keys: [], minContrast: 3, derive: (c) => c.ansi.blue }],
-  ['s-error', { keys: [], minContrast: 3, derive: (c) => c.role('error') }],
-  ['s-off', { keys: ['disabledForeground'], minContrast: 2, derive: (c) => c.role('outline') }],
+  ['s-starting', { keys: [], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.ansi.cyan }],
+  ['s-active', { keys: [], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.ansi.green }],
+  ['s-compacting', { keys: [], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.ansi.magenta }],
+  ['s-waiting', { keys: [], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.ansi.yellow }],
+  ['s-idle', { keys: [], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.ansi.blue }],
+  ['s-error', { keys: [], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.role('error') }],
+  ['s-off', { keys: ['disabledForeground'], minContrast: SMALL_TEXT, against: onRaised, derive: (c) => c.role('outline') }],
 ]
 
 /**

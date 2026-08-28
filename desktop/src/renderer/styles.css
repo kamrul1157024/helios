@@ -413,8 +413,11 @@ small {
 /* The dot marks a session mid-turn. It steps between two opacities from a
    timer rather than animating: a CSS animation ticks the compositor every
    vsync whatever its duration, and the whole window is recomposited for each
-   tick, so a 1.4s fade and a 120th-of-a-second one cost the same. */
-:root.dim-pulse .pulse {
+   tick, so a 1.4s fade and a 120th-of-a-second one cost the same.
+
+   Only the dot fades. The same class rides the status word, and a word at a
+   third of its opacity is a word nobody can read for two thirds of the time. */
+:root.dim-pulse .dot.pulse {
   opacity: 0.35;
 }
 
@@ -1174,7 +1177,6 @@ small {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  opacity: 0.8;
 }
 
 /* Permissions are a state to notice, not a label to read past. */
@@ -1182,7 +1184,6 @@ small {
   padding: 0 4px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--on-surface) 9%, transparent);
-  opacity: 1;
 }
 
 .row-ram {
@@ -1903,7 +1904,7 @@ small {
 .file-chip-icon {
   display: inline-flex;
   align-items: center;
-  opacity: 0.7;
+  color: var(--on-surface-variant);
 }
 
 /* ─── Tool calls ────────────────────────────────────────────────────────── */
@@ -4324,8 +4325,10 @@ hr {
   font-size: 12px;
 }
 
+/* The note carries the detail and the headline carries the version, so the
+   two are told apart by weight rather than by fading one of them. */
 .update-note {
-  opacity: 0.8;
+  font-weight: 400;
 }
 
 .update-banner .ext-link {
@@ -4335,7 +4338,6 @@ hr {
 
 .update-banner .dismiss {
   color: inherit;
-  opacity: 0.8;
 }
 
 /* ─── Agent note ────────────────────────────────────────────────────────── */
@@ -4483,7 +4485,7 @@ hr {
   min-width: 230px;
   padding: 6px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--outline-variant);
   background: var(--surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
 }
@@ -4493,19 +4495,19 @@ hr {
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--on-surface-variant);
 }
 
 .picker-note {
   padding: 0 8px 6px;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--on-surface-variant);
 }
 
 .picker-sep {
   height: 1px;
   margin: 4px 0;
-  background: var(--border);
+  background: var(--outline-variant);
 }
 
 .picker-check {
@@ -4533,7 +4535,7 @@ hr {
 }
 
 .picker-item:hover:not(:disabled) {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
 }
 
 .picker-item:disabled {
@@ -4543,11 +4545,11 @@ hr {
 
 .picker-radio {
   width: 12px;
-  color: var(--muted);
+  color: var(--on-surface-variant);
 }
 
 .picker-item.on .picker-radio {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 /* No rail and no rounding. The status is a word on the second line now, and
@@ -4559,16 +4561,14 @@ hr {
 
 .row-status {
   font-weight: 600;
-  color: var(--muted);
+  color: var(--on-surface-variant);
 }
 
 .session-row.active .row-status,
-.session-row.starting .row-status { color: var(--ok, #3fb950); }
-.session-row.waiting_permission .row-status { color: var(--warn, #d29922); }
-.session-row.compacting .row-status { color: var(--info, #58a6ff); }
-.session-row.error .row-status { color: var(--danger, #e5484d); }
-
-.row-status.pulse { animation: pulse 2s ease-in-out infinite; }
+.session-row.starting .row-status { color: var(--s-active); }
+.session-row.waiting_permission .row-status { color: var(--s-waiting); }
+.session-row.compacting .row-status { color: var(--s-compacting); }
+.session-row.error .row-status { color: var(--s-error); }
 
 /* Always shown now: there is one row shape, so there is nothing to toggle. */
 .row-sub { display: flex; }
@@ -4585,9 +4585,9 @@ hr {
   width: calc(100% - 8px);
   margin: 2px 0 4px;
   padding: 4px 6px;
-  border: 1px solid var(--accent, #58a6ff);
+  border: 1px solid var(--primary);
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--surface);
   color: inherit;
   font: inherit;
   font-size: 13px;
@@ -4620,7 +4620,7 @@ hr {
 }
 
 .group-add:hover {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
   color: var(--on-surface);
 }
 
@@ -4663,15 +4663,15 @@ hr {
 /* Where a dragged group would land. One gesture, two meanings, so the edge and
    the middle have to look different before the drop, not after it. */
 .group-head.drop-before {
-  box-shadow: inset 0 2px 0 0 var(--accent, #58a6ff);
+  box-shadow: inset 0 2px 0 0 var(--primary);
 }
 
 .group-head.drop-after {
-  box-shadow: inset 0 -2px 0 0 var(--accent, #58a6ff);
+  box-shadow: inset 0 -2px 0 0 var(--primary);
 }
 
 .group-head.drop-inside {
-  background: color-mix(in srgb, var(--accent, #58a6ff) 18%, transparent);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
   border-radius: var(--r-sm);
 }
 

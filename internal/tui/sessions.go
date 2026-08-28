@@ -28,75 +28,155 @@ const schemeSettKey = "tui_color_scheme"
 var schemeOrder = []string{"dark", "surface", "ocean", "forest", "dracula", "solarized"}
 
 // schemeColors holds the palette for a given color scheme.
+//
+// Every colour here is stated per scheme rather than shared, because a scheme
+// that paints its own card background changes what is legible on it: the green
+// that reads as "active" on a near-black card is green on green in `forest`.
+// The values below clear 4.5:1 for body text and 3:1 for everything else
+// against both `surface` and `surfaceSelected`.
 type schemeColors struct {
 	surface         lipgloss.Color // card bg (empty string = transparent)
 	surfaceSelected lipgloss.Color
 	onSurface       lipgloss.Color // primary text
 	onSurfaceDim    lipgloss.Color // secondary text
 	onSurfaceMuted  lipgloss.Color // tertiary text
-	outline         lipgloss.Color // borders
+	outline         lipgloss.Color // borders and hints
+	separator       lipgloss.Color // the rule above the help line, deliberately fainter
 	primary         lipgloss.Color
 	hasBG           bool // whether to apply Background()
+
+	statusActive     lipgloss.Color
+	statusWaiting    lipgloss.Color
+	statusCompacting lipgloss.Color
+	statusError      lipgloss.Color
+	statusIdle       lipgloss.Color
+	statusTerminated lipgloss.Color
+}
+
+// statusColor is the accent stripe and icon colour for a session's status.
+func (c schemeColors) statusColor(status string) lipgloss.Color {
+	switch status {
+	case "active":
+		return c.statusActive
+	case "waiting_permission":
+		return c.statusWaiting
+	case "compacting":
+		return c.statusCompacting
+	case "error":
+		return c.statusError
+	case "terminated":
+		return c.statusTerminated
+	default:
+		return c.statusIdle
+	}
 }
 
 var schemes = map[string]schemeColors{
+	// The one scheme that paints no card of its own, so its text lands on
+	// whatever the terminal's background is. Judged against a dark terminal,
+	// which is the assumption the scheme is named for.
 	"dark": {
-		onSurface:      lipgloss.Color("252"),
-		onSurfaceDim:   lipgloss.Color("245"),
-		onSurfaceMuted: lipgloss.Color("240"),
-		outline:        lipgloss.Color("238"),
-		primary:        lipgloss.Color("70"),
-		hasBG:          false,
+		onSurface:        lipgloss.Color("252"),
+		onSurfaceDim:     lipgloss.Color("245"),
+		onSurfaceMuted:   lipgloss.Color("240"),
+		outline:          lipgloss.Color("242"),
+		separator:        lipgloss.Color("238"),
+		primary:          lipgloss.Color("70"),
+		hasBG:            false,
+		statusActive:     lipgloss.Color("114"),
+		statusWaiting:    lipgloss.Color("215"),
+		statusCompacting: lipgloss.Color("111"),
+		statusError:      lipgloss.Color("203"),
+		statusIdle:       lipgloss.Color("247"),
+		statusTerminated: lipgloss.Color("102"),
 	},
 	"surface": {
-		surface:         lipgloss.Color("235"),
-		surfaceSelected: lipgloss.Color("237"),
-		onSurface:       lipgloss.Color("252"),
-		onSurfaceDim:    lipgloss.Color("245"),
-		onSurfaceMuted:  lipgloss.Color("240"),
-		outline:         lipgloss.Color("238"),
-		primary:         lipgloss.Color("70"),
-		hasBG:           true,
+		surface:          lipgloss.Color("235"),
+		surfaceSelected:  lipgloss.Color("237"),
+		onSurface:        lipgloss.Color("252"),
+		onSurfaceDim:     lipgloss.Color("250"),
+		onSurfaceMuted:   lipgloss.Color("248"),
+		outline:          lipgloss.Color("245"),
+		separator:        lipgloss.Color("242"),
+		primary:          lipgloss.Color("70"),
+		hasBG:            true,
+		statusActive:     lipgloss.Color("114"),
+		statusWaiting:    lipgloss.Color("215"),
+		statusCompacting: lipgloss.Color("111"),
+		statusError:      lipgloss.Color("203"),
+		statusIdle:       lipgloss.Color("247"),
+		statusTerminated: lipgloss.Color("102"),
 	},
 	"ocean": {
-		surface:         lipgloss.Color("17"),  // deep navy
-		surfaceSelected: lipgloss.Color("18"),  // brighter navy
-		onSurface:       lipgloss.Color("159"), // light cyan
-		onSurfaceDim:    lipgloss.Color("110"), // steel blue
-		onSurfaceMuted:  lipgloss.Color("67"),  // muted blue
-		outline:         lipgloss.Color("24"),
-		primary:         lipgloss.Color("81"), // bright cyan
-		hasBG:           true,
+		surface:          lipgloss.Color("17"),  // deep navy
+		surfaceSelected:  lipgloss.Color("18"),  // brighter navy
+		onSurface:        lipgloss.Color("159"), // light cyan
+		onSurfaceDim:     lipgloss.Color("110"), // steel blue
+		onSurfaceMuted:   lipgloss.Color("74"),  // muted blue
+		outline:          lipgloss.Color("67"),
+		separator:        lipgloss.Color("60"),
+		primary:          lipgloss.Color("81"), // bright cyan
+		hasBG:            true,
+		statusActive:     lipgloss.Color("114"),
+		statusWaiting:    lipgloss.Color("215"),
+		statusCompacting: lipgloss.Color("111"),
+		statusError:      lipgloss.Color("203"),
+		statusIdle:       lipgloss.Color("247"),
+		statusTerminated: lipgloss.Color("66"),
 	},
+	// The tightest scheme: its card is a mid green, so the greens and reds the
+	// other schemes use for status land on their own hue and have to be
+	// lightened until they separate from it.
 	"forest": {
-		surface:         lipgloss.Color("22"),  // deep green
-		surfaceSelected: lipgloss.Color("23"),  // teal
-		onSurface:       lipgloss.Color("194"), // light mint
-		onSurfaceDim:    lipgloss.Color("108"), // sage
-		onSurfaceMuted:  lipgloss.Color("65"),  // olive
-		outline:         lipgloss.Color("28"),
-		primary:         lipgloss.Color("114"), // bright green
-		hasBG:           true,
+		surface:          lipgloss.Color("22"),  // deep green
+		surfaceSelected:  lipgloss.Color("23"),  // teal
+		onSurface:        lipgloss.Color("194"), // light mint
+		onSurfaceDim:     lipgloss.Color("151"), // sage
+		onSurfaceMuted:   lipgloss.Color("108"), // olive
+		outline:          lipgloss.Color("109"),
+		separator:        lipgloss.Color("102"),
+		primary:          lipgloss.Color("114"), // bright green
+		hasBG:            true,
+		statusActive:     lipgloss.Color("120"),
+		statusWaiting:    lipgloss.Color("215"),
+		statusCompacting: lipgloss.Color("111"),
+		statusError:      lipgloss.Color("209"),
+		statusIdle:       lipgloss.Color("248"),
+		statusTerminated: lipgloss.Color("145"),
 	},
 	"dracula": {
-		surface:         lipgloss.Color("236"), // bg
-		surfaceSelected: lipgloss.Color("238"), // current line
-		onSurface:       lipgloss.Color("231"), // foreground
-		onSurfaceDim:    lipgloss.Color("183"), // purple-ish
-		onSurfaceMuted:  lipgloss.Color("61"),  // comment
-		outline:         lipgloss.Color("60"),
-		primary:         lipgloss.Color("212"), // pink
-		hasBG:           true,
+		surface:          lipgloss.Color("236"), // bg
+		surfaceSelected:  lipgloss.Color("238"), // current line
+		onSurface:        lipgloss.Color("231"), // foreground
+		onSurfaceDim:     lipgloss.Color("183"), // purple-ish
+		onSurfaceMuted:   lipgloss.Color("146"), // comment
+		outline:          lipgloss.Color("104"),
+		separator:        lipgloss.Color("242"),
+		primary:          lipgloss.Color("212"), // pink
+		hasBG:            true,
+		statusActive:     lipgloss.Color("114"),
+		statusWaiting:    lipgloss.Color("215"),
+		statusCompacting: lipgloss.Color("111"),
+		statusError:      lipgloss.Color("203"),
+		statusIdle:       lipgloss.Color("247"),
+		statusTerminated: lipgloss.Color("246"),
 	},
 	"solarized": {
-		surface:         lipgloss.Color("0"),   // base03
-		surfaceSelected: lipgloss.Color("234"), // base02
-		onSurface:       lipgloss.Color("187"), // base1
-		onSurfaceDim:    lipgloss.Color("246"), // base0
-		onSurfaceMuted:  lipgloss.Color("242"), // base01
-		outline:         lipgloss.Color("240"),
-		primary:         lipgloss.Color("136"), // yellow
-		hasBG:           true,
+		surface:          lipgloss.Color("0"),   // base03
+		surfaceSelected:  lipgloss.Color("234"), // base02
+		onSurface:        lipgloss.Color("187"), // base1
+		onSurfaceDim:     lipgloss.Color("246"), // base0
+		onSurfaceMuted:   lipgloss.Color("245"), // base01
+		outline:          lipgloss.Color("242"),
+		separator:        lipgloss.Color("239"),
+		primary:          lipgloss.Color("136"), // yellow
+		hasBG:            true,
+		statusActive:     lipgloss.Color("114"),
+		statusWaiting:    lipgloss.Color("215"),
+		statusCompacting: lipgloss.Color("111"),
+		statusError:      lipgloss.Color("203"),
+		statusIdle:       lipgloss.Color("247"),
+		statusTerminated: lipgloss.Color("102"),
 	},
 }
 
@@ -109,31 +189,6 @@ func nextScheme(current string) string {
 	}
 	return schemeOrder[0]
 }
-
-// Status accent colors (left border)
-var (
-	colorActive     = lipgloss.Color("70")  // green
-	colorWaiting    = lipgloss.Color("214") // amber
-	colorCompact    = lipgloss.Color("75")  // blue
-	colorError      = lipgloss.Color("196") // red
-	colorIdle       = lipgloss.Color("241") // grey
-	colorTerminated = lipgloss.Color("245") // muted grey
-)
-
-// ── Styles (scheme-independent) ──
-
-var (
-	sessBorderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("238")).
-			Padding(0, 1)
-
-	sessSepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("236"))
-
-	sessSearchLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("75"))
-)
 
 func sessStatusIcon(status string) string {
 	switch status {
@@ -158,23 +213,6 @@ func sessStatusIcon(status string) string {
 
 func sessCanResume(status string) bool {
 	return status == "terminated"
-}
-
-func sessStatusColor(status string) lipgloss.Color {
-	switch status {
-	case "active":
-		return colorActive
-	case "waiting_permission":
-		return colorWaiting
-	case "compacting":
-		return colorCompact
-	case "error":
-		return colorError
-	case "terminated":
-		return colorTerminated
-	default:
-		return colorIdle
-	}
 }
 
 // ── Messages ──
@@ -233,7 +271,6 @@ func (m *SessionsModel) colors() schemeColors {
 func NewSessionsModel(internalPort int) SessionsModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	ti := textinput.New()
 	ti.Placeholder = "filter sessions..."
@@ -249,13 +286,23 @@ func NewSessionsModel(internalPort int) SessionsModel {
 		}
 	}
 
-	return SessionsModel{
+	m := SessionsModel{
 		client:  c,
 		spinner: s,
 		search:  ti,
 		loading: true,
 		scheme:  scheme,
 	}
+	m.styleSpinner()
+	return m
+}
+
+// styleSpinner repaints the spinner for the current scheme. The spinner carries
+// its own style rather than being rendered through one, so it is the one piece
+// of the view that has to be updated when the scheme changes rather than read
+// from the palette at draw time.
+func (m *SessionsModel) styleSpinner() {
+	m.spinner.Style = lipgloss.NewStyle().Foreground(m.colors().primary)
 }
 
 func (m SessionsModel) Init() tea.Cmd {
@@ -423,6 +470,7 @@ func (m *SessionsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "c":
 		m.scheme = nextScheme(m.scheme)
+		m.styleSpinner()
 		go m.client.updateSettings(map[string]string{schemeSettKey: m.scheme}) //nolint:errcheck
 		return m, nil
 	}
@@ -515,7 +563,7 @@ const cardLines = 2
 
 func (m SessionsModel) renderCard(sess sessionInfo, selected bool, width int) string {
 	c := m.colors()
-	accent := sessStatusColor(sess.Status)
+	accent := c.statusColor(sess.Status)
 
 	// Card uses lipgloss border on left side only for the accent stripe.
 	// Inner width: total - border(1) - padding(2)
@@ -622,6 +670,13 @@ func (m SessionsModel) View() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(c.primary)
 	countStyle := lipgloss.NewStyle().Foreground(c.onSurfaceMuted)
 	dimText := lipgloss.NewStyle().Foreground(c.onSurfaceDim)
+	searchLabel := lipgloss.NewStyle().Foreground(c.primary)
+	sepStyle := lipgloss.NewStyle().Foreground(c.separator)
+	errStyle := lipgloss.NewStyle().Foreground(c.statusError)
+	frame := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(c.outline).
+		Padding(0, 1)
 
 	var content strings.Builder
 
@@ -638,7 +693,7 @@ func (m SessionsModel) View() string {
 	content.WriteString(title + strings.Repeat(" ", titleGap) + count + "\n")
 
 	// ── Search box ──
-	searchContent := sessSearchLabel.Render("🔍 ")
+	searchContent := searchLabel.Render("🔍 ")
 	if m.searching {
 		searchContent += m.search.View()
 	} else if m.search.Value() != "" {
@@ -656,13 +711,13 @@ func (m SessionsModel) View() string {
 	// ── Loading / error / empty ──
 	if m.loading && len(m.sessions) == 0 {
 		content.WriteString(fmt.Sprintf("\n  Loading... %s\n", m.spinner.View()))
-		return sessBorderStyle.Width(m.width - 4).Render(content.String())
+		return frame.Width(m.width - 4).Render(content.String())
 	}
 
 	if m.errMsg != "" {
-		content.WriteString("\n" + errorStyle.Render("  "+m.errMsg) + "\n")
+		content.WriteString("\n" + errStyle.Render("  "+m.errMsg) + "\n")
 		content.WriteString(m.renderHelp(iw))
-		return sessBorderStyle.Width(m.width - 4).Render(content.String())
+		return frame.Width(m.width - 4).Render(content.String())
 	}
 
 	if len(m.filtered) == 0 {
@@ -673,7 +728,7 @@ func (m SessionsModel) View() string {
 			content.WriteString(dimText.Render("  No matches.") + "\n")
 		}
 		content.WriteString(m.renderHelp(iw))
-		return sessBorderStyle.Width(m.width - 4).Render(content.String())
+		return frame.Width(m.width - 4).Render(content.String())
 	}
 
 	content.WriteString("\n")
@@ -702,12 +757,12 @@ func (m SessionsModel) View() string {
 	}
 
 	// ── Separator ──
-	content.WriteString(sessSepStyle.Render(strings.Repeat("┈", iw)) + "\n")
+	content.WriteString(sepStyle.Render(strings.Repeat("┈", iw)) + "\n")
 
 	// ── Help ──
 	content.WriteString(m.renderHelp(iw))
 
-	return sessBorderStyle.Width(m.width - 4).Render(content.String())
+	return frame.Width(m.width - 4).Render(content.String())
 }
 
 func (m SessionsModel) renderHelp(width int) string {

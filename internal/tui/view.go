@@ -11,40 +11,53 @@ import (
 	"github.com/kamrul1157024/helios/internal/tailscale"
 )
 
+// The setup screens paint no background of their own, so this text lands on
+// whatever the terminal's is. Every colour is stated for both, because the
+// single values these used to be were picked against a dark terminal and left
+// the light one with a pale amber warning and a pale blue URL on white — the
+// two lines on the screen a user most needs to read. Each side clears 4.5:1.
+var (
+	accentColor = lipgloss.AdaptiveColor{Light: "28", Dark: "70"}   // green
+	dimColor    = lipgloss.AdaptiveColor{Light: "241", Dark: "245"} // grey
+	linkColor   = lipgloss.AdaptiveColor{Light: "25", Dark: "75"}   // blue
+	dangerColor = lipgloss.AdaptiveColor{Light: "124", Dark: "203"} // red
+	warnColor   = lipgloss.AdaptiveColor{Light: "130", Dark: "214"} // amber
+)
+
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("70"))
+			Foreground(accentColor)
 
 	subtitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
+			Foreground(dimColor)
 
 	checkStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("70"))
+			Foreground(accentColor)
 
 	crossStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
+			Foreground(dangerColor)
 
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
+			Foreground(dimColor)
 
 	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("70")).
+			Foreground(accentColor).
 			Bold(true)
 
 	urlStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("75")).
+			Foreground(linkColor).
 			Underline(true)
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
+			Foreground(dangerColor)
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
+			Foreground(dimColor).
 			MarginTop(1)
 
 	warnStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
+			Foreground(warnColor)
 )
 
 // copyableURL renders a URL on a line of its own, flush left and with nothing
