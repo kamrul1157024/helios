@@ -106,6 +106,27 @@ interface GroupDrop {
   mode: DropMode
 }
 
+/**
+ * What a drag is carrying, said as a MIME type rather than as a prefix on the
+ * payload.
+ *
+ * A dragover may read `dataTransfer.types` but not the data behind them, and a
+ * dragover is where a target decides whether to accept — so the kind of thing
+ * being dragged has to be in the type. A group header takes both a group and a
+ * session and means something different by each, so it has to know which before
+ * the drop.
+ *
+ * The host is part of the type for the same reason: a header on another daemon
+ * has to refuse a session it can never hold, and the type is all it can see.
+ * `types` is lowercased by the browser, so the id is lowercased going in.
+ */
+const GROUP_DRAG = 'application/x-helios-group'
+const SESSION_DRAG = 'application/x-helios-session'
+
+function sessionDrag(hostId: string): string {
+  return `${SESSION_DRAG}+${hostId.toLowerCase()}`
+}
+
 /** Edges claim a quarter each; the middle half nests. */
 function dropModeFor(event: React.DragEvent, el: HTMLElement): DropMode {
   const rect = el.getBoundingClientRect()
@@ -367,7 +388,12 @@ export function Sidebar({
               // its whole group with it.
               accepts={dragging?.hostId === host.id && dragging.path === path}
               onDragStart={() => setDragging({ hostId: host.id, path, sessionId: session.session_id })}
-              onDragEnd={() => setDragging(null)}
+              onDragEnd={() => {
+                setDragging(null)
+                // A session dropped nowhere leaves a header lit otherwise: the
+                // header's own dragend never fires, because it is not the source.
+                setGroupDrop(null)
+              }}
               onContextMenu={(x, y) => setMenu({ hostId: host.id, session, x, y })}
               onDropBefore={(draggedId) => {
                 // The id off the drag itself, not React state: the drop can
@@ -410,26 +436,50 @@ export function Sidebar({
                       event.stopPropagation()
                       event.dataTransfer.effectAllowed = 'move'
                       event.dataTransfer.setData('text/plain', node.key)
+                      event.dataTransfer.setData(GROUP_DRAG, node.key)
                       setGroupDrag({ hostId: host.id, key: node.key })
                     }}
                     onDragEnd={() => {
                       setGroupDrag(null)
                       setGroupDrop(null)
                     }}
+                    // Which gesture this is comes off the transfer's types, not
+                    // out of state: the two drags mean different things here,
+                    // and a drop can land in the same tick as the drag start,
+                    // before either setState has committed.
                     onDragOver={(event) => {
-                      if (!real || groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
+                      const kinds = event.dataTransfer.types
+                      // Every header takes a session, Ungrouped included —
+                      // dropping there is how a session leaves its group. It
+                      // always nests: a session has no position among groups.
+                      if (kinds.includes(sessionDrag(host.id))) {
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                        setGroupDrop({ key: node.key, mode: 'inside' })
+                        return
+                      }
+                      if (!real || !kinds.includes(GROUP_DRAG)) return
+                      if (groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
                       event.preventDefault()
                       event.dataTransfer.dropEffect = 'move'
                       setGroupDrop({ key: node.key, mode: dropModeFor(event, event.currentTarget) })
                     }}
                     onDragLeave={() => setGroupDrop((d) => (d?.key === node.key ? null : d))}
-                    // The key and the mode both come off the event rather than
-                    // out of state: a drop can land in the same tick as the drag
-                    // start, before setGroupDrag has committed.
+                    // The payload and the mode both come off the event rather
+                    // than out of state, for the reason above.
                     onDrop={(event) => {
+                      const moved = event.dataTransfer.getData(sessionDrag(host.id))
+                      if (moved) {
+                        event.preventDefault()
+                        setDragging(null)
+                        setGroupDrop(null)
+                        // node.key is "" on Ungrouped, which is what unfiles it.
+                        void store.setSessionGroup(host.id, moved, node.key)
+                        return
+                      }
                       if (!real) return
                       event.preventDefault()
-                      const dragged = event.dataTransfer.getData('text/plain')
+                      const dragged = event.dataTransfer.getData(GROUP_DRAG)
                       const mode = dropModeFor(event, event.currentTarget)
                       setGroupDrag(null)
                       setGroupDrop(null)
@@ -896,6 +946,9 @@ function SessionRow({
         // starts; the id is also what makes the drop unambiguous.
         event.dataTransfer.effectAllowed = 'move'
         event.dataTransfer.setData('text/plain', session.session_id)
+        // Again under a type of its own, so a group header can tell this from a
+        // header being dragged and file the session instead of moving a group.
+        event.dataTransfer.setData(sessionDrag(hostId), session.session_id)
         onDragStart()
       }}
       onDragEnd={onDragEnd}
