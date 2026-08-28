@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/mcp"
 	"github.com/kamrul1157024/helios/internal/notifications"
@@ -154,7 +155,7 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	// MCP lives here rather than on the public server because this listener is
 	// already what it needs to be: loopback only, no auth. Agents reach it with
 	// a session id from their prompt; see docs/specs/39-agent-driven-explain-ui.md.
-	mux.Handle("/mcp", mcp.New(shared.DB, shared, shared))
+	mux.Handle("/mcp", mcp.New(shared.DB, shared, shared, featureflag.MCP()))
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", port),

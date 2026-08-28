@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 )
 
@@ -113,21 +114,23 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Claude hooks not installed"))
 		}
 
-		if m.mcpRegistered {
-			b.WriteString(check("Agent tools registered with Claude Code"))
-		} else if m.mcpDeclined {
-			// Opted out during setup. Still reachable, but it stops asking:
-			// a suggestion that survives being declined is a nag.
-			b.WriteString(dimStyle.Render("  · Agent tools are off. Press m to turn them on."))
-			b.WriteString("\n")
-		} else {
-			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Agent tools not registered with Claude Code"))
-			b.WriteString(dimStyle.Render("  · Lets an agent open a file or a diff in Helios. Press m to register."))
-			b.WriteString("\n")
-		}
-		if m.mcpMsg != "" {
-			b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
-			b.WriteString("\n")
+		if featureflag.MCP() {
+			if m.mcpRegistered {
+				b.WriteString(check("Agent tools registered with Claude Code"))
+			} else if m.mcpDeclined {
+				// Opted out during setup. Still reachable, but it stops asking:
+				// a suggestion that survives being declined is a nag.
+				b.WriteString(dimStyle.Render("  · Agent tools are off. Press m to turn them on."))
+				b.WriteString("\n")
+			} else {
+				b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Agent tools not registered with Claude Code"))
+				b.WriteString(dimStyle.Render("  · Lets an agent open a file or a diff in Helios. Press m to register."))
+				b.WriteString("\n")
+			}
+			if m.mcpMsg != "" {
+				b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
+				b.WriteString("\n")
+			}
 		}
 
 		if m.shellInstalled {
@@ -160,7 +163,7 @@ func (m StartModel) viewLoading() string {
 		}
 
 		keys := "  enter continue  t change tunnel  N notifications  s settings  q quit"
-		if !m.mcpRegistered {
+		if featureflag.MCP() && !m.mcpRegistered {
 			keys = "  m agent tools" + keys
 		}
 		b.WriteString(helpStyle.Render(keys))
@@ -429,22 +432,24 @@ func (m StartModel) viewMain() string {
 	} else if m.hooksOK {
 		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
 	}
-	if m.mcpRegistered {
-		b.WriteString(check("Agent tools registered with Claude Code"))
-	} else if m.mcpDeclined {
-		// Opted out during setup. Still reachable, but it stops asking:
-		// a suggestion that survives being declined is a nag.
-		b.WriteString(dimStyle.Render("  · Agent tools are off. Press m to turn them on."))
-		b.WriteString("\n")
-	} else {
-		// A suggestion, not a fault: everything else works without it.
-		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Agent tools not registered with Claude Code"))
-		b.WriteString(dimStyle.Render("  · Lets an agent open a file or a diff in Helios. Press m to register."))
-		b.WriteString("\n")
-	}
-	if m.mcpMsg != "" {
-		b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
-		b.WriteString("\n")
+	if featureflag.MCP() {
+		if m.mcpRegistered {
+			b.WriteString(check("Agent tools registered with Claude Code"))
+		} else if m.mcpDeclined {
+			// Opted out during setup. Still reachable, but it stops asking:
+			// a suggestion that survives being declined is a nag.
+			b.WriteString(dimStyle.Render("  · Agent tools are off. Press m to turn them on."))
+			b.WriteString("\n")
+		} else {
+			// A suggestion, not a fault: everything else works without it.
+			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Agent tools not registered with Claude Code"))
+			b.WriteString(dimStyle.Render("  · Lets an agent open a file or a diff in Helios. Press m to register."))
+			b.WriteString("\n")
+		}
+		if m.mcpMsg != "" {
+			b.WriteString(dimStyle.Render("  · " + m.mcpMsg))
+			b.WriteString("\n")
+		}
 	}
 	if m.shellInstalled {
 		b.WriteString(check(fmt.Sprintf("Shell wrapper (%s)", m.shellInfo.Name)))
@@ -552,7 +557,7 @@ func (m StartModel) viewMain() string {
 	// The MCP key is advertised only while there is something to do with it,
 	// so the bar does not carry a permanently dead binding.
 	keys := "  t change tunnel  N notifications  s settings  q quit"
-	if !m.mcpRegistered {
+	if featureflag.MCP() && !m.mcpRegistered {
 		keys = "  m agent tools" + keys
 	}
 	b.WriteString(helpStyle.Render(keys))
