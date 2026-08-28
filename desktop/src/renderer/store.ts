@@ -61,6 +61,15 @@ export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
 export type SortMode = 'activity' | 'manual'
 
 /**
+ * What splits the list into groups, if anything.
+ *
+ * 'manual' is the tree the user built and the daemon holds. 'auto' is derived
+ * from where each session is running and stored nowhere, so it needs no server
+ * data and nothing about it can be edited.
+ */
+export type GroupMode = 'off' | 'manual' | 'auto'
+
+/**
  * A file the user asked to see, from a chip in the transcript. The counter is
  * what makes clicking the same chip twice reopen it: the path alone would not
  * change, and the panel would ignore it.
@@ -173,13 +182,14 @@ export interface State {
    */
   groups: Record<string, SessionGroup[]>
   /**
-   * Whether the sidebar nests sessions under their groups.
+   * How the sidebar splits the list: not at all, by the user's group tree, or
+   * by each session's directory.
    *
    * Client-side and off by default: the arrangement belongs to the daemon, but
    * how you look at it is this window's business — a phone and a wide monitor
    * want different answers.
    */
-  grouping: boolean
+  grouping: GroupMode
   /**
    * Hosts whose daemon has no grouping routes, by host id.
    *
@@ -192,17 +202,27 @@ export interface State {
 
 const GROUPING_KEY = 'helios.grouping'
 
-function readFlag(key: string): boolean {
+/**
+ * Reads the saved mode, tolerating the flag this setting used to be.
+ *
+ * An install from before the modes holds '1' or '0' under the same key. Those
+ * mean the only grouping there was, which is the manual tree — reading them as
+ * an unknown value would silently turn off a sidebar the user had arranged.
+ */
+function readGroupMode(): GroupMode {
   try {
-    return localStorage.getItem(key) === '1'
+    const saved = localStorage.getItem(GROUPING_KEY)
+    if (saved === 'manual' || saved === 'auto' || saved === 'off') return saved
+    if (saved === '1') return 'manual'
+    return 'off'
   } catch {
-    return false
+    return 'off'
   }
 }
 
-function writeFlag(key: string, on: boolean): void {
+function writeGroupMode(mode: GroupMode): void {
   try {
-    localStorage.setItem(key, on ? '1' : '0')
+    localStorage.setItem(GROUPING_KEY, mode)
   } catch {
     // A full or unavailable store costs the preference, not the setting.
   }
@@ -232,7 +252,7 @@ const initial: State = {
   pairingLink: null,
   groups: {},
   groupsUnsupported: {},
-  grouping: readFlag(GROUPING_KEY),
+  grouping: readGroupMode(),
 }
 
 type Listener = () => void
@@ -456,15 +476,19 @@ class Store {
   }
 
   /**
-   * Turns nesting on or off for this window.
+   * Changes how this window splits the list.
    *
    * Asking the daemon to resolve groups costs a lookup it should not do for a
    * client that will not render them, so the flag rides on the fetch and the
-   * list is refetched when it changes.
+   * list is refetched when it changes. Only the manual tree needs it: the
+   * directory grouping reads a field every session already carries, so
+   * switching into or out of it is a re-render and nothing more.
    */
-  async setGrouping(on: boolean): Promise<void> {
-    this.set({ grouping: on })
-    writeFlag(GROUPING_KEY, on)
+  async setGrouping(mode: GroupMode): Promise<void> {
+    const before = this.state.grouping
+    this.set({ grouping: mode })
+    writeGroupMode(mode)
+    if ((before === 'manual') === (mode === 'manual')) return
     await Promise.all(this.state.hosts.map((host) => this.refreshHost(host.id)))
   }
 
@@ -570,7 +594,7 @@ class Store {
   async refreshSessions(hostId: string): Promise<void> {
     try {
       const { sessions, host } = await api(hostId).listSessions(
-        this.state.grouping ? { grouped: '1' } : {},
+        this.state.grouping === 'manual' ? { grouped: '1' } : {},
       )
       const before = this.state.sessions[hostId]
       this.set((s) => ({

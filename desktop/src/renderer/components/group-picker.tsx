@@ -1,7 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { store, useStore } from '../store.ts'
-import type { SortMode } from '../store.ts'
+import type { GroupMode, SortMode } from '../store.ts'
+
+/** The choices, in the order they widen: nothing, then a tree the user keeps,
+ *  then one the app works out. */
+const GROUP_MODES: { mode: GroupMode; label: string; hint: string }[] = [
+  { mode: 'off', label: 'Off', hint: 'One flat list, in whatever order is set below.' },
+  {
+    mode: 'manual',
+    label: 'Manual grouping',
+    hint:
+      'Groups you make and keep. Nest them as deep as you like, drag a session onto a group to file it, ' +
+      'and right-click a group to rename or delete it. Deleting one moves its sessions and subgroups up a level.',
+  },
+  {
+    mode: 'auto',
+    label: 'Directory',
+    hint:
+      "One group per working directory, worked out from the sessions themselves. Nothing to set up and " +
+      'nothing to maintain, but it is a single level and you cannot move a session between directories.',
+  },
+]
 
 /**
  * How the list is arranged: whether it is grouped at all, and what orders it.
@@ -48,21 +68,33 @@ export function GroupPicker({
 
   return (
     <div className="group-picker" ref={panel} role="dialog" aria-label="Arrange the list">
-      <label className="picker-check">
-        <input
-          type="checkbox"
-          checked={grouping}
+      {/* Radios rather than the switch this was, and the same radios as the
+          order below it: there are three answers now, and two controls that
+          both arrange the list should not disagree about how a choice looks. */}
+      <div className="picker-head">Group sessions by</div>
+      {GROUP_MODES.map(({ mode, label, hint }) => (
+        <button
+          key={mode}
+          className={grouping === mode ? 'picker-item on' : 'picker-item'}
           disabled={busy}
-          onChange={async (event) => {
+          onClick={async () => {
             setBusy(true)
-            await store.setGrouping(event.target.checked)
+            await store.setGrouping(mode)
             setBusy(false)
           }}
-        />
-        <span>Group sessions</span>
-      </label>
+        >
+          <span className="picker-radio">{grouping === mode ? '●' : '○'}</span>
+          <span className="picker-label">{label}</span>
+          {/* The mode names cannot carry their own explanation — "Manual
+              grouping" says nothing about nesting or filing, and a label long
+              enough to say it would not be a label. */}
+          <span className="picker-info" title={hint} aria-label={hint}>
+            ⓘ
+          </span>
+        </button>
+      ))}
 
-      {grouping && unsupported && (
+      {grouping === 'manual' && unsupported && (
         <>
           <div className="picker-sep" />
           <div className="picker-note">

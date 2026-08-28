@@ -20,6 +20,7 @@ import {
 } from '../../shared/models.ts'
 import { Chevron, Console, Cpu, Memory, Plus, Search, Sort } from './icons.tsx'
 import {
+  buildCwdTree,
   buildTree,
   byRank,
   depthOf,
@@ -174,7 +175,12 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
   const sortMode = useStore((s) => s.sortMode)
-  const grouping = useStore((s) => s.grouping)
+  const groupMode = useStore((s) => s.grouping)
+  // Split apart once, here: almost everything below asks "is the list split at
+  // all" or "is this a tree the user can edit", and neither reads well as a
+  // comparison against a string repeated thirty times.
+  const grouping = groupMode !== 'off'
+  const derived = groupMode === 'auto'
   const groupsByHost = useStore((s) => s.groups)
   const groupsUnsupported = useStore((s) => s.groupsUnsupported)
   // The card being dragged, so the row under the pointer can show where it
@@ -304,15 +310,22 @@ export function Sidebar({
       // Sorted first, then nested. The rank vector decides where a session
       // hangs; the comparators above decide the order it hangs in. Keeping them
       // apart is what lets a group move without re-ranking anything inside it.
-      const depth = grouping ? depthOf(ordered.map((row) => row.session)) : 0
-      const sorted = grouping
+      //
+      // Only the manual tree ranks: an auto group's place comes from where its
+      // first session already landed, so re-sorting by a rank every session
+      // shares would be a no-op at best.
+      const tree = groupMode === 'manual'
+      const depth = tree ? depthOf(ordered.map((row) => row.session)) : 0
+      const sorted = tree
         ? [...ordered].sort((a, b) =>
             byRank(rankOf(a.session, depth), rankOf(b.session, depth)),
           )
         : ordered
-      const nodes = grouping
+      const nodes = tree
         ? buildTree(sorted.map((row) => row.session), groupsByHost[host.id] ?? [])
-        : []
+        : derived
+          ? buildCwdTree(sorted.map((row) => row.session))
+          : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
       // An unfetched host has no entry at all, an empty one has []. Without the
@@ -322,7 +335,7 @@ export function Sidebar({
       const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
       return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, groupsByHost])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode, groupMode, derived, groupsByHost])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -435,8 +448,14 @@ export function Sidebar({
             const foldKey = `${host.id}:${path}`
             const isFolded = folded[foldKey] ?? false
             // Ungrouped is synthetic. It has no key to reorder and no name to
-            // rename, so it is a header and nothing else.
-            const real = node.key !== ''
+            // rename, so it is a header and nothing else. An auto group's key
+            // is its directory, which is a name but not one anybody stored.
+            const named = node.key !== ''
+            // Whether there is a group behind the header to act on. An auto
+            // group is a reading of the sessions, not a thing: renaming or
+            // deleting one would have to change where the sessions are running,
+            // and nesting it would claim a level the directory does not have.
+            const real = named && !derived
             // `real` again, because Ungrouped's key is "" — the same string the
             // host's own root uses, and a shared key would put two headers into
             // the field at once.
@@ -501,7 +520,11 @@ export function Sidebar({
                           // Every header takes a session, Ungrouped included —
                           // dropping there is how a session leaves its group. It
                           // always nests: a session has no position among groups.
-                          if (kinds.includes(sessionDrag(host.id))) {
+                          //
+                          // Except an auto header, which is a directory: a
+                          // session belongs to the one it is running in, and a
+                          // drop cannot move it there.
+                          if (!derived && kinds.includes(sessionDrag(host.id))) {
                             event.preventDefault()
                             event.dataTransfer.dropEffect = 'move'
                             setGroupDrop({ key: node.key, mode: 'inside' })
@@ -517,7 +540,7 @@ export function Sidebar({
                         // The payload and the mode both come off the event rather
                         // than out of state, for the reason above.
                         onDrop={(event) => {
-                          const moved = event.dataTransfer.getData(sessionDrag(host.id))
+                          const moved = derived ? '' : event.dataTransfer.getData(sessionDrag(host.id))
                           if (moved) {
                             event.preventDefault()
                             setDragging(null)
@@ -541,13 +564,21 @@ export function Sidebar({
                         <span className="group-count">{node.total}</span>
                         <Chevron className="chevron group-chevron" open={!isFolded} />
                       </button>
-                      {real && (
+                      {/* Not `real`: an auto group cannot be renamed or nested,
+                          but "another session here" is the one thing a
+                          directory does answer, and it answers it exactly —
+                          the group's key is the directory. */}
+                      {named && (
                         <button
                           className="group-add"
                           aria-label={`New session in ${node.name}`}
                           title={`New session in ${node.name}`}
                           onClick={(event) => {
                             event.stopPropagation()
+                            if (derived) {
+                              onNewSession({ hostId: host.id, cwd: node.key })
+                              return
+                            }
                             // The directory is a guess — the group's most recent
                             // session's — but the group is not: the dialog files the
                             // new session here whatever directory it ends up in.
@@ -628,7 +659,7 @@ export function Sidebar({
                 {!isCollapsed && (
                   <div className="host-meta">
                     <HostMeter stats={stats[host.id]} />
-                    {grouping && !groupsUnsupported[host.id] && (
+                    {groupMode === 'manual' && !groupsUnsupported[host.id] && (
                       <button
                         className="link"
                         onClick={() => setCreatingIn(`${host.id}:`)}
@@ -651,7 +682,7 @@ export function Sidebar({
                 )}
               </div>
 
-              {!isCollapsed && grouping && creatingIn === `${host.id}:` && (
+              {!isCollapsed && groupMode === 'manual' && creatingIn === `${host.id}:` && (
                 <NewGroupField
                   onCancel={() => setCreatingIn(null)}
                   onCommit={(name) => {

@@ -4674,3 +4674,22 @@ hr {
   background: color-mix(in srgb, var(--accent, #58a6ff) 18%, transparent);
   border-radius: var(--r-sm);
 }
+
+.picker-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The explanation the label cannot hold. Dim until hovered, so it reads as
+   available rather than as something demanding attention. */
+.picker-info {
+  flex: none;
+  color: var(--on-surface-variant);
+  opacity: 0.5;
+  font-size: 11px;
+  cursor: help;
+}
+
+.picker-item:hover .picker-info {
+  opacity: 1;
+}

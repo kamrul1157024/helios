@@ -139,6 +139,57 @@ export function buildTree(sessions: Session[], groups: SessionGroup[] = []): Gro
   return roots
 }
 
+/**
+ * The label an auto group wears: the last segment of its directory.
+ *
+ * The whole path is the fallback rather than the first choice because it is
+ * the thing that does not fit — at a sidebar's width every row would read
+ * `/Users/…/workspace/` and differ only past the truncation.
+ */
+export function cwdLabel(cwd: string): string {
+  return cwd.replace(/\/+$/, '').split('/').pop() || cwd || 'sessions'
+}
+
+/**
+ * Groups sessions by the directory they run in.
+ *
+ * Kept apart from `buildTree` rather than folded into it behind a flag: that
+ * one reads a catalogue, nests to any depth, and invents a node for the
+ * sessions no group claims. This one has no catalogue to read, one level, and
+ * no leftovers — every session has a cwd. The two share the node shape and
+ * nothing else.
+ *
+ * A node exists because a session is in that directory, so an empty one cannot
+ * happen and there is nothing here to keep an empty one alive for: unlike a
+ * made group, an auto group is not somewhere the user can file anything.
+ *
+ * Sessions arrive already sorted, and both the sessions inside a node and the
+ * nodes themselves keep that order — the directory holding the session the
+ * caller ranked first comes first.
+ */
+export function buildCwdTree(sessions: Session[]): GroupNode[] {
+  const nodes = new Map<string, GroupNode>()
+  for (const session of sessions) {
+    const cwd = session.cwd
+    let node = nodes.get(cwd)
+    if (!node) {
+      node = {
+        key: cwd,
+        name: cwdLabel(cwd),
+        position: nodes.size,
+        path: [cwd],
+        children: [],
+        sessions: [],
+        total: 0,
+      }
+      nodes.set(cwd, node)
+    }
+    node.sessions.push(session)
+    node.total += 1
+  }
+  return [...nodes.values()]
+}
+
 function sortNodes(nodes: GroupNode[]): void {
   nodes.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
   for (const node of nodes) sortNodes(node.children)

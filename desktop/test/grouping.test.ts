@@ -3,8 +3,10 @@ import test from 'node:test'
 
 import {
   UNRANKED,
+  buildCwdTree,
   buildTree,
   byRank,
+  cwdLabel,
   depthOf,
   headerFor,
   rankOf,
@@ -147,5 +149,79 @@ test('a group holding a single child still gets its own header', () => {
 test('a group is tinted from its key, and stays that colour', () => {
   assert.equal(tintOf('g_work'), tintOf('g_work'))
   assert.match(tintOf('g_work'), /^hsl\(\d+ 62% 62%\)$/)
+})
+
+// ─── Grouping by directory ───────────────────────────────────────────────
+//
+// Derived from the sessions and stored nowhere, so these say what the reading
+// is rather than what the user arranged.
+
+function inDir(id: string, cwd: string): Session {
+  return { ...session(id, 0), cwd }
+}
+
+test('a directory is labelled by its last segment', () => {
+  assert.equal(cwdLabel('/Users/me/workspace/helios'), 'helios')
+  assert.equal(cwdLabel('/Users/me/workspace/helios/'), 'helios', 'a trailing slash is not a segment')
+  assert.equal(cwdLabel('/'), '/', 'the root has no segment, so it is its own label')
+  assert.equal(cwdLabel(''), 'sessions')
+})
+
+test('one node per directory, holding the sessions in it', () => {
+  const roots = buildCwdTree([
+    inDir('a', '/w/helios'),
+    inDir('b', '/w/opal'),
+    inDir('c', '/w/helios'),
+  ])
+
+  assert.deepEqual(roots.map((node) => node.name), ['helios', 'opal'])
+  assert.deepEqual(roots[0]?.sessions.map((s) => s.session_id), ['a', 'c'])
+  assert.equal(roots[0]?.total, 2)
+  assert.equal(roots[1]?.total, 1)
+})
+
+// Two directories can end in the same word. Keying on the label would merge
+// them, and the sidebar would show sessions under a directory they are not in.
+test('directories that share a basename stay apart', () => {
+  const roots = buildCwdTree([inDir('a', '/w/one/src'), inDir('b', '/w/two/src')])
+  assert.equal(roots.length, 2)
+  assert.deepEqual(roots.map((node) => node.name), ['src', 'src'])
+  assert.deepEqual(roots.map((node) => node.key), ['/w/one/src', '/w/two/src'])
+})
+
+// There is no catalogue behind these, so the node's identity is the directory
+// itself — which is what the header's "new session" seeds the dialog with.
+test('a node is keyed and pathed by the directory itself', () => {
+  const [node] = buildCwdTree([inDir('a', '/w/helios')])
+  assert.equal(node?.key, '/w/helios')
+  assert.deepEqual(node?.path, ['/w/helios'])
+})
+
+// Single level: the ordering inside a node is the caller's, and the nodes
+// follow the session that opened each one.
+test('the nodes keep the order the sessions arrived in', () => {
+  const roots = buildCwdTree([inDir('a', '/w/z'), inDir('b', '/w/a'), inDir('c', '/w/z')])
+  assert.deepEqual(roots.map((node) => node.key), ['/w/z', '/w/a'])
+  assert.deepEqual(roots.map((node) => node.position), [0, 1])
+})
+
+test('nothing nests and nothing is ungrouped', () => {
+  const roots = buildCwdTree([inDir('a', '/w/helios'), inDir('b', '/w/opal')])
+  assert.ok(roots.every((node) => node.children.length === 0), 'one level only')
+  assert.ok(roots.every((node) => node.key !== ''), 'every session has a cwd, so there are no leftovers')
+})
+
+// The manual tree is the only thing that reads group_key, and it is the only
+// thing an auto group must not inherit: filing is off in this mode.
+test('the manual filing is ignored', () => {
+  const filed = { ...inDir('a', '/w/helios'), group_key: 'g_work', group_path: [WORK] }
+  const roots = buildCwdTree([filed, inDir('b', '/w/helios')])
+  assert.equal(roots.length, 1)
+  assert.equal(roots[0]?.name, 'helios')
+  assert.equal(roots[0]?.total, 2)
+})
+
+test('no sessions means no nodes', () => {
+  assert.deepEqual(buildCwdTree([]), [])
 })
 
