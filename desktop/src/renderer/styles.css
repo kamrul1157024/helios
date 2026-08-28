@@ -4740,3 +4740,18 @@ hr {
 .sidebar-list {
   overflow-x: hidden;
 }
+
+/* Where a dragged group would land. One gesture, two meanings, so the edge and
+   the middle have to look different before the drop, not after it. */
+.group-head.drop-before {
+  box-shadow: inset 0 2px 0 0 var(--accent, #58a6ff);
+}
+
+.group-head.drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--accent, #58a6ff);
+}
+
+.group-head.drop-inside {
+  background: color-mix(in srgb, var(--accent, #58a6ff) 18%, transparent);
+  border-radius: var(--r-sm);
+}

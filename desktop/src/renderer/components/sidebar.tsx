@@ -85,10 +85,34 @@ interface Drag {
   sessionId: string
 }
 
-/** A group header being dragged, to reorder the groups themselves. */
+/** A group header being dragged, to rearrange the tree itself. */
 interface GroupDrag {
   hostId: string
   key: string
+}
+
+/**
+ * Where a dragged header would land.
+ *
+ * One gesture has to mean two things, so the pointer's height within the header
+ * decides: near an edge it goes beside the target, in the middle it goes inside
+ * it. Without the indicator that renders this, the difference would be a guess
+ * the user makes after the fact.
+ */
+type DropMode = 'before' | 'after' | 'inside'
+
+interface GroupDrop {
+  key: string
+  mode: DropMode
+}
+
+/** Edges claim a quarter each; the middle half nests. */
+function dropModeFor(event: React.DragEvent, el: HTMLElement): DropMode {
+  const rect = el.getBoundingClientRect()
+  const offset = (event.clientY - rect.top) / rect.height
+  if (offset < 0.25) return 'before'
+  if (offset > 0.75) return 'after'
+  return 'inside'
 }
 
 export function Sidebar({
@@ -122,6 +146,7 @@ export function Sidebar({
   // A group header on the move. Separate from a session drag: they reorder
   // different things and a drop on one is never a drop on the other.
   const [groupDrag, setGroupDrag] = useState<GroupDrag | null>(null)
+  const [groupDrop, setGroupDrop] = useState<GroupDrop | null>(null)
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
   const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
@@ -161,6 +186,53 @@ export function Sidebar({
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', done)
+  }
+
+  /**
+   * A dropped header either nests inside the target or lands beside it.
+   *
+   * Beside means "among the target's siblings", so a group coming from another
+   * parent is re-parented first and then ordered — two writes, because position
+   * is only meaningful within one parent and the daemon has no way to express
+   * both at once.
+   */
+  const moveOrReorder = async (
+    hostId: string,
+    dragged: string,
+    target: string,
+    mode: DropMode,
+  ): Promise<void> => {
+    const all = groupsByHost[hostId] ?? []
+    const targetGroup = all.find((g) => g.key === target)
+    const draggedGroup = all.find((g) => g.key === dragged)
+    if (!targetGroup || !draggedGroup) return
+
+    // Refused here as well as in the daemon, so the list does not flicker
+    // through an arrangement the write is about to reject.
+    const ancestors = new Set<string>()
+    for (let at = targetGroup; at; at = all.find((g) => g.key === at.parent) as typeof at) {
+      if (ancestors.has(at.key)) break
+      ancestors.add(at.key)
+      if (!at.parent) break
+    }
+    if (ancestors.has(dragged)) return
+
+    if (mode === 'inside') {
+      await store.moveGroup(hostId, dragged, target)
+      return
+    }
+
+    const parent = targetGroup.parent ?? ''
+    if ((draggedGroup.parent ?? '') !== parent) await store.moveGroup(hostId, dragged, parent)
+
+    const siblings = (store.getSnapshot().groups[hostId] ?? [])
+      .filter((g) => (g.parent ?? '') === parent)
+      .map((g) => g.key)
+      .filter((k) => k !== dragged)
+    const at = siblings.indexOf(target)
+    if (at === -1) return
+    siblings.splice(mode === 'before' ? at : at + 1, 0, dragged)
+    await store.reorderGroups(hostId, parent, siblings)
   }
 
   const grouped = useMemo<Group[]>(() => {
@@ -321,7 +393,15 @@ export function Sidebar({
             const real = node.key !== ''
             return (
               <div className="group" key={path || 'ungrouped'}>
-                <div className={isFolded ? 'group-head folded' : 'group-head'}>
+                <div
+                  className={[
+                    'group-head',
+                    isFolded ? 'folded' : '',
+                    groupDrop?.key === node.key ? `drop-${groupDrop.mode}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
                   <button
                     className="group-title"
                     aria-expanded={!isFolded}
@@ -332,27 +412,29 @@ export function Sidebar({
                       event.dataTransfer.setData('text/plain', node.key)
                       setGroupDrag({ hostId: host.id, key: node.key })
                     }}
-                    onDragEnd={() => setGroupDrag(null)}
+                    onDragEnd={() => {
+                      setGroupDrag(null)
+                      setGroupDrop(null)
+                    }}
                     onDragOver={(event) => {
                       if (!real || groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
                       event.preventDefault()
                       event.dataTransfer.dropEffect = 'move'
+                      setGroupDrop({ key: node.key, mode: dropModeFor(event, event.currentTarget) })
                     }}
-                    // The key comes off the transfer, and the guard with it: a
-                    // drop can arrive in the same tick as the drag start,
-                    // before setGroupDrag has committed, and a handler that
-                    // read that state would decide nothing was being dragged.
+                    onDragLeave={() => setGroupDrop((d) => (d?.key === node.key ? null : d))}
+                    // The key and the mode both come off the event rather than
+                    // out of state: a drop can land in the same tick as the drag
+                    // start, before setGroupDrag has committed.
                     onDrop={(event) => {
                       if (!real) return
                       event.preventDefault()
                       const dragged = event.dataTransfer.getData('text/plain')
+                      const mode = dropModeFor(event, event.currentTarget)
                       setGroupDrag(null)
-                      const keys = (groupsByHost[host.id] ?? []).map((group) => group.key)
-                      const from = keys.indexOf(dragged)
-                      const to = keys.indexOf(node.key)
-                      if (from === -1 || to === -1 || from === to) return
-                      keys.splice(to, 0, keys.splice(from, 1)[0] as string)
-                      void store.reorderGroups(host.id, '', keys)
+                      setGroupDrop(null)
+                      if (!dragged || dragged === node.key) return
+                      void moveOrReorder(host.id, dragged, node.key, mode)
                     }}
                     onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
                   >
