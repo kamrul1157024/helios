@@ -181,6 +181,14 @@ export interface State {
    */
   grouping: boolean
   /**
+   * Hosts whose daemon has no grouping routes, by host id.
+   *
+   * A daemon older than the feature answers 404, and offering to make a group
+   * on a machine that cannot hold one is worse than not offering: the button
+   * looks broken rather than absent.
+   */
+  groupsUnsupported: Record<string, boolean>
+  /**
    * Where the derived Directory level sits among the grouping levels, or null
    * when it is not in use.
    *
@@ -246,6 +254,7 @@ const initial: State = {
   toast: null,
   pairingLink: null,
   groups: {},
+  groupsUnsupported: {},
   grouping: readFlag(GROUPING_KEY),
   directoryDepth: readDirectoryDepth(),
 }
@@ -498,8 +507,21 @@ class Store {
   async refreshGroups(hostId: string): Promise<void> {
     try {
       const groups = await api(hostId).listGroups()
-      this.set((s) => ({ groups: { ...s.groups, [hostId]: groups } }))
+      this.set((s) => ({
+        groups: { ...s.groups, [hostId]: groups },
+        groupsUnsupported: { ...s.groupsUnsupported, [hostId]: false },
+      }))
     } catch (err) {
+      // A 404 is an answer, not a failure: this daemon predates grouping. Mark
+      // it and stop offering, rather than reporting an error the user cannot
+      // act on from here.
+      if (statusOf(err) === 404) {
+        this.set((s) => ({
+          groups: { ...s.groups, [hostId]: [] },
+          groupsUnsupported: { ...s.groupsUnsupported, [hostId]: true },
+        }))
+        return
+      }
       this.failHost(hostId, err)
     }
   }

@@ -37,6 +37,7 @@ export function GroupPicker({
   const grouping = useStore((s) => s.grouping)
   const directoryDepth = useStore((s) => s.directoryDepth)
   const groups = useStore((s) => (hostId ? (s.groups[hostId] ?? NO_GROUPS) : NO_GROUPS))
+  const unsupported = useStore((s) => (hostId ? Boolean(s.groupsUnsupported[hostId]) : false))
   const panel = useRef<HTMLDivElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -111,7 +112,17 @@ export function GroupPicker({
         <span>Group sessions</span>
       </label>
 
-      {grouping && (
+      {grouping && unsupported && (
+        <>
+          <div className="picker-sep" />
+          <div className="picker-note">
+            {hostName || 'This machine'} is running a daemon without grouping. Update it to make
+            groups here.
+          </div>
+        </>
+      )}
+
+      {grouping && !unsupported && (
         <>
           <div className="picker-sep" />
           <div className="picker-head">{showHostName ? `Groups on ${hostName}` : 'Groups'}</div>

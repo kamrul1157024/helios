@@ -111,6 +111,7 @@ export function Sidebar({
   const sortMode = useStore((s) => s.sortMode)
   const grouping = useStore((s) => s.grouping)
   const groupsByHost = useStore((s) => s.groups)
+  const groupsUnsupported = useStore((s) => s.groupsUnsupported)
   const directoryDepth = useStore((s) => s.directoryDepth)
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
@@ -361,7 +362,7 @@ export function Sidebar({
                     <span className="group-count">{node.total}</span>
                     <Chevron className="chevron group-chevron" open={!isFolded} />
                   </button>
-                  {real && (
+                  {real && !groupsUnsupported[host.id] && (
                     <button
                       className="group-add"
                       aria-label={`New group in ${node.name}`}
@@ -425,7 +426,7 @@ export function Sidebar({
                 {!isCollapsed && (
                   <div className="host-meta">
                     <HostMeter stats={stats[host.id]} />
-                    {grouping && (
+                    {grouping && !groupsUnsupported[host.id] && (
                       <button
                         className="link"
                         onClick={() => setCreatingIn(`${host.id}:`)}
@@ -515,7 +516,11 @@ export function Sidebar({
         <SelectionMenu
           x={menu.x}
           y={menu.y}
-          actions={sessionActions(menu.hostId, menu.session, groupsByHost[menu.hostId] ?? [])}
+          actions={sessionActions(
+            menu.hostId,
+            menu.session,
+            groupsUnsupported[menu.hostId] ? [] : (groupsByHost[menu.hostId] ?? []),
+          )}
           onClose={() => setMenu(null)}
         />
       )}
@@ -644,6 +649,13 @@ function NewGroupField({
   onCancel: () => void
 }): JSX.Element {
   const [draft, setDraft] = useState('')
+  const field = useRef<HTMLInputElement | null>(null)
+  // autoFocus does not fire reliably for an input mounted into a tree that is
+  // already on screen — the button that opened it keeps focus, so the keystrokes
+  // go nowhere and the field looks like a button that did nothing.
+  useEffect(() => {
+    field.current?.focus()
+  }, [])
   // Controlled, so React owns the value. Uncontrolled looked simpler and cost a
   // day: anything setting the field programmatically — a test, an autofill —
   // writes straight to the DOM node, and a handler reading React's idea of it
@@ -655,8 +667,8 @@ function NewGroupField({
   }
   return (
     <input
+      ref={field}
       className="new-group"
-      autoFocus
       placeholder="Group name"
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
