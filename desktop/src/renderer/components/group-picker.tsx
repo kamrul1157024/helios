@@ -35,7 +35,6 @@ export function GroupPicker({
   onClose: () => void
 }): JSX.Element {
   const grouping = useStore((s) => s.grouping)
-  const directoryDepth = useStore((s) => s.directoryDepth)
   const groups = useStore((s) => (hostId ? (s.groups[hostId] ?? NO_GROUPS) : NO_GROUPS))
   const unsupported = useStore((s) => (hostId ? Boolean(s.groupsUnsupported[hostId]) : false))
   const panel = useRef<HTMLDivElement | null>(null)
@@ -90,12 +89,6 @@ export function GroupPicker({
     await store.renameGroup(hostId, key, next)
   }
 
-  // Directory is a grouping key like the rest, so it lives in the same list
-  // rather than behind a checkbox of its own. Its place in the list is the
-  // depth it nests at: first and it gathers, last and it splits.
-  const levels: (SessionGroup | 'dir')[] = [...groups]
-  if (directoryDepth !== null) levels.splice(Math.min(directoryDepth, levels.length), 0, 'dir')
-
   return (
     <div className="group-picker" ref={panel} role="dialog" aria-label="Arrange the list">
       <label className="picker-check">
@@ -130,39 +123,7 @@ export function GroupPicker({
             <div className="picker-note">None yet. Make one, then file sessions into it.</div>
           )}
 
-          {levels.map((entry, index) =>
-            entry === 'dir' ? (
-              <div className="picker-group derived" key="dir">
-                <span className="picker-handle" aria-hidden="true">⠿</span>
-                <span className="picker-group-name">Directory</span>
-                <span className="picker-derived" title="Read from each session's working directory, not assigned">
-                  auto
-                </span>
-                <button
-                  className="picker-icon"
-                  aria-label="Move Directory up"
-                  disabled={index === 0}
-                  onClick={() => store.setDirectoryDepth(index - 1)}
-                >
-                  ⌃
-                </button>
-                <button
-                  className="picker-icon"
-                  aria-label="Move Directory down"
-                  disabled={index === levels.length - 1}
-                  onClick={() => store.setDirectoryDepth(index + 1)}
-                >
-                  ⌄
-                </button>
-                <button
-                  className="picker-icon danger"
-                  aria-label="Remove the Directory level"
-                  onClick={() => store.setDirectoryDepth(null)}
-                >
-                  ×
-                </button>
-              </div>
-            ) : ((group) => (
+          {groups.map((group) => (
             <div
               key={group.key}
               className={dragKey === group.key ? 'picker-group dragging' : 'picker-group'}
@@ -234,17 +195,8 @@ export function GroupPicker({
                 ×
               </button>
             </div>
-          ))(entry),
-          )}
+          ))}
 
-          {directoryDepth === null && (
-            <button
-              className="picker-item"
-              onClick={() => store.setDirectoryDepth(groups.length)}
-            >
-              + Directory
-            </button>
-          )}
 
           {adding ? (
             <input

@@ -188,38 +188,15 @@ export interface State {
    * looks broken rather than absent.
    */
   groupsUnsupported: Record<string, boolean>
-  /**
-   * Where the derived Directory level sits among the grouping levels, or null
-   * when it is not in use.
-   *
-   * A number rather than a flag because Directory is a grouping key like any
-   * other and belongs in the same ordered list — it just reads its value off
-   * the session instead of being assigned. Client-side, like the rest of the
-   * grouping configuration: the groups are the daemon's, the arrangement of
-   * levels is this window's.
-   */
-  directoryDepth: number | null
 }
 
 const GROUPING_KEY = 'helios.grouping'
-const DIR_DEPTH_KEY = 'helios.directoryDepth'
 
 function readFlag(key: string): boolean {
   try {
     return localStorage.getItem(key) === '1'
   } catch {
     return false
-  }
-}
-
-function readDirectoryDepth(): number | null {
-  try {
-    const raw = localStorage.getItem(DIR_DEPTH_KEY)
-    if (raw === null || raw === '') return null
-    const n = Number(raw)
-    return Number.isInteger(n) && n >= 0 ? n : null
-  } catch {
-    return null
   }
 }
 
@@ -256,7 +233,6 @@ const initial: State = {
   groups: {},
   groupsUnsupported: {},
   grouping: readFlag(GROUPING_KEY),
-  directoryDepth: readDirectoryDepth(),
 }
 
 type Listener = () => void
@@ -490,18 +466,6 @@ class Store {
     this.set({ grouping: on })
     writeFlag(GROUPING_KEY, on)
     await Promise.all(this.state.hosts.map((host) => this.refreshHost(host.id)))
-  }
-
-  /** Purely a view change — the cwd is already on every session, so nothing is
-   *  refetched. Null takes the level out of the list. */
-  setDirectoryDepth(depth: number | null): void {
-    this.set({ directoryDepth: depth })
-    try {
-      if (depth === null) localStorage.removeItem(DIR_DEPTH_KEY)
-      else localStorage.setItem(DIR_DEPTH_KEY, String(depth))
-    } catch {
-      // A full or unavailable store costs the preference, not the setting.
-    }
   }
 
   async refreshGroups(hostId: string): Promise<void> {

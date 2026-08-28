@@ -77,11 +77,7 @@ function emptyNode(group: SessionGroup | null, path: string[]): GroupNode {
  * Sessions arrive already sorted by the caller, and this only decides where
  * each one hangs.
  */
-export function buildTree(
-  sessions: Session[],
-  groups: SessionGroup[] = [],
-  directoryDepth: number | null = null,
-): GroupNode[] {
+export function buildTree(sessions: Session[], groups: SessionGroup[] = []): GroupNode[] {
   const nodes = new Map<string, GroupNode>()
   const byKey = new Map<string, SessionGroup>()
   for (const group of groups) byKey.set(group.key, group)
@@ -123,7 +119,6 @@ export function buildTree(
   }
 
   let ungrouped: GroupNode | null = null
-  const index = new Map<string, GroupNode>()
 
   for (const session of sessions) {
     let chain = chainOf(session.group_key)
@@ -135,70 +130,13 @@ export function buildTree(
       chain = [ungrouped]
     }
 
-    // Directory sits where the picker put it: at 0 it gathers, at the end it
-    // splits. It is derived, so its node is made on demand rather than coming
-    // from the catalogue.
-    let host = chain[chain.length - 1] as GroupNode
-    if (directoryDepth !== null) {
-      const at = Math.min(directoryDepth, chain.length)
-      const parent = at === 0 ? null : (chain[at - 1] as GroupNode)
-      const siblings = parent ? parent.children : roots
-      const path = [...(parent?.path ?? []), directoryKey(session.cwd)]
-      host = ensure(siblings, index, directoryGroup(session, siblings.length), path)
-      // A directory inserted above a group re-parents nothing: the levels below
-      // it still hang where the catalogue put them, and the session lands here.
-    }
-
+    const host = chain[chain.length - 1] as GroupNode
     host.sessions.push(session)
     for (const node of chain) node.total += 1
-    if (host !== chain[chain.length - 1]) host.total += 1
   }
 
   sortNodes(roots)
   return roots
-}
-
-/** Directory nodes are keyed apart from group keys so nothing mistakes one for
- *  a group it could rename, delete or reorder. */
-export const DIRECTORY_PREFIX = 'dir:'
-
-export function isDirectoryNode(node: GroupNode): boolean {
-  return node.key.startsWith(DIRECTORY_PREFIX)
-}
-
-function directoryKey(cwd: string): string {
-  return `${DIRECTORY_PREFIX}${cwd}`
-}
-
-/**
- * A directory as a group. Positions start past every real group's, so a
- * directory split always sorts below the subgroups beside it: a group someone
- * made outranks a level the app derived.
- */
-const DIRECTORY_BASE = 1_000_000
-
-function directoryGroup(session: Session, seen: number): SessionGroup {
-  const trimmed = (session.cwd ?? '').replace(/\/+$/, '')
-  return {
-    key: directoryKey(session.cwd),
-    name: trimmed.split('/').pop() || trimmed || 'sessions',
-    position: DIRECTORY_BASE + seen,
-  }
-}
-
-function ensure(
-  siblings: GroupNode[],
-  index: Map<string, GroupNode>,
-  group: SessionGroup,
-  path: string[],
-): GroupNode {
-  const id = path.join(' ')
-  const found = index.get(id)
-  if (found) return found
-  const node = emptyNode(group, path)
-  index.set(id, node)
-  siblings.push(node)
-  return node
 }
 
 function sortNodes(nodes: GroupNode[]): void {

@@ -17,7 +17,7 @@ export function App(): JSX.Element {
   // Where the new-session dialog should start when it was opened from a
   // project rather than from the toolbar: the point of the project's own
   // button is that it does not ask again which project it meant.
-  const [seed, setSeed] = useState<{ hostId: string; cwd: string } | null>(null)
+  const [seed, setSeed] = useState<{ hostId: string; cwd: string; group?: string } | null>(null)
 
   useEffect(() => {
     void store.init()

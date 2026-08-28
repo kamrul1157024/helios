@@ -24,7 +24,6 @@ import {
   byRank,
   depthOf,
   rankOf,
-  isDirectoryNode,
   type GroupNode,
 } from './grouping.ts'
 import { GroupPicker } from './group-picker.tsx'
@@ -97,7 +96,7 @@ export function Sidebar({
   onAddHost,
   onSettings,
 }: {
-  onNewSession: (seed?: { hostId: string; cwd: string }) => void
+  onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
   onAddHost: () => void
   onSettings: () => void
 }): JSX.Element {
@@ -112,7 +111,6 @@ export function Sidebar({
   const grouping = useStore((s) => s.grouping)
   const groupsByHost = useStore((s) => s.groups)
   const groupsUnsupported = useStore((s) => s.groupsUnsupported)
-  const directoryDepth = useStore((s) => s.directoryDepth)
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
   const [dragging, setDragging] = useState<Drag | null>(null)
@@ -198,7 +196,7 @@ export function Sidebar({
           )
         : ordered
       const nodes = grouping
-        ? buildTree(sorted.map((row) => row.session), groupsByHost[host.id] ?? [], directoryDepth)
+        ? buildTree(sorted.map((row) => row.session), groupsByHost[host.id] ?? [])
         : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
@@ -209,7 +207,7 @@ export function Sidebar({
       const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
       return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, directoryDepth, groupsByHost])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, groupsByHost])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -320,7 +318,7 @@ export function Sidebar({
             const isFolded = folded[foldKey] ?? false
             // Ungrouped is synthetic. It has no key to reorder and no name to
             // rename, so it is a header and nothing else.
-            const real = node.key !== '' && !isDirectoryNode(node)
+            const real = node.key !== ''
             return (
               <div className="group" key={path || 'ungrouped'}>
                 <div className={isFolded ? 'group-head folded' : 'group-head'}>
@@ -362,6 +360,23 @@ export function Sidebar({
                     <span className="group-count">{node.total}</span>
                     <Chevron className="chevron group-chevron" open={!isFolded} />
                   </button>
+                  {real && (
+                    <button
+                      className="group-add"
+                      aria-label={`New session in ${node.name}`}
+                      title={`New session in ${node.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        // The directory is a guess — the group's most recent
+                        // session's — but the group is not: the dialog files the
+                        // new session here whatever directory it ends up in.
+                        const recent = node.sessions[0] ?? node.children[0]?.sessions[0]
+                        onNewSession({ hostId: host.id, cwd: recent?.cwd ?? '', group: node.key })
+                      }}
+                    >
+                      <Console />
+                    </button>
+                  )}
                   {real && !groupsUnsupported[host.id] && (
                     <button
                       className="group-add"
