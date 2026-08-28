@@ -111,7 +111,7 @@ export function Sidebar({
   const sortMode = useStore((s) => s.sortMode)
   const grouping = useStore((s) => s.grouping)
   const groupsByHost = useStore((s) => s.groups)
-  const splitDirectories = useStore((s) => s.splitDirectories)
+  const directoryDepth = useStore((s) => s.directoryDepth)
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
   const [dragging, setDragging] = useState<Drag | null>(null)
@@ -193,7 +193,7 @@ export function Sidebar({
             byRank(rankOf(a.session, depth), rankOf(b.session, depth)),
           )
         : ordered
-      const nodes = grouping ? buildTree(sorted.map((row) => row.session), splitDirectories) : []
+      const nodes = grouping ? buildTree(sorted.map((row) => row.session), directoryDepth) : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
       // An unfetched host has no entry at all, an empty one has []. Without the
@@ -203,7 +203,7 @@ export function Sidebar({
       const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
       return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, splitDirectories])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, directoryDepth])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.

@@ -129,7 +129,7 @@ test('splitting by directory adds a level inside the innermost group', () => {
   const b = { ...session('b', 1, WORK), cwd: '/x/work/opal-app' }
   const c = { ...session('c', 2, WORK), cwd: '/x/wt/vilnius' }
 
-  const [work] = buildTree([a, b, c], true)
+  const [work] = buildTree([a, b, c], 1)
   assert.equal(work?.name, 'Work')
   assert.equal(work?.sessions.length, 0, 'sessions moved down into directory nodes')
   assert.deepEqual(
@@ -141,7 +141,7 @@ test('splitting by directory adds a level inside the innermost group', () => {
 })
 
 test('a directory node is marked derived, so nothing offers to rename it', () => {
-  const [work] = buildTree([{ ...session('a', 0, WORK), cwd: '/x/work/opal-app' }], true)
+  const [work] = buildTree([{ ...session('a', 0, WORK), cwd: '/x/work/opal-app' }], 1)
   assert.equal(isDirectoryNode(work!), false)
   assert.equal(isDirectoryNode(work!.children[0]!), true)
 })
@@ -149,7 +149,7 @@ test('a directory node is marked derived, so nothing offers to rename it', () =>
 test('a group someone made outranks a directory the app derived', () => {
   const deep = { ...session('deep', 0, WORK, OPAL), cwd: '/x/a' }
   const shallow = { ...session('shallow', 1, WORK), cwd: '/x/b' }
-  const [work] = buildTree([deep, shallow], true)
+  const [work] = buildTree([deep, shallow], 2)
   assert.deepEqual(
     work?.children.map((child) => child.name),
     ['opal-app', 'b'],
@@ -157,14 +157,34 @@ test('a group someone made outranks a directory the app derived', () => {
   )
 })
 
-test('ungrouped sessions split by directory too', () => {
-  const [loose] = buildTree([{ ...session('a', 0), cwd: '/x/scratch' }], true)
-  assert.equal(loose?.name, 'Ungrouped')
-  assert.equal(loose?.children[0]?.name, 'scratch')
+test('at depth 0 the directory gathers instead of splitting', () => {
+  const [dir] = buildTree([{ ...session('a', 0), cwd: '/x/scratch' }], 0)
+  assert.equal(dir?.name, 'scratch', 'the directory is the outermost level')
+  assert.equal(dir?.sessions.length, 1)
 })
 
 test('splitting is off unless asked for', () => {
   const [work] = buildTree([{ ...session('a', 0, WORK), cwd: '/x/work/opal-app' }])
   assert.equal(work?.children.length, 0)
   assert.equal(work?.sessions.length, 1)
+})
+
+// Directory is a level like any other, so where it sits in the list is where it
+// nests — first it gathers, last it splits.
+test('the directory level obeys the depth it was given', () => {
+  const s = { ...session('a', 0, WORK), cwd: '/x/work/opal-app' }
+
+  const [outer] = buildTree([s], 0)
+  assert.equal(outer?.name, 'opal-app')
+  assert.equal(outer?.children[0]?.name, 'Work')
+
+  const [inner] = buildTree([s], 1)
+  assert.equal(inner?.name, 'Work')
+  assert.equal(inner?.children[0]?.name, 'opal-app')
+})
+
+test('a depth past the end lands last rather than throwing', () => {
+  const [work] = buildTree([{ ...session('a', 0, WORK), cwd: '/x/a' }], 9)
+  assert.equal(work?.name, 'Work')
+  assert.equal(work?.children[0]?.name, 'a')
 })

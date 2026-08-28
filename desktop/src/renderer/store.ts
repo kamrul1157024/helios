@@ -180,19 +180,38 @@ export interface State {
    * want different answers.
    */
   grouping: boolean
-  /** Adds a derived level under the innermost group, one node per directory.
-   *  Costs no storage: the cwd is already on the session. */
-  splitDirectories: boolean
+  /**
+   * Where the derived Directory level sits among the grouping levels, or null
+   * when it is not in use.
+   *
+   * A number rather than a flag because Directory is a grouping key like any
+   * other and belongs in the same ordered list — it just reads its value off
+   * the session instead of being assigned. Client-side, like the rest of the
+   * grouping configuration: the groups are the daemon's, the arrangement of
+   * levels is this window's.
+   */
+  directoryDepth: number | null
 }
 
 const GROUPING_KEY = 'helios.grouping'
-const SPLIT_DIRS_KEY = 'helios.splitDirectories'
+const DIR_DEPTH_KEY = 'helios.directoryDepth'
 
 function readFlag(key: string): boolean {
   try {
     return localStorage.getItem(key) === '1'
   } catch {
     return false
+  }
+}
+
+function readDirectoryDepth(): number | null {
+  try {
+    const raw = localStorage.getItem(DIR_DEPTH_KEY)
+    if (raw === null || raw === '') return null
+    const n = Number(raw)
+    return Number.isInteger(n) && n >= 0 ? n : null
+  } catch {
+    return null
   }
 }
 
@@ -228,7 +247,7 @@ const initial: State = {
   pairingLink: null,
   groups: {},
   grouping: readFlag(GROUPING_KEY),
-  splitDirectories: readFlag(SPLIT_DIRS_KEY),
+  directoryDepth: readDirectoryDepth(),
 }
 
 type Listener = () => void
@@ -465,10 +484,15 @@ class Store {
   }
 
   /** Purely a view change — the cwd is already on every session, so nothing is
-   *  refetched. */
-  setSplitDirectories(on: boolean): void {
-    this.set({ splitDirectories: on })
-    writeFlag(SPLIT_DIRS_KEY, on)
+   *  refetched. Null takes the level out of the list. */
+  setDirectoryDepth(depth: number | null): void {
+    this.set({ directoryDepth: depth })
+    try {
+      if (depth === null) localStorage.removeItem(DIR_DEPTH_KEY)
+      else localStorage.setItem(DIR_DEPTH_KEY, String(depth))
+    } catch {
+      // A full or unavailable store costs the preference, not the setting.
+    }
   }
 
   async refreshGroups(hostId: string): Promise<void> {

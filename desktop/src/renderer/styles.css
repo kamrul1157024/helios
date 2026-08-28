@@ -4650,3 +4650,17 @@ hr {
 .group:hover > .group-rows {
   border-left-color: color-mix(in srgb, var(--on-surface) 55%, transparent);
 }
+
+/* Directory is in the same list as the groups, so it looks like them — the tag
+   is the only thing saying its value is read rather than assigned. */
+.picker-group.derived .picker-group-name {
+  color: var(--on-surface-variant);
+}
+
+.picker-derived {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--hover);
+  color: var(--on-surface-variant);
+  font-size: 10px;
+}
