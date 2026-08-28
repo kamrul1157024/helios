@@ -106,6 +106,27 @@ interface GroupDrop {
   mode: DropMode
 }
 
+/** A right-click on a session row, and where the pointer was. */
+interface RowMenu {
+  kind: 'session'
+  hostId: string
+  session: Session
+  x: number
+  y: number
+}
+
+/** A right-click on a group header. The name is copied rather than the node
+ *  held, so a refresh arriving under an open menu cannot leave it pointing at a
+ *  tree that has been rebuilt. */
+interface HeadMenu {
+  kind: 'group'
+  hostId: string
+  key: string
+  name: string
+  x: number
+  y: number
+}
+
 /**
  * What a drag is carrying, said as a MIME type rather than as a prefix on the
  * payload.
@@ -171,15 +192,16 @@ export function Sidebar({
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
   const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
-  // The session a right-click named, and where the pointer was. Held for the
-  // whole list rather than per row, so a second right-click moves the one menu
-  // instead of opening another beside it.
-  const [menu, setMenu] = useState<{ hostId: string; session: Session; x: number; y: number } | null>(
-    null,
-  )
+  // What a right-click named, and where the pointer was. Held for the whole
+  // list rather than per row, so a second right-click moves the one menu
+  // instead of opening another beside it — and one piece of state, so a header
+  // menu and a row menu can never be open at once.
+  const [menu, setMenu] = useState<RowMenu | HeadMenu | null>(null)
   // Which group is having a child named, keyed by host and group. Empty string
   // is the root of that host, so one piece of state covers both.
   const [creatingIn, setCreatingIn] = useState<string | null>(null)
+  // Which group header is being renamed in place, keyed the same way.
+  const [renaming, setRenaming] = useState<string | null>(null)
   const [picker, setPicker] = useState(false)
   const aside = useRef<HTMLElement | null>(null)
 
@@ -338,15 +360,13 @@ export function Sidebar({
           </button>
           {picker && (
             <GroupPicker
-              // Groups belong to a daemon, so the picker has to name one: the
-              // host of the session being looked at, falling back to the first.
-              // It says which one in its own header, because a silent guess
-              // with several paired would manage a machine nobody is watching.
+              // Grouping is one setting for the app, but whether a daemon can
+              // hold groups at all is per host: the one being looked at, or the
+              // first, which is the one the note below would be about.
               hostId={selection?.hostId ?? hosts[0]?.id ?? null}
               hostName={
                 hosts.find((h) => h.id === (selection?.hostId ?? hosts[0]?.id))?.name ?? ''
               }
-              showHostName={hosts.length > 1}
               manual={manual}
               onClose={() => setPicker(false)}
             />
@@ -394,7 +414,7 @@ export function Sidebar({
                 // header's own dragend never fires, because it is not the source.
                 setGroupDrop(null)
               }}
-              onContextMenu={(x, y) => setMenu({ hostId: host.id, session, x, y })}
+              onContextMenu={(x, y) => setMenu({ kind: 'session', hostId: host.id, session, x, y })}
               onDropBefore={(draggedId) => {
                 // The id off the drag itself, not React state: the drop can
                 // arrive in the same tick as the drag start, before a setState
@@ -417,6 +437,10 @@ export function Sidebar({
             // Ungrouped is synthetic. It has no key to reorder and no name to
             // rename, so it is a header and nothing else.
             const real = node.key !== ''
+            // `real` again, because Ungrouped's key is "" — the same string the
+            // host's own root uses, and a shared key would put two headers into
+            // the field at once.
+            const editing = real && renaming === `${host.id}:${node.key}`
             return (
               <div className="group" key={path || 'ungrouped'}>
                 <div
@@ -427,101 +451,128 @@ export function Sidebar({
                   ]
                     .filter(Boolean)
                     .join(' ')}
+                  // Rename and delete are the group's own, so Ungrouped — which
+                  // is neither named nor stored — offers no menu at all.
+                  onContextMenu={(event) => {
+                    if (!real) return
+                    event.preventDefault()
+                    setMenu({
+                      kind: 'group',
+                      hostId: host.id,
+                      key: node.key,
+                      name: node.name,
+                      x: event.clientX,
+                      y: event.clientY,
+                    })
+                  }}
                 >
-                  <button
-                    className="group-title"
-                    aria-expanded={!isFolded}
-                    draggable={real}
-                    onDragStart={(event) => {
-                      event.stopPropagation()
-                      event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.setData('text/plain', node.key)
-                      event.dataTransfer.setData(GROUP_DRAG, node.key)
-                      setGroupDrag({ hostId: host.id, key: node.key })
-                    }}
-                    onDragEnd={() => {
-                      setGroupDrag(null)
-                      setGroupDrop(null)
-                    }}
-                    // Which gesture this is comes off the transfer's types, not
-                    // out of state: the two drags mean different things here,
-                    // and a drop can land in the same tick as the drag start,
-                    // before either setState has committed.
-                    onDragOver={(event) => {
-                      const kinds = event.dataTransfer.types
-                      // Every header takes a session, Ungrouped included —
-                      // dropping there is how a session leaves its group. It
-                      // always nests: a session has no position among groups.
-                      if (kinds.includes(sessionDrag(host.id))) {
-                        event.preventDefault()
-                        event.dataTransfer.dropEffect = 'move'
-                        setGroupDrop({ key: node.key, mode: 'inside' })
-                        return
-                      }
-                      if (!real || !kinds.includes(GROUP_DRAG)) return
-                      if (groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
-                      event.preventDefault()
-                      event.dataTransfer.dropEffect = 'move'
-                      setGroupDrop({ key: node.key, mode: dropModeFor(event, event.currentTarget) })
-                    }}
-                    onDragLeave={() => setGroupDrop((d) => (d?.key === node.key ? null : d))}
-                    // The payload and the mode both come off the event rather
-                    // than out of state, for the reason above.
-                    onDrop={(event) => {
-                      const moved = event.dataTransfer.getData(sessionDrag(host.id))
-                      if (moved) {
-                        event.preventDefault()
-                        setDragging(null)
-                        setGroupDrop(null)
-                        // node.key is "" on Ungrouped, which is what unfiles it.
-                        void store.setSessionGroup(host.id, moved, node.key)
-                        return
-                      }
-                      if (!real) return
-                      event.preventDefault()
-                      const dragged = event.dataTransfer.getData(GROUP_DRAG)
-                      const mode = dropModeFor(event, event.currentTarget)
-                      setGroupDrag(null)
-                      setGroupDrop(null)
-                      if (!dragged || dragged === node.key) return
-                      void moveOrReorder(host.id, dragged, node.key, mode)
-                    }}
-                    onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
-                  >
-                    <span className="group-name">{node.name}</span>
-                    <span className="group-count">{node.total}</span>
-                    <Chevron className="chevron group-chevron" open={!isFolded} />
-                  </button>
-                  {real && (
-                    <button
-                      className="group-add"
-                      aria-label={`New session in ${node.name}`}
-                      title={`New session in ${node.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        // The directory is a guess — the group's most recent
-                        // session's — but the group is not: the dialog files the
-                        // new session here whatever directory it ends up in.
-                        const recent = node.sessions[0] ?? node.children[0]?.sessions[0]
-                        onNewSession({ hostId: host.id, cwd: recent?.cwd ?? '', group: node.key })
+                  {editing ? (
+                    <NewGroupField
+                      initial={node.name}
+                      onCancel={() => setRenaming(null)}
+                      onCommit={(name) => {
+                        setRenaming(null)
+                        if (name !== node.name) void store.renameGroup(host.id, node.key, name)
                       }}
-                    >
-                      <Console />
-                    </button>
-                  )}
-                  {real && !groupsUnsupported[host.id] && (
-                    <button
-                      className="group-add"
-                      aria-label={`New group in ${node.name}`}
-                      title={`New group in ${node.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setFolded((f) => ({ ...f, [foldKey]: false }))
-                        setCreatingIn(`${host.id}:${node.key}`)
-                      }}
-                    >
-                      <Plus />
-                    </button>
+                    />
+                  ) : (
+                    <>
+                      <button
+                        className="group-title"
+                        aria-expanded={!isFolded}
+                        draggable={real}
+                        onDragStart={(event) => {
+                          event.stopPropagation()
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', node.key)
+                          event.dataTransfer.setData(GROUP_DRAG, node.key)
+                          setGroupDrag({ hostId: host.id, key: node.key })
+                        }}
+                        onDragEnd={() => {
+                          setGroupDrag(null)
+                          setGroupDrop(null)
+                        }}
+                        // Which gesture this is comes off the transfer's types, not
+                        // out of state: the two drags mean different things here,
+                        // and a drop can land in the same tick as the drag start,
+                        // before either setState has committed.
+                        onDragOver={(event) => {
+                          const kinds = event.dataTransfer.types
+                          // Every header takes a session, Ungrouped included —
+                          // dropping there is how a session leaves its group. It
+                          // always nests: a session has no position among groups.
+                          if (kinds.includes(sessionDrag(host.id))) {
+                            event.preventDefault()
+                            event.dataTransfer.dropEffect = 'move'
+                            setGroupDrop({ key: node.key, mode: 'inside' })
+                            return
+                          }
+                          if (!real || !kinds.includes(GROUP_DRAG)) return
+                          if (groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
+                          event.preventDefault()
+                          event.dataTransfer.dropEffect = 'move'
+                          setGroupDrop({ key: node.key, mode: dropModeFor(event, event.currentTarget) })
+                        }}
+                        onDragLeave={() => setGroupDrop((d) => (d?.key === node.key ? null : d))}
+                        // The payload and the mode both come off the event rather
+                        // than out of state, for the reason above.
+                        onDrop={(event) => {
+                          const moved = event.dataTransfer.getData(sessionDrag(host.id))
+                          if (moved) {
+                            event.preventDefault()
+                            setDragging(null)
+                            setGroupDrop(null)
+                            // node.key is "" on Ungrouped, which is what unfiles it.
+                            void store.setSessionGroup(host.id, moved, node.key)
+                            return
+                          }
+                          if (!real) return
+                          event.preventDefault()
+                          const dragged = event.dataTransfer.getData(GROUP_DRAG)
+                          const mode = dropModeFor(event, event.currentTarget)
+                          setGroupDrag(null)
+                          setGroupDrop(null)
+                          if (!dragged || dragged === node.key) return
+                          void moveOrReorder(host.id, dragged, node.key, mode)
+                        }}
+                        onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
+                      >
+                        <span className="group-name">{node.name}</span>
+                        <span className="group-count">{node.total}</span>
+                        <Chevron className="chevron group-chevron" open={!isFolded} />
+                      </button>
+                      {real && (
+                        <button
+                          className="group-add"
+                          aria-label={`New session in ${node.name}`}
+                          title={`New session in ${node.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            // The directory is a guess — the group's most recent
+                            // session's — but the group is not: the dialog files the
+                            // new session here whatever directory it ends up in.
+                            const recent = node.sessions[0] ?? node.children[0]?.sessions[0]
+                            onNewSession({ hostId: host.id, cwd: recent?.cwd ?? '', group: node.key })
+                          }}
+                        >
+                          <Console />
+                        </button>
+                      )}
+                      {real && !groupsUnsupported[host.id] && (
+                        <button
+                          className="group-add"
+                          aria-label={`New group in ${node.name}`}
+                          title={`New group in ${node.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setFolded((f) => ({ ...f, [foldKey]: false }))
+                            setCreatingIn(`${host.id}:${node.key}`)
+                          }}
+                        >
+                          <Plus />
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -667,11 +718,17 @@ export function Sidebar({
         <SelectionMenu
           x={menu.x}
           y={menu.y}
-          actions={sessionActions(
-            menu.hostId,
-            menu.session,
-            groupsUnsupported[menu.hostId] ? [] : (groupsByHost[menu.hostId] ?? []),
-          )}
+          actions={
+            menu.kind === 'session'
+              ? sessionActions(
+                  menu.hostId,
+                  menu.session,
+                  groupsUnsupported[menu.hostId] ? [] : (groupsByHost[menu.hostId] ?? []),
+                )
+              : groupActions(menu.hostId, menu.key, () =>
+                  setRenaming(`${menu.hostId}:${menu.key}`),
+                )
+          }
           onClose={() => setMenu(null)}
         />
       )}
@@ -786,6 +843,27 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
 }
 
 /**
+ * What can be done to a group, as the right-click on its header offers it.
+ *
+ * Only ever called for a real group: Ungrouped is a heading the tree draws over
+ * the sessions nothing has claimed, and there is no record behind it to rename
+ * or remove.
+ */
+function groupActions(hostId: string, key: string, onRename: () => void): MenuAction[] {
+  return [
+    { label: 'Rename', run: onRename },
+    {
+      label: 'Delete',
+      danger: true,
+      // Nothing inside is lost — the daemon lifts the sessions and any child
+      // groups up a level — so this does not stop to ask.
+      title: 'Delete the group — its sessions and subgroups move up a level',
+      run: () => void store.deleteGroup(hostId, key),
+    },
+  ]
+}
+
+/**
  * Names a new group, in place.
  *
  * Inline rather than a dialog: the point of a `+` on a header is that the
@@ -795,11 +873,16 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
 function NewGroupField({
   onCommit,
   onCancel,
+  initial = '',
 }: {
   onCommit: (name: string) => void
   onCancel: () => void
+  /** The name already on the header, when this is a rename rather than a new
+   *  one. Seeded into state rather than left as a defaultValue, so the field
+   *  stays controlled — see below for what uncontrolled cost. */
+  initial?: string
 }): JSX.Element {
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(initial)
   const field = useRef<HTMLInputElement | null>(null)
   // Enter commits and the parent unmounts this input, which fires blur — so
   // without a latch the same name is submitted twice, or a commit races the

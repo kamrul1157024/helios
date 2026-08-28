@@ -980,21 +980,6 @@ small {
   background: none;
 }
 
-/* The initial on a tinted tile. Colour is the fastest way back to a project
-   once there are six of them, and it costs no width. */
-.group-badge {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--tint) 20%, transparent);
-  color: var(--tint);
-  font-size: 11px;
-  font-weight: 700;
-}
-
 .group-name {
   min-width: 0;
   overflow: hidden;
@@ -4565,73 +4550,6 @@ hr {
   color: var(--accent);
 }
 
-.picker-group {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  padding: 4px 8px;
-  border-radius: 5px;
-  font-size: 13px;
-  cursor: grab;
-}
-
-.picker-group:hover {
-  background: var(--hover);
-}
-
-.picker-group.dragging {
-  opacity: 0.5;
-}
-
-.picker-handle {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.picker-group-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.picker-icon {
-  border: 0;
-  border-radius: 4px;
-  background: none;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1;
-  padding: 3px 5px;
-  cursor: pointer;
-}
-
-.picker-icon:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.picker-icon.danger:hover {
-  color: var(--danger, #e5484d);
-}
-
-.picker-input {
-  flex: 1;
-  min-width: 0;
-  padding: 3px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-}
-
-.picker-input.new {
-  width: calc(100% - 16px);
-  margin: 4px 8px;
-}
-
 /* No rail and no rounding. The status is a word on the second line now, and
    colouring the row's edge as well says the same thing twice — on a rounded
    card it reads as a stray bracket rather than a status. */
@@ -4661,20 +4579,6 @@ hr {
   border-left-color: color-mix(in srgb, var(--on-surface) 55%, transparent);
 }
 
-/* Directory is in the same list as the groups, so it looks like them — the tag
-   is the only thing saying its value is read rather than assigned. */
-.picker-group.derived .picker-group-name {
-  color: var(--on-surface-variant);
-}
-
-.picker-derived {
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--hover);
-  color: var(--on-surface-variant);
-  font-size: 10px;
-}
-
 /* Naming a new group where it will live, rather than in a dialog that asks
    again for the parent the click already chose. */
 .new-group {
@@ -4687,6 +4591,17 @@ hr {
   color: inherit;
   font: inherit;
   font-size: 13px;
+}
+
+/* The same field renaming a header in place, where it is one item in a flex row
+   rather than a line of its own. Bold, because it is standing in for the
+   header's own name and the weight should not jump on the way in and out. */
+.group-head > .new-group {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin: 2px 0;
+  font-weight: 600;
 }
 
 .group-add {
