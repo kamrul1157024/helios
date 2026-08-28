@@ -244,7 +244,7 @@ export function resolveTheme(
   // recede further because receding is what they are for.
   const tokens = indexTokenColors(theme, bg)
   const codeBg = resolved.get('code-bg') ?? bg
-  vars['--syn-fg'] = toHex(ensureContrast(fg, codeBg, 4.5))
+  vars['--syn-fg'] = toHex(ensureContrast(fg, codeBg, 7))
   for (const [role, candidates] of Object.entries(SYNTAX_SCOPES)) {
     let value: Rgb | null = null
     for (const scope of candidates) {

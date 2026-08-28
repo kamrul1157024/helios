@@ -223,6 +223,10 @@ test('an on- role is measured against its container, not the surface', () => {
     },
   })
   const container = parseColor(theme.vars['--error-container']) as never
+  // Four, not seven: this fixture's container is a mid red, and no colour
+  // reaches 7:1 against it. The floor is best-effort where the container makes
+  // it unreachable; what is asserted here is that the container is what the
+  // role is measured against at all.
   assert.ok(contrast(parseColor(theme.vars['--on-error-container']) as never, container) >= 4)
 })
 
@@ -528,7 +532,7 @@ const THEME_DIR = path.join(import.meta.dirname, '..', '..', 'themes')
 
 /** Text roles and the floor each is held to, against every surface it lands on. */
 const TEXT_FLOORS: [string, number][] = [
-  ['on-surface', 4.5],
+  ['on-surface', 7],
   ['on-surface-variant', 4.5],
   ['primary', 3],
   // Status and error are drawn as words, not only as dots: the "Active" label
@@ -568,7 +572,7 @@ for (const entry of fs.readdirSync(THEME_DIR).filter((f) => f.endsWith('.json'))
     const codeBg = colour('--code-bg')
     for (const [name, value] of Object.entries(theme.vars)) {
       if (!name.startsWith('--syn-')) continue
-      const floor = name === '--syn-fg' ? 4.5 : name === '--syn-comment' ? 3 : 3.5
+      const floor = name === '--syn-fg' ? 7 : name === '--syn-comment' ? 3 : 3.5
       const ratio = contrast(parseColor(value) as Rgb, codeBg)
       assert.ok(ratio >= floor, `${name} on --code-bg is ${ratio.toFixed(2)}, below ${floor}`)
     }
