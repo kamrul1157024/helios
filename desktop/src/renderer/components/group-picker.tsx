@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { store, useStore } from '../store.ts'
-import type { GroupMode, SortMode } from '../store.ts'
+import type { GroupMode, GroupOrder, SortMode } from '../store.ts'
 
 /** The choices, in the order they widen: nothing, then a tree the user keeps,
  *  then one the app works out. */
@@ -21,6 +21,17 @@ const GROUP_MODES: { mode: GroupMode; label: string; hint: string }[] = [
       "One group per working directory, worked out from the sessions themselves. Nothing to set up and " +
       'nothing to maintain, but it is a single level and you cannot move a session between directories.',
   },
+]
+
+/**
+ * What orders the directory groups. Offered only in that mode: a made group
+ * sits where the user dragged its header to, and a choice here would fight the
+ * drag rather than add to it.
+ */
+const GROUP_ORDERS: { order: GroupOrder; label: string }[] = [
+  { order: 'activity', label: 'Activity' },
+  { order: 'name', label: 'Name A→Z' },
+  { order: 'manual', label: 'Manual — drag to move' },
 ]
 
 /**
@@ -45,6 +56,7 @@ export function GroupPicker({
   onClose: () => void
 }): JSX.Element {
   const grouping = useStore((s) => s.grouping)
+  const groupOrder = useStore((s) => s.groupOrder)
   const unsupported = useStore((s) => (hostId ? Boolean(s.groupsUnsupported[hostId]) : false))
   const panel = useRef<HTMLDivElement | null>(null)
   const [busy, setBusy] = useState(false)
@@ -101,6 +113,25 @@ export function GroupPicker({
             {hostName || 'This machine'} is running a daemon without grouping. Update it to make
             groups here.
           </div>
+        </>
+      )}
+
+      {/* Auto only, and hidden rather than disabled: the manual tree's order is
+          the drag, the way the other manual-only affordances are absent here
+          rather than greyed out. */}
+      {grouping === 'auto' && (
+        <>
+          <div className="picker-sep" />
+          <div className="picker-head">Order groups by</div>
+          {GROUP_ORDERS.map(({ order, label }) => (
+            <button
+              key={order}
+              className={groupOrder === order ? 'picker-item on' : 'picker-item'}
+              onClick={() => store.orderGroupsBy(order)}
+            >
+              <span className="picker-radio">{groupOrder === order ? '●' : '○'}</span> {label}
+            </button>
+          ))}
         </>
       )}
 

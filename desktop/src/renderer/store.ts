@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 import { api, bridge, statusOf } from './bridge.ts'
+import type { GroupOrder, PathOrder } from './components/grouping.ts'
 import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type {
@@ -68,6 +69,10 @@ export type SortMode = 'activity' | 'manual'
  * data and nothing about it can be edited.
  */
 export type GroupMode = 'off' | 'manual' | 'auto'
+
+/** Defined with the tree builders that apply it; re-exported so the picker and
+ *  the sidebar can read it from the store like every other setting. */
+export type { GroupOrder, PathOrder } from './components/grouping.ts'
 
 /**
  * A file the user asked to see, from a chip in the transcript. The counter is
@@ -191,6 +196,17 @@ export interface State {
    */
   grouping: GroupMode
   /**
+   * What orders the directory groups against each other.
+   *
+   * Only read in 'auto': a made group sits where it was dragged to, and that
+   * position is the daemon's. Client-side and unsent for the same reason
+   * `grouping` is — it is a reading of the arrangement, not the arrangement.
+   */
+  groupOrder: GroupOrder
+  /** Where each directory has been dragged to, by path. Only read when
+   *  groupOrder is 'manual'. */
+  dirOrder: PathOrder
+  /**
    * Hosts whose daemon has no grouping routes, by host id.
    *
    * A daemon older than the feature answers 404, and offering to make a group
@@ -228,6 +244,49 @@ function writeGroupMode(mode: GroupMode): void {
   }
 }
 
+const GROUP_ORDER_KEY = 'helios.groupOrder'
+const DIR_ORDER_KEY = 'helios.dirOrder'
+
+/** Anything but the one other name means activity, which is the default and is
+ *  also what an install from before this setting was showing. */
+const GROUP_ORDERS: GroupOrder[] = ['activity', 'name', 'manual']
+
+function readGroupOrder(): GroupOrder {
+  try {
+    const saved = localStorage.getItem(GROUP_ORDER_KEY)
+    // Checked against the list rather than one value at a time: the previous
+    // form recognised 'name' and treated everything else as 'activity', so
+    // adding a third order silently reverted it on every reload.
+    return GROUP_ORDERS.find((order) => order === saved) ?? 'activity'
+  } catch {
+    return 'activity'
+  }
+}
+
+function readDirOrder(): PathOrder {
+  try {
+    const raw = localStorage.getItem(DIR_ORDER_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: PathOrder = {}
+    for (const [path, at] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof at === 'number' && Number.isFinite(at)) out[path] = at
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function writeGroupOrder(order: GroupOrder): void {
+  try {
+    localStorage.setItem(GROUP_ORDER_KEY, order)
+  } catch {
+    // A full or unavailable store costs the preference, not the setting.
+  }
+}
+
 const initial: State = {
   hosts: [],
   hostStatus: {},
@@ -253,6 +312,8 @@ const initial: State = {
   groups: {},
   groupsUnsupported: {},
   grouping: readGroupMode(),
+  groupOrder: readGroupOrder(),
+  dirOrder: readDirOrder(),
 }
 
 type Listener = () => void
@@ -490,6 +551,33 @@ class Store {
     writeGroupMode(mode)
     if ((before === 'manual') === (mode === 'manual')) return
     await Promise.all(this.state.hosts.map((host) => this.refreshHost(host.id)))
+  }
+
+  /**
+   * Changes what orders the directory groups.
+   *
+   * Nothing is refetched: both orders are worked out from fields the sessions
+   * already carry, so this is a re-render.
+   */
+  /** Records a hand-arranged directory order, first path first. Dragging one
+   *  is itself the request to sort by hand, so it selects that mode. */
+  reorderDirectories(paths: string[]): void {
+    const dirOrder: PathOrder = {}
+    paths.forEach((path, index) => {
+      dirOrder[path] = index
+    })
+    this.set({ dirOrder, groupOrder: 'manual' })
+    try {
+      localStorage.setItem(DIR_ORDER_KEY, JSON.stringify(dirOrder))
+      writeGroupOrder('manual')
+    } catch {
+      // A full or unavailable store costs the arrangement, not the list.
+    }
+  }
+
+  orderGroupsBy(order: GroupOrder): void {
+    this.set({ groupOrder: order })
+    writeGroupOrder(order)
   }
 
   async refreshGroups(hostId: string): Promise<void> {

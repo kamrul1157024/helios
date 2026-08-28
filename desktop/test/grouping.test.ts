@@ -9,6 +9,8 @@ import {
   cwdLabel,
   depthOf,
   headerFor,
+  lastActivityOf,
+  orderGroups,
   rankOf,
   tintOf,
 } from '../src/renderer/components/grouping.ts'
@@ -197,8 +199,8 @@ test('a node is keyed and pathed by the directory itself', () => {
   assert.deepEqual(node?.path, ['/w/helios'])
 })
 
-// Single level: the ordering inside a node is the caller's, and the nodes
-// follow the session that opened each one.
+// Single level: the ordering inside a node is the caller's, and nodes that
+// cannot be told apart by activity keep the order the sessions arrived in.
 test('the nodes keep the order the sessions arrived in', () => {
   const roots = buildCwdTree([inDir('a', '/w/z'), inDir('b', '/w/a'), inDir('c', '/w/z')])
   assert.deepEqual(roots.map((node) => node.key), ['/w/z', '/w/a'])
@@ -223,5 +225,88 @@ test('the manual filing is ignored', () => {
 
 test('no sessions means no nodes', () => {
   assert.deepEqual(buildCwdTree([]), [])
+})
+
+// ─── Ordering the directory groups ───────────────────────────────────────
+//
+// The groups themselves, not the sessions in them. Only the derived tree is
+// ordered this way: a made group sits at the position it was dragged to.
+
+/** A session in a directory that last did something at a given moment. */
+function busy(id: string, cwd: string, lastEventAt: string): Session {
+  return { ...session(id, 0), cwd, last_event_at: lastEventAt }
+}
+
+test('activity puts the group holding the newest session first', () => {
+  const roots = buildCwdTree(
+    [
+      busy('a', '/w/apples', '2026-08-28T01:00:00Z'),
+      busy('b', '/w/zebra', '2026-08-28T03:00:00Z'),
+      busy('c', '/w/mango', '2026-08-28T02:00:00Z'),
+    ],
+    'activity',
+  )
+  assert.deepEqual(roots.map((node) => node.name), ['zebra', 'mango', 'apples'])
+})
+
+// The two orders have to be able to disagree, or neither is worth offering.
+test('name sorts A→Z, which the same sessions do not sort into by activity', () => {
+  const sessions = [
+    busy('a', '/w/apples', '2026-08-28T01:00:00Z'),
+    busy('b', '/w/zebra', '2026-08-28T03:00:00Z'),
+    busy('c', '/w/mango', '2026-08-28T02:00:00Z'),
+  ]
+  assert.deepEqual(buildCwdTree(sessions, 'name').map((node) => node.name), [
+    'apples',
+    'mango',
+    'zebra',
+  ])
+  assert.notDeepEqual(
+    buildCwdTree(sessions, 'name').map((node) => node.name),
+    buildCwdTree(sessions, 'activity').map((node) => node.name),
+  )
+})
+
+// Nothing else can decide it, and a list that shuffles two equally idle
+// directories on every refresh is a list nobody can read.
+test('groups that are equally active keep the order they arrived in', () => {
+  const same = '2026-08-28T01:00:00Z'
+  const roots = buildCwdTree([busy('a', '/w/zebra', same), busy('b', '/w/apples', same)], 'activity')
+  assert.deepEqual(roots.map((node) => node.name), ['zebra', 'apples'])
+})
+
+test("a group's activity is its newest session, not its first", () => {
+  const [node] = buildCwdTree([
+    busy('a', '/w/helios', '2026-08-28T01:00:00Z'),
+    busy('b', '/w/helios', '2026-08-28T05:00:00Z'),
+  ])
+  assert.equal(lastActivityOf(node!), '2026-08-28T05:00:00Z')
+})
+
+// A session that has produced nothing yet has no last_event_at. Reading that as
+// no activity would file a directory made a minute ago below one nobody has
+// touched all week.
+test('a session with no events falls back to when it was created', () => {
+  const fresh = { ...session('fresh', 0), cwd: '/w/fresh', created_at: '2026-08-28T09:00:00Z' }
+  const roots = buildCwdTree([busy('old', '/w/old', '2026-08-28T04:00:00Z'), fresh], 'activity')
+  assert.deepEqual(roots.map((node) => node.name), ['fresh', 'old'])
+})
+
+test('activity is the order when none is asked for', () => {
+  const sessions = [
+    busy('a', '/w/apples', '2026-08-28T01:00:00Z'),
+    busy('b', '/w/zebra', '2026-08-28T03:00:00Z'),
+  ]
+  assert.deepEqual(
+    buildCwdTree(sessions).map((node) => node.name),
+    buildCwdTree(sessions, 'activity').map((node) => node.name),
+  )
+})
+
+test('ordering answers with a new list and leaves the one it was given alone', () => {
+  const nodes = buildCwdTree([busy('a', '/w/zebra', '2026-08-28T03:00:00Z'), busy('b', '/w/apples', '2026-08-28T01:00:00Z')])
+  const byName = orderGroups(nodes, 'name')
+  assert.deepEqual(nodes.map((node) => node.name), ['zebra', 'apples'])
+  assert.deepEqual(byName.map((node) => node.name), ['apples', 'zebra'])
 })
 

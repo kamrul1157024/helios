@@ -139,6 +139,65 @@ export function buildTree(sessions: Session[], groups: SessionGroup[] = []): Gro
   return roots
 }
 
+/** What decides the order of the directory groups themselves. */
+export type GroupOrder = 'activity' | 'name' | 'manual'
+
+/** Where each directory has been dragged to, by path.
+ *
+ *  A directory has no id to hang a position on, so the path is the key. Held on
+ *  the client rather than in the daemon because the grouping it orders is
+ *  itself derived — there is no row to attach a number to. */
+export type PathOrder = Record<string, number>
+
+/**
+ * When a group last did anything: the newest moment across the sessions in it.
+ *
+ * `last_event_at` is missing until a session has produced something, so a
+ * freshly created one falls back to when it was made — otherwise a brand new
+ * directory would sort as the oldest thing on the list.
+ */
+export function lastActivityOf(node: GroupNode): string {
+  let newest = ''
+  for (const session of node.sessions) {
+    const at = session.last_event_at ?? session.created_at
+    if (at > newest) newest = at
+  }
+  return newest
+}
+
+/**
+ * Orders the directory groups.
+ *
+ * Only the derived tree comes through here. A made group carries a position the
+ * user dragged it to, and an ordering choice over the top of that would undo
+ * the drag the moment it landed.
+ *
+ * Sorted, not left to arrive in order. Activity is close to the order the
+ * sessions already came in, but "close to" is the problem: it held only while
+ * the caller's comparator agreed, and nothing said so. Ties keep the order they
+ * arrived in, which sort is required to preserve.
+ */
+export function orderGroups(
+  nodes: GroupNode[],
+  order: GroupOrder,
+  placed: PathOrder = {},
+): GroupNode[] {
+  if (order === 'name') {
+    return [...nodes].sort((a, b) => a.name.localeCompare(b.name))
+  }
+  if (order === 'manual') {
+    // A directory nobody has dragged sorts after every one that has, by
+    // activity — so turning manual on does not scatter the untouched ones, and
+    // a directory seen for the first time lands at the end rather than
+    // somewhere arbitrary in the middle.
+    const at = (node: GroupNode): number => placed[node.key] ?? Number.MAX_SAFE_INTEGER
+    return [...nodes].sort(
+      (a, b) => at(a) - at(b) || lastActivityOf(b).localeCompare(lastActivityOf(a)),
+    )
+  }
+  return [...nodes].sort((a, b) => lastActivityOf(b).localeCompare(lastActivityOf(a)))
+}
+
 /**
  * The label an auto group wears: the last segment of its directory.
  *
@@ -163,11 +222,15 @@ export function cwdLabel(cwd: string): string {
  * happen and there is nothing here to keep an empty one alive for: unlike a
  * made group, an auto group is not somewhere the user can file anything.
  *
- * Sessions arrive already sorted, and both the sessions inside a node and the
- * nodes themselves keep that order — the directory holding the session the
- * caller ranked first comes first.
+ * Sessions arrive already sorted and the sessions inside a node keep that
+ * order. The nodes themselves are ordered by `order`, which is the reader's
+ * choice and not the caller's arrangement.
  */
-export function buildCwdTree(sessions: Session[]): GroupNode[] {
+export function buildCwdTree(
+  sessions: Session[],
+  order: GroupOrder = 'activity',
+  placed: PathOrder = {},
+): GroupNode[] {
   const nodes = new Map<string, GroupNode>()
   for (const session of sessions) {
     const cwd = session.cwd
@@ -187,7 +250,7 @@ export function buildCwdTree(sessions: Session[]): GroupNode[] {
     node.sessions.push(session)
     node.total += 1
   }
-  return [...nodes.values()]
+  return orderGroups([...nodes.values()], order, placed)
 }
 
 function sortNodes(nodes: GroupNode[]): void {

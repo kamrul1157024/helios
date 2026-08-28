@@ -181,6 +181,8 @@ export function Sidebar({
   // comparison against a string repeated thirty times.
   const grouping = groupMode !== 'off'
   const derived = groupMode === 'auto'
+  const groupOrder = useStore((s) => s.groupOrder)
+  const dirOrder = useStore((s) => s.dirOrder)
   const groupsByHost = useStore((s) => s.groups)
   const groupsUnsupported = useStore((s) => s.groupsUnsupported)
   // The card being dragged, so the row under the pointer can show where it
@@ -324,7 +326,7 @@ export function Sidebar({
       const nodes = tree
         ? buildTree(sorted.map((row) => row.session), groupsByHost[host.id] ?? [])
         : derived
-          ? buildCwdTree(sorted.map((row) => row.session))
+          ? buildCwdTree(sorted.map((row) => row.session), groupOrder, dirOrder)
           : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
@@ -335,7 +337,19 @@ export function Sidebar({
       const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
       return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode, groupMode, derived, groupsByHost])
+  }, [
+    hosts,
+    sessions,
+    notifications,
+    query,
+    showTerminated,
+    sortMode,
+    groupMode,
+    derived,
+    groupOrder,
+    dirOrder,
+    groupsByHost,
+  ])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -499,7 +513,7 @@ export function Sidebar({
                       <button
                         className="group-title"
                         aria-expanded={!isFolded}
-                        draggable={real}
+                        draggable={real || derived}
                         onDragStart={(event) => {
                           event.stopPropagation()
                           event.dataTransfer.effectAllowed = 'move'
@@ -530,11 +544,21 @@ export function Sidebar({
                             setGroupDrop({ key: node.key, mode: 'inside' })
                             return
                           }
-                          if (!real || !kinds.includes(GROUP_DRAG)) return
+                          // A directory header accepts a drag whatever the
+                          // current order is: dragging one is itself the
+                          // request to arrange them by hand, and requiring the
+                          // mode first would mean choosing it before there was
+                          // any reason to.
+                          const arrangeable = real || derived
+                          if (!arrangeable || !kinds.includes(GROUP_DRAG)) return
                           if (groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
                           event.preventDefault()
                           event.dataTransfer.dropEffect = 'move'
-                          setGroupDrop({ key: node.key, mode: dropModeFor(event, event.currentTarget) })
+                          const over = dropModeFor(event, event.currentTarget)
+                          setGroupDrop({
+                            key: node.key,
+                            mode: derived && over === 'inside' ? 'after' : over,
+                          })
                         }}
                         onDragLeave={() => setGroupDrop((d) => (d?.key === node.key ? null : d))}
                         // The payload and the mode both come off the event rather
@@ -549,13 +573,26 @@ export function Sidebar({
                             void store.setSessionGroup(host.id, moved, node.key)
                             return
                           }
-                          if (!real) return
+                          if (!real && !derived) return
                           event.preventDefault()
                           const dragged = event.dataTransfer.getData(GROUP_DRAG)
-                          const mode = dropModeFor(event, event.currentTarget)
+                          const raw = dropModeFor(event, event.currentTarget)
+                          const mode = derived && raw === 'inside' ? 'after' : raw
                           setGroupDrag(null)
                           setGroupDrop(null)
                           if (!dragged || dragged === node.key) return
+                          if (derived) {
+                            // Directories are one flat level, so there is
+                            // nothing to nest into: every drop is a reorder,
+                            // and the half of the header you hit only decides
+                            // which side of it you land on.
+                            const paths = nodes.map((n) => n.key).filter((k) => k !== dragged)
+                            const at = paths.indexOf(node.key)
+                            if (at === -1) return
+                            paths.splice(mode === 'before' ? at : at + 1, 0, dragged)
+                            store.reorderDirectories(paths)
+                            return
+                          }
                           void moveOrReorder(host.id, dragged, node.key, mode)
                         }}
                         onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
