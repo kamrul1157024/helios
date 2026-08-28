@@ -4664,3 +4664,73 @@ hr {
   color: var(--on-surface-variant);
   font-size: 10px;
 }
+
+/* Naming a new group where it will live, rather than in a dialog that asks
+   again for the parent the click already chose. */
+.new-group {
+  width: calc(100% - 8px);
+  margin: 2px 0 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--accent, #58a6ff);
+  border-radius: 4px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+.group-add {
+  flex: none;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--on-surface-variant);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.group-head:hover .group-add {
+  opacity: 1;
+}
+
+.group-add:hover {
+  background: var(--hover);
+  color: var(--on-surface);
+}
+
+/* Nothing in a row may refuse to shrink.
+   A flex child defaults to min-width:auto, so a long title keeps its full
+   intrinsic width and pushes the row wider than the sidebar. Nested one level
+   per group, that overflow compounds until the title is off-screen entirely and
+   only the right-aligned time and memory are still visible — which is exactly
+   what deep trees started doing. */
+.group,
+.group-rows,
+.session-row,
+.row-main,
+.row-sub {
+  min-width: 0;
+}
+
+.row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.group-title,
+.group-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The list scrolls down, never sideways: a horizontal scrollbar in a sidebar
+   means something already failed to fit. */
+.sidebar-list {
+  overflow-x: hidden;
+}

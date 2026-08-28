@@ -132,6 +132,9 @@ export function Sidebar({
   const [menu, setMenu] = useState<{ hostId: string; session: Session; x: number; y: number } | null>(
     null,
   )
+  // Which group is having a child named, keyed by host and group. Empty string
+  // is the root of that host, so one piece of state covers both.
+  const [creatingIn, setCreatingIn] = useState<string | null>(null)
   const [picker, setPicker] = useState(false)
   const aside = useRef<HTMLElement | null>(null)
 
@@ -193,7 +196,9 @@ export function Sidebar({
             byRank(rankOf(a.session, depth), rankOf(b.session, depth)),
           )
         : ordered
-      const nodes = grouping ? buildTree(sorted.map((row) => row.session), directoryDepth) : []
+      const nodes = grouping
+        ? buildTree(sorted.map((row) => row.session), groupsByHost[host.id] ?? [], directoryDepth)
+        : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
       // An unfetched host has no entry at all, an empty one has []. Without the
@@ -203,7 +208,7 @@ export function Sidebar({
       const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
       return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, directoryDepth])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode, grouping, directoryDepth, groupsByHost])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -356,10 +361,33 @@ export function Sidebar({
                     <span className="group-count">{node.total}</span>
                     <Chevron className="chevron group-chevron" open={!isFolded} />
                   </button>
+                  {real && (
+                    <button
+                      className="group-add"
+                      aria-label={`New group in ${node.name}`}
+                      title={`New group in ${node.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setFolded((f) => ({ ...f, [foldKey]: false }))
+                        setCreatingIn(`${host.id}:${node.key}`)
+                      }}
+                    >
+                      <Plus />
+                    </button>
+                  )}
                 </div>
 
                 {!isFolded && (
                   <div className="group-rows">
+                    {creatingIn === `${host.id}:${node.key}` && (
+                      <NewGroupField
+                        onCancel={() => setCreatingIn(null)}
+                        onCommit={(name) => {
+                          setCreatingIn(null)
+                          void store.createGroup(host.id, name, node.key)
+                        }}
+                      />
+                    )}
                     {node.children.map((child) => renderNode(child))}
                     {node.sessions.map((session) => renderRow(session, path))}
                   </div>
@@ -397,6 +425,15 @@ export function Sidebar({
                 {!isCollapsed && (
                   <div className="host-meta">
                     <HostMeter stats={stats[host.id]} />
+                    {grouping && (
+                      <button
+                        className="link"
+                        onClick={() => setCreatingIn(`${host.id}:`)}
+                        title="A group at the top level, with no parent"
+                      >
+                        + Group
+                      </button>
+                    )}
                     {(hidden > 0 || revealed) && (
                       <button
                         className="link show-terminated"
@@ -410,6 +447,16 @@ export function Sidebar({
                   </div>
                 )}
               </div>
+
+              {!isCollapsed && grouping && creatingIn === `${host.id}:` && (
+                <NewGroupField
+                  onCancel={() => setCreatingIn(null)}
+                  onCommit={(name) => {
+                    setCreatingIn(null)
+                    void store.createGroup(host.id, name, '')
+                  }}
+                />
+              )}
 
               {!isCollapsed &&
                 (grouping
@@ -580,6 +627,46 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
   })
 
   return actions
+}
+
+/**
+ * Names a new group, in place.
+ *
+ * Inline rather than a dialog: the point of a `+` on a header is that the
+ * parent is already chosen by where you clicked, and a modal would ask again
+ * with a field the header could just have shown.
+ */
+function NewGroupField({
+  onCommit,
+  onCancel,
+}: {
+  onCommit: (name: string) => void
+  onCancel: () => void
+}): JSX.Element {
+  const [draft, setDraft] = useState('')
+  // Controlled, so React owns the value. Uncontrolled looked simpler and cost a
+  // day: anything setting the field programmatically — a test, an autofill —
+  // writes straight to the DOM node, and a handler reading React's idea of it
+  // sees an empty string.
+  const commit = (typed: string): void => {
+    const name = typed.trim()
+    if (name) onCommit(name)
+    else onCancel()
+  }
+  return (
+    <input
+      className="new-group"
+      autoFocus
+      placeholder="Group name"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit(event.currentTarget.value)
+        if (event.key === 'Escape') onCancel()
+      }}
+      onBlur={(event) => commit(event.target.value)}
+    />
+  )
 }
 
 /**
