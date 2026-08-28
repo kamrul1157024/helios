@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 /** One entry of a popover: what it says, and what it does. */
 export interface MenuAction {
   label: string
   run: () => void
+  /** Destructive, and coloured to say so before it is clicked. */
+  danger?: boolean
 }
 
 /**
@@ -45,17 +47,33 @@ export function SelectionMenu({
 
   // Centred on the selection, so a menu near either edge would hang off it.
   const left = anchor === 'above' ? Math.min(Math.max(x, 110), window.innerWidth - 110) : x
+  const [shifted, setShifted] = useState<{ left: number; top: number } | null>(null)
+
+  // A menu opened near the bottom of the window would otherwise run off it —
+  // and the last item, which is where the destructive one goes, is the part
+  // that disappears. Measured rather than estimated, because the height is the
+  // number of actions the caller passed. Before paint, so it does not jump.
+  useLayoutEffect(() => {
+    if (anchor !== 'point') return
+    const rect = box.current?.getBoundingClientRect()
+    if (!rect) return
+    setShifted({
+      left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+    })
+  }, [anchor, x, y, actions.length])
 
   return (
     <div
       className={`line-menu${anchor === 'above' ? ' floating' : ''}`}
       ref={box}
-      style={{ left, top: y }}
+      style={shifted ?? { left, top: y }}
       onMouseDown={(event) => event.preventDefault()}
     >
       {actions.map((action) => (
         <button
           key={action.label}
+          className={action.danger ? 'danger' : undefined}
           onClick={() => {
             action.run()
             onClose()

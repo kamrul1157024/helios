@@ -102,6 +102,32 @@ export function statusLabel(status: string): string {
   }
 }
 
+/**
+ * The model, without what the provider beside it already said.
+ *
+ * The ids are qualified for an API, not for a list: `claude-opus-5` under a
+ * provider called `claude` spends half its width repeating the word next to
+ * it, and `claude-haiku-4-5-20251001` spends the rest on a release date that
+ * distinguishes nothing here. Callers keep the full id in a tooltip.
+ */
+export function shortModel(model: string, source: string): string {
+  const withoutVendor = model.startsWith(`${source}-`) ? model.slice(source.length + 1) : model
+  // A trailing release date, but not a version: 20251001 is a date, 4-5 is not.
+  return withoutVendor.replace(/-\d{8}$/, '')
+}
+
+/** Permission modes as a list can afford to say them. */
+export function shortMode(mode: string): string {
+  switch (mode) {
+    case 'acceptEdits':
+      return 'accept'
+    case 'bypassPermissions':
+      return 'bypass'
+    default:
+      return mode
+  }
+}
+
 /** Compact relative time — "3m", "2h", "5d" — as on the mobile cards. */
 export function timeAgo(iso?: string): string {
   if (!iso) return ''

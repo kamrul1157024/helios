@@ -5,7 +5,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { canResume, hasTerminal, needsRecovery, type Session } from '../src/shared/models.ts'
+import {
+  canResume,
+  hasTerminal,
+  needsRecovery,
+  shortMode,
+  shortModel,
+  type Session,
+} from '../src/shared/models.ts'
 
 function session(patch: Partial<Session>): Session {
   return {
@@ -62,4 +69,34 @@ test('a busy session is neither cold nor resumable', () => {
   const busy = session({ status: 'active', terminal: '/tmp/helios/s1.sock' })
   assert.equal(needsRecovery(busy), false)
   assert.equal(canResume(busy), false)
+})
+
+// The model ids the daemon carries are API-qualified — `claude-opus-5` under a
+// provider called `claude`, and release dates on the dated ones. These are the
+// real values from a store with 251 sessions in it.
+test('a model sheds the vendor its provider already named', () => {
+  assert.equal(shortModel('claude-opus-5', 'claude'), 'opus-5')
+  assert.equal(shortModel('claude-sonnet-4-5-20250929', 'claude'), 'sonnet-4-5')
+  assert.equal(shortModel('claude-haiku-4-5-20251001', 'claude'), 'haiku-4-5')
+})
+
+test('a context-window suffix is part of the name, not a date', () => {
+  assert.equal(shortModel('claude-opus-5[1m]', 'claude'), 'opus-5[1m]')
+})
+
+test('a version is not mistaken for a release date', () => {
+  // Eight digits at the end are a date; four dash-separated parts are not.
+  assert.equal(shortModel('claude-opus-4-8', 'claude'), 'opus-4-8')
+})
+
+test('a model from another provider keeps its whole name', () => {
+  assert.equal(shortModel('gpt-5', 'openai'), 'gpt-5')
+  assert.equal(shortModel('<synthetic>', 'claude'), '<synthetic>')
+})
+
+test('permission modes are said the short way, and unknown ones verbatim', () => {
+  assert.equal(shortMode('bypassPermissions'), 'bypass')
+  assert.equal(shortMode('acceptEdits'), 'accept')
+  assert.equal(shortMode('plan'), 'plan')
+  assert.equal(shortMode('auto'), 'auto')
 })
