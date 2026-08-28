@@ -15,10 +15,19 @@ import {
   timeAgo,
   type HostRecord,
   type Session,
+  type SessionGroup,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Console, Cpu, Memory, MultiLine, Plus, Search, SingleLine, Sort } from './icons.tsx'
-import { placeOf, tintOf } from './projects.ts'
+import { Chevron, Console, Cpu, Memory, Plus, Search, Sort } from './icons.tsx'
+import {
+  buildCwdTree,
+  buildTree,
+  byRank,
+  depthOf,
+  rankOf,
+  type GroupNode,
+} from './grouping.ts'
+import { GroupPicker } from './group-picker.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
@@ -50,22 +59,16 @@ interface Row {
   pending: number
 }
 
-/** One directory, and every session the host is running in it. */
-interface Project {
-  /** The project's name, folded — what its sessions are gathered on. */
-  key: string
-  name: string
-  /** Where a new session in this project starts. */
-  cwd: string
-  rows: Row[]
-  /** What this project's warm terminals hold, summed over its rows. */
-  memory: number
-}
-
 interface Group {
   host: HostRecord
-  projects: Project[]
-  /** Sessions shown, across every project — what the host head counts. */
+  /** Every session shown, in render order — the flat list, and what a reorder
+   *  posts. Used directly when grouping is off. */
+  rows: Row[]
+  /** The same sessions nested, when grouping is on. Empty when it is off. */
+  nodes: GroupNode[]
+  /** Approvals waiting on each session, by session id. */
+  pending: Map<string, number>
+  /** Sessions shown, across every group — what the host head counts. */
   count: number
   /** Terminated sessions withheld from rows, so the host can offer them. */
   hidden: number
@@ -73,11 +76,86 @@ interface Group {
   loading: boolean
 }
 
-/** A session being dragged, and the project it may be dropped back into. */
+/** A session being dragged, and the group it may be dropped back into. Held as
+ *  the whole path rather than one key: a drop is legal only inside the node the
+ *  drag started in, and at three levels deep the innermost key is not enough to
+ *  say which node that was. */
 interface Drag {
   hostId: string
-  projectKey: string
+  path: string
   sessionId: string
+}
+
+/** A group header being dragged, to rearrange the tree itself. */
+interface GroupDrag {
+  hostId: string
+  key: string
+}
+
+/**
+ * Where a dragged header would land.
+ *
+ * One gesture has to mean two things, so the pointer's height within the header
+ * decides: near an edge it goes beside the target, in the middle it goes inside
+ * it. Without the indicator that renders this, the difference would be a guess
+ * the user makes after the fact.
+ */
+type DropMode = 'before' | 'after' | 'inside'
+
+interface GroupDrop {
+  key: string
+  mode: DropMode
+}
+
+/** A right-click on a session row, and where the pointer was. */
+interface RowMenu {
+  kind: 'session'
+  hostId: string
+  session: Session
+  x: number
+  y: number
+}
+
+/** A right-click on a group header. The name is copied rather than the node
+ *  held, so a refresh arriving under an open menu cannot leave it pointing at a
+ *  tree that has been rebuilt. */
+interface HeadMenu {
+  kind: 'group'
+  hostId: string
+  key: string
+  name: string
+  x: number
+  y: number
+}
+
+/**
+ * What a drag is carrying, said as a MIME type rather than as a prefix on the
+ * payload.
+ *
+ * A dragover may read `dataTransfer.types` but not the data behind them, and a
+ * dragover is where a target decides whether to accept — so the kind of thing
+ * being dragged has to be in the type. A group header takes both a group and a
+ * session and means something different by each, so it has to know which before
+ * the drop.
+ *
+ * The host is part of the type for the same reason: a header on another daemon
+ * has to refuse a session it can never hold, and the type is all it can see.
+ * `types` is lowercased by the browser, so the id is lowercased going in.
+ */
+const GROUP_DRAG = 'application/x-helios-group'
+const SESSION_DRAG = 'application/x-helios-session'
+
+function sessionDrag(hostId: string): string {
+  return `${SESSION_DRAG}+${hostId.toLowerCase()}`
+}
+
+/** Edges claim a quarter each; the middle half nests. */
+function dropModeFor(event: React.DragEvent, el: HTMLElement): DropMode {
+  const rect = el.getBoundingClientRect()
+  const offset = (event.clientY - rect.top) / rect.height
+  if (offset < 0.25) return 'before'
+  if (offset > 0.75) return 'after'
+  return 'inside'
 }
 
 export function Sidebar({
@@ -85,7 +163,7 @@ export function Sidebar({
   onAddHost,
   onSettings,
 }: {
-  onNewSession: (seed?: { hostId: string; cwd: string }) => void
+  onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
   onAddHost: () => void
   onSettings: () => void
 }): JSX.Element {
@@ -97,23 +175,40 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
   const sortMode = useStore((s) => s.sortMode)
-  const density = useStore((s) => s.density)
+  const groupMode = useStore((s) => s.grouping)
+  // Split apart once, here: almost everything below asks "is the list split at
+  // all" or "is this a tree the user can edit", and neither reads well as a
+  // comparison against a string repeated thirty times.
+  const grouping = groupMode !== 'off'
+  const derived = groupMode === 'auto'
+  const groupsByHost = useStore((s) => s.groups)
+  const groupsUnsupported = useStore((s) => s.groupsUnsupported)
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
   const [dragging, setDragging] = useState<Drag | null>(null)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  // Folded projects, keyed by host and path together: two machines can hold
-  // checkouts at the same path, and folding one should not fold the other.
+  // Folded groups, keyed by host and the group's whole path: the same group can
+  // appear at two depths, and folding it in one place should not fold the
+  // other.
   const [folded, setFolded] = useState<Record<string, boolean>>({})
+  // A group header on the move. Separate from a session drag: they reorder
+  // different things and a drop on one is never a drop on the other.
+  const [groupDrag, setGroupDrag] = useState<GroupDrag | null>(null)
+  const [groupDrop, setGroupDrop] = useState<GroupDrop | null>(null)
   // Per host, not global: a machine kept for finished work and one being
   // worked in want opposite answers, and the setting is one click away.
   const [showTerminated, setShowTerminated] = useState<Record<string, boolean>>({})
-  // The session a right-click named, and where the pointer was. Held for the
-  // whole list rather than per row, so a second right-click moves the one menu
-  // instead of opening another beside it.
-  const [menu, setMenu] = useState<{ hostId: string; session: Session; x: number; y: number } | null>(
-    null,
-  )
+  // What a right-click named, and where the pointer was. Held for the whole
+  // list rather than per row, so a second right-click moves the one menu
+  // instead of opening another beside it — and one piece of state, so a header
+  // menu and a row menu can never be open at once.
+  const [menu, setMenu] = useState<RowMenu | HeadMenu | null>(null)
+  // Which group is having a child named, keyed by host and group. Empty string
+  // is the root of that host, so one piece of state covers both.
+  const [creatingIn, setCreatingIn] = useState<string | null>(null)
+  // Which group header is being renamed in place, keyed the same way.
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [picker, setPicker] = useState(false)
   const aside = useRef<HTMLElement | null>(null)
 
   // The width is a CSS variable rather than state: the value is read by the
@@ -142,6 +237,53 @@ export function Sidebar({
     window.addEventListener('pointerup', done)
   }
 
+  /**
+   * A dropped header either nests inside the target or lands beside it.
+   *
+   * Beside means "among the target's siblings", so a group coming from another
+   * parent is re-parented first and then ordered — two writes, because position
+   * is only meaningful within one parent and the daemon has no way to express
+   * both at once.
+   */
+  const moveOrReorder = async (
+    hostId: string,
+    dragged: string,
+    target: string,
+    mode: DropMode,
+  ): Promise<void> => {
+    const all = groupsByHost[hostId] ?? []
+    const targetGroup = all.find((g) => g.key === target)
+    const draggedGroup = all.find((g) => g.key === dragged)
+    if (!targetGroup || !draggedGroup) return
+
+    // Refused here as well as in the daemon, so the list does not flicker
+    // through an arrangement the write is about to reject.
+    const ancestors = new Set<string>()
+    for (let at = targetGroup; at; at = all.find((g) => g.key === at.parent) as typeof at) {
+      if (ancestors.has(at.key)) break
+      ancestors.add(at.key)
+      if (!at.parent) break
+    }
+    if (ancestors.has(dragged)) return
+
+    if (mode === 'inside') {
+      await store.moveGroup(hostId, dragged, target)
+      return
+    }
+
+    const parent = targetGroup.parent ?? ''
+    if ((draggedGroup.parent ?? '') !== parent) await store.moveGroup(hostId, dragged, parent)
+
+    const siblings = (store.getSnapshot().groups[hostId] ?? [])
+      .filter((g) => (g.parent ?? '') === parent)
+      .map((g) => g.key)
+      .filter((k) => k !== dragged)
+    const at = siblings.indexOf(target)
+    if (at === -1) return
+    siblings.splice(mode === 'before' ? at : at + 1, 0, dragged)
+    await store.reorderGroups(hostId, parent, siblings)
+  }
+
   const grouped = useMemo<Group[]>(() => {
     const needle = query.trim().toLowerCase()
     return hosts.map((host) => {
@@ -165,29 +307,35 @@ export function Sidebar({
         .map((session) => ({ session, pending: pendingByCwd.get(session.session_id) ?? 0 }))
         .sort(sortMode[host.id] === 'manual' ? byHand : compareRows)
 
-      // Projects take the position of their best session rather than an order
-      // of their own: grouping arranges the list, it does not re-rank it, so a
-      // session that wants attention still carries its project to the top.
-      const byProject = new Map<string, Project>()
-      for (const row of ordered) {
-        const place = placeOf(row.session)
-        let project = byProject.get(place.key)
-        if (!project) {
-          project = { key: place.key, name: place.name, cwd: place.cwd, rows: [], memory: 0 }
-          byProject.set(place.key, project)
-        }
-        project.rows.push(row)
-        project.memory += row.session.memory_bytes ?? 0
-      }
+      // Sorted first, then nested. The rank vector decides where a session
+      // hangs; the comparators above decide the order it hangs in. Keeping them
+      // apart is what lets a group move without re-ranking anything inside it.
+      //
+      // Only the manual tree ranks: an auto group's place comes from where its
+      // first session already landed, so re-sorting by a rank every session
+      // shares would be a no-op at best.
+      const tree = groupMode === 'manual'
+      const depth = tree ? depthOf(ordered.map((row) => row.session)) : 0
+      const sorted = tree
+        ? [...ordered].sort((a, b) =>
+            byRank(rankOf(a.session, depth), rankOf(b.session, depth)),
+          )
+        : ordered
+      const nodes = tree
+        ? buildTree(sorted.map((row) => row.session), groupsByHost[host.id] ?? [])
+        : derived
+          ? buildCwdTree(sorted.map((row) => row.session))
+          : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
       // An unfetched host has no entry at all, an empty one has []. Without the
       // distinction a daemon that is slow to answer looks like a daemon with
       // nothing on it.
       const loading = sessions[host.id] === undefined
-      return { host, projects: [...byProject.values()], count: ordered.length, hidden, loading }
+      const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
+      return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
-  }, [hosts, sessions, notifications, query, showTerminated, sortMode])
+  }, [hosts, sessions, notifications, query, showTerminated, sortMode, groupMode, derived, groupsByHost])
 
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
@@ -213,34 +361,30 @@ export function Sidebar({
             </button>
           )}
         </div>
-        <button
-          className={manual ? 'tool sort-toggle on' : 'tool sort-toggle'}
-          aria-label={manual ? 'Sorting by hand' : 'Sorting by activity'}
-          aria-pressed={manual}
-          title={
-            manual
-              ? 'Sort: Manual — drag a session to move it.\nClick to sort by activity instead.'
-              : 'Sort: Activity — approvals first, then live, then most recent.\nClick to arrange them by hand instead.'
-          }
-          onClick={() => void store.setSortModeEverywhere(manual ? 'activity' : 'manual')}
-        >
-          <Sort />
-        </button>
-        {/* Beside the sort toggle because it is the same kind of control: not
-            a preference set once, but a way of looking at the list, changed
-            while looking at it. Shows the state it is in, as the sort does. */}
-        <button
-          className="tool density-toggle"
-          aria-label={density === 'compact' ? 'Compact list' : 'Comfortable list'}
-          title={
-            density === 'compact'
-              ? 'Compact — one line a session, title and time.\nClick for the second line back.'
-              : 'Comfortable — a second line with the agent, model and memory.\nClick to fit more on screen.'
-          }
-          onClick={() => void store.setDensity(density === 'compact' ? 'comfortable' : 'compact')}
-        >
-          {density === 'compact' ? <SingleLine /> : <MultiLine />}
-        </button>
+        <div className="picker-anchor">
+          <button
+            className={grouping || manual ? 'tool sort-toggle on' : 'tool sort-toggle'}
+            aria-label="Arrange the list"
+            aria-expanded={picker}
+            title={'Arrange — grouping, and what each level sorts by.'}
+            onClick={() => setPicker((open) => !open)}
+          >
+            <Sort />
+          </button>
+          {picker && (
+            <GroupPicker
+              // Grouping is one setting for the app, but whether a daemon can
+              // hold groups at all is per host: the one being looked at, or the
+              // first, which is the one the note below would be about.
+              hostId={selection?.hostId ?? hosts[0]?.id ?? null}
+              hostName={
+                hosts.find((h) => h.id === (selection?.hostId ?? hosts[0]?.id))?.name ?? ''
+              }
+              manual={manual}
+              onClose={() => setPicker(false)}
+            />
+          )}
+        </div>
         <button
           className="tool primary"
           aria-label="New session"
@@ -252,31 +396,261 @@ export function Sidebar({
       </header>
 
       <div className="sidebar-list">
-        {grouped.map(({ host, projects, count, hidden, loading }) => {
+        {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
           const revealed = showTerminated[host.id] ?? false
           // The whole host in display order, which is what a reorder posts.
-          const order = projects.flatMap((project) => project.rows.map((row) => row.session.session_id))
+          const order = rows.map((row) => row.session.session_id)
+          // One machine needs no header saying which machine: the rule that
+          // hides a level splitting nothing survives here, where it started.
+          const showHost = hosts.length > 1
+          const draggable = sortMode[host.id] === 'manual'
+
+          const renderRow = (session: Session, path: string): JSX.Element => (
+            <SessionRow
+              key={session.session_id}
+              hostId={host.id}
+              session={session}
+              pending={pending.get(session.session_id) ?? 0}
+              selected={selection?.hostId === host.id && selection.sessionId === session.session_id}
+              draggable={draggable}
+              dragging={dragging?.sessionId === session.session_id}
+              // Only inside the node it started in: the daemon holds one flat
+              // order per host, so a card dropped across a divide would drag
+              // its whole group with it.
+              accepts={dragging?.hostId === host.id && dragging.path === path}
+              onDragStart={() => setDragging({ hostId: host.id, path, sessionId: session.session_id })}
+              onDragEnd={() => {
+                setDragging(null)
+                // A session dropped nowhere leaves a header lit otherwise: the
+                // header's own dragend never fires, because it is not the source.
+                setGroupDrop(null)
+              }}
+              onContextMenu={(x, y) => setMenu({ kind: 'session', hostId: host.id, session, x, y })}
+              onDropBefore={(draggedId) => {
+                // The id off the drag itself, not React state: the drop can
+                // arrive in the same tick as the drag start, before a setState
+                // has committed, and then nothing moves.
+                const ids = [...order]
+                const from = ids.indexOf(draggedId)
+                const to = ids.indexOf(session.session_id)
+                setDragging(null)
+                if (from === -1 || to === -1 || from === to) return
+                ids.splice(to, 0, ids.splice(from, 1)[0] as string)
+                void store.reorderSessions(host.id, ids)
+              }}
+            />
+          )
+
+          const renderNode = (node: GroupNode): JSX.Element => {
+            const path = node.path.join('/')
+            const foldKey = `${host.id}:${path}`
+            const isFolded = folded[foldKey] ?? false
+            // Ungrouped is synthetic. It has no key to reorder and no name to
+            // rename, so it is a header and nothing else. An auto group's key
+            // is its directory, which is a name but not one anybody stored.
+            const named = node.key !== ''
+            // Whether there is a group behind the header to act on. An auto
+            // group is a reading of the sessions, not a thing: renaming or
+            // deleting one would have to change where the sessions are running,
+            // and nesting it would claim a level the directory does not have.
+            const real = named && !derived
+            // `real` again, because Ungrouped's key is "" — the same string the
+            // host's own root uses, and a shared key would put two headers into
+            // the field at once.
+            const editing = real && renaming === `${host.id}:${node.key}`
+            return (
+              <div className="group" key={path || 'ungrouped'}>
+                <div
+                  className={[
+                    'group-head',
+                    isFolded ? 'folded' : '',
+                    groupDrop?.key === node.key ? `drop-${groupDrop.mode}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  // Rename and delete are the group's own, so Ungrouped — which
+                  // is neither named nor stored — offers no menu at all.
+                  onContextMenu={(event) => {
+                    if (!real) return
+                    event.preventDefault()
+                    setMenu({
+                      kind: 'group',
+                      hostId: host.id,
+                      key: node.key,
+                      name: node.name,
+                      x: event.clientX,
+                      y: event.clientY,
+                    })
+                  }}
+                >
+                  {editing ? (
+                    <NewGroupField
+                      initial={node.name}
+                      onCancel={() => setRenaming(null)}
+                      onCommit={(name) => {
+                        setRenaming(null)
+                        if (name !== node.name) void store.renameGroup(host.id, node.key, name)
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        className="group-title"
+                        aria-expanded={!isFolded}
+                        draggable={real}
+                        onDragStart={(event) => {
+                          event.stopPropagation()
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', node.key)
+                          event.dataTransfer.setData(GROUP_DRAG, node.key)
+                          setGroupDrag({ hostId: host.id, key: node.key })
+                        }}
+                        onDragEnd={() => {
+                          setGroupDrag(null)
+                          setGroupDrop(null)
+                        }}
+                        // Which gesture this is comes off the transfer's types, not
+                        // out of state: the two drags mean different things here,
+                        // and a drop can land in the same tick as the drag start,
+                        // before either setState has committed.
+                        onDragOver={(event) => {
+                          const kinds = event.dataTransfer.types
+                          // Every header takes a session, Ungrouped included —
+                          // dropping there is how a session leaves its group. It
+                          // always nests: a session has no position among groups.
+                          //
+                          // Except an auto header, which is a directory: a
+                          // session belongs to the one it is running in, and a
+                          // drop cannot move it there.
+                          if (!derived && kinds.includes(sessionDrag(host.id))) {
+                            event.preventDefault()
+                            event.dataTransfer.dropEffect = 'move'
+                            setGroupDrop({ key: node.key, mode: 'inside' })
+                            return
+                          }
+                          if (!real || !kinds.includes(GROUP_DRAG)) return
+                          if (groupDrag?.hostId !== host.id || groupDrag.key === node.key) return
+                          event.preventDefault()
+                          event.dataTransfer.dropEffect = 'move'
+                          setGroupDrop({ key: node.key, mode: dropModeFor(event, event.currentTarget) })
+                        }}
+                        onDragLeave={() => setGroupDrop((d) => (d?.key === node.key ? null : d))}
+                        // The payload and the mode both come off the event rather
+                        // than out of state, for the reason above.
+                        onDrop={(event) => {
+                          const moved = derived ? '' : event.dataTransfer.getData(sessionDrag(host.id))
+                          if (moved) {
+                            event.preventDefault()
+                            setDragging(null)
+                            setGroupDrop(null)
+                            // node.key is "" on Ungrouped, which is what unfiles it.
+                            void store.setSessionGroup(host.id, moved, node.key)
+                            return
+                          }
+                          if (!real) return
+                          event.preventDefault()
+                          const dragged = event.dataTransfer.getData(GROUP_DRAG)
+                          const mode = dropModeFor(event, event.currentTarget)
+                          setGroupDrag(null)
+                          setGroupDrop(null)
+                          if (!dragged || dragged === node.key) return
+                          void moveOrReorder(host.id, dragged, node.key, mode)
+                        }}
+                        onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
+                      >
+                        <span className="group-name">{node.name}</span>
+                        <span className="group-count">{node.total}</span>
+                        <Chevron className="chevron group-chevron" open={!isFolded} />
+                      </button>
+                      {/* Not `real`: an auto group cannot be renamed or nested,
+                          but "another session here" is the one thing a
+                          directory does answer, and it answers it exactly —
+                          the group's key is the directory. */}
+                      {named && (
+                        <button
+                          className="group-add"
+                          aria-label={`New session in ${node.name}`}
+                          title={`New session in ${node.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            if (derived) {
+                              onNewSession({ hostId: host.id, cwd: node.key })
+                              return
+                            }
+                            // The directory is a guess — the group's most recent
+                            // session's — but the group is not: the dialog files the
+                            // new session here whatever directory it ends up in.
+                            const recent = node.sessions[0] ?? node.children[0]?.sessions[0]
+                            onNewSession({ hostId: host.id, cwd: recent?.cwd ?? '', group: node.key })
+                          }}
+                        >
+                          <Console />
+                        </button>
+                      )}
+                      {real && !groupsUnsupported[host.id] && (
+                        <button
+                          className="group-add"
+                          aria-label={`New group in ${node.name}`}
+                          title={`New group in ${node.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setFolded((f) => ({ ...f, [foldKey]: false }))
+                            setCreatingIn(`${host.id}:${node.key}`)
+                          }}
+                        >
+                          <Plus />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {!isFolded && (
+                  <div className="group-rows">
+                    {/* `real`, because Ungrouped's key is "" — the same string
+                        the host's own "+ Group" sets. Without this the one
+                        click mounts two fields, the second steals focus from
+                        the first, and the first's blur cancels both. */}
+                    {real && creatingIn === `${host.id}:${node.key}` && (
+                      <NewGroupField
+                        onCancel={() => setCreatingIn(null)}
+                        onCommit={(name) => {
+                          setCreatingIn(null)
+                          void store.createGroup(host.id, name, node.key)
+                        }}
+                      />
+                    )}
+                    {node.children.map((child) => renderNode(child))}
+                    {node.sessions.map((session) => renderRow(session, path))}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
           return (
             <section key={host.id} className="host-group">
               <div className="host-head">
-                <button
-                  className="host-title"
-                  aria-expanded={!isCollapsed}
-                  onClick={() => setCollapsed((c) => ({ ...c, [host.id]: !isCollapsed }))}
-                >
-                  <span className={`host-dot ${status}`} title={hostStatus[host.id]?.error ?? status} />
-                  <span className="host-name">{host.name}</span>
-                  {/* No count until there is one: a 0 that turns into 12 reads
-                      as an answer, and it was not one. */}
-                  {!loading && (
-                    <span className="host-count">
-                      {count} {count === 1 ? 'session' : 'sessions'}
-                    </span>
-                  )}
-                  <Chevron className="chevron" open={!isCollapsed} />
-                </button>
+                {showHost && (
+                  <button
+                    className="host-title"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => setCollapsed((c) => ({ ...c, [host.id]: !isCollapsed }))}
+                  >
+                    <span className={`host-dot ${status}`} title={hostStatus[host.id]?.error ?? status} />
+                    <span className="host-name">{host.name}</span>
+                    {/* No count until there is one: a 0 that turns into 12 reads
+                        as an answer, and it was not one. */}
+                    {!loading && (
+                      <span className="host-count">
+                        {count} {count === 1 ? 'session' : 'sessions'}
+                      </span>
+                    )}
+                    <Chevron className="chevron" open={!isCollapsed} />
+                  </button>
+                )}
 
                 {/* One line under the host: what its terminals cost on the
                     left, and the sessions it is not showing on the right. Both
@@ -285,6 +659,15 @@ export function Sidebar({
                 {!isCollapsed && (
                   <div className="host-meta">
                     <HostMeter stats={stats[host.id]} />
+                    {groupMode === 'manual' && !groupsUnsupported[host.id] && (
+                      <button
+                        className="link"
+                        onClick={() => setCreatingIn(`${host.id}:`)}
+                        title="A group at the top level, with no parent"
+                      >
+                        + Group
+                      </button>
+                    )}
                     {(hidden > 0 || revealed) && (
                       <button
                         className="link show-terminated"
@@ -299,88 +682,20 @@ export function Sidebar({
                 )}
               </div>
 
-              {!isCollapsed &&
-                projects.map((project) => {
-                  const foldKey = `${host.id}:${project.key}`
-                  const isFolded = folded[foldKey] ?? false
-                  return (
-                    <div className="project" key={project.key}>
-                      <div className={isFolded ? 'project-head folded' : 'project-head'}>
-                        <button
-                          className="project-title"
-                          title={project.cwd}
-                          aria-expanded={!isFolded}
-                          onClick={() => setFolded((f) => ({ ...f, [foldKey]: !isFolded }))}
-                        >
-                          <span className="project-badge" style={{ '--tint': tintOf(project.key) } as React.CSSProperties}>
-                            {project.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <span className="project-name">{project.name}</span>
-                          <span className="project-count">{project.rows.length}</span>
-                          {project.memory > 0 && (
-                            <>
-                              <span className="project-sep">·</span>
-                              <span className="project-ram">{formatBytes(project.memory)}</span>
-                            </>
-                          )}
-                          <Chevron className="chevron project-chevron" open={!isFolded} />
-                        </button>
-                        <button
-                          className="project-add"
-                          aria-label={`New session in ${project.name}`}
-                          title={`New session in ${project.name}`}
-                          onClick={() => onNewSession({ hostId: host.id, cwd: project.cwd })}
-                        >
-                          <Plus />
-                        </button>
-                      </div>
+              {!isCollapsed && groupMode === 'manual' && creatingIn === `${host.id}:` && (
+                <NewGroupField
+                  onCancel={() => setCreatingIn(null)}
+                  onCommit={(name) => {
+                    setCreatingIn(null)
+                    void store.createGroup(host.id, name, '')
+                  }}
+                />
+              )}
 
-                      {!isFolded && (
-                        <div className="project-rows">
-                          {project.rows.map(({ session, pending }) => (
-                            <SessionRow
-                              key={session.session_id}
-                              hostId={host.id}
-                              session={session}
-                              pending={pending}
-                              selected={
-                                selection?.hostId === host.id && selection.sessionId === session.session_id
-                              }
-                              draggable={sortMode[host.id] === 'manual'}
-                              dragging={dragging?.sessionId === session.session_id}
-                              // Only inside its own project: the daemon holds one
-                              // flat order per host, so a card dropped across the
-                              // divide would drag its whole project with it.
-                              accepts={dragging?.hostId === host.id && dragging.projectKey === project.key}
-                              onDragStart={() =>
-                                setDragging({
-                                  hostId: host.id,
-                                  projectKey: project.key,
-                                  sessionId: session.session_id,
-                                })
-                              }
-                              onDragEnd={() => setDragging(null)}
-                              onContextMenu={(x, y) => setMenu({ hostId: host.id, session, x, y })}
-                              onDropBefore={(draggedId) => {
-                                // The id off the drag itself, not React state: the
-                                // drop can arrive in the same tick as the drag
-                                // start, before a setState has committed, and then
-                                // nothing moves.
-                                const ids = [...order]
-                                const from = ids.indexOf(draggedId)
-                                const to = ids.indexOf(session.session_id)
-                                setDragging(null)
-                                if (from === -1 || to === -1 || from === to) return
-                                ids.splice(to, 0, ids.splice(from, 1)[0] as string)
-                                void store.reorderSessions(host.id, ids)
-                              }}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+              {!isCollapsed &&
+                (grouping
+                  ? nodes.map((node) => renderNode(node))
+                  : rows.map((row) => renderRow(row.session, '')))}
 
               {/* Skeletons rather than a spinner: the list is about to be a
                   list, and showing its shape keeps the sidebar from resizing
@@ -394,7 +709,6 @@ export function Sidebar({
                 [0, 1, 2].map((index) => (
                   <div key={index} className="session-row skeleton" aria-hidden="true">
                     <div className="row-main">
-                      <span className="row-dot" />
                       <span className="row-title">
                         <span className="skeleton-line" />
                       </span>
@@ -435,7 +749,17 @@ export function Sidebar({
         <SelectionMenu
           x={menu.x}
           y={menu.y}
-          actions={sessionActions(menu.hostId, menu.session)}
+          actions={
+            menu.kind === 'session'
+              ? sessionActions(
+                  menu.hostId,
+                  menu.session,
+                  groupsUnsupported[menu.hostId] ? [] : (groupsByHost[menu.hostId] ?? []),
+                )
+              : groupActions(menu.hostId, menu.key, () =>
+                  setRenaming(`${menu.hostId}:${menu.key}`),
+                )
+          }
           onClose={() => setMenu(null)}
         />
       )}
@@ -465,7 +789,7 @@ export function Sidebar({
  * first and reading the header to check it had changed. On the row they name
  * the session under the pointer, which is the one being pointed at.
  */
-function sessionActions(hostId: string, session: Session): MenuAction[] {
+function sessionActions(hostId: string, session: Session, groups: SessionGroup[]): MenuAction[] {
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       await fn()
@@ -475,7 +799,30 @@ function sessionActions(hostId: string, session: Session): MenuAction[] {
     }
   }
 
-  const actions: MenuAction[] = [
+  const held = session.group_key ?? ''
+
+  // One entry per group, ticked on the one this session is filed under.
+  // Choosing another moves it; choosing the current one takes it out.
+  const actions: MenuAction[] = groups.map((group) => {
+    const inside = held === group.key
+    return {
+      label: `${inside ? '✓ ' : '\u2003'}${group.name}`,
+      run: () => void store.setSessionGroup(hostId, session.session_id, inside ? '' : group.key),
+    }
+  })
+
+  actions.push({
+    label: 'New group…',
+    run: () => {
+      const name = window.prompt('Name the group')?.trim()
+      if (!name) return
+      void store.createGroup(hostId, name).then((group) => {
+        if (group) void store.setSessionGroup(hostId, session.session_id, group.key)
+      })
+    },
+  })
+
+  actions.push(
     {
       label: 'Regenerate title',
       // The daemon waits for the model before answering, so this can sit for
@@ -494,7 +841,7 @@ function sessionActions(hostId: string, session: Session): MenuAction[] {
       run: () =>
         void run(() => api(hostId).patchSession(session.session_id, { pinned: !session.pinned })),
     },
-  ]
+  )
 
   // Nothing to end when it has already ended, and the row itself carries the
   // Resume that a terminated session is waiting for.
@@ -524,6 +871,88 @@ function sessionActions(hostId: string, session: Session): MenuAction[] {
   })
 
   return actions
+}
+
+/**
+ * What can be done to a group, as the right-click on its header offers it.
+ *
+ * Only ever called for a real group: Ungrouped is a heading the tree draws over
+ * the sessions nothing has claimed, and there is no record behind it to rename
+ * or remove.
+ */
+function groupActions(hostId: string, key: string, onRename: () => void): MenuAction[] {
+  return [
+    { label: 'Rename', run: onRename },
+    {
+      label: 'Delete',
+      danger: true,
+      // Nothing inside is lost — the daemon lifts the sessions and any child
+      // groups up a level — so this does not stop to ask.
+      title: 'Delete the group — its sessions and subgroups move up a level',
+      run: () => void store.deleteGroup(hostId, key),
+    },
+  ]
+}
+
+/**
+ * Names a new group, in place.
+ *
+ * Inline rather than a dialog: the point of a `+` on a header is that the
+ * parent is already chosen by where you clicked, and a modal would ask again
+ * with a field the header could just have shown.
+ */
+function NewGroupField({
+  onCommit,
+  onCancel,
+  initial = '',
+}: {
+  onCommit: (name: string) => void
+  onCancel: () => void
+  /** The name already on the header, when this is a rename rather than a new
+   *  one. Seeded into state rather than left as a defaultValue, so the field
+   *  stays controlled — see below for what uncontrolled cost. */
+  initial?: string
+}): JSX.Element {
+  const [draft, setDraft] = useState(initial)
+  const field = useRef<HTMLInputElement | null>(null)
+  // Enter commits and the parent unmounts this input, which fires blur — so
+  // without a latch the same name is submitted twice, or a commit races the
+  // cancel that follows it.
+  const done = useRef(false)
+  // autoFocus does not fire reliably for an input mounted into a tree that is
+  // already on screen — the button that opened it keeps focus, so the keystrokes
+  // go nowhere and the field looks like a button that did nothing.
+  useEffect(() => {
+    field.current?.focus()
+  }, [])
+  // Controlled, so React owns the value. Uncontrolled looked simpler and cost a
+  // day: anything setting the field programmatically — a test, an autofill —
+  // writes straight to the DOM node, and a handler reading React's idea of it
+  // sees an empty string.
+  const commit = (typed: string): void => {
+    if (done.current) return
+    done.current = true
+    const name = typed.trim()
+    if (name) onCommit(name)
+    else onCancel()
+  }
+  return (
+    <input
+      ref={field}
+      className="new-group"
+      placeholder="Group name"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit(event.currentTarget.value)
+        if (event.key === 'Escape') {
+          done.current = true
+          onCancel()
+        }
+      }}
+      onBlur={(event) => commit(event.target.value)}
+    />
+  )
 }
 
 /**
@@ -631,6 +1060,9 @@ function SessionRow({
         // starts; the id is also what makes the drop unambiguous.
         event.dataTransfer.effectAllowed = 'move'
         event.dataTransfer.setData('text/plain', session.session_id)
+        // Again under a type of its own, so a group header can tell this from a
+        // header being dragged and file the session instead of moving a group.
+        event.dataTransfer.setData(sessionDrag(hostId), session.session_id)
         onDragStart()
       }}
       onDragEnd={onDragEnd}
@@ -646,11 +1078,11 @@ function SessionRow({
         onDropBefore(event.dataTransfer.getData('text/plain'))
       }}
       onClick={() => store.select(hostId, session.session_id)}
-      // Selected as well as pointed at: the menu acts on this session, and the
-      // panel beside it should be showing the one that is about to change.
+      // Pointed at, not opened. A right-click is a question about a session,
+      // and answering it by loading that session into the panel throws away
+      // whatever the user was reading — the one thing they did not ask for.
       onContextMenu={(event) => {
         event.preventDefault()
-        store.select(hostId, session.session_id)
         onContextMenu(event.clientX, event.clientY)
       }}
       // A terminated session has to be resumed before it has a terminal worth
@@ -662,10 +1094,6 @@ function SessionRow({
       }
     >
       <div className="row-main">
-        <span
-          className={`row-dot ${session.status}${busy ? ' pulse' : ''}`}
-          title={statusLabel(session.status)}
-        />
         <span className="row-title" title={label}>
           {label}
         </span>
@@ -721,8 +1149,14 @@ function SessionRow({
       {/* What the session is, under what it is called. Kept off the title's
           line so the title gets the whole width — a long one is the common
           case, and it was losing half its room to a trail of small print. */}
+      {/* The status was a coloured dot with a tooltip, which is the least
+          legible thing a row can say about the thing that matters most. In
+          words, and first, it reads without being hovered — and the provider it
+          replaces was "claude" on every row until a second one ships. */}
       <div className="row-sub">
-        <span className="row-provider">{session.source}</span>
+        <span className={`row-status ${session.status}${busy ? ' pulse' : ''}`}>
+          {statusLabel(session.status)}
+        </span>
         {session.model !== undefined && (
           <span className="row-model" title={session.model}>
             {shortModel(session.model, session.source)}

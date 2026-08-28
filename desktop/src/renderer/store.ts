@@ -9,6 +9,7 @@ import type {
   HostStatus,
   Notification,
   Session,
+  SessionGroup,
   SSEEvent,
   TabStatus,
   HostStats,
@@ -58,6 +59,15 @@ export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
 
 /** Sorted by what the sessions are doing, or by hand. */
 export type SortMode = 'activity' | 'manual'
+
+/**
+ * What splits the list into groups, if anything.
+ *
+ * 'manual' is the tree the user built and the daemon holds. 'auto' is derived
+ * from where each session is running and stored nowhere, so it needs no server
+ * data and nothing about it can be edited.
+ */
+export type GroupMode = 'off' | 'manual' | 'auto'
 
 /**
  * A file the user asked to see, from a chip in the transcript. The counter is
@@ -163,6 +173,59 @@ export interface State {
    * which way it is set.
    */
   density: Density
+  /**
+   * Every group the daemon knows, by host id, in display order.
+   *
+   * Held apart from the sessions because a group outlives the sessions in it:
+   * an empty one still has a place in the arrangement, and the picker has to
+   * offer it.
+   */
+  groups: Record<string, SessionGroup[]>
+  /**
+   * How the sidebar splits the list: not at all, by the user's group tree, or
+   * by each session's directory.
+   *
+   * Client-side and off by default: the arrangement belongs to the daemon, but
+   * how you look at it is this window's business — a phone and a wide monitor
+   * want different answers.
+   */
+  grouping: GroupMode
+  /**
+   * Hosts whose daemon has no grouping routes, by host id.
+   *
+   * A daemon older than the feature answers 404, and offering to make a group
+   * on a machine that cannot hold one is worse than not offering: the button
+   * looks broken rather than absent.
+   */
+  groupsUnsupported: Record<string, boolean>
+}
+
+const GROUPING_KEY = 'helios.grouping'
+
+/**
+ * Reads the saved mode, tolerating the flag this setting used to be.
+ *
+ * An install from before the modes holds '1' or '0' under the same key. Those
+ * mean the only grouping there was, which is the manual tree — reading them as
+ * an unknown value would silently turn off a sidebar the user had arranged.
+ */
+function readGroupMode(): GroupMode {
+  try {
+    const saved = localStorage.getItem(GROUPING_KEY)
+    if (saved === 'manual' || saved === 'auto' || saved === 'off') return saved
+    if (saved === '1') return 'manual'
+    return 'off'
+  } catch {
+    return 'off'
+  }
+}
+
+function writeGroupMode(mode: GroupMode): void {
+  try {
+    localStorage.setItem(GROUPING_KEY, mode)
+  } catch {
+    // A full or unavailable store costs the preference, not the setting.
+  }
 }
 
 const initial: State = {
@@ -187,6 +250,9 @@ const initial: State = {
   density: bridge.theme.boot().density,
   toast: null,
   pairingLink: null,
+  groups: {},
+  groupsUnsupported: {},
+  grouping: readGroupMode(),
 }
 
 type Listener = () => void
@@ -324,7 +390,12 @@ class Store {
   // ─── Data ──────────────────────────────────────────────────────────────
 
   async refreshHost(hostId: string): Promise<void> {
-    await Promise.all([this.refreshSessions(hostId), this.refreshNotifications(hostId), this.refreshSortMode(hostId)])
+    await Promise.all([
+      this.refreshSessions(hostId),
+      this.refreshNotifications(hostId),
+      this.refreshSortMode(hostId),
+      this.refreshGroups(hostId),
+    ])
   }
 
   /** The daemon owns the sort mode, so a second window opens on the same one. */
@@ -404,9 +475,127 @@ class Store {
     }
   }
 
+  /**
+   * Changes how this window splits the list.
+   *
+   * Asking the daemon to resolve groups costs a lookup it should not do for a
+   * client that will not render them, so the flag rides on the fetch and the
+   * list is refetched when it changes. Only the manual tree needs it: the
+   * directory grouping reads a field every session already carries, so
+   * switching into or out of it is a re-render and nothing more.
+   */
+  async setGrouping(mode: GroupMode): Promise<void> {
+    const before = this.state.grouping
+    this.set({ grouping: mode })
+    writeGroupMode(mode)
+    if ((before === 'manual') === (mode === 'manual')) return
+    await Promise.all(this.state.hosts.map((host) => this.refreshHost(host.id)))
+  }
+
+  async refreshGroups(hostId: string): Promise<void> {
+    try {
+      const groups = await api(hostId).listGroups()
+      this.set((s) => ({
+        groups: { ...s.groups, [hostId]: groups },
+        groupsUnsupported: { ...s.groupsUnsupported, [hostId]: false },
+      }))
+    } catch (err) {
+      // A 404 is an answer, not a failure: this daemon predates grouping. Mark
+      // it and stop offering, rather than reporting an error the user cannot
+      // act on from here.
+      if (statusOf(err) === 404) {
+        this.set((s) => ({
+          groups: { ...s.groups, [hostId]: [] },
+          groupsUnsupported: { ...s.groupsUnsupported, [hostId]: true },
+        }))
+        return
+      }
+      this.failHost(hostId, err)
+    }
+  }
+
+  /** An empty parent makes it a root. */
+  async createGroup(hostId: string, name: string, parent = ''): Promise<SessionGroup | null> {
+    try {
+      const group = await api(hostId).createGroup(name, parent)
+      await this.refreshGroups(hostId)
+      return group
+    } catch (err) {
+      this.fail(err)
+      return null
+    }
+  }
+
+  async renameGroup(hostId: string, key: string, name: string): Promise<void> {
+    try {
+      await api(hostId).renameGroup(key, name)
+      await this.refreshGroups(hostId)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /** Moves a group and everything beneath it. An empty parent makes it a root. */
+  async moveGroup(hostId: string, key: string, parent: string): Promise<void> {
+    try {
+      await api(hostId).moveGroup(key, parent)
+      await Promise.all([this.refreshGroups(hostId), this.refreshSessions(hostId)])
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /** Deleting lifts the group's children and its sessions one level, so both
+   *  the tree and the sessions have to be refetched. */
+  async deleteGroup(hostId: string, key: string): Promise<void> {
+    try {
+      await api(hostId).deleteGroup(key)
+      await Promise.all([this.refreshGroups(hostId), this.refreshSessions(hostId)])
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Moves a group, and every session under it with it.
+   *
+   * Applied here first for the same reason a dragged session is: a header that
+   * snaps back while the daemon answers reads as a drag that failed.
+   */
+  async reorderGroups(hostId: string, parent: string, orderedKeys: string[]): Promise<void> {
+    const before = this.state.groups[hostId] ?? []
+    const byKey = new Map(before.map((group) => [group.key, group]))
+    const next: SessionGroup[] = []
+    orderedKeys.forEach((key, index) => {
+      const group = byKey.get(key)
+      if (group) next.push({ ...group, position: index })
+    })
+    this.set((s) => ({ groups: { ...s.groups, [hostId]: next } }))
+
+    try {
+      await api(hostId).setGroupOrder(parent, orderedKeys)
+      await this.refreshSessions(hostId)
+    } catch (err) {
+      this.set((s) => ({ groups: { ...s.groups, [hostId]: before } }))
+      this.fail(err)
+    }
+  }
+
+  /** Files a session under one group. An empty key unassigns it. */
+  async setSessionGroup(hostId: string, sessionId: string, key: string): Promise<void> {
+    try {
+      await api(hostId).setSessionGroup(sessionId, key)
+      await this.refreshSessions(hostId)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
   async refreshSessions(hostId: string): Promise<void> {
     try {
-      const { sessions, host } = await api(hostId).listSessions()
+      const { sessions, host } = await api(hostId).listSessions(
+        this.state.grouping === 'manual' ? { grouped: '1' } : {},
+      )
       const before = this.state.sessions[hostId]
       this.set((s) => ({
         sessions: { ...s.sessions, [hostId]: sessions },

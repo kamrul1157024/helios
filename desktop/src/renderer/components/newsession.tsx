@@ -10,7 +10,7 @@ export function NewSessionDialog({
 }: {
   /** Host and directory the dialog was opened for, from a project's own
    *  new-session button. Null when it was opened from the toolbar. */
-  seed?: { hostId: string; cwd: string } | null
+  seed?: { hostId: string; cwd: string; group?: string } | null
   onClose: () => void
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
@@ -85,6 +85,10 @@ export function NewSessionDialog({
         prompt: prompt || undefined,
         permission_mode: mode || undefined,
       })
+      // Filed before the refresh, so the list arrives with it already in the
+      // group the + was pressed on. The directory only seeded the dialog; the
+      // group is what the button actually promised.
+      if (seed?.group) await store.setSessionGroup(hostId, result.session_id, seed.group)
       await store.refreshSessions(hostId)
       store.select(hostId, result.session_id)
       const session = store

@@ -920,35 +920,53 @@ small {
    what they are holding between them — so the rows themselves no longer have
    to each repeat a directory. */
 
-.project {
+.group {
   margin-bottom: 18px;
 }
 
 /* Indented under the header, so the eye can run down one project's rows
    without the next project's header pulling it back to the margin. */
-.project-rows {
-  padding-left: 8px;
+.group-rows {
+  /* One step per level, and one only: these nest inside each other, so the
+     indent compounds through the DOM. Multiplying by depth as well made every
+     level wider than the last.
+
+     The guide line comes free with that nesting — one border, drawn once per
+     level, because each of these sits inside the last. Indentation alone left
+     the reader counting pixels to work out how deep a session was. The border
+     takes a pixel out of the padding so the columns do not move. */
+  padding-left: 9px;
+  /* Brighter than --border, which is tuned for panel edges and disappears as a
+     hairline inside a list. This one has a job: it is the only thing saying how
+     deep a session sits. */
+  border-left: 1px solid color-mix(in srgb, var(--on-surface) 22%, transparent);
 }
 
-.project-head {
+.group-head {
   display: flex;
   align-items: center;
   margin-bottom: 2px;
   border-radius: var(--r-sm);
-  padding-right: 4px;
+  /* Matches the session row's, so a group's count and a session's time sit on
+     the same right edge. */
+  padding-right: 8px;
 }
 
-.project-head:hover {
+.group-head:hover {
   background: color-mix(in srgb, var(--on-surface) 5%, transparent);
 }
 
-.project-title {
+/* No badge: it pushed the name 30px right of every unbadged header and of the
+   rows underneath, so a group's own sessions did not line up with its name.
+   The indent and the name say which group this is; the colour was decoration
+   paying for it with the alignment. */
+.group-title {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 4px 6px 5px;
+  padding: 6px 8px;
   border-radius: var(--r-sm);
   background: none;
   color: var(--on-surface);
@@ -957,36 +975,21 @@ small {
   text-align: left;
 }
 
-.project-title:hover:not(:disabled),
-.project-title:active:not(:disabled) {
+.group-title:hover:not(:disabled),
+.group-title:active:not(:disabled) {
   background: none;
 }
 
-/* The initial on a tinted tile. Colour is the fastest way back to a project
-   once there are six of them, and it costs no width. */
-.project-badge {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--tint) 20%, transparent);
-  color: var(--tint);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.project-name {
+.group-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.project-count,
-.project-sep,
-.project-ram {
+.group-count,
+.group-sep,
+.group-ram {
   flex: none;
   color: var(--on-surface-variant);
   font-size: 11.5px;
@@ -994,25 +997,25 @@ small {
   font-variant-numeric: tabular-nums;
 }
 
-.project-sep {
+.group-sep {
   opacity: 0.5;
 }
 
 /* Out of the way until the pointer is on the row — and back for good once it
    is the thing holding a project shut. */
-.project-chevron {
+.group-chevron {
   margin-left: auto;
   padding-left: 6px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.project-head:hover .project-chevron,
-.project-head.folded .project-chevron {
+.group-head:hover .group-chevron,
+.group-head.folded .group-chevron {
   opacity: 0.55;
 }
 
-.project-add {
+.group-add {
   flex: none;
   width: 26px;
   height: 26px;
@@ -1025,17 +1028,17 @@ small {
   transition: opacity 120ms ease;
 }
 
-.project-head:hover .project-add,
-.project-add:focus-visible {
+.group-head:hover .group-add,
+.group-add:focus-visible {
   opacity: 1;
 }
 
-.project-add:hover:not(:disabled) {
+.group-add:hover:not(:disabled) {
   background: color-mix(in srgb, var(--on-surface) 10%, transparent);
   color: var(--on-surface);
 }
 
-.project-add .ui-icon {
+.group-add .ui-icon {
   width: 15px;
   height: 15px;
 }
@@ -1055,9 +1058,9 @@ small {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 7px 8px 7px 9px;
+  padding: 7px 8px;
   margin-bottom: 2px;
-  border-radius: var(--r-sm);
+  border-radius: 0;
   color: var(--on-surface);
   cursor: default;
   transition: background-color 120ms ease;
@@ -1077,7 +1080,6 @@ small {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-left: 16px;
   font-size: 10.5px;
   line-height: 1.4;
   color: var(--on-surface-variant);
@@ -1102,46 +1104,23 @@ small {
   background: var(--surface-high);
 }
 
-.row-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--s-off);
-}
 
-.row-dot.active {
-  background: var(--s-active);
-}
 
-.row-dot.starting {
-  background: var(--s-starting);
-}
 
-.row-dot.compacting {
-  background: var(--s-compacting);
-}
 
-.row-dot.waiting_permission,
-.row-dot.waiting_input {
-  background: var(--s-waiting);
-}
 
-.row-dot.idle {
-  background: var(--s-idle);
-}
 
-.row-dot.error {
-  background: var(--s-error);
-}
+
+
+
+
+
+
+
 
 /* Hollow, for the two states that are over: a filled dot says something is
    there, and for these there is not. */
-.row-dot.ended,
-.row-dot.terminated {
-  background: none;
-  box-shadow: inset 0 0 0 1.5px var(--s-off);
-}
+
 
 .row-title {
   flex: 1;
@@ -1323,9 +1302,7 @@ small {
 
 /* The second line is what comfortable buys. Compact is the same row without
    it, which is a difference worth a button. */
-[data-density='compact'] .row-sub {
-  display: none;
-}
+
 
 [data-density='compact'] .row-act {
   width: 18px;
@@ -1336,7 +1313,7 @@ small {
   margin-bottom: 13px;
 }
 
-[data-density='compact'] .project-title {
+[data-density='compact'] .group-title {
   padding-top: 3px;
   padding-bottom: 3px;
 }
@@ -1931,7 +1908,11 @@ small {
 
 /* ─── Tool calls ────────────────────────────────────────────────────────── */
 
-.msg.tool {
+/* "tool-call", not "tool": `.tool` is the 36px square toolbar button, and a
+   bare `.tool` here inherited its width, its fixed 36px height and its
+   `place-items: center` — which clipped the expanded row to the height of a
+   button and centred the overflow so the left of every line was cut off. */
+.msg.tool-call {
   background: var(--surface-container);
   border-radius: var(--r-md);
   overflow: hidden;
@@ -1939,6 +1920,7 @@ small {
 
 .tool-head {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -1964,6 +1946,11 @@ small {
 
 .tool-summary {
   flex: 1;
+  /* Without this the ellipsis never fires: a flex child defaults to
+     min-width:auto, so a long summary keeps its full intrinsic width, the head
+     overflows the card, and what shows is an arbitrary window into the middle
+     of the text rather than its start. */
+  min-width: 0;
   color: var(--on-surface-variant);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
@@ -3896,9 +3883,7 @@ hr {
   pointer-events: none;
 }
 
-.session-row.skeleton .row-dot {
-  opacity: 0.25;
-}
+.session-row.skeleton 
 
 .row-sub .skeleton-line {
   width: 34%;
@@ -4481,4 +4466,230 @@ hr {
   outline: 2px solid var(--primary);
   outline-offset: -2px;
   border-radius: 3px;
+}
+
+/* The arrange popover. Anchored to its button so it opens under it rather than
+   at the corner of the window. */
+.picker-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.group-picker {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 230px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.picker-head {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.picker-note {
+  padding: 0 8px 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.picker-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.picker-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.picker-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.picker-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.picker-radio {
+  width: 12px;
+  color: var(--muted);
+}
+
+.picker-item.on .picker-radio {
+  color: var(--accent);
+}
+
+/* No rail and no rounding. The status is a word on the second line now, and
+   colouring the row's edge as well says the same thing twice — on a rounded
+   card it reads as a stray bracket rather than a status. */
+.session-row {
+  border-radius: 0;
+}
+
+.row-status {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.session-row.active .row-status,
+.session-row.starting .row-status { color: var(--ok, #3fb950); }
+.session-row.waiting_permission .row-status { color: var(--warn, #d29922); }
+.session-row.compacting .row-status { color: var(--info, #58a6ff); }
+.session-row.error .row-status { color: var(--danger, #e5484d); }
+
+.row-status.pulse { animation: pulse 2s ease-in-out infinite; }
+
+/* Always shown now: there is one row shape, so there is nothing to toggle. */
+.row-sub { display: flex; }
+
+/* The guide belonging to the group under the pointer, so hovering a header
+   says how far its contents reach. */
+.group:hover > .group-rows {
+  border-left-color: color-mix(in srgb, var(--on-surface) 55%, transparent);
+}
+
+/* Naming a new group where it will live, rather than in a dialog that asks
+   again for the parent the click already chose. */
+.new-group {
+  width: calc(100% - 8px);
+  margin: 2px 0 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--accent, #58a6ff);
+  border-radius: 4px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* The same field renaming a header in place, where it is one item in a flex row
+   rather than a line of its own. Bold, because it is standing in for the
+   header's own name and the weight should not jump on the way in and out. */
+.group-head > .new-group {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin: 2px 0;
+  font-weight: 600;
+}
+
+.group-add {
+  flex: none;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--on-surface-variant);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.group-head:hover .group-add {
+  opacity: 1;
+}
+
+.group-add:hover {
+  background: var(--hover);
+  color: var(--on-surface);
+}
+
+/* Nothing in a row may refuse to shrink.
+   A flex child defaults to min-width:auto, so a long title keeps its full
+   intrinsic width and pushes the row wider than the sidebar. Nested one level
+   per group, that overflow compounds until the title is off-screen entirely and
+   only the right-aligned time and memory are still visible — which is exactly
+   what deep trees started doing. */
+.group,
+.group-rows,
+.session-row,
+.row-main,
+.row-sub {
+  min-width: 0;
+}
+
+.row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.group-title,
+.group-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The list scrolls down, never sideways: a horizontal scrollbar in a sidebar
+   means something already failed to fit. */
+.sidebar-list {
+  overflow-x: hidden;
+}
+
+/* Where a dragged group would land. One gesture, two meanings, so the edge and
+   the middle have to look different before the drop, not after it. */
+.group-head.drop-before {
+  box-shadow: inset 0 2px 0 0 var(--accent, #58a6ff);
+}
+
+.group-head.drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--accent, #58a6ff);
+}
+
+.group-head.drop-inside {
+  background: color-mix(in srgb, var(--accent, #58a6ff) 18%, transparent);
+  border-radius: var(--r-sm);
+}
+
+.picker-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The explanation the label cannot hold. Dim until hovered, so it reads as
+   available rather than as something demanding attention. */
+.picker-info {
+  flex: none;
+  color: var(--on-surface-variant);
+  opacity: 0.5;
+  font-size: 11px;
+  cursor: help;
+}
+
+.picker-item:hover .picker-info {
+  opacity: 1;
 }

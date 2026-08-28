@@ -37,6 +37,7 @@ import type {
   ProviderInfo,
   SSEEvent,
   Session,
+  SessionGroup,
   Subagent,
   TabStatus,
   TerminalInfo,
@@ -178,9 +179,37 @@ export class HostApi {
   }
 
   listSessions(
-    params: { q?: string; status?: string; filter?: string; cwd?: string } = {},
+    params: {
+      q?: string
+      status?: string
+      filter?: string
+      cwd?: string
+      grouped?: string
+      group_key?: string
+    } = {},
   ): Promise<{ sessions: Session[]; host?: HostStats }> {
     return this.call('listSessions', params)
+  }
+  listGroups(): Promise<SessionGroup[]> {
+    return this.call('listGroups')
+  }
+  createGroup(name: string, parent = ''): Promise<SessionGroup> {
+    return this.call('createGroup', name, parent)
+  }
+  moveGroup(key: string, parent: string): Promise<void> {
+    return this.call('moveGroup', key, parent)
+  }
+  renameGroup(key: string, name: string): Promise<void> {
+    return this.call('renameGroup', key, name)
+  }
+  deleteGroup(key: string): Promise<void> {
+    return this.call('deleteGroup', key)
+  }
+  setGroupOrder(parent: string, order: string[]): Promise<void> {
+    return this.call('setGroupOrder', parent, order)
+  }
+  setSessionGroup(id: string, group: string): Promise<void> {
+    return this.call('setSessionGroup', id, group)
   }
   getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {
     return this.call('getSession', id)

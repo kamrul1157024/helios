@@ -12,6 +12,7 @@ import type {
   GitStatus,
   GrepResult,
   ModelInfo,
+  SessionGroup,
   Notification,
   ProviderInfo,
   Session,
@@ -134,13 +135,53 @@ export class ApiClient {
   // ─── Sessions ──────────────────────────────────────────────────────────
 
   async listSessions(
-    params: { q?: string; status?: string; filter?: string; cwd?: string } = {},
+    params: {
+      q?: string
+      status?: string
+      filter?: string
+      cwd?: string
+      /** "1" asks the daemon to resolve each session's groups. */
+      grouped?: string
+      group_key?: string
+    } = {},
   ): Promise<{ sessions: Session[]; host?: HostStats }> {
     const res = await this.request<{ sessions?: Session[]; host?: HostStats }>(
       'GET',
       `/api/sessions${queryString(params)}`,
     )
     return { sessions: res.sessions ?? [], host: res.host }
+  }
+
+  // ─── Groups ────────────────────────────────────────────────────────────
+
+  async listGroups(): Promise<SessionGroup[]> {
+    const res = await this.request<{ groups?: SessionGroup[] }>('GET', '/api/groups')
+    return res.groups ?? []
+  }
+
+  async createGroup(name: string, parent = ''): Promise<SessionGroup> {
+    return this.request('POST', '/api/groups', { name, parent })
+  }
+
+  async moveGroup(key: string, parent: string): Promise<void> {
+    await this.request('PATCH', `/api/groups/${encodeURIComponent(key)}`, { parent })
+  }
+
+  async renameGroup(key: string, name: string): Promise<void> {
+    await this.request('PATCH', `/api/groups/${encodeURIComponent(key)}`, { name })
+  }
+
+  async deleteGroup(key: string): Promise<void> {
+    await this.request('DELETE', `/api/groups/${encodeURIComponent(key)}`)
+  }
+
+  async setGroupOrder(parent: string, order: string[]): Promise<void> {
+    await this.request('POST', '/api/groups/order', { parent, order })
+  }
+
+  /** Files the session under one group. An empty key unassigns it. */
+  async setSessionGroup(id: string, group: string): Promise<void> {
+    await this.request('PATCH', `/api/sessions/${encodeURIComponent(id)}`, { group })
   }
 
   async getSession(id: string): Promise<{ session: Session; pending_permissions: number }> {

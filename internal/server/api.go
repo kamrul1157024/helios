@@ -311,12 +311,14 @@ func enrichSession(sess *store.Session) {
 }
 
 func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	status := r.URL.Query().Get("status")
-	filter := r.URL.Query().Get("filter")
-	cwd := r.URL.Query().Get("cwd")
-
-	sessions, err := s.shared.DB.SearchSessions(query, status, filter, cwd)
+	sessions, err := s.shared.DB.SearchSessions(store.SessionQuery{
+		Query:    r.URL.Query().Get("q"),
+		Status:   r.URL.Query().Get("status"),
+		Filter:   r.URL.Query().Get("filter"),
+		CWD:      r.URL.Query().Get("cwd"),
+		Grouped:  r.URL.Query().Get("grouped") == "1",
+		GroupKey: r.URL.Query().Get("group_key"),
+	})
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
 		return
@@ -915,10 +917,20 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 		Pinned *bool   `json:"pinned"`
 		Title  *string `json:"title"`
 		Status *string `json:"status"`
+		Group  *string `json:"group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	// Before anything else is written: the store refuses a key that names no
+	// group, and a rejected grouping should not leave a half-applied patch.
+	if req.Group != nil {
+		if err := s.shared.DB.SetSessionGroup(id, *req.Group); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	pinned := session.Pinned

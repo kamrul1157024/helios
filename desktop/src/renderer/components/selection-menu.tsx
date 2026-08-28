@@ -6,6 +6,9 @@ export interface MenuAction {
   run: () => void
   /** Destructive, and coloured to say so before it is clicked. */
   danger?: boolean
+  /** Hovered explanation, for an action whose reach is wider than its label —
+   *  and for one that does not stop to ask before it acts. */
+  title?: string
 }
 
 /**
@@ -74,6 +77,7 @@ export function SelectionMenu({
         <button
           key={action.label}
           className={action.danger ? 'danger' : undefined}
+          title={action.title}
           onClick={() => {
             action.run()
             onClose()
