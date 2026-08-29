@@ -47,8 +47,10 @@ type Reporter struct {
 	debounceTimers map[string]*time.Timer
 	listeners      map[*Listener]bool
 	listenersMu    sync.RWMutex
-	providerID     string
-	db             *store.Store
+	// providerID names the fallback narrator, used when a session's own
+	// provider has no cheap model.
+	providerID string
+	db         *store.Store
 }
 
 // New creates a Reporter.
@@ -60,6 +62,16 @@ func New(providerID string, db *store.Store) *Reporter {
 		providerID:     providerID,
 		db:             db,
 	}
+}
+
+// smallModelFor resolves the model that narrates a session.
+func (r *Reporter) smallModelFor(sessionID string) provider.SmallModel {
+	if sess, err := r.db.GetSession(sessionID); err == nil && sess != nil {
+		if m := provider.SmallModelFor(sess.Source); m != nil {
+			return m
+		}
+	}
+	return provider.SmallModelFor(r.providerID)
 }
 
 // debounceWindow returns the configured debounce duration from settings.
@@ -237,7 +249,10 @@ func (r *Reporter) flush(sessionID string) {
 
 	system := r.systemPrompt()
 
-	caller := provider.GetSmallModelCaller(r.providerID)
+	// The session's own provider narrates it, so a Codex session is not
+	// summarised by a call to Claude. Falling back to the default keeps
+	// narration working for a provider that has no cheap model of its own.
+	caller := r.smallModelFor(sessionID)
 	if caller == nil {
 		return
 	}
@@ -245,7 +260,7 @@ func (r *Reporter) flush(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	text, err := caller(ctx, system, prompt)
+	text, err := caller.Complete(ctx, system, prompt)
 	if err != nil || text == "" {
 		return
 	}

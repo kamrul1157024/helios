@@ -75,7 +75,18 @@ class DaemonAPIService extends ChangeNotifier {
   String? _lastSessionCwd;
 
   List<ProviderInfo> _providers = [];
-  List<ProviderInfo> get providers => _providers;
+
+  /// Every provider the daemon knows, ready or not. For a surface that
+  /// explains what is missing rather than hiding it.
+  List<ProviderInfo> get allProviders => _providers;
+
+  /// Providers a session can actually be started with.
+  ///
+  /// An unready agent — not installed, or hooks missing — produces a session
+  /// that runs and is never heard from, which reads as a hang. `helios start`
+  /// is where those are shown, with what to do about them.
+  List<ProviderInfo> get providers =>
+      _providers.where((p) => p.ready).toList(growable: false);
   bool _providersLoaded = false;
   bool get providersLoaded => _providersLoaded;
 

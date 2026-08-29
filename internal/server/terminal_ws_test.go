@@ -87,7 +87,7 @@ func newTerminalServer(t *testing.T) (*httptest.Server, *backend.Host, string) {
 		t.Fatalf("helios dir: %v", err)
 	}
 
-	reg := terminal.NewRegistry(heliosDir, func(sessionID, cwd string, argv []string) error {
+	reg := terminal.NewRegistry(heliosDir, func(sessionID, cwd string, argv []string, env map[string]string) error {
 		args := []string{"ptyhost", sessionID, "--cwd", cwd}
 		if len(argv) > 0 {
 			args = append(args, "--cmd", argv[0])

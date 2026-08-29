@@ -27,7 +27,7 @@ func newRegistryEnv(t *testing.T) *registryEnv {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 
-	reg := NewRegistry(dir, func(sessionID, cwd string, argv []string) error {
+	reg := NewRegistry(dir, func(sessionID, cwd string, argv []string, env map[string]string) error {
 		t.Errorf("unexpected spawn of %s", sessionID)
 		return nil
 	})

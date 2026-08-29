@@ -33,6 +33,24 @@ class HeliosNotification {
     required this.createdAt,
   });
 
+  /// The provider that raised this: "claude" from "claude.permission".
+  String get provider {
+    final i = type.indexOf('.');
+    return i < 0 ? type : type.substring(0, i);
+  }
+
+  /// What kind of request this is, independent of who raised it:
+  /// "permission" from "codex.permission", "elicitation.form" from
+  /// "claude.elicitation.form".
+  ///
+  /// Every switch in the app keys on this rather than on the whole type. That
+  /// one change is what makes a second provider cost nothing here: its
+  /// permission request is the same request, and it gets the same card.
+  String get kind {
+    final i = type.indexOf('.');
+    return i < 0 ? '' : type.substring(i + 1);
+  }
+
   factory HeliosNotification.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
     Map<String, dynamic>? parseJson(dynamic raw) {
       if (raw == null) return null;
@@ -66,7 +84,34 @@ class HeliosNotification {
 
   bool get isPending => status == 'pending';
 
-  String get displayTitle => title ?? type;
+  /// The heading a card shows.
+  ///
+  /// The server's title wins. The fallback describes the kind of request
+  /// without naming an agent, so it reads correctly for any provider — and it
+  /// beats showing the raw type, which is what a user used to see.
+  String get displayTitle => title ?? kindLabel;
+
+  /// A human name for the kind of request, for when the server sent no title.
+  String get kindLabel {
+    switch (kind) {
+      case 'permission':
+        return 'Permission request';
+      case 'question':
+        return 'Question';
+      case 'elicitation.form':
+        return 'Input requested';
+      case 'elicitation.url':
+        return 'Authentication required';
+      case 'trust':
+        return 'Workspace trust required';
+      case 'done':
+        return 'Session completed';
+      case 'error':
+        return 'Session error';
+      default:
+        return type;
+    }
+  }
   String get displayDetail => detail ?? 'No details';
 
   String get timeAgo {

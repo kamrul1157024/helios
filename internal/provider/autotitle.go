@@ -1,4 +1,4 @@
-package claude
+package provider
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
 )
@@ -192,7 +191,7 @@ func titleSystemPrompt(custom string, forceTitle bool) string {
 }
 
 // TriggerAutoTitle checks eligibility and fires async title generation if appropriate.
-func TriggerAutoTitle(ctx *provider.HookContext, sessionID, cwd, transcriptPath string, notify func(string, interface{})) {
+func TriggerAutoTitle(ctx *HookContext, sessionID, cwd, transcriptPath string, notify func(string, interface{})) {
 	enabled, _ := ctx.DB.GetSetting("autotitle.enabled")
 	if enabled != "true" {
 		return
@@ -264,7 +263,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	// UserPromptSubmit hook with a message on it, or a client send. A session
 	// driven straight from its terminal records nothing, and this used to give
 	// up on it while holding the file that had every prompt in it.
-	recentPairs, latest := readSession(transcriptPath, 5)
+	recentPairs, latest := readSession(sess.Source, transcriptPath, 5)
 	userMsg := latest
 	if userMsg == "" {
 		userMsg = usableMessage(sess.LastUserMessage)
@@ -281,7 +280,9 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	emoji, _ := db.GetSetting("autotitle.emoji")
 	systemPrompt := titleSystemPrompt(custom, forceTitle)
 
-	caller := provider.GetSmallModelCaller("claude")
+	// The session's own provider, not a fixed one: a Codex session summarised
+	// by a call to Claude would be both wrong and surprising on someone's bill.
+	caller := SmallModelFor(sess.Source)
 	if caller == nil {
 		return ""
 	}
@@ -289,7 +290,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	ctx, cancel := context.WithTimeout(context.Background(), titleCallTimeout)
 	defer cancel()
 
-	title, err := caller(ctx, systemPrompt, prompt)
+	title, err := caller.Complete(ctx, systemPrompt, prompt)
 	if err != nil || title == "" {
 		// Deliberately before the attempt is charged: the model never answered.
 		log.Printf("autotitle: haiku call failed for %s (attempt %d, not charged): %v", sessionID, attempt, err)
@@ -358,6 +359,17 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 // can proceed with creating…", having taken the transcript for its own
 // orders. Nothing in it is addressed to the titler, so it is marked as
 // material to read rather than instructions to follow.
+// readTranscript reads through the provider's own parser. There is no fallback:
+// reading one agent's log with another's parser yields no messages, and a
+// session with no messages is one the titler silently leaves untitled.
+func readTranscript(providerID, path string) (*transcript.TranscriptResult, error) {
+	t := TranscriberFor(providerID)
+	if t == nil {
+		return nil, fmt.Errorf("no transcript reader for provider %q", providerID)
+	}
+	return transcript.Page(t.ParseLine, path, 200, 0)
+}
+
 func buildTitlePrompt(project, userMsg string, pairs []exchangePair) string {
 	var sb strings.Builder
 	sb.WriteString("Name the session described between <session> and </session>.\n")
@@ -393,12 +405,18 @@ type exchangePair struct {
 // to megabytes — and both answers come out of the same scan. It goes through
 // the store, since this runs on the Stop hook of every turn and the only new
 // part of the file is what that turn wrote.
-func readSession(transcriptPath string, n int) (pairs []exchangePair, latest string) {
+// readSession reads the recent end of a session's transcript through the
+// parser that understands it.
+//
+// transcript.Page reads Claude's format only, so a Codex rollout came back
+// empty here and the session was never titled — the visible symptom being a
+// list of untitled sessions next to titled ones.
+func readSession(providerID, transcriptPath string, n int) (pairs []exchangePair, latest string) {
 	if transcriptPath == "" {
 		return nil, ""
 	}
 
-	result, err := transcript.Page(transcriptPath, 200, 0)
+	result, err := readTranscript(providerID, transcriptPath)
 	if err != nil {
 		return nil, ""
 	}

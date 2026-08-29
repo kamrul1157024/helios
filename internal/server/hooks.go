@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/provider"
+	codex "github.com/kamrul1157024/helios/internal/provider/codex"
 	"github.com/kamrul1157024/helios/internal/reporter"
 )
 
@@ -21,7 +22,7 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("hook: received %s from %s", hookType, r.RemoteAddr)
 
-	handler := provider.GetHookHandler(hookType)
+	handler := provider.HookHandlerFor(hookType)
 	if handler == nil {
 		log.Printf("hook: unknown type %s", hookType)
 		http.Error(w, fmt.Sprintf("unknown hook type: %s", hookType), http.StatusNotFound)
@@ -36,6 +37,12 @@ func (s *InternalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("hook: dispatching %s (%d bytes)", hookType, len(body))
+	// A received hook is the only evidence some agents give that they are
+	// running our hooks at all. Codex skips an untrusted table in silence, so
+	// the health check has nothing else to go on.
+	if id, _, ok := strings.Cut(hookType, "."); ok {
+		codex.NoteHookReceivedFor(id)
+	}
 	ctx := s.hookContext()
 	handler(ctx, w, r, json.RawMessage(body))
 }

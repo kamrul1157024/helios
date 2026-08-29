@@ -115,7 +115,12 @@ class Session {
 
   /// Switching the mode restarts the agent, which would discard a turn in
   /// flight and strand any pending permission prompt.
-  bool get canSwitchPermissionMode => source == 'claude' && isIdle;
+  ///
+  /// Whether the provider *has* modes is a separate question, and not one this
+  /// model can answer: the vocabulary is served per provider. The caller
+  /// checks that; this only says the session is in a state where a restart is
+  /// acceptable.
+  bool get canSwitchPermissionMode => isIdle;
 
   /// Memory the terminal holds, as "412 MB" or "1.2 GB". Empty when cold.
   String get memoryLabel {

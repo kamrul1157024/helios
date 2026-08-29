@@ -459,7 +459,11 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
   const [modes, setModes] = useState<string[] | null>(null)
   const [pending, setPending] = useState(false)
 
-  if (session.source !== 'claude') return null
+  // Nothing to show for a provider with no modes. The list arrives only after
+  // the select is focused, so before that this renders for every provider —
+  // an empty control on a provider that has none, which is why the check is
+  // here rather than in a comment claiming it happens.
+  if (modes !== null && modes.length === 0) return null
 
   const load = async (): Promise<void> => {
     if (modes) return

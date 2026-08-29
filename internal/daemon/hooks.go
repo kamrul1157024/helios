@@ -1,332 +1,133 @@
 package daemon
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	claude "github.com/kamrul1157024/helios/internal/provider/claude"
+	"github.com/kamrul1157024/helios/internal/provider"
 )
 
-func hookConfig(port int) map[string]interface{} {
-	base := fmt.Sprintf("http://localhost:%d/hooks/claude", port)
-	// Every hook that blocks on a human gets the same budget, derived from the
-	// one the daemon itself waits: helios has to give up first, or the CLI walks
-	// away from a prompt that is still on screen.
-	blocking := claude.HookTimeoutSeconds
-	return map[string]interface{}{
-		"hooks": map[string]interface{}{
-			"PermissionRequest": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "http",
-							"url":     base + "/permission",
-							"timeout": blocking,
-						},
-					},
-				},
-			},
-			"UserPromptSubmit": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/prompt/submit",
-						},
-					},
-				},
-			},
-			"PreToolUse": []interface{}{
-				map[string]interface{}{
-					"matcher": "AskUserQuestion",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "http",
-							"url":     base + "/question",
-							"timeout": blocking,
-						},
-					},
-				},
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/tool/pre",
-						},
-					},
-				},
-			},
-			"PostToolUse": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/tool/post",
-						},
-					},
-				},
-			},
-			"PostToolUseFailure": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/tool/post/failure",
-						},
-					},
-				},
-			},
-			"Elicitation": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "http",
-							"url":     base + "/elicitation",
-							"timeout": blocking,
-						},
-					},
-				},
-			},
-			"PreCompact": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/compact/pre",
-						},
-					},
-				},
-			},
-			"PostCompact": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/compact/post",
-						},
-					},
-				},
-			},
-			"Stop": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/stop",
-						},
-					},
-				},
-			},
-			"StopFailure": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/stop/failure",
-						},
-					},
-				},
-			},
-			"Notification": []interface{}{
-				map[string]interface{}{
-					"matcher": "permission_prompt|idle_prompt",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type": "http",
-							"url":  base + "/notification",
-						},
-					},
-				},
-			},
-			// SessionStart/End and SubagentStart/Stop use command hooks
-			// because Claude Code v2.1.101 does not fire HTTP hooks for
-			// these lifecycle events. The command hook pipes stdin (the
-			// hook payload) through curl to the daemon endpoint.
-			"SessionStart": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "command",
-							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/session/start",
-						},
-					},
-				},
-			},
-			"SessionEnd": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "command",
-							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/session/end",
-						},
-					},
-				},
-			},
-			"SubagentStart": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "command",
-							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/subagent/start",
-						},
-					},
-				},
-			},
-			"SubagentStop": []interface{}{
-				map[string]interface{}{
-					"matcher": "*",
-					"hooks": []interface{}{
-						map[string]interface{}{
-							"type":    "command",
-							"command": "cat | curl -s -X POST -H 'Content-Type: application/json' -d @- " + base + "/subagent/stop",
-						},
-					},
-				},
-			},
-		},
-	}
-}
+// Hook installation is per provider: each agent has its own file, its own
+// format, and its own idea of when a hook counts as installed. The daemon
+// iterates; it knows none of that.
 
-func InstallHooks(local bool) error {
-	cfg := DefaultConfig()
-	hooks := hookConfig(cfg.Server.InternalPort)
-
-	var settingsPath string
+// InstallHooks writes every registered provider's hook table.
+//
+// One provider failing does not stop the others. A machine with Claude but not
+// Codex should still end up with working Claude hooks.
+// InstallHooks writes hook tables. An empty only means every provider.
+func InstallHooks(local bool, only ...string) error {
+	scope := provider.ScopeUser
 	if local {
-		settingsPath = filepath.Join(".claude", "settings.local.json")
-	} else {
-		home, _ := os.UserHomeDir()
-		settingsPath = filepath.Join(home, ".claude", "settings.json")
+		scope = provider.ScopeProject
 	}
-
-	existing := make(map[string]interface{})
-	data, err := os.ReadFile(settingsPath)
-	if err == nil {
-		json.Unmarshal(data, &existing)
+	wanted := map[string]bool{}
+	for _, id := range only {
+		wanted[id] = true
 	}
-
-	// Merge hooks into existing settings
-	existing["hooks"] = hooks["hooks"]
-
-	out, err := json.MarshalIndent(existing, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal settings: %w", err)
+	var errs []error
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		if len(wanted) > 0 && !wanted[id] {
+			continue
+		}
+		inst := provider.InstallerFor(id)
+		if inst == nil {
+			continue
+		}
+		if err := inst.InstallHooks(scope); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+			continue
+		}
+		fmt.Printf("Hooks installed for %s\n", id)
 	}
-
-	dir := filepath.Dir(settingsPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create dir: %w", err)
-	}
-
-	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
-		return fmt.Errorf("write settings: %w", err)
-	}
-
-	fmt.Printf("Hooks installed to %s\n", settingsPath)
-	return nil
+	return errors.Join(errs...)
 }
 
-func InstallHooksIfMissing() {
-	home, _ := os.UserHomeDir()
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		InstallHooks(false)
-		return
+// HooksHealth reports each provider's hook state, keyed by provider ID.
+func HooksHealth() map[string]provider.HookHealth {
+	out := map[string]provider.HookHealth{}
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		if inst := provider.InstallerFor(id); inst != nil {
+			out[id] = inst.HookHealth()
+		}
 	}
-	if !json.Valid(data) {
-		InstallHooks(false)
-		return
-	}
-	var m map[string]interface{}
-	json.Unmarshal(data, &m)
-	if _, ok := m["hooks"]; !ok {
-		InstallHooks(false)
-	}
+	return out
 }
 
-// HookConfigHash returns the SHA256 hash of the expected hook config JSON.
-func HookConfigHash() string {
-	cfg := DefaultConfig()
-	hooks := hookConfig(cfg.Server.InternalPort)
-	data, _ := json.Marshal(hooks["hooks"])
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-// HooksOutdated checks if the installed hooks differ from the expected config.
-// Returns true when hooks are present but their content doesn't match the
-// current hook config (e.g. after a helios upgrade that added new hooks).
+// HooksOutdated reports whether any provider's installed hooks are present but
+// stale.
+//
+// Missing is not outdated: a provider whose agent is not installed has no
+// hooks and needs none, and nagging about it would train the user to ignore
+// the warning that matters.
 func HooksOutdated() bool {
-	home, _ := os.UserHomeDir()
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
-
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return false // no file — not outdated, just missing
+	for _, h := range HooksHealth() {
+		if h.Installed && !h.Current {
+			return true
+		}
 	}
-
-	var settings map[string]interface{}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return false
-	}
-
-	installed, ok := settings["hooks"]
-	if !ok {
-		return false // no hooks key — not outdated, just missing
-	}
-
-	installedJSON, _ := json.Marshal(installed)
-	installedSum := sha256.Sum256(installedJSON)
-
-	return hex.EncodeToString(installedSum[:]) != HookConfigHash()
+	return false
 }
 
+// HooksIneffective returns the providers whose hooks are installed and current
+// but that the agent is not running.
+//
+// This exists because of Codex: it reads an untrusted hook table, declines to
+// run it, and reports nothing. The daemon then receives no events and every
+// session sits at "starting" with no error anywhere. See
+// docs/specs/46-codex-provider.md.
+func HooksIneffective() map[string]provider.HookHealth {
+	out := map[string]provider.HookHealth{}
+	for id, h := range HooksHealth() {
+		if h.Installed && h.Current && !h.Effective {
+			out[id] = h
+		}
+	}
+	return out
+}
+
+// InstallHooksIfMissing installs for any provider that has no hooks at all.
+func InstallHooksIfMissing() {
+	for id, h := range HooksHealth() {
+		if h.Installed {
+			continue
+		}
+		if inst := provider.InstallerFor(id); inst != nil {
+			if err := inst.InstallHooks(provider.ScopeUser); err != nil {
+				fmt.Fprintf(os.Stderr, "hooks: install for %s: %v\n", id, err)
+			}
+		}
+	}
+}
+
+// ShowHooks prints each provider's hook health.
 func ShowHooks() {
-	cfg := DefaultConfig()
-	hooks := hookConfig(cfg.Server.InternalPort)
-	out, _ := json.MarshalIndent(hooks, "", "  ")
+	out, err := json.MarshalIndent(HooksHealth(), "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hooks: %v\n", err)
+		return
+	}
 	fmt.Println(string(out))
 }
 
+// RemoveHooks removes every registered provider's hook table.
 func RemoveHooks() error {
-	home, _ := os.UserHomeDir()
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
-
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return fmt.Errorf("no settings file found")
+	var errs []error
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		inst := provider.InstallerFor(id)
+		if inst == nil {
+			continue
+		}
+		if err := inst.RemoveHooks(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", id, err))
+			continue
+		}
+		fmt.Printf("Hooks removed for %s\n", id)
 	}
-
-	existing := make(map[string]interface{})
-	if err := json.Unmarshal(data, &existing); err != nil {
-		return fmt.Errorf("parse settings: %w", err)
-	}
-
-	delete(existing, "hooks")
-
-	out, _ := json.MarshalIndent(existing, "", "  ")
-	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
-		return fmt.Errorf("write settings: %w", err)
-	}
-
-	fmt.Println("Hooks removed from", settingsPath)
-	return nil
+	return errors.Join(errs...)
 }

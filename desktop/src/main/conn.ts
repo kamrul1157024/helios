@@ -70,8 +70,14 @@ export class TerminalConn extends EventEmitter {
   private pongTimer: NodeJS.Timeout | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
 
-  constructor(private readonly opts: TerminalConnOptions) {
+  // Assigned rather than declared as a parameter property: `node --test`
+  // strips types without compiling them, and a parameter property is syntax it
+  // refuses, which would put this whole file out of reach of the test suite.
+  private readonly opts: TerminalConnOptions
+
+  constructor(opts: TerminalConnOptions) {
     super()
+    this.opts = opts
     this.cols = opts.cols
     this.rows = opts.rows
   }
@@ -110,6 +116,15 @@ export class TerminalConn extends EventEmitter {
     return this.dialWebSocket(this.opts.endpoint)
   }
 
+  /**
+   * Dialling again cannot help: the host is gone, not slow.
+   *
+   * The daemon can name a socket whose host has died — it forgets one only when
+   * its reaper next runs — and without this the tab retries that path every
+   * eight seconds for as long as the window is open.
+   */
+  private static readonly GONE = new Set(['ENOENT', 'ECONNREFUSED'])
+
   private dialUnix(path: string): Promise<net.Socket> {
     return new Promise((resolve, reject) => {
       const socket = net.connect(path)
@@ -125,8 +140,11 @@ export class TerminalConn extends EventEmitter {
         socket.on('close', () => this.onTransportClose('terminal host closed the socket'))
         resolve(socket)
       })
-      socket.once('error', (err) => {
+      socket.once('error', (err: NodeJS.ErrnoException) => {
         clearTimeout(timer)
+        if (err.code && TerminalConn.GONE.has(err.code)) {
+          this.fail('session has no live terminal')
+        }
         reject(err)
       })
     })

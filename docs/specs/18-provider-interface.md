@@ -1,5 +1,12 @@
 # AI Provider Interface
 
+> **Superseded by [47-provider-interface.md](47-provider-interface.md).**
+>
+> This document is a design from before the daemon existed. Helios did not
+> build it. There is no Go `Provider` interface, no provider configuration in
+> `config.yaml`, and no pane scraping. Spec 47 describes the interface as
+> built and as it must grow. Keep this file for the history.
+
 ## Overview
 
 Helios is not tied to Claude. It manages AI coding sessions generically. The AI backend is a **provider plugin** — a native Go interface implementation compiled into the binary.

@@ -249,7 +249,7 @@ func TestWrap_AdoptFailureStillRegistersSession(t *testing.T) {
 // has to be recorded even when the caller named none. Leaving the column null
 // would mean "the CLI's default" on the next wake, which is not what it ran in.
 func TestCreateSession_RecordsTheModeItLaunchedWith(t *testing.T) {
-	claude.Register(0)
+	registerClaude(t)
 	srv, shared, _ := newInternalTestServer(t)
 
 	// A real directory: creating a session resolves its cwd, and a path that
@@ -271,7 +271,7 @@ func TestCreateSession_RecordsTheModeItLaunchedWith(t *testing.T) {
 }
 
 func TestCreateSession_RecordsTheRequestedMode(t *testing.T) {
-	claude.Register(0)
+	registerClaude(t)
 	srv, shared, _ := newInternalTestServer(t)
 
 	postJSON(t, srv.URL+"/internal/sessions",
@@ -539,11 +539,11 @@ func TestStop_BroadcastsIdleOverSSE(t *testing.T) {
 // Queuing a prompt writes into the terminal, so a session can only advertise
 // the feature while it has one.
 func TestListSessions_PromptQueueFollowsTerminal(t *testing.T) {
-	provider.RegisterProvider(provider.ProviderInfo{
-		ID:           "queueing",
-		Name:         "Queueing",
-		Capabilities: provider.ProviderCapabilities{PromptQueue: true},
-	}, nil, nil)
+	provider.Deregister("queueing")
+	if err := provider.Register(&queueingProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	t.Cleanup(func() { provider.Deregister("queueing") })
 
 	srv, shared, be := newInternalTestServer(t)
 	seedSession(t, shared.DB, "sess-warm", "queueing")
@@ -557,5 +557,17 @@ func TestListSessions_PromptQueueFollowsTerminal(t *testing.T) {
 	}
 	if got["sess-cold"].SupportsPromptQueue {
 		t.Error("a cold session has no terminal to queue into")
+	}
+}
+
+// registerClaude asserts the provider TestMain registered is present.
+//
+// A guard rather than a registration: these tests used to call
+// claude.Register themselves, and leaving that in would hide a TestMain that
+// stopped running.
+func registerClaude(t *testing.T) {
+	t.Helper()
+	if _, ok := provider.Get("claude"); !ok {
+		t.Fatal("claude provider not registered; see TestMain")
 	}
 }

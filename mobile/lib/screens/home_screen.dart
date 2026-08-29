@@ -118,61 +118,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final notifSvc = NotificationService.instance;
     final silent = !notifSvc.isAlertEnabled(type);
 
-    if (type == 'claude.permission') {
+    // Keyed on the kind of request — the part of the type after the provider
+    // prefix — so a permission request raises a permission notification
+    // whoever asked.
+    //
+    // The default arm is the point of this. It used to be an if/else chain
+    // over seven literal claude.* types with no final else, so a notification
+    // from any other provider raised nothing at all: the agent waited for an
+    // answer and the phone never buzzed. Never fall through in silence.
+    final kind = registry.kindOfType(type);
+    final title = data['title']?.toString();
+    final detail = data['detail']?.toString();
+
+    if (kind == 'permission') {
       debugPrint('[HomeScreen] showing OS permission notification');
       notifSvc.showPermissionNotification(
         id: payload,
         key: key,
-        toolName: '$prefix${data['title'] ?? 'Unknown tool'}',
-        detail: data['detail']?.toString() ?? 'Permission requested',
+        toolName: '$prefix${title ?? 'Unknown tool'}',
+        detail: detail ?? 'Permission requested',
         silent: silent,
       );
-    } else if (type == 'claude.question') {
-      debugPrint('[HomeScreen] showing OS question notification');
-      notifSvc.showNotification(
-        id: payload,
-        key: key,
-        title: '${prefix}Claude has a question',
-        body: data['detail']?.toString() ?? 'Answer required',
-        silent: silent,
-      );
-    } else if (type.startsWith('claude.elicitation')) {
-      debugPrint('[HomeScreen] showing OS elicitation notification');
-      notifSvc.showNotification(
-        id: payload,
-        key: key,
-        title: '$prefix${data['title'] ?? 'Input requested'}',
-        body: data['detail']?.toString() ?? 'Input required',
-        silent: silent,
-      );
-    } else if (type == 'claude.trust') {
-      debugPrint('[HomeScreen] showing OS trust notification');
-      notifSvc.showNotification(
-        id: payload,
-        key: key,
-        title: '${prefix}Workspace trust required',
-        body: data['detail']?.toString() ?? 'Claude is asking to trust the workspace.',
-        silent: silent,
-      );
-    } else if (type == 'claude.done') {
-      debugPrint('[HomeScreen] showing OS done notification');
-      notifSvc.showNotification(
-        id: payload,
-        key: key,
-        title: '${prefix}Task completed',
-        body: data['detail']?.toString() ?? 'Claude finished a task.',
-        silent: silent,
-      );
-    } else if (type == 'claude.error') {
-      debugPrint('[HomeScreen] showing OS error notification');
-      notifSvc.showNotification(
-        id: payload,
-        key: key,
-        title: '${prefix}Session error',
-        body: data['detail']?.toString() ?? 'Claude stopped due to an error.',
-        silent: silent,
-      );
+      return;
     }
+
+    debugPrint('[HomeScreen] showing OS notification for kind=$kind');
+    notifSvc.showNotification(
+      id: payload,
+      key: key,
+      title: prefix + (title ?? registry.labelForKind(kind)),
+      body: detail ?? registry.bodyForKind(kind),
+      silent: silent,
+    );
   }
 
   void _handleNotificationAction(String rawPayload, String action) {

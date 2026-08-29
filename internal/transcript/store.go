@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"io"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -78,20 +79,20 @@ var shared = NewStore()
 
 // Page returns a window of a transcript, counted from the end: offset=0 is the
 // newest `limit` messages.
-func Page(path string, limit, offset int) (*TranscriptResult, error) {
-	return shared.Page(path, limit, offset)
+func Page(parse LineParser, path string, limit, offset int) (*TranscriptResult, error) {
+	return shared.Page(parse, path, limit, offset)
 }
 
 // Delta returns the messages appended after seq, or a fresh newest page if the
 // epoch no longer holds.
-func Delta(path, epoch string, afterSeq, limit int) (*TranscriptResult, error) {
-	return shared.Delta(path, epoch, afterSeq, limit)
+func Delta(parse LineParser, path, epoch string, afterSeq, limit int) (*TranscriptResult, error) {
+	return shared.Delta(parse, path, epoch, afterSeq, limit)
 }
 
 // Page returns a window of a transcript, counted from the end: offset=0 is the
 // newest `limit` messages.
-func (s *Store) Page(path string, limit, offset int) (*TranscriptResult, error) {
-	e, err := s.current(path)
+func (s *Store) Page(parse LineParser, path string, limit, offset int) (*TranscriptResult, error) {
+	e, err := s.current(parse, path)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +109,8 @@ func (s *Store) Page(path string, limit, offset int) (*TranscriptResult, error) 
 // were counted against — it was forked, replaced, or truncated. Answering with
 // a delta then would append messages to a conversation the caller no longer
 // has, so the answer is a newest page and a flag saying to start over.
-func (s *Store) Delta(path, epoch string, afterSeq, limit int) (*TranscriptResult, error) {
-	e, err := s.current(path)
+func (s *Store) Delta(parse LineParser, path, epoch string, afterSeq, limit int) (*TranscriptResult, error) {
+	e, err := s.current(parse, path)
 	if err != nil {
 		return nil, err
 	}
@@ -122,16 +123,21 @@ func (s *Store) Delta(path, epoch string, afterSeq, limit int) (*TranscriptResul
 		return result, nil
 	}
 
-	start := afterSeq + 1
-	if start < 0 {
-		start = 0
-	}
-	if start > len(e.messages) {
-		start = len(e.messages)
-	}
+	// Searched for, not indexed by: a sequence number is only its own index
+	// while a format numbers its messages densely from zero. Codex numbers a
+	// message by the record's ordinal in the rollout, which counts records it
+	// does not render, so afterSeq+1 there is far past the end of the slice —
+	// and every delta came back empty, leaving a live session frozen on the
+	// page it was opened with.
+	start := sort.Search(len(e.messages), func(i int) bool {
+		return e.messages[i].Seq > afterSeq
+	})
 	fresh := e.messages[start:]
 	if limit > 0 && len(fresh) > limit {
 		fresh = fresh[len(fresh)-limit:]
+	}
+	if fresh == nil {
+		fresh = []Message{}
 	}
 
 	return &TranscriptResult{
@@ -145,7 +151,7 @@ func (s *Store) Delta(path, epoch string, afterSeq, limit int) (*TranscriptResul
 
 // current returns the entry for path, up to date, with its mutex held. The
 // caller unlocks.
-func (s *Store) current(path string) (*entry, error) {
+func (s *Store) current(parse LineParser, path string) (*entry, error) {
 	s.mu.Lock()
 	e := s.entries[path]
 	if e == nil {
@@ -157,7 +163,7 @@ func (s *Store) current(path string) (*entry, error) {
 	s.mu.Unlock()
 
 	e.mu.Lock()
-	if err := e.refresh(path); err != nil {
+	if err := e.refresh(parse, path); err != nil {
 		e.mu.Unlock()
 		return nil, err
 	}
@@ -189,7 +195,7 @@ func (s *Store) evictLocked() {
 // Reading is the only thing that keeps the entry current, which is what makes
 // this safe: an entry that only ever advances when it is read cannot be stale
 // at the moment it is served. A stat is ~2µs, so checking costs nothing.
-func (e *entry) refresh(path string) error {
+func (e *entry) refresh(parse LineParser, path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("stat transcript: %w", err)
@@ -212,9 +218,9 @@ func (e *entry) refresh(path string) error {
 	defer f.Close()
 
 	if e.extends(f, info) {
-		return e.appendFrom(f, info)
+		return e.appendFrom(parse, f, info)
 	}
-	return e.rebuild(f, info)
+	return e.rebuild(parse, f, info)
 }
 
 // extends reports whether the file is the one already parsed, with more written
@@ -233,12 +239,12 @@ func (e *entry) extends(f *os.File, info os.FileInfo) bool {
 }
 
 // rebuild parses the whole file. Callers hold e.mu.
-func (e *entry) rebuild(f *os.File, info os.FileInfo) error {
+func (e *entry) rebuild(parse LineParser, f *os.File, info os.FileInfo) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek transcript: %w", err)
 	}
 
-	msgs, consumed, err := parseSegment(f, maxLineBytes, 0)
+	msgs, consumed, err := parseSegment(f, maxLineBytes, 0, parse)
 	if err != nil {
 		return err
 	}
@@ -251,12 +257,12 @@ func (e *entry) rebuild(f *os.File, info os.FileInfo) error {
 }
 
 // appendFrom parses the bytes written since the last read. Callers hold e.mu.
-func (e *entry) appendFrom(f *os.File, info os.FileInfo) error {
+func (e *entry) appendFrom(parse LineParser, f *os.File, info os.FileInfo) error {
 	if _, err := f.Seek(e.parsedBytes, io.SeekStart); err != nil {
 		return fmt.Errorf("seek transcript: %w", err)
 	}
 
-	msgs, consumed, err := parseSegment(f, maxLineBytes, len(e.messages))
+	msgs, consumed, err := parseSegment(f, maxLineBytes, len(e.messages), parse)
 	if err != nil {
 		return err
 	}

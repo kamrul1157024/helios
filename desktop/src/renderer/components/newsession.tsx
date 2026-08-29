@@ -34,8 +34,16 @@ export function NewSessionDialog({
     let cancelled = false
     const client = api(hostId)
     void Promise.all([client.providers(), client.listDirectories()])
-      .then(([providerList, dirs]) => {
+      .then(([allProviders, dirs]) => {
         if (cancelled) return
+        // Only agents that would actually start. An unready one — not
+        // installed, or hooks missing — produces a session that runs and is
+        // never heard from, which reads as a hang. `helios start` is where an
+        // unready agent is shown, with what to do about it.
+        //
+        // ready is optional so an older daemon, which does not send it, keeps
+        // offering everything it did before.
+        const providerList = allProviders.filter((p) => p.ready !== false)
         setProviders(providerList)
         setDirectories(dirs)
         const first = providerList[0]

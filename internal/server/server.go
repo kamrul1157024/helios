@@ -97,12 +97,14 @@ func (sh *Shared) hostStats() map[string]interface{} {
 
 func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) *Shared {
 	sh := &Shared{
-		DB:       db,
-		Mgr:      mgr,
-		SSE:      NewSSEBroadcaster(),
-		Backend:  be,
-		Pending:  NewPendingSessionMap(),
-		Signals:  NewSessionSignals(),
+		DB:      db,
+		Mgr:     mgr,
+		SSE:     NewSSEBroadcaster(),
+		Backend: be,
+		Pending: NewPendingSessionMap(),
+		Signals: NewSessionSignals(),
+		// "claude" is the fallback narrator only; each session is narrated by
+		// its own provider when that provider has a cheap model.
 		Reporter: reporter.New("claude", db),
 	}
 	// The manager owns notification state, so it announces its own writes. No
@@ -215,6 +217,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("POST /api/device/logs", s.handleDeviceLogs)
 	protectedMux.HandleFunc("GET /api/commands", s.handleListCommands)
 	protectedMux.HandleFunc("GET /api/providers", s.handleListProviders)
+	protectedMux.HandleFunc("GET /api/notification-types", s.handleNotificationTypes)
+	protectedMux.HandleFunc("GET /api/hooks/health", s.handleHooksHealth)
 	protectedMux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	protectedMux.HandleFunc("GET /api/reporter", s.handleReporter)
 	protectedMux.HandleFunc("GET /api/settings", s.handleGetSettings)

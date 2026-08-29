@@ -523,6 +523,7 @@ func main() {
 	for _, path := range []string{
 		"/api/sessions", "/api/sessions/directories", "/api/providers",
 		"/api/commands", "/api/settings", "/api/notifications", "/api/auth/devices",
+		"/api/notification-types", "/api/hooks/health",
 	} {
 		r, err := dev.do("GET", path, nil)
 		if err != nil {
@@ -531,6 +532,14 @@ func main() {
 		}
 		check("GET "+path, r.code == 200, r.String())
 	}
+
+	// ── What the clients are told about providers ──
+	//
+	// These used to be hardcoded once per client, so a provider added to the
+	// daemon was invisible until every client was edited too. Checking the
+	// served shape here is what stops that regressing quietly.
+	step("Provider catalogue")
+	checkProviderCatalogue(dev)
 
 	// ── SSE ──
 	step("Event stream")
@@ -982,4 +991,78 @@ func summarize() {
 	if len(failures) > 0 {
 		os.Exit(1)
 	}
+}
+
+// checkProviderCatalogue asserts that the daemon describes its providers well
+// enough for a client to render them without knowing any provider by name.
+func checkProviderCatalogue(dev *device) {
+	r, err := dev.do("GET", "/api/providers", nil)
+	if err != nil || r.code != 200 {
+		check("GET /api/providers returns a catalogue", false, fmt.Sprintf("%v", err))
+		return
+	}
+	var provResp struct {
+		Providers []struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			Kind         string `json:"kind"`
+			Capabilities struct {
+				Hooks       bool `json:"hooks"`
+				Resume      bool `json:"resume"`
+				PromptQueue bool `json:"prompt_queue"`
+			} `json:"capabilities"`
+			PermissionModes []string `json:"permission_modes"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal([]byte(r.body), &provResp); err != nil {
+		check("providers decode", false, err.Error())
+		return
+	}
+	check("at least two providers are registered",
+		len(provResp.Providers) >= 2, fmt.Sprintf("%d providers", len(provResp.Providers)))
+
+	for _, p := range provResp.Providers {
+		// Capabilities are derived from the interfaces a provider implements,
+		// so an empty set means the daemon failed to resolve them at all.
+		check(p.ID+" declares a name and kind",
+			p.Name != "" && p.Kind != "", fmt.Sprintf("%+v", p))
+		check(p.ID+" reports hook support",
+			p.Capabilities.Hooks, "a provider with no hooks reports no status")
+		check(p.ID+" reports its permission modes",
+			len(p.PermissionModes) > 0, "clients would render an empty mode picker")
+	}
+
+	r, err = dev.do("GET", "/api/notification-types", nil)
+	if err != nil || r.code != 200 {
+		check("GET /api/notification-types", false, fmt.Sprintf("%v", err))
+		return
+	}
+	var catResp struct {
+		Types []struct {
+			Type     string `json:"type"`
+			Provider string `json:"provider"`
+			Label    string `json:"label"`
+			Blocking bool   `json:"blocking"`
+			Group    string `json:"group"`
+		} `json:"notification_types"`
+	}
+	if err := json.Unmarshal([]byte(r.body), &catResp); err != nil {
+		check("notification-types decode", false, err.Error())
+		return
+	}
+	seen := map[string]bool{}
+	blocking := 0
+	for _, t := range catResp.Types {
+		seen[t.Provider] = true
+		if t.Label == "" {
+			check("every notification type has a label", false, t.Type)
+		}
+		if t.Blocking {
+			blocking++
+		}
+	}
+	check("the catalogue covers every provider",
+		seen["claude"] && seen["codex"], fmt.Sprintf("%v", seen))
+	check("the catalogue marks blocking requests",
+		blocking > 0, "no type blocks, so no client would raise an answerable card")
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -24,7 +25,7 @@ func TestCreateTrustNotification_RecordsItsSession(t *testing.T) {
 
 	shared := NewShared(db, notifications.NewManager(db), newStubBackend())
 	p := &PendingSession{SessionID: "sess-trust", CWD: "/tmp/untrusted"}
-	createTrustNotification(shared, p)
+	createTrustNotification(shared, p, claudeTrustPrompt)
 
 	notifs, err := db.ListNotifications("claude", "", "claude.trust")
 	if err != nil {
@@ -68,7 +69,7 @@ func TestTrustNotification_IsResolvedByItsSession(t *testing.T) {
 
 	mgr := notifications.NewManager(db)
 	shared := NewShared(db, mgr, newStubBackend())
-	createTrustNotification(shared, &PendingSession{SessionID: "sess-trust", CWD: "/tmp/untrusted"})
+	createTrustNotification(shared, &PendingSession{SessionID: "sess-trust", CWD: "/tmp/untrusted"}, claudeTrustPrompt)
 
 	ids, err := mgr.ResolveSession("sess-trust", "resolved", "claude")
 	if err != nil {
@@ -152,7 +153,7 @@ func TestContainsTrustPrompt(t *testing.T) {
 		"only run Claude Code in a directory that is one you trust",
 	}
 	for _, s := range yes {
-		if !containsTrustPrompt(s) {
+		if matchTrustPrompt(s) == nil {
 			t.Fatalf("should detect trust prompt in %q", s)
 		}
 	}
@@ -164,7 +165,7 @@ func TestContainsTrustPrompt(t *testing.T) {
 		"trusted advisor",
 	}
 	for _, s := range no {
-		if containsTrustPrompt(s) {
+		if matchTrustPrompt(s) != nil {
 			t.Fatalf("should not detect trust prompt in %q", s)
 		}
 	}
@@ -176,4 +177,12 @@ func TestPendingTTLIsSane(t *testing.T) {
 	if pendingTTL < time.Minute {
 		t.Fatalf("pendingTTL too short: %v", pendingTTL)
 	}
+}
+
+// claudeTrustPrompt is what the Claude provider's ScreenWatcher returns. Kept
+// here so the notification tests do not depend on a registered provider.
+var claudeTrustPrompt = &provider.ScreenPrompt{
+	Type:   "claude.trust",
+	Title:  "Workspace trust required",
+	Detail: "Claude is asking to trust this folder before it can run.",
 }

@@ -15,48 +15,48 @@ class _NotificationSettingsScreenState
 
   static const _blockingTypes = [
     _NotifType(
-      type: 'claude.permission',
+      kind: 'permission',
       label: 'Permission requests',
-      description: 'Claude is asking to use a tool that requires your approval.',
+      description: 'The agent is asking to use a tool that requires your approval.',
       blocking: true,
     ),
     _NotifType(
-      type: 'claude.question',
+      kind: 'question',
       label: 'Questions',
-      description: 'Claude needs your input to continue.',
+      description: 'The agent needs your input to continue.',
       blocking: true,
     ),
     _NotifType(
-      type: 'claude.elicitation.form',
+      kind: 'elicitation.form',
       label: 'Elicitation — form input',
       description: 'An MCP server is requesting structured input from you.',
       blocking: true,
     ),
     _NotifType(
-      type: 'claude.elicitation.url',
+      kind: 'elicitation.url',
       label: 'Elicitation — authentication',
       description: 'An MCP server requires you to authenticate via a URL.',
       blocking: true,
     ),
     _NotifType(
-      type: 'claude.trust',
+      kind: 'trust',
       label: 'Workspace trust',
-      description: 'Claude is asking to trust the files in this workspace.',
+      description: 'The agent is asking to trust the files in this workspace.',
       blocking: true,
     ),
   ];
 
   static const _informationalTypes = [
     _NotifType(
-      type: 'claude.done',
+      kind: 'done',
       label: 'Session completed',
-      description: 'Claude finished a task.',
+      description: 'The agent finished a task.',
       blocking: false,
     ),
     _NotifType(
-      type: 'claude.error',
+      kind: 'error',
       label: 'Session error',
-      description: 'Claude stopped due to an error.',
+      description: 'The agent stopped due to an error.',
       blocking: false,
     ),
   ];
@@ -67,9 +67,9 @@ class _NotificationSettingsScreenState
     _alertTypes = Map.of(NotificationService.instance.alertTypes);
   }
 
-  Future<void> _setAlert(String type, bool value) async {
-    setState(() => _alertTypes[type] = value);
-    await NotificationService.instance.setAlertEnabled(type, value);
+  Future<void> _setAlert(String kind, bool value) async {
+    setState(() => _alertTypes[kind] = value);
+    await NotificationService.instance.setAlertEnabled(kind, value);
   }
 
   Future<void> _resetToDefaults() async {
@@ -100,7 +100,7 @@ class _NotificationSettingsScreenState
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              'These notifications block Claude until you respond.',
+              'These notifications block the agent until you respond.',
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -136,7 +136,7 @@ class _NotificationSettingsScreenState
   }
 
   Widget _buildTile(_NotifType t) {
-    final alertOn = _alertTypes[t.type] ?? true;
+    final alertOn = _alertTypes[t.kind] ?? true;
     final showWarning = t.blocking && !alertOn;
 
     return SwitchListTile(
@@ -177,7 +177,7 @@ class _NotificationSettingsScreenState
       ),
       isThreeLine: showWarning,
       value: alertOn,
-      onChanged: (v) => _setAlert(t.type, v),
+      onChanged: (v) => _setAlert(t.kind, v),
     );
   }
 }
@@ -200,14 +200,18 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// One row of the settings list.
+///
+/// Keyed by kind rather than by notification type, so a single "Permission
+/// requests" toggle covers every provider instead of one row per agent.
 class _NotifType {
-  final String type;
+  final String kind;
   final String label;
   final String description;
   final bool blocking;
 
   const _NotifType({
-    required this.type,
+    required this.kind,
     required this.label,
     required this.description,
     required this.blocking,

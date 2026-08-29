@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
@@ -230,5 +231,63 @@ func TestTranscriptEndpointEmptyForSessionWithoutTranscript(t *testing.T) {
 	}
 	if total, _ := body["total"].(float64); total != 0 {
 		t.Fatalf("total = %v, want 0", body["total"])
+	}
+}
+
+// The endpoint read every transcript with the Claude parser, so a Codex
+// rollout — a different format entirely — came back as no messages at all.
+func TestTranscriptEndpointReadsCodexWithTheCodexParser(t *testing.T) {
+	e := newTranscriptEnv(t)
+
+	rollout := filepath.Join(t.TempDir(), "rollout-2026-08-29T20-25-29-01a04de9.jsonl")
+	lines := []string{
+		`{"timestamp":"t1","ordinal":0,"type":"session_meta","payload":{"cwd":"/tmp","model":"gpt-5.6-sol"}}`,
+		`{"timestamp":"t2","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"count the files"}]}}`,
+		`{"timestamp":"t3","ordinal":5,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"there are four"}]}}`,
+	}
+	if err := os.WriteFile(rollout, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+	if err := e.srv.shared.DB.UpsertSession(&store.Session{
+		SessionID:      "cx",
+		Source:         "codex",
+		CWD:            "/tmp",
+		Status:         "idle",
+		TranscriptPath: &rollout,
+	}); err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	r := httptest.NewRequest("GET", "/api/sessions/cx/transcript?limit=50", nil)
+	w := httptest.NewRecorder()
+	e.srv.handleSessionTranscript(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var got transcript.TranscriptResult
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if want := []string{"count the files", "there are four"}; fmt.Sprint(texts(got.Messages)) != fmt.Sprint(want) {
+		t.Errorf("messages = %v, want %v", texts(got.Messages), want)
+	}
+}
+
+// An empty transcript is an empty list. A nil slice marshals to null, and the
+// desktop set that as its message state and crashed reading its length.
+func TestTranscriptEndpointServesAnEmptyListNotNull(t *testing.T) {
+	e := newTranscriptEnv(t)
+
+	r := httptest.NewRequest("GET", "/api/sessions/s1/transcript?limit=50", nil)
+	w := httptest.NewRecorder()
+	e.srv.handleSessionTranscript(w, r)
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := string(body["messages"]); got != "[]" {
+		t.Errorf("messages = %s, want []", got)
 	}
 }

@@ -614,7 +614,7 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 		})
 	}
 
-	TriggerAutoTitle(ctx, input.SessionID, input.CWD, input.TranscriptPath, ctx.Notify)
+	provider.TriggerAutoTitle(ctx, input.SessionID, input.CWD, input.TranscriptPath, ctx.Notify)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{}`)

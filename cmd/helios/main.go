@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tui"
@@ -130,17 +132,12 @@ func handleDaemon(args []string) {
 					newArgs = append(newArgs, a)
 				}
 			}
-			proc, err := os.StartProcess(exe, append([]string{exe}, newArgs...), &os.ProcAttr{
-				Dir:   "/",
-				Env:   os.Environ(),
-				Files: []*os.File{os.Stdin, nil, nil},
-			})
+			pid, err := daemon.SpawnDetached(exe, newArgs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error starting background daemon: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("helios daemon started in background (pid %d)\n", proc.Pid)
-			proc.Release()
+			fmt.Printf("helios daemon started in background (pid %d)\n", pid)
 			return
 		}
 		// Run under supervisor so panics/crashes get auto-restarted
@@ -272,6 +269,10 @@ func handleStart() {
 	// Notifications belong to the desktop app now; a notifier left running by
 	// an older install would fire alongside it.
 	reapLegacyNotifier()
+
+	// The setup screens read the registry: which agents are installed, and
+	// which commands the shell wrapper has to cover.
+	daemon.RegisterProviders(cfg.Server.InternalPort)
 
 	// The TUI runs in this terminal. Sessions live in their own terminal hosts,
 	// so there is no multiplexer to open a window in or attach to.
@@ -456,15 +457,36 @@ func handleTunnel(args []string) {
 	}
 }
 
+// availableProviders lists the agents this machine can actually start, for
+// the usage line. A provider whose CLI is absent is not offered.
+func availableProviders() []string {
+	daemon.RegisterDefaultProviders()
+	var out []string
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		if _, err := exec.LookPath(id); err == nil {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"none found"}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func handleNew(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios new \"prompt\" [--model model] [--cwd /path/to/dir]")
+		fmt.Fprintln(os.Stderr,
+			"Usage: helios new \"prompt\" [--provider name] [--model model] [--cwd /path/to/dir]")
+		fmt.Fprintln(os.Stderr, "Providers: "+strings.Join(availableProviders(), ", "))
 		os.Exit(1)
 	}
 
 	prompt := args[0]
 	cwd, _ := os.Getwd()
 	model := ""
+	providerID := ""
 
 	for i, a := range args {
 		if a == "--cwd" && i+1 < len(args) {
@@ -472,6 +494,9 @@ func handleNew(args []string) {
 		}
 		if a == "--model" && i+1 < len(args) {
 			model = args[i+1]
+		}
+		if a == "--provider" && i+1 < len(args) {
+			providerID = args[i+1]
 		}
 	}
 
@@ -484,6 +509,11 @@ func handleNew(args []string) {
 	}
 	if model != "" {
 		reqBody["model"] = model
+	}
+	// Left unset when the user names none, so the daemon applies its own
+	// default rather than the CLI guessing at one that may not be registered.
+	if providerID != "" {
+		reqBody["provider"] = providerID
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -537,12 +567,15 @@ func handleWrap(args []string) {
 	}
 
 	cwd, _ := os.Getwd()
-	sessionID, parts, isClaude := wrapCommand(args[cmdStart:])
+	sessionID, parts, providerID := wrapCommand(args[cmdStart:])
 
 	heliosDir := daemon.HeliosDir()
 	socket := terminal.SocketPath(heliosDir, sessionID)
 	if !terminal.Probe(socket) {
-		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, resolveBinary(parts)); err != nil {
+		// A provider whose agent mints its own session id identifies itself
+		// through the environment; harmless for one that does not.
+		env := map[string]string{"HELIOS_SESSION": sessionID}
+		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, resolveBinary(parts), env); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to start terminal host: %v\n", err)
 			os.Exit(1)
 		}
@@ -554,8 +587,10 @@ func handleWrap(args []string) {
 
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
-	if isClaude {
-		registerWrappedSession(internalURL, socket, cwd, sessionID, explicitPermissionMode(parts))
+	// Any known provider is registered, not just Claude. A wrapped codex used
+	// to get a helios-managed terminal the daemon never heard about.
+	if providerID != "" {
+		registerWrappedSession(internalURL, socket, cwd, sessionID, providerID, explicitPermissionMode(parts))
 	}
 
 	res, err := terminal.Attach(context.Background(), terminal.AttachConfig{
@@ -573,13 +608,13 @@ func handleWrap(args []string) {
 
 	// The process ended for real. Hooks do not fire on Ctrl-C or a crash, so
 	// the daemon is told directly rather than left showing a live session.
-	if isClaude {
+	if providerID != "" {
 		body, err := json.Marshal(map[string]interface{}{
 			"session_id": sessionID,
 			"cwd":        cwd,
 		})
 		if err == nil {
-			postAndClose(internalURL+"/hooks/claude/session.end", body)
+			postAndClose(internalURL+"/hooks/"+providerID+"/session.end", body)
 		}
 	}
 	os.Exit(res.ExitCode)
@@ -607,21 +642,40 @@ func resolveBinary(parts []string) []string {
 // agree on. --resume/--continue already carry one; otherwise we mint it and
 // pass it down, which is what makes the session addressable from the phone
 // before its first hook arrives.
-func wrapCommand(parts []string) (sessionID string, cmd []string, isClaude bool) {
-	isClaude = filepath.Base(parts[0]) == "claude"
-	if !isClaude {
-		return uuid.New().String(), parts, false
+// wrapProvider maps a wrapped binary to the provider that speaks for it.
+//
+// A name match, because the CLI cannot ask the registry: providers are
+// registered in the daemon process, not this one. The daemon validates what it
+// is sent, so a wrong guess here is rejected rather than believed.
+func wrapProvider(bin string) string {
+	switch filepath.Base(bin) {
+	case "claude":
+		return "claude"
+	case "codex":
+		return "codex"
+	default:
+		return ""
+	}
+}
+
+func wrapCommand(parts []string) (sessionID string, cmd []string, providerID string) {
+	providerID = wrapProvider(parts[0])
+	if providerID != "claude" {
+		// Only Claude takes an id from us. Codex mints its own and reports it
+		// through its session-start hook, so helios keeps this one as the row
+		// key and learns the other later.
+		return uuid.New().String(), parts, providerID
 	}
 
 	for i, a := range parts {
 		if (a == "--resume" || a == "--continue" || a == "--session-id") && i+1 < len(parts) {
-			return parts[i+1], parts, true
+			return parts[i+1], parts, providerID
 		}
 	}
 
 	sessionID = uuid.New().String()
 	cmd = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
-	return sessionID, cmd, true
+	return sessionID, cmd, providerID
 }
 
 // explicitPermissionMode returns the permission mode the user asked a wrapped
@@ -652,11 +706,12 @@ func explicitPermissionMode(parts []string) string {
 // registerWrappedSession binds a hand-started terminal to a session record.
 // The daemon being down is not fatal: the command still runs, it is simply not
 // tracked until the daemon comes back and recovers the host from its sidecar.
-func registerWrappedSession(internalURL, socket, cwd, sessionID, permissionMode string) {
+func registerWrappedSession(internalURL, socket, cwd, sessionID, providerID, permissionMode string) {
 	body, err := json.Marshal(map[string]string{
 		"handle":          socket,
 		"cwd":             cwd,
 		"session_id":      sessionID,
+		"provider":        providerID,
 		"permission_mode": permissionMode,
 	})
 	if err != nil {
@@ -992,19 +1047,29 @@ func handleCleanup(args []string) {
 
 func handleHooks(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove>")
+		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove> [--provider name] [--local]")
 		os.Exit(1)
 	}
+
+	// The registry is per process, and this one is not the daemon: without
+	// this every branch below iterates nothing and reports success.
+	daemon.RegisterDefaultProviders()
 
 	switch args[0] {
 	case "install":
 		local := false
-		for _, a := range args[1:] {
+		var only []string
+		for i, a := range args[1:] {
 			if a == "--local" {
 				local = true
 			}
+			// One agent at a time, so setup can be done per provider rather
+			// than as a single all-or-nothing step.
+			if a == "--provider" && i+2 < len(args) {
+				only = append(only, args[i+2])
+			}
 		}
-		if err := daemon.InstallHooks(local); err != nil {
+		if err := daemon.InstallHooks(local, only...); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -1034,6 +1099,9 @@ func handleSetup(args []string) {
 	// "all" is kept as an alias: setup once configured editors too, and there
 	// is nothing left to configure now that sessions bring their own terminal.
 	case "shell", "all":
+		// The snippet names one function per registered provider, so an empty
+		// registry would install a wrapper that wraps nothing.
+		daemon.RegisterDefaultProviders()
 		info := daemon.DetectShell()
 		if daemon.ShellWrapperInstalled(info) {
 			fmt.Printf("Shell wrapper already installed in %s\n", info.RCPath)
@@ -1102,8 +1170,9 @@ Commands:
   start                 Start helios (daemon + tunnel + device pairing TUI)
   stop                  Stop daemon (tunnel stays alive)
   devices               Device management (TUI)
-  new "prompt" [flags]  Launch Claude in a helios-managed terminal
-                        --cwd PATH  Working directory (default: current)
+  new "prompt" [flags]  Launch an agent in a helios-managed terminal
+                        --cwd PATH       Working directory (default: current)
+                        --provider NAME  Agent to launch (default: claude)
   attach <session>      Attach this terminal to a session (^\ d to detach)
   wrap -- <cmd> [args]  Run a command in a helios-managed terminal
                         Example: helios wrap -- claude
@@ -1120,7 +1189,7 @@ Commands:
   tunnel status         Show tunnel status (works without daemon)
   tunnel stop           Stop the tunnel (prompts for confirmation)
 
-  setup shell           Install shell wrapper (claude → helios wrap)
+  setup shell           Install shell wrapper (agent commands → helios wrap)
   setup tailscale       Check Tailscale readiness for Serve and Funnel
 
   auth init             Generate pairing QR (non-interactive)

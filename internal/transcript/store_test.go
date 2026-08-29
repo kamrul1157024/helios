@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func contents(msgs []Message) []string {
 func TestStoreMatchesFullParse(t *testing.T) {
 	path := writeTranscript(t, "one", "two", "three")
 
-	got, err := NewStore().Page(path, 10, 0)
+	got, err := NewStore().Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -80,14 +81,14 @@ func TestStoreServesAppendedMessages(t *testing.T) {
 	path := writeTranscript(t, "one", "two")
 	s := NewStore()
 
-	first, err := s.Page(path, 10, 0)
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
 
 	appendTo(t, path, "three")
 
-	second, err := s.Page(path, 10, 0)
+	second, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page after append: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestStoreLeavesPartialLineForNextRead(t *testing.T) {
 	path := writeTranscript(t, "one")
 	s := NewStore()
 
-	if _, err := s.Page(path, 10, 0); err != nil {
+	if _, err := s.Page(ParseClaudeLine, path, 10, 0); err != nil {
 		t.Fatalf("Page: %v", err)
 	}
 
@@ -121,7 +122,7 @@ func TestStoreLeavesPartialLineForNextRead(t *testing.T) {
 	}
 	f.Close()
 
-	partial, err := s.Page(path, 10, 0)
+	partial, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page with a partial line: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestStoreLeavesPartialLineForNextRead(t *testing.T) {
 	}
 	f.Close()
 
-	complete, err := s.Page(path, 10, 0)
+	complete, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page after completing the line: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestStoreRebuildsOnTruncation(t *testing.T) {
 	path := writeTranscript(t, "one", "two", "three")
 	s := NewStore()
 
-	first, err := s.Page(path, 10, 0)
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestStoreRebuildsOnTruncation(t *testing.T) {
 		t.Fatalf("truncate: %v", err)
 	}
 
-	second, err := s.Page(path, 10, 0)
+	second, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page after truncation: %v", err)
 	}
@@ -178,7 +179,7 @@ func TestStoreRebuildsWhenRewrittenToTheSameLength(t *testing.T) {
 	path := writeTranscript(t, "one", "two")
 	s := NewStore()
 
-	first, err := s.Page(path, 10, 0)
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestStoreRebuildsWhenRewrittenToTheSameLength(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	second, err := s.Page(path, 10, 0)
+	second, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page after rewrite: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestStoreRebuildsWhenTheFileIsReplaced(t *testing.T) {
 	}
 	s := NewStore()
 
-	first, err := s.Page(path, 10, 0)
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestStoreRebuildsWhenTheFileIsReplaced(t *testing.T) {
 		t.Fatalf("replace: %v", err)
 	}
 
-	second, err := s.Page(path, 10, 0)
+	second, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page after replacement: %v", err)
 	}
@@ -239,7 +240,7 @@ func TestStoreDeltaReturnsOnlyWhatIsNew(t *testing.T) {
 	path := writeTranscript(t, "one", "two")
 	s := NewStore()
 
-	first, err := s.Page(path, 10, 0)
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -247,7 +248,7 @@ func TestStoreDeltaReturnsOnlyWhatIsNew(t *testing.T) {
 
 	appendTo(t, path, "three", "four")
 
-	delta, err := s.Delta(path, first.Epoch, newest, 0)
+	delta, err := s.Delta(ParseClaudeLine, path, first.Epoch, newest, 0)
 	if err != nil {
 		t.Fatalf("Delta: %v", err)
 	}
@@ -266,7 +267,7 @@ func TestStoreDeltaOnAStaleEpochResets(t *testing.T) {
 	path := writeTranscript(t, "one", "two")
 	s := NewStore()
 
-	first, err := s.Page(path, 10, 0)
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestStoreDeltaOnAStaleEpochResets(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	delta, err := s.Delta(path, first.Epoch, 1, 10)
+	delta, err := s.Delta(ParseClaudeLine, path, first.Epoch, 1, 10)
 	if err != nil {
 		t.Fatalf("Delta: %v", err)
 	}
@@ -291,11 +292,11 @@ func TestStoreSeqSurvivesPaging(t *testing.T) {
 	path := writeTranscript(t, "one", "two", "three", "four")
 	s := NewStore()
 
-	newest, err := s.Page(path, 2, 0)
+	newest, err := s.Page(ParseClaudeLine, path, 2, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
-	older, err := s.Page(path, 2, 2)
+	older, err := s.Page(ParseClaudeLine, path, 2, 2)
 	if err != nil {
 		t.Fatalf("Page(offset=2): %v", err)
 	}
@@ -326,7 +327,7 @@ func TestStoreConcurrentReadersSeeOneTranscript(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				if _, err := s.Page(path, 10, 0); err != nil {
+				if _, err := s.Page(ParseClaudeLine, path, 10, 0); err != nil {
 					t.Errorf("Page: %v", err)
 					return
 				}
@@ -338,7 +339,7 @@ func TestStoreConcurrentReadersSeeOneTranscript(t *testing.T) {
 	}
 	wg.Wait()
 
-	final, err := s.Page(path, 100, 0)
+	final, err := s.Page(ParseClaudeLine, path, 100, 0)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -353,7 +354,7 @@ func TestStoreConcurrentReadersSeeOneTranscript(t *testing.T) {
 }
 
 func TestStoreMissingFile(t *testing.T) {
-	if _, err := NewStore().Page(filepath.Join(t.TempDir(), "absent.jsonl"), 10, 0); err == nil {
+	if _, err := NewStore().Page(ParseClaudeLine, filepath.Join(t.TempDir(), "absent.jsonl"), 10, 0); err == nil {
 		t.Fatal("no error for a transcript that is not there")
 	}
 }
@@ -369,14 +370,62 @@ func BenchmarkStoreWarmPage(b *testing.B) {
 	}
 
 	s := NewStore()
-	if _, err := s.Page(path, 50, 0); err != nil {
+	if _, err := s.Page(ParseClaudeLine, path, 50, 0); err != nil {
 		b.Fatalf("warm: %v", err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := s.Page(path, 50, 0); err != nil {
+		if _, err := s.Page(ParseClaudeLine, path, 50, 0); err != nil {
 			b.Fatalf("Page: %v", err)
 		}
+	}
+}
+
+// A provider can number its messages by something other than their position:
+// Codex uses the record's ordinal in the rollout, which counts records that
+// render nothing. A delta that indexed by the number ran off the end of the
+// slice and answered "nothing new" to every poll for the rest of the session.
+func TestStoreDeltaFollowsSparseSequenceNumbers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sparse.jsonl")
+	write := func(seqs ...int) {
+		var sb strings.Builder
+		for _, seq := range seqs {
+			sb.WriteString(fmt.Sprintf(`{"seq":%d,"text":"m%d"}`, seq, seq) + "\n")
+		}
+		if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	// A parser whose messages carry the number from the line, spaced apart.
+	parse := func(line []byte, _ int) []Message {
+		var raw struct {
+			Seq  int    `json:"seq"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(line, &raw) != nil {
+			return nil
+		}
+		return []Message{{Seq: raw.Seq, Role: RoleAssistant, Content: raw.Text}}
+	}
+
+	write(10, 25)
+	s := NewStore()
+	first, err := s.Page(parse, path, 10, 0)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte(
+		`{"seq":10,"text":"m10"}`+"\n"+`{"seq":25,"text":"m25"}`+"\n"+`{"seq":41,"text":"m41"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	delta, err := s.Delta(parse, path, first.Epoch, 25, 0)
+	if err != nil {
+		t.Fatalf("Delta: %v", err)
+	}
+	if got := contents(delta.Messages); len(got) != 1 || got[0] != "m41" {
+		t.Errorf("delta = %v, want just the message after seq 25", got)
 	}
 }

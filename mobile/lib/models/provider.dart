@@ -9,11 +9,26 @@ class ProviderInfo {
   /// already gained a mode between releases.
   final List<String> permissionModes;
 
+  /// Whether a session started now would work: the agent installed, its hooks
+  /// written and current. Session creation offers only ready providers, so a
+  /// user is never given a choice that fails; `helios start` shows them all
+  /// and says what is missing.
+  ///
+  /// Defaults to true so an older daemon, which does not send it, keeps
+  /// offering everything it did before.
+  final bool ready;
+
+  /// What is missing, when not ready. For a surface that explains rather than
+  /// filters.
+  final String? blocker;
+
   ProviderInfo({
     required this.id,
     required this.name,
     required this.icon,
     this.permissionModes = const [],
+    this.ready = true,
+    this.blocker,
   });
 
   factory ProviderInfo.fromJson(Map<String, dynamic> json) {
@@ -26,6 +41,8 @@ class ProviderInfo {
               ?.map((m) => m as String)
               .toList() ??
           const [],
+      ready: json['ready'] as bool? ?? true,
+      blocker: json['blocker'] as String?,
     );
   }
 }

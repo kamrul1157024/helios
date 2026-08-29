@@ -434,7 +434,7 @@ export interface WriteResult {
   mod_time: string
 }
 
-/** internal/provider/registry.go:107 */
+/** internal/provider/provider.go */
 export interface ProviderInfo {
   id: string
   name: string
@@ -445,6 +445,15 @@ export interface ProviderInfo {
    * already gained a mode between releases.
    */
   permission_modes?: string[]
+  /**
+   * Whether a session started now would work: the agent installed, its hooks
+   * written and current. Session creation offers only ready providers, so a
+   * user is never given a choice that fails; `helios start` shows them all
+   * and uses `blocker` to say what is missing.
+   */
+  ready?: boolean
+  blocker?: string
+  hint?: string
 }
 
 export interface ModelInfo {

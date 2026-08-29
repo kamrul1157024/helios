@@ -36,6 +36,7 @@ func handlePtyHost(args []string) {
 	cols, rows := terminal.DefaultCols, terminal.DefaultRows
 	command := ""
 	var cmdArgs []string
+	extraEnv := map[string]string{}
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -67,6 +68,15 @@ func handlePtyHost(args []string) {
 			if i+1 < len(args) {
 				i++
 				cmdArgs = append(cmdArgs, args[i])
+			}
+		case "--env":
+			// KEY=VALUE. A provider uses this to tell its own hooks which
+			// helios session they belong to, when the agent has no flag for it.
+			if i+1 < len(args) {
+				i++
+				if k, v, ok := strings.Cut(args[i], "="); ok && k != "" {
+					extraEnv[k] = v
+				}
 			}
 		}
 	}
@@ -123,7 +133,7 @@ func handlePtyHost(args []string) {
 		Dir:       cwd,
 		Cols:      cols,
 		Rows:      rows,
-		Env:       agentEnv(),
+		Env:       agentEnv(extraEnv),
 	})
 	if err != nil {
 		ln.Close()
@@ -179,6 +189,7 @@ var agentVars = []string{
 	"CLAUDECODE",
 	"CLAUDE_CODE_SESSION_ID",
 	"CLAUDE_CODE_CHILD_SESSION",
+	heliosSessionVar,
 }
 
 // agentEnv returns this process's environment without the marks of the agent
@@ -188,13 +199,32 @@ var agentVars = []string{
 // ordinary, and the child inherits those variables through the wrap. The agent
 // then takes itself for a continuation of its parent: its hooks report the
 // wrong session and the new one never gets a title.
-func agentEnv() []string {
+// heliosSessionVar names the session a terminal belongs to. Listed in
+// agentVars so it is scrubbed from an inherited environment: an agent started
+// from inside another agent's session would otherwise report its parent's id,
+// and every hook it sent would be filed against the parent's row — including
+// the transcript path, which would then point at the wrong agent's file.
+const heliosSessionVar = "HELIOS_SESSION"
+
+func agentEnv(extra map[string]string) []string {
 	env := os.Environ()
-	out := make([]string, 0, len(env))
+	out := make([]string, 0, len(env)+len(extra))
 	for _, kv := range env {
-		if key, _, ok := strings.Cut(kv, "="); !ok || !slices.Contains(agentVars, key) {
-			out = append(out, kv)
+		key, _, ok := strings.Cut(kv, "=")
+		if ok && slices.Contains(agentVars, key) {
+			continue
 		}
+		// A provider's own variable wins over an inherited one, so a nested
+		// session cannot be mistaken for the one that launched it.
+		if ok {
+			if _, overridden := extra[key]; overridden {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	for k, v := range extra {
+		out = append(out, k+"="+v)
 	}
 	return out
 }

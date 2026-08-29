@@ -241,7 +241,19 @@ func (h *Host) Wake(sessionID, cwd string) (bool, error) {
 // Endpoint returns the socket a viewer connects to.
 func (h *Host) Endpoint(sessionID string) (string, bool) { return h.reg.Socket(sessionID) }
 
-func (h *Host) Handle(sessionID string) (string, bool) { return h.reg.Socket(sessionID) }
+// Handle returns the socket, and only while something is listening on it.
+//
+// The registry keeps an entry until the reaper sweeps it, twenty minutes after
+// the host died, and clients read this field as "there is a terminal here": the
+// desktop dials the path it is given and retries the ENOENT forever. Probing
+// costs a connect to a local socket, which for a dead one fails immediately.
+func (h *Host) Handle(sessionID string) (string, bool) {
+	socket, ok := h.reg.Socket(sessionID)
+	if !ok || !h.reg.IsWarm(sessionID) {
+		return "", false
+	}
+	return socket, true
+}
 
 func (h *Host) Alive(sessionID string) bool { return h.reg.IsWarm(sessionID) }
 
@@ -436,3 +448,13 @@ var (
 	_ Waker   = (*Host)(nil)
 	_ Viewer  = (*Host)(nil)
 )
+
+// StartWithEnv launches argv with extra environment. See backend.EnvStarter.
+func (h *Host) StartWithEnv(sessionID, cwd string, argv []string, env map[string]string) (string, error) {
+	sock, err := h.reg.StartWithEnv(sessionID, cwd, argv, env)
+	if err != nil {
+		return "", err
+	}
+	h.warmMirror(sessionID)
+	return sock, nil
+}

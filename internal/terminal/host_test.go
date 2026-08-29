@@ -423,3 +423,128 @@ func TestHostDropsAStalledViewer(t *testing.T) {
 	}
 	t.Errorf("stalled viewer still attached after 15s: %+v", h.Status())
 }
+
+// A resize reflows every viewer's own emulator, and for a full-screen
+// application that leaves a grid of blanks until the application repaints. An
+// idle agent never does. On a phone the keyboard opening is a resize, so
+// opening it emptied the terminal and only leaving the screen and coming back
+// filled it in — while this host still held the screen the whole time.
+func TestHostResizeHandsViewersTheScreen(t *testing.T) {
+	h, sock := serveHost(t, HostConfig{
+		SessionID: "s-resize",
+		Command:   "sh",
+		Args:      []string{"-c", "echo before-the-resize; sleep 10"},
+		Cols:      80,
+		Rows:      24,
+	})
+	waitForScreen(t, h, "before-the-resize", 5*time.Second)
+
+	c, err := Dial(sock, Hello{Role: RoleInteractive, Cols: 80, Rows: 24, Name: "phone"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	// Drain the join: the replay and the status that follow it.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		f, err := c.Next()
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if f.Type == FrameStatus {
+			break
+		}
+	}
+
+	// The keyboard opening, in one frame.
+	if err := c.Resize(80, 12); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+
+	// The child is asleep and writes nothing, so a snapshot is the only thing
+	// that can arrive — and it has to carry what was on screen.
+	var snapshot string
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && snapshot == "" {
+		f, err := c.Next()
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if f.Type == FrameSnapshot {
+			_, ansi, err := DecodeSnapshot(f.Payload)
+			if err != nil {
+				t.Fatalf("DecodeSnapshot: %v", err)
+			}
+			snapshot = string(ansi)
+		}
+	}
+
+	if snapshot == "" {
+		t.Fatal("no snapshot after the resize: the viewer is left with a blank grid until the child repaints")
+	}
+	if !strings.Contains(snapshot, "before-the-resize") {
+		t.Errorf("snapshot does not carry the screen: %q", snapshot)
+	}
+}
+
+// The case the phone actually hits: a full-screen application. Its grid lives
+// on the alternate screen, which the emulator wipes when it reflows, so a
+// snapshot rendered after the resize carries nothing — the host has already
+// forgotten what was on it.
+func TestHostResizeKeepsAFullScreenApplication(t *testing.T) {
+	h, sock := serveHost(t, HostConfig{
+		SessionID: "s-altscreen",
+		Command:   "sh",
+		// Alternate screen, home the cursor, draw, then idle — an agent's TUI
+		// sitting at its prompt, which is what never repaints.
+		Args: []string{"-c", "printf '\\033[?1049h\\033[H\\033[2Jalt-screen-content'; sleep 10"},
+		Cols: 80,
+		Rows: 24,
+	})
+	waitForScreen(t, h, "alt-screen-content", 5*time.Second)
+
+	c, err := Dial(sock, Hello{Role: RoleInteractive, Cols: 80, Rows: 24, Name: "phone"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		f, err := c.Next()
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if f.Type == FrameStatus {
+			break
+		}
+	}
+
+	if err := c.Resize(80, 12); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+
+	var snapshot string
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && snapshot == "" {
+		f, err := c.Next()
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if f.Type == FrameSnapshot {
+			_, ansi, err := DecodeSnapshot(f.Payload)
+			if err != nil {
+				t.Fatalf("DecodeSnapshot: %v", err)
+			}
+			snapshot = string(ansi)
+		}
+	}
+
+	if snapshot == "" {
+		t.Fatal("no snapshot after the resize")
+	}
+	if !strings.Contains(snapshot, "alt-screen-content") {
+		t.Errorf("the screen was lost in the reflow; snapshot was:\n%q", snapshot)
+	}
+}

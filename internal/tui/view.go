@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kamrul1157024/helios/internal/featureflag"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 )
 
@@ -76,6 +77,10 @@ func (m StartModel) View() string {
 	switch m.screen {
 	case screenLoading:
 		return m.viewLoading()
+	case screenAgentMenu:
+		return m.viewAgentMenu()
+	case screenAgentSetup:
+		return m.viewAgentSetup()
 	case screenHooksInstall:
 		return m.viewHooksInstall()
 	case screenHooksUpdate:
@@ -119,13 +124,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Daemon not running"))
 		}
 
-		if m.hooksOK && !m.hooksOutdated {
-			b.WriteString(check("Claude hooks installed"))
-		} else if m.hooksOK && m.hooksOutdated {
-			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
-		} else {
-			b.WriteString(cross("Claude hooks not installed"))
-		}
+		b.WriteString(renderHookLines(m.hookLines))
 
 		if featureflag.MCP() {
 			if m.mcpRegistered {
@@ -175,7 +174,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString("\n")
 		}
 
-		keys := "  enter continue  t change tunnel  N notifications  s settings  q quit"
+		keys := "  enter continue  a agents  t change tunnel  N notifications  s settings  q quit"
 		if featureflag.MCP() && !m.mcpRegistered {
 			keys = "  m agent tools" + keys
 		}
@@ -188,11 +187,13 @@ func (m StartModel) viewLoading() string {
 func (m StartModel) viewHooksInstall() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Claude Hooks"))
+	// Named for the agents actually on this machine, because installing is
+	// per agent and the screen used to promise only Claude while writing both.
+	b.WriteString(titleStyle.Render("helios — Agent Hooks"))
 	b.WriteString("\n\n")
-	b.WriteString(cross("Claude hooks not installed"))
+	b.WriteString(renderHookLines(m.hookLines))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  Hooks let helios intercept Claude Code permission prompts"))
+	b.WriteString(subtitleStyle.Render("  Hooks let helios intercept an agent's permission prompts"))
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  and forward them to your phone for approval."))
 	b.WriteString("\n")
@@ -204,9 +205,9 @@ func (m StartModel) viewHooksInstall() string {
 func (m StartModel) viewHooksUpdate() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Claude Hooks"))
+	b.WriteString(titleStyle.Render("helios — Agent Hooks"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks are outdated"))
+	b.WriteString(renderHookLines(m.hookLines))
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  A newer hook configuration is available."))
 	b.WriteString("\n")
@@ -440,11 +441,7 @@ func (m StartModel) viewMain() string {
 
 	// Status
 	b.WriteString(check("Daemon running"))
-	if m.hooksOK && !m.hooksOutdated {
-		b.WriteString(check("Claude hooks installed"))
-	} else if m.hooksOK {
-		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
-	}
+	b.WriteString(renderHookLines(m.hookLines))
 	if featureflag.MCP() {
 		if m.mcpRegistered {
 			b.WriteString(check("Agent tools registered with Claude Code"))
@@ -569,7 +566,7 @@ func (m StartModel) viewMain() string {
 
 	// The MCP key is advertised only while there is something to do with it,
 	// so the bar does not carry a permanently dead binding.
-	keys := "  t change tunnel  N notifications  s settings  q quit"
+	keys := "  a agents  t change tunnel  N notifications  s settings  q quit"
 	if featureflag.MCP() && !m.mcpRegistered {
 		keys = "  m agent tools" + keys
 	}
@@ -623,4 +620,175 @@ func check(msg string) string {
 
 func cross(msg string) string {
 	return fmt.Sprintf("  %s %s\n", crossStyle.Render("✗"), msg)
+}
+
+// renderHookLines reports each installed agent's hooks on its own line.
+//
+// One line per provider rather than one tick for all of them, because the
+// states differ and the difference is the whole point: a machine can have
+// Claude working and Codex installed-but-untrusted, and Codex says nothing
+// about the latter itself. The detail comes from the provider, so it can name
+// the command that fixes it.
+// renderHookLines reports each agent on its own line.
+//
+// One line per agent rather than a single tick for all of them, because the
+// states differ and the difference is the point: a machine can have Claude
+// working and Codex not.
+//
+// The row itself comes from agentMenuRow — literally the same function the
+// agent menu uses. It was a second implementation, and the two drifted within
+// a day: the dashboard called an agent "~ not run them yet" while the menu one
+// keypress away called the same agent "✓ ready". Two screens of one program
+// disagreeing about the same fact is worse than either wording.
+func renderHookLines(lines []hookLine) string {
+	if len(lines) == 0 {
+		return cross("No agents registered")
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString("  " + agentMenuRow(l) + "\n")
+	}
+	return b.String()
+}
+
+// agentFirstRunNote explains a caveat helios cannot clear itself.
+//
+// The line goes away on its own once the agent runs a hook. Until then it is
+// indistinguishable from an agent that has read the hooks and declined to run
+// them, so say what to check without asserting which it is.
+func agentFirstRunNote(providerID string) string {
+	if providerID == "codex" {
+		return "This clears after codex's next session. If it does not, the hooks " +
+			"need approving: run /hooks inside codex."
+	}
+	return "This clears after the agent's next session."
+}
+
+// agentInstallHint tells the user how to get an agent they do not have.
+func agentInstallHint(providerID string) string {
+	switch providerID {
+	case "claude":
+		return "npm i -g @anthropic-ai/claude-code"
+	case "codex":
+		return "npm i -g @openai/codex"
+	default:
+		return "see the provider's own docs"
+	}
+}
+
+func agentDisplayName(providerID string) string {
+	if p, ok := provider.Get(providerID); ok {
+		return p.Info().Name
+	}
+	return providerID
+}
+
+// viewAgentMenu lists the agents and lets the user set one up at a time.
+//
+// A menu rather than a single prompt because the decisions are separate: a
+// machine with two agents was being asked one yes/no for both, on a screen
+// that could only describe one of them.
+func (m StartModel) viewAgentMenu() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — Agents"))
+	b.WriteString("\n\n")
+	b.WriteString(subtitleStyle.Render("  An agent is offered when you start a session only once it is set up."))
+	b.WriteString("\n\n")
+
+	for i, l := range m.hookLines {
+		cursor := "  "
+		if i == m.agentCursor {
+			cursor = selectedStyle.Render("▸ ")
+		}
+		b.WriteString(cursor + agentMenuRow(l) + "\n")
+	}
+
+	if m.agentMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(check(m.agentMsg))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  ↑↓ choose  enter set up  s skip this agent  tab skip all  q quit"))
+	return b.String()
+}
+
+// agentMenuRow is one line: the agent, its state, and what is missing.
+func agentMenuRow(l hookLine) string {
+	name := agentDisplayName(l.Provider)
+	switch {
+	case l.Skipped:
+		// Dim, and stated as the user's choice rather than a fault, because
+		// it is one. Reversible with the same key that set it.
+		return subtitleStyle.Render(fmt.Sprintf("· %s — skipped", name))
+	case !l.CLIPresent:
+		return subtitleStyle.Render(fmt.Sprintf("· %s — not installed", name))
+	case !l.Health.Installed:
+		return fmt.Sprintf("%s %s — hooks not installed", warnStyle.Render("✗"), name)
+	case !l.Health.Current:
+		return fmt.Sprintf("%s %s — hooks out of date", warnStyle.Render("~"), name)
+	case !l.Health.Effective:
+		// A tick, not a warning: everything helios can do is done, and
+		// readiness already counts this agent as startable. The note is a
+		// caveat, and it clears itself after the agent's first session.
+		return fmt.Sprintf("%s %s — ready %s", checkStyle.Render("✓"), name,
+			subtitleStyle.Render("(awaiting its first session)"))
+	default:
+		return fmt.Sprintf("%s %s — ready", checkStyle.Render("✓"), name)
+	}
+}
+
+// viewAgentSetup explains one agent and what setting it up will do.
+func (m StartModel) viewAgentSetup() string {
+	var b strings.Builder
+	line, ok := m.agentAt(m.agentCursor)
+	name := agentDisplayName(m.agentSetup)
+
+	b.WriteString(titleStyle.Render("helios — " + name))
+	b.WriteString("\n\n")
+
+	if !ok || !line.CLIPresent {
+		// Helios cannot install someone else's agent, and should not pretend
+		// to. Say what to run and get out of the way.
+		b.WriteString(cross(name + " is not installed"))
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("  Install it, then run helios start again:"))
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("    " + agentInstallHint(m.agentSetup)))
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  s skip this agent  enter back  tab back  q quit"))
+		return b.String()
+	}
+
+	b.WriteString("  " + agentMenuRow(line) + "\n\n")
+	b.WriteString(subtitleStyle.Render("  Hooks let helios see this agent's sessions and answer its"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  permission prompts from your phone."))
+	b.WriteString("\n")
+
+	done := line.Health.Installed && line.Health.Current
+	action := "enter install hooks"
+
+	if done {
+		// Nothing left for helios to do. Saying "install hooks" here offered
+		// an action that rewrote the same file and returned to an identical
+		// screen, which reads as the key being broken.
+		action = "enter reinstall hooks"
+		b.WriteString("\n")
+		b.WriteString(check("Hooks are installed and up to date"))
+		if !line.Health.Effective {
+			b.WriteString("\n")
+			b.WriteString(subtitleStyle.Render("  " + agentFirstRunNote(m.agentSetup)))
+		}
+	}
+
+	if m.agentMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(check(m.agentMsg))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  " + action + "  s skip this agent  tab back  q quit"))
+	return b.String()
 }

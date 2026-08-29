@@ -234,7 +234,9 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
       <div className="pane-term" ref={hostRef} />
       {tab.status.state !== 'live' && (
         <div className="pane-overlay">
-          <span className="spinner" />
+          {/* No spinner once it is closed: nothing is being waited for, and a
+              spinner over a dead session reads as one that is still coming. */}
+          {tab.status.state !== 'closed' && <span className="spinner" />}
           <span>{describe(tab)}</span>
         </div>
       )}

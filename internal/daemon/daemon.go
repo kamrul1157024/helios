@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
-	"github.com/kamrul1157024/helios/internal/discovery"
-	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
+	codex "github.com/kamrul1157024/helios/internal/provider/codex"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/terminal"
@@ -74,18 +74,44 @@ func TunnelProviderConfig(cfg *Config) tunnel.ProviderConfig {
 // see the session's stored permission mode; without this, every wake would
 // reset the mode to the default and undo the user's last switch.
 //
-// Returning nil is the safe answer for anything we cannot look up — ptyhost's
-// fallback then applies, which is the behaviour that predates this.
-func resumeArgs(db *store.Store, sessionID string) []string {
+// Three outcomes. Argv, when the provider can wake it. Nil with no error for a
+// session we cannot look up at all, which leaves ptyhost's own fallback to
+// apply — the behaviour that predates this. And an error when a known provider
+// says it cannot wake this session, which must *not* fall through: ptyhost's
+// fallback resumes claude, so a cold Codex session would come back as a Claude
+// one in the same directory.
+func resumeLaunch(db *store.Store, sessionID string) ([]string, map[string]string, error) {
 	sess, err := db.GetSession(sessionID)
-	if err != nil || sess == nil || sess.Source != "claude" {
-		return nil
+	if err != nil || sess == nil {
+		return nil, nil, nil
+	}
+	r := provider.ResumerFor(sess.Source)
+	if r == nil {
+		return nil, nil, nil
 	}
 	mode := ""
 	if sess.PermissionMode != nil {
 		mode = *sess.PermissionMode
 	}
-	return claude.ResumeArgs(sessionID, mode)
+	// Empty when the provider never reported one. Do not substitute the helios
+	// id: an agent that mints its own would be handed an id it has never seen,
+	// and would either error or start something that is not this conversation.
+	// The provider decides what an empty one means.
+	resumeID := ""
+	if sess.ResumeID != nil {
+		resumeID = *sess.ResumeID
+	}
+	launch, err := r.Resume(sessionID, resumeID, mode)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resume %s: %w", sessionID, err)
+	}
+	if len(launch.Argv) == 0 {
+		return nil, nil, fmt.Errorf(
+			"provider %s cannot wake session %s: it never reported a resume id, "+
+				"which usually means its hooks are installed but not trusted",
+			sess.Source, sessionID)
+	}
+	return launch.Argv, launch.Env, nil
 }
 
 func startDaemon(cfg *Config) error {
@@ -119,23 +145,24 @@ func startDaemon(cfg *Config) error {
 	mgr := notifications.NewManager(db)
 	mgr.StartCleanup()
 
-	// Register providers. A zero port is how the provider is told to leave
-	// --mcp-config off the argv, which is what the flag being off means for a
-	// session Helios launches itself.
-	mcpPort := 0
-	if featureflag.MCP() {
-		mcpPort = cfg.Server.InternalPort
-	}
-	claude.Register(mcpPort)
+	// Register providers. Order is the order clients list them in.
+	RegisterProviders(cfg.Server.InternalPort)
 
 	// Terminal hosts are separate processes, so any that survived the last
 	// daemon are still serving; adopt them before anything else looks at
 	// session state.
-	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string) error {
+	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string, env map[string]string) error {
 		if len(argv) == 0 {
-			argv = resumeArgs(db, sessionID)
+			resumed, resumeEnv, err := resumeLaunch(db, sessionID)
+			if err != nil {
+				return err
+			}
+			argv = resumed
+			if env == nil {
+				env = resumeEnv
+			}
 		}
-		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv)
+		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv, env)
 	})
 	if alive, cleaned, err := registry.Recover(); err != nil {
 		log.Printf("terminal: recover: %v", err)
@@ -150,9 +177,10 @@ func startDaemon(cfg *Config) error {
 
 	// Give the claude action handlers access to session terminals
 	claude.SetBackend(term)
+	codex.SetBackend(term)
 
 	// Discover existing Claude sessions from transcript files
-	go discovery.DiscoverClaudeSessions(db)
+	go provider.DiscoverAll(db)
 
 	// Create tunnel manager
 	tunnelMgr := tunnel.NewManager(HeliosDir())
@@ -338,6 +366,12 @@ func Stop() error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return fmt.Errorf("process not found: %w", err)
+	}
+	// The pid file is written by a daemon and removed by a deferred call that a
+	// killed daemon never reaches, so the number in it can belong to anything.
+	if !isHeliosProcess(pid) {
+		os.Remove(pidPath)
+		return fmt.Errorf("daemon not running (pid %d is not helios)", pid)
 	}
 
 	if err := proc.Signal(syscall.SIGTERM); err != nil {

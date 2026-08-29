@@ -15,7 +15,7 @@ func TestSpawnHostRejectsMissingCwd(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "deleted-worktree")
 
-	err := SpawnHost(dir, "sess-1", missing, []string{"/bin/echo"})
+	err := SpawnHost(dir, "sess-1", missing, []string{"/bin/echo"}, nil)
 	if err == nil {
 		t.Fatal("expected an error for a missing working directory")
 	}
@@ -35,7 +35,7 @@ func TestSpawnHostRejectsFileAsCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SpawnHost(dir, "sess-1", file, []string{"/bin/echo"}); err == nil {
+	if err := SpawnHost(dir, "sess-1", file, []string{"/bin/echo"}, nil); err == nil {
 		t.Fatal("expected an error for a file used as the working directory")
 	}
 }
@@ -43,7 +43,7 @@ func TestSpawnHostRejectsFileAsCwd(t *testing.T) {
 // Empty argv is the resume path: the host picks the agent and its --resume
 // flag itself, so nothing is passed down.
 func TestHostArgs_NoCommandMeansResume(t *testing.T) {
-	got := hostArgs("sess-1", "/work", nil)
+	got := hostArgs("sess-1", "/work", nil, nil)
 
 	want := []string{"ptyhost", "sess-1", "--cwd", "/work"}
 	if !slices.Equal(got, want) {
@@ -52,7 +52,7 @@ func TestHostArgs_NoCommandMeansResume(t *testing.T) {
 }
 
 func TestHostArgs_CommandBecomesOneFlagPerWord(t *testing.T) {
-	got := hostArgs("sess-1", "/work", []string{"/bin/claude", "--session-id", "sess-1"})
+	got := hostArgs("sess-1", "/work", []string{"/bin/claude", "--session-id", "sess-1"}, nil)
 
 	want := []string{
 		"ptyhost", "sess-1", "--cwd", "/work",
@@ -68,10 +68,27 @@ func TestHostArgs_CommandBecomesOneFlagPerWord(t *testing.T) {
 func TestHostArgs_ArgumentsSurviveWhole(t *testing.T) {
 	prompt := "fix `git log` and say \"hi\", it's $HOME"
 
-	got := hostArgs("sess-1", "", []string{"claude", prompt})
+	got := hostArgs("sess-1", "", []string{"claude", prompt}, nil)
 
 	want := []string{"ptyhost", "sess-1", "--cmd", "claude", "--arg", prompt}
 	if !slices.Equal(got, want) {
 		t.Errorf("args = %q, want %q", got, want)
+	}
+}
+
+// TestHostArgsCarriesEnv pins the flag a provider relies on to tell its own
+// hooks which helios session they belong to. Sorted, so the command line does
+// not change with Go's map iteration order.
+func TestHostArgsCarriesEnv(t *testing.T) {
+	got := hostArgs("sess-1", "/work", []string{"codex"}, map[string]string{
+		"HELIOS_SESSION": "sess-1",
+		"A_FIRST":        "1",
+	})
+	want := []string{
+		"ptyhost", "sess-1", "--cwd", "/work", "--cmd", "codex",
+		"--env", "A_FIRST=1", "--env", "HELIOS_SESSION=sess-1",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("hostArgs with env:\n got %q\nwant %q", got, want)
 	}
 }

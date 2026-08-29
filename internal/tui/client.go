@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -108,14 +109,37 @@ type deviceCreateResponse struct {
 	SetupURL  string `json:"setup_url"`
 }
 
+// deviceCreate asks the daemon for a pairing token.
+//
+// Every failure is reported. It used to ignore the status code and the decode
+// error and return an empty token as success, and the setup screen shows its
+// spinner precisely while the token is empty — so a daemon that answered 500,
+// or answered with anything that was not the expected JSON, left "Generating
+// pairing code..." turning for ever with nothing on screen to say why.
 func (c *client) deviceCreate() (*deviceCreateResponse, error) {
 	resp, err := c.httpClient.Post(c.baseURL+"/internal/device/create", "application/json", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
 	var r deviceCreateResponse
-	json.NewDecoder(resp.Body).Decode(&r)
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("unreadable response: %w", err)
+	}
+	if r.Token == "" {
+		// A well-formed answer with nothing in it. Treated as success before,
+		// which is the shape that produced the endless spinner.
+		return nil, fmt.Errorf("daemon returned no pairing token")
+	}
 	return &r, nil
 }
 

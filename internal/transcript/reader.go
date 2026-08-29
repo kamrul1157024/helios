@@ -82,6 +82,27 @@ type claudeContentBlock struct {
 	ToolUseID string                 `json:"tool_use_id,omitempty"`
 }
 
+// LineParser turns one complete transcript line into the messages it holds.
+//
+// A transcript is a stream of independent records, which is what lets the store
+// read only what was appended since last time. seq is how many messages came
+// before this line, for formats that do not number their own records; a parser
+// whose format does number them ignores it and sets Seq itself.
+type LineParser func(line []byte, seq int) []Message
+
+// ParseClaudeLine reads one Claude .jsonl entry.
+func ParseClaudeLine(line []byte, seq int) []Message {
+	var entry claudeEntry
+	if json.Unmarshal(line, &entry) != nil {
+		return nil
+	}
+	msgs := parseClaudeEntry(&entry)
+	for i := range msgs {
+		msgs[i].Seq = seq + i
+	}
+	return msgs
+}
+
 // ParseClaudeTranscript reads a Claude .jsonl transcript file and returns
 // generic messages with pagination. offset=0 means start from the end (newest).
 func ParseClaudeTranscript(path string, limit, offset int) (*TranscriptResult, error) {
@@ -96,7 +117,7 @@ func ParseClaudeTranscript(path string, limit, offset int) (*TranscriptResult, e
 
 // parseClaude parses the .jsonl stream, skipping any entry longer than max.
 func parseClaude(src io.Reader, max, limit, offset int) (*TranscriptResult, error) {
-	allMessages, _, err := parseSegment(src, max, 0)
+	allMessages, _, err := parseSegment(src, max, 0, ParseClaudeLine)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +131,7 @@ func parseClaude(src io.Reader, max, limit, offset int) (*TranscriptResult, erro
 // there. Only bytes up to and including the final newline are counted as
 // consumed: an unterminated tail is left for the next read rather than parsed
 // into a truncated message that would then be cached forever.
-func parseSegment(src io.Reader, max, firstSeq int) (msgs []Message, consumed int64, err error) {
+func parseSegment(src io.Reader, max, firstSeq int, parse LineParser) (msgs []Message, consumed int64, err error) {
 	r := bufio.NewReaderSize(src, 64*1024)
 	seq := firstSeq
 
@@ -122,14 +143,9 @@ func parseSegment(src io.Reader, max, firstSeq int) (msgs []Message, consumed in
 		// An entry longer than the cap is a tool result carrying a whole file,
 		// and its tail is gone: parsing the head would only yield broken JSON.
 		if terminated && len(line) > 0 && !oversized {
-			var entry claudeEntry
-			if json.Unmarshal(line, &entry) == nil {
-				for _, m := range parseClaudeEntry(&entry) {
-					m.Seq = seq
-					seq++
-					msgs = append(msgs, m)
-				}
-			}
+			parsed := parse(line, seq)
+			seq += len(parsed)
+			msgs = append(msgs, parsed...)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
@@ -141,6 +157,17 @@ func parseSegment(src io.Reader, max, firstSeq int) (msgs []Message, consumed in
 }
 
 // page slices a window off the end of msgs: offset=0 gets the last `limit`.
+// Paginate is the shared paging contract, exported so every provider's parser
+// answers a given limit and offset identically.
+//
+// It was briefly reimplemented in the codex parser, where limit <= 0 came to
+// mean "everything" rather than "nothing" — the same API call would have
+// returned a whole transcript from one provider and an empty page from the
+// other.
+func Paginate(msgs []Message, limit, offset int) *TranscriptResult {
+	return page(msgs, limit, offset)
+}
+
 func page(msgs []Message, limit, offset int) *TranscriptResult {
 	total := len(msgs)
 
@@ -156,8 +183,15 @@ func page(msgs []Message, limit, offset int) *TranscriptResult {
 		end = total
 	}
 
+	// Never the nil slice: it marshals to null, and a client that reads the
+	// field as a list crashes on a transcript that has parsed to nothing yet.
+	window := msgs[start:end]
+	if window == nil {
+		window = []Message{}
+	}
+
 	return &TranscriptResult{
-		Messages: msgs[start:end],
+		Messages: window,
 		Total:    total,
 		Returned: end - start,
 		Offset:   offset,

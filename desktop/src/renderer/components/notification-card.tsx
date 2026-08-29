@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { Notification } from '../../shared/models.ts'
+import { kindOf } from '../../shared/notifications.ts'
 
 /**
  * One notification, rendered with the controls its type needs.
@@ -34,12 +35,12 @@ export function NotificationCard({
   }
 
   const body = ((): JSX.Element => {
-    switch (notif.type) {
-      case 'claude.permission':
+    switch (kindOf(notif.type)) {
+      case 'permission':
         return <PermissionCard payload={payload} busy={busy} act={act} />
-      case 'claude.question':
+      case 'question':
         return <QuestionCard payload={payload} busy={busy} act={act} />
-      case 'claude.trust':
+      case 'trust':
         return (
           <Actions busy={busy}>
             <button onClick={() => void act({ action: 'trust' })}>Trust folder</button>
@@ -48,11 +49,11 @@ export function NotificationCard({
             </button>
           </Actions>
         )
-      case 'claude.elicitation.url':
+      case 'elicitation.url':
         return <UrlCard payload={payload} busy={busy} act={act} />
-      case 'claude.elicitation.form':
+      case 'elicitation.form':
         return <FormCard payload={payload} busy={busy} act={act} />
-      case 'claude.error':
+      case 'error':
         return <ErrorCard payload={payload} busy={busy} act={act} />
       default:
         return (
@@ -368,19 +369,21 @@ function describeSuggestion(suggestion: unknown): string {
 }
 
 export function label(type: string): string {
-  switch (type) {
-    case 'claude.permission':
+  switch (kindOf(type)) {
+    case 'permission':
       return 'Permission request'
-    case 'claude.question':
+    case 'question':
       return 'Question'
-    case 'claude.elicitation.form':
+    case 'elicitation.form':
       return 'Input requested'
-    case 'claude.elicitation.url':
+    case 'elicitation.url':
       return 'Authentication required'
-    case 'claude.trust':
+    case 'trust':
       return 'Workspace trust'
-    case 'claude.error':
+    case 'error':
       return 'Session error'
+    case 'done':
+      return 'Session completed'
     default:
       return type
   }

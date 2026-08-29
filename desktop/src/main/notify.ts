@@ -2,7 +2,7 @@ import { Notification as ElectronNotification, nativeImage, Tray, Menu, app } fr
 import path from 'node:path'
 
 import type { HostRegistry } from './hosts.ts'
-import { isBlocking } from '../shared/notifications.ts'
+import { isBlocking, kindOf } from '../shared/notifications.ts'
 import type { Hud } from './hud.ts'
 import type { PrefsStore } from './prefs.ts'
 import type { Notification } from '../shared/models.ts'
@@ -201,15 +201,17 @@ export class Notifier {
 }
 
 function titleFor(type: string): string {
-  switch (type) {
-    case 'claude.permission':
+  switch (kindOf(type)) {
+    case 'permission':
       return 'Permission needed'
-    case 'claude.question':
-      return 'Claude has a question'
-    case 'claude.trust':
+    case 'question':
+      return 'A question is waiting'
+    case 'trust':
       return 'Trust this folder?'
-    case 'claude.error':
+    case 'error':
       return 'Session error'
+    case 'done':
+      return 'Session completed'
     default:
       return 'Helios'
   }
