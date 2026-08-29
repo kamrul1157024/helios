@@ -537,12 +537,15 @@ func handleWrap(args []string) {
 	}
 
 	cwd, _ := os.Getwd()
-	sessionID, parts, isClaude := wrapCommand(args[cmdStart:])
+	sessionID, parts, providerID := wrapCommand(args[cmdStart:])
 
 	heliosDir := daemon.HeliosDir()
 	socket := terminal.SocketPath(heliosDir, sessionID)
 	if !terminal.Probe(socket) {
-		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, resolveBinary(parts)); err != nil {
+		// A provider whose agent mints its own session id identifies itself
+		// through the environment; harmless for one that does not.
+		env := map[string]string{"HELIOS_SESSION": sessionID}
+		if err := terminal.SpawnHost(heliosDir, sessionID, cwd, resolveBinary(parts), env); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to start terminal host: %v\n", err)
 			os.Exit(1)
 		}
@@ -554,8 +557,10 @@ func handleWrap(args []string) {
 
 	cfg, _ := daemon.LoadConfig()
 	internalURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.InternalPort)
-	if isClaude {
-		registerWrappedSession(internalURL, socket, cwd, sessionID, explicitPermissionMode(parts))
+	// Any known provider is registered, not just Claude. A wrapped codex used
+	// to get a helios-managed terminal the daemon never heard about.
+	if providerID != "" {
+		registerWrappedSession(internalURL, socket, cwd, sessionID, providerID, explicitPermissionMode(parts))
 	}
 
 	res, err := terminal.Attach(context.Background(), terminal.AttachConfig{
@@ -573,13 +578,13 @@ func handleWrap(args []string) {
 
 	// The process ended for real. Hooks do not fire on Ctrl-C or a crash, so
 	// the daemon is told directly rather than left showing a live session.
-	if isClaude {
+	if providerID != "" {
 		body, err := json.Marshal(map[string]interface{}{
 			"session_id": sessionID,
 			"cwd":        cwd,
 		})
 		if err == nil {
-			postAndClose(internalURL+"/hooks/claude/session.end", body)
+			postAndClose(internalURL+"/hooks/"+providerID+"/session.end", body)
 		}
 	}
 	os.Exit(res.ExitCode)
@@ -607,21 +612,40 @@ func resolveBinary(parts []string) []string {
 // agree on. --resume/--continue already carry one; otherwise we mint it and
 // pass it down, which is what makes the session addressable from the phone
 // before its first hook arrives.
-func wrapCommand(parts []string) (sessionID string, cmd []string, isClaude bool) {
-	isClaude = filepath.Base(parts[0]) == "claude"
-	if !isClaude {
-		return uuid.New().String(), parts, false
+// wrapProvider maps a wrapped binary to the provider that speaks for it.
+//
+// A name match, because the CLI cannot ask the registry: providers are
+// registered in the daemon process, not this one. The daemon validates what it
+// is sent, so a wrong guess here is rejected rather than believed.
+func wrapProvider(bin string) string {
+	switch filepath.Base(bin) {
+	case "claude":
+		return "claude"
+	case "codex":
+		return "codex"
+	default:
+		return ""
+	}
+}
+
+func wrapCommand(parts []string) (sessionID string, cmd []string, providerID string) {
+	providerID = wrapProvider(parts[0])
+	if providerID != "claude" {
+		// Only Claude takes an id from us. Codex mints its own and reports it
+		// through its session-start hook, so helios keeps this one as the row
+		// key and learns the other later.
+		return uuid.New().String(), parts, providerID
 	}
 
 	for i, a := range parts {
 		if (a == "--resume" || a == "--continue" || a == "--session-id") && i+1 < len(parts) {
-			return parts[i+1], parts, true
+			return parts[i+1], parts, providerID
 		}
 	}
 
 	sessionID = uuid.New().String()
 	cmd = append([]string{parts[0], "--session-id", sessionID}, parts[1:]...)
-	return sessionID, cmd, true
+	return sessionID, cmd, providerID
 }
 
 // explicitPermissionMode returns the permission mode the user asked a wrapped
@@ -652,11 +676,12 @@ func explicitPermissionMode(parts []string) string {
 // registerWrappedSession binds a hand-started terminal to a session record.
 // The daemon being down is not fatal: the command still runs, it is simply not
 // tracked until the daemon comes back and recovers the host from its sidecar.
-func registerWrappedSession(internalURL, socket, cwd, sessionID, permissionMode string) {
+func registerWrappedSession(internalURL, socket, cwd, sessionID, providerID, permissionMode string) {
 	body, err := json.Marshal(map[string]string{
 		"handle":          socket,
 		"cwd":             cwd,
 		"session_id":      sessionID,
+		"provider":        providerID,
 		"permission_mode": permissionMode,
 	})
 	if err != nil {

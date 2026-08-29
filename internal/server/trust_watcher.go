@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -83,27 +84,27 @@ func (m *PendingSessionMap) MarkNotifSent(sessionID string) {
 	}
 }
 
-// trustPromptPatterns are strings that appear in Claude's workspace trust dialog.
-var trustPromptPatterns = []string{
-	"yes, i trust this folder",
-	"quick safety check",
-	"one you trust",
-	"trust the files in this",
-}
-
-// containsTrustPrompt reports whether rendered screen text shows the dialog.
+// matchTrustPrompt asks every provider what a screen means.
 //
-// The input must be emulator output, never the raw PTY stream: Claude Code
-// positions text with cursor-column jumps, so these phrases never appear
-// contiguously in the bytes it writes.
-func containsTrustPrompt(screen string) bool {
-	lower := strings.ToLower(screen)
-	for _, pattern := range trustPromptPatterns {
-		if strings.Contains(lower, pattern) {
-			return true
+// The wording belongs to the agent, not to the daemon. Claude and Codex both
+// have a trust dialog and they phrase it differently, so a list of phrases
+// here would recognise one and miss the other in silence — which is a session
+// stuck at "starting" with no card and no error.
+//
+// The input must be emulator output, never the raw PTY stream: a TUI positions
+// text with cursor-column jumps, so its phrases never appear contiguously in
+// the bytes it writes.
+func matchTrustPrompt(screen string) *provider.ScreenPrompt {
+	for _, p := range provider.All() {
+		w := provider.ScreenWatcherFor(p.Info().ID)
+		if w == nil {
+			continue
+		}
+		if prompt := w.MatchScreen(screen); prompt != nil {
+			return prompt
 		}
 	}
-	return false
+	return nil
 }
 
 // screenNotifier is implemented by backends that can push screen changes. The
@@ -153,20 +154,25 @@ func checkTrustPrompt(shared *Shared, sessionID string) {
 		return
 	}
 	screen, err := shared.Backend.Capture(sessionID)
-	if err != nil || !containsTrustPrompt(screen) {
+	if err != nil {
 		return
 	}
-	log.Printf("trust-watcher: trust prompt detected in session %s", sessionID)
+	prompt := matchTrustPrompt(screen)
+	if prompt == nil {
+		return
+	}
+	log.Printf("trust-watcher: %s detected in session %s", prompt.Type, sessionID)
 	shared.Pending.MarkNotifSent(sessionID)
-	createTrustNotification(shared, &p)
+	createTrustNotification(shared, &p, prompt)
 }
 
-// createTrustNotification raises a claude.trust notification for a session
-// showing the trust dialog.
-func createTrustNotification(shared *Shared, p *PendingSession) {
-	title := "Workspace trust required"
-	detail := "Claude needs permission to access this workspace"
+// createTrustNotification raises the provider's own trust notification for a
+// session showing its trust dialog.
+func createTrustNotification(shared *Shared, p *PendingSession, prompt *provider.ScreenPrompt) {
+	title := prompt.Title
+	detail := prompt.Detail
 	payloadStr := `{"session_id":"` + p.SessionID + `","cwd":"` + p.CWD + `"}`
+	source, _, _ := strings.Cut(prompt.Type, ".")
 
 	// SourceSession, not just the payload: it is the column every
 	// session-scoped sweep keys on. Without it the dialog stays pending after
@@ -175,10 +181,10 @@ func createTrustNotification(shared *Shared, p *PendingSession) {
 	// to route a tap on it to.
 	notif := &store.Notification{
 		ID:            notifications.GenerateNotificationID(),
-		Source:        "claude",
+		Source:        source,
 		SourceSession: p.SessionID,
 		CWD:           p.CWD,
-		Type:          "claude.trust",
+		Type:          prompt.Type,
 		Status:        "pending",
 		Title:         &title,
 		Detail:        &detail,

@@ -13,10 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/backend"
-	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
-	claudeprovider "github.com/kamrul1157024/helios/internal/provider/claude"
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
@@ -67,7 +65,7 @@ func (s *PublicServer) handleNotificationAction(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	handler := provider.GetActionHandler(notif.Type)
+	handler := provider.ActionHandlerFor(notif.Type)
 	if handler == nil {
 		jsonError(w, fmt.Sprintf("no action handler for type: %s", notif.Type), http.StatusBadRequest)
 		return
@@ -147,7 +145,7 @@ func (s *PublicServer) handleBatchNotifications(w http.ResponseWriter, r *http.R
 			continue
 		}
 
-		handler := provider.GetActionHandler(notif.Type)
+		handler := provider.ActionHandlerFor(notif.Type)
 		if handler == nil {
 			result["success"] = false
 			result["error"] = "no_action_handler"
@@ -306,7 +304,7 @@ func (s *PublicServer) handleUpdateDeviceMe(w http.ResponseWriter, r *http.Reque
 
 // enrichSession sets computed fields (e.g. SupportsPromptQueue) using provider capabilities.
 func enrichSession(sess *store.Session) {
-	caps := provider.GetCapabilities(sess.Source)
+	caps := provider.CapabilitiesOf(sess.Source)
 	sess.ComputePromptQueue(caps.PromptQueue)
 }
 
@@ -362,7 +360,7 @@ func (s *PublicServer) handleGetSession(w http.ResponseWriter, r *http.Request) 
 	enrichSession(session)
 
 	// Get pending permission count for this session
-	pendingNotifs, _ := s.shared.DB.ListNotifications("claude", "pending", "")
+	pendingNotifs, _ := s.shared.DB.ListNotifications("", "pending", "")
 	pendingCount := 0
 	for _, n := range pendingNotifs {
 		if n.SourceSession == id {
@@ -394,11 +392,11 @@ func (s *PublicServer) resolveTranscriptPath(session *store.Session) string {
 			return recorded
 		}
 	}
-	if session.Source != "claude" {
+	t := provider.TranscriberFor(session.Source)
+	if t == nil {
 		return ""
 	}
-
-	found := discovery.FindClaudeTranscript(session.SessionID)
+	found := t.LocateTranscript(session.SessionID)
 	if found == "" {
 		return ""
 	}
@@ -537,9 +535,16 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 	log.Printf("session-send: session=%s status=%s live=%v", id, session.Status, live)
 
 	if session.Status == "active" || session.Status == "waiting_permission" {
-		caps := provider.GetCapabilities(session.Source)
-		if caps.PromptQueue && live {
-			if err := s.shared.Backend.SendText(id, req.Message); err != nil {
+		// The provider owns how a prompt reaches a busy agent. A provider that
+		// does not implement Queuer has no way to hold one, so the session is
+		// reported busy rather than the prompt being dropped.
+		queuer := provider.QueuerFor(session.Source)
+		if queuer != nil && live {
+			resumeID := id
+			if session.ResumeID != nil && *session.ResumeID != "" {
+				resumeID = *session.ResumeID
+			}
+			if err := queuer.QueuePrompt(id, resumeID, req.Message); err != nil {
 				log.Printf("session-send: queue failed for %s: %v", id, err)
 				jsonError(w, fmt.Sprintf("failed to queue: %v", err), http.StatusInternalServerError)
 				return
@@ -671,18 +676,20 @@ func (sh *Shared) stopSession(w http.ResponseWriter, id string) {
 // while the agent is mid-turn: interrupting work to change a setting is never
 // what the user meant, and a pending permission prompt would be stranded.
 func (sh *Shared) setPermissionMode(w http.ResponseWriter, id, mode string) {
-	if !claudeprovider.ValidPermissionMode(mode) {
-		jsonError(w, fmt.Sprintf("unknown permission mode: %q", mode), http.StatusBadRequest)
-		return
-	}
-
 	session, err := sh.DB.GetSession(id)
 	if err != nil || session == nil {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
-	if session.Source != "claude" {
+	// The vocabulary belongs to the provider, so the provider validates it.
+	// A provider with no modes at all rejects every value, which is the right
+	// answer: there is nothing to set.
+	if provider.ModerFor(session.Source) == nil {
 		jsonError(w, fmt.Sprintf("provider %s has no permission modes", session.Source), http.StatusBadRequest)
+		return
+	}
+	if !provider.ValidMode(session.Source, mode) {
+		jsonError(w, fmt.Sprintf("unknown permission mode: %q", mode), http.StatusBadRequest)
 		return
 	}
 	if session.Status == "terminated" || session.Status == "ended" {
@@ -1037,7 +1044,15 @@ func (s *PublicServer) handleGenerateSessionTitle(w http.ResponseWriter, r *http
 	// Not the hook path: that one leaves a titled session alone, so asking it to
 	// rename a session did nothing at all. Waits for the answer, so the caller
 	// hears whether the name changed rather than being told "success" either way.
-	title := claudeprovider.RegenerateTitle(s.shared.DB, id, session.CWD, transcriptPath, notify)
+	titler := provider.TitlerFor(session.Source)
+	if titler == nil {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"success": false, "error": "no_titler",
+			"message": fmt.Sprintf("provider %s cannot name a session", session.Source),
+		})
+		return
+	}
+	title := titler.Title(s.shared.DB, id, session.CWD, transcriptPath, notify)
 	if title == "" {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"success": false,
@@ -1113,17 +1128,6 @@ func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *ht
 	})
 }
 
-// launchPermissionMode reports the mode a freshly built session is starting
-// under, or "" for a provider that has no permission modes. Claude is the only
-// one with them today, and only its session builder knows what an empty request
-// resolves to.
-func launchPermissionMode(providerID string, spec provider.SessionSpec) string {
-	if providerID != "claude" {
-		return ""
-	}
-	return claudeprovider.LaunchPermissionMode(spec)
-}
-
 func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider                   string `json:"provider"`
@@ -1142,8 +1146,8 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		req.Provider = "claude"
 	}
 
-	builder := provider.GetSessionBuilder(req.Provider)
-	if builder == nil {
+	prov, known := provider.Get(req.Provider)
+	if !known {
 		jsonError(w, fmt.Sprintf("unknown provider: %s", req.Provider), http.StatusNotFound)
 		return
 	}
@@ -1173,9 +1177,13 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		PermissionMode:  req.PermissionMode,
 		SkipPermissions: req.DangerouslySkipPermissions,
 	}
-	argv := builder(spec)
+	launch, err := prov.Launch(spec)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to build launch: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
+	handle, err := startTerminal(s.shared.Backend, sessionID, req.CWD, launch)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
 		return
@@ -1186,7 +1194,7 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	event := "Launch"
 	sess := &store.Session{
 		SessionID: sessionID,
-		Source:    "claude",
+		Source:    req.Provider,
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
@@ -1198,7 +1206,7 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	// hook: a session evicted before it reports in would otherwise wake with an
 	// empty column, and an empty column means "whatever the CLI defaults to" —
 	// which is not what a Helios-launched session was started in.
-	if mode := launchPermissionMode(req.Provider, spec); mode != "" {
+	if mode := launch.Mode; mode != "" {
 		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
 			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
 		}
@@ -1215,6 +1223,23 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 	})
 }
 
+// startTerminal launches a provider's argv, with its environment when the
+// backend can carry one.
+//
+// A provider needs Env only when its agent cannot be told which helios session
+// it belongs to any other way, so a backend without EnvStarter is not broken —
+// it just cannot host that provider's sessions.
+func startTerminal(b backend.Backend, sessionID, cwd string, launch provider.Launch) (string, error) {
+	if len(launch.Env) > 0 {
+		if es, ok := b.(backend.EnvStarter); ok {
+			return es.StartWithEnv(sessionID, cwd, launch.Argv, launch.Env)
+		}
+		log.Printf("start: backend %s cannot set environment; %s may not report in",
+			b.Name(), sessionID)
+	}
+	return b.Start(sessionID, cwd, launch.Argv)
+}
+
 // handleWrap binds a terminal the user started by hand — `helios wrap` — to a
 // session record.
 func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
@@ -1222,17 +1247,23 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 		Handle         string `json:"handle"`
 		CWD            string `json:"cwd"`
 		SessionID      string `json:"session_id"`
+		Provider       string `json:"provider,omitempty"`
 		PermissionMode string `json:"permission_mode,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
 		jsonError(w, "missing session_id", http.StatusBadRequest)
 		return
 	}
+	// An older `helios wrap` sends no provider. Claude is the right guess for
+	// those: it is the only one that wrapped before this field existed.
+	if req.Provider == "" {
+		req.Provider = "claude"
+	}
 
 	event := "Wrap"
 	sess := &store.Session{
 		SessionID: req.SessionID,
-		Source:    "claude",
+		Source:    req.Provider,
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
@@ -1243,7 +1274,7 @@ func (s *InternalServer) handleWrap(w http.ResponseWriter, r *http.Request) {
 	// Only a mode the user typed on the wrapped command is recorded. Wrap adds
 	// none of its own, and a null column is what tells a later wake to leave the
 	// flag off and let the CLI apply the same default it started under.
-	if claudeprovider.ValidPermissionMode(req.PermissionMode) {
+	if provider.ValidMode(req.Provider, req.PermissionMode) {
 		if err := s.shared.DB.UpdateSessionPermissionMode(req.SessionID, req.PermissionMode); err != nil {
 			log.Printf("wrap: record permission mode for %s: %v", req.SessionID, err)
 		}
@@ -1575,7 +1606,7 @@ func releaseAsset(name string) string {
 
 func (s *PublicServer) handleListCommands(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"commands": provider.GetCommands(),
+		"commands": provider.Commands(),
 	})
 }
 
@@ -1629,7 +1660,7 @@ func (s *PublicServer) handleGetSettings(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"settings":    settings,
 		"personas":    reporter.Personas,
-		"event_types": provider.GetAllEventTypes(),
+		"event_types": provider.EventTypes(),
 	})
 }
 
@@ -1675,11 +1706,11 @@ func getCachedModels(providerID string) ([]provider.ModelInfo, bool) {
 }
 
 func fetchAndCacheModels(providerID string) ([]provider.ModelInfo, error) {
-	fetcher := provider.GetModelsFetcher(providerID)
-	if fetcher == nil {
+	lister := provider.ModelListerFor(providerID)
+	if lister == nil {
 		return nil, fmt.Errorf("unknown provider: %s", providerID)
 	}
-	models, err := fetcher()
+	models, err := lister.Models()
 	if err != nil {
 		return nil, err
 	}
@@ -1688,10 +1719,53 @@ func fetchAndCacheModels(providerID string) ([]provider.ModelInfo, error) {
 	return models, nil
 }
 
+// providerView is what a client needs to render a provider: its identity, what
+// it can do, and the mode vocabulary that belongs to it rather than to them.
+type providerView struct {
+	provider.Info
+	Capabilities    provider.Capabilities `json:"capabilities"`
+	PermissionModes []string              `json:"permission_modes,omitempty"`
+}
+
 func (s *PublicServer) handleListProviders(w http.ResponseWriter, r *http.Request) {
+	views := []providerView{}
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		views = append(views, providerView{
+			Info:            p.Info(),
+			Capabilities:    provider.CapabilitiesOf(id),
+			PermissionModes: provider.PermissionModes(id),
+		})
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"providers": views})
+}
+
+// handleNotificationTypes serves the catalogue the clients used to hardcode.
+//
+// Each client held its own copy of the type list, its labels, which types
+// block and their default alert state — four copies each — so adding a
+// provider meant editing all of them and forgetting one was silent. This is
+// the same fix permission_modes already had.
+func (s *PublicServer) handleNotificationTypes(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"providers": provider.GetProviders(),
+		"notification_types": provider.NotificationTypes(),
 	})
+}
+
+// handleHooksHealth reports whether each provider's hooks will actually run.
+//
+// Worth its own endpoint because the interesting failure is silent: Codex
+// reads an untrusted hook table, declines to run it, and says nothing, so the
+// daemon receives no events and every session sits at "starting".
+func (s *PublicServer) handleHooksHealth(w http.ResponseWriter, r *http.Request) {
+	health := map[string]provider.HookHealth{}
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		if inst := provider.InstallerFor(id); inst != nil {
+			health[id] = inst.HookHealth()
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"hooks": health})
 }
 
 func (s *PublicServer) handleListModels(w http.ResponseWriter, r *http.Request) {
@@ -1757,8 +1831,8 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		req.Provider = "claude"
 	}
 
-	builder := provider.GetSessionBuilder(req.Provider)
-	if builder == nil {
+	prov, known := provider.Get(req.Provider)
+	if !known {
 		jsonError(w, fmt.Sprintf("unknown provider: %s", req.Provider), http.StatusNotFound)
 		return
 	}
@@ -1788,9 +1862,13 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		PermissionMode:  req.PermissionMode,
 		SkipPermissions: req.DangerouslySkipPermissions,
 	}
-	argv := builder(spec)
+	launch, err := prov.Launch(spec)
+	if err != nil {
+		jsonError(w, fmt.Sprintf("failed to build launch: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-	handle, err := s.shared.Backend.Start(sessionID, req.CWD, argv)
+	handle, err := startTerminal(s.shared.Backend, sessionID, req.CWD, launch)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
 		return
@@ -1801,7 +1879,7 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 	event := "Launch"
 	sess := &store.Session{
 		SessionID: sessionID,
-		Source:    "claude",
+		Source:    req.Provider,
 		CWD:       req.CWD,
 		Status:    "starting",
 		LastEvent: &event,
@@ -1813,7 +1891,7 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 	// hook: a session evicted before it reports in would otherwise wake with an
 	// empty column, and an empty column means "whatever the CLI defaults to" —
 	// which is not what a Helios-launched session was started in.
-	if mode := launchPermissionMode(req.Provider, spec); mode != "" {
+	if mode := launch.Mode; mode != "" {
 		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
 			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
 		}

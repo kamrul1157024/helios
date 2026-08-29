@@ -135,3 +135,14 @@ type Viewer interface {
 	// Endpoint returns the address a viewer connects to for this session.
 	Endpoint(sessionID string) (string, bool)
 }
+
+// EnvStarter is implemented by backends that can inject environment variables
+// into a session's process.
+//
+// Optional rather than part of Backend, like Usager and Evicter: a provider
+// needs it only when its agent cannot be told which Helios session it belongs
+// to any other way. Codex mints its own session id and offers no flag to set
+// one, so its hooks identify themselves from the environment instead.
+type EnvStarter interface {
+	StartWithEnv(sessionID, cwd string, argv []string, env map[string]string) (handle string, err error)
+}

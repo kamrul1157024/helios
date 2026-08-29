@@ -321,7 +321,7 @@ func TestE2ERegistryWakeIsIdempotent(t *testing.T) {
 
 	var spawns int
 	var mu sync.Mutex
-	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string) error {
+	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string, env map[string]string) error {
 		mu.Lock()
 		spawns++
 		mu.Unlock()
@@ -647,7 +647,7 @@ func TestE2EUsagePricesALiveHost(t *testing.T) {
 	e := newE2E(t)
 	const sid = "e2e-usage"
 
-	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string) error {
+	reg := NewRegistry(e.heliosDir(), func(sessionID, cwd string, argv []string, env map[string]string) error {
 		cmd := exec.Command(e.binary, "ptyhost", sessionID, "--cwd", cwd, "--cmd", "sh")
 		cmd.Env = append(os.Environ(), "HOME="+e.dir)
 		cmd.SysProcAttr = detachSysProcAttr()

@@ -436,3 +436,13 @@ var (
 	_ Waker   = (*Host)(nil)
 	_ Viewer  = (*Host)(nil)
 )
+
+// StartWithEnv launches argv with extra environment. See backend.EnvStarter.
+func (h *Host) StartWithEnv(sessionID, cwd string, argv []string, env map[string]string) (string, error) {
+	sock, err := h.reg.StartWithEnv(sessionID, cwd, argv, env)
+	if err != nil {
+		return "", err
+	}
+	h.warmMirror(sessionID)
+	return sock, nil
+}

@@ -1,229 +1,409 @@
 package provider
 
 import (
-	"context"
-	"encoding/json"
-	"net/http"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
 
-	"github.com/kamrul1157024/helios/internal/backend"
-	"github.com/kamrul1157024/helios/internal/hitl"
-	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
-// ReportEvent is a narration event passed to the Reporter.
-// Defined here to avoid circular imports (reporter imports provider).
-type ReportEvent struct {
-	Type      string
-	SessionID string
-	CWD       string
-	ToolName  string
-	ToolInput string // summarized tool input
-	Message   string
-	Status    string
-	AgentType string
-	Detail    string
+// registration is a provider with its capabilities already resolved.
+//
+// The resolution happens here, once, rather than by type assertion at each
+// call site. That is deliberate. A type assertion asks "does this Go type
+// implement Resumer", which is the wrong question for any provider kind where
+// one Go type serves many different agents — it would implement the interface
+// for all of them or none. Resolving into fields lets a future kind fill them
+// from whatever it knows, and no call site changes.
+type registration struct {
+	p Provider
+
+	// Each is nil when the provider does not offer it.
+	resume      Resumer
+	hooks       Hooker
+	installer   HookInstaller
+	actor       Actor
+	moder       Moder
+	models      ModelLister
+	transcriber Transcriber
+	discoverer  Discoverer
+	titler      Titler
+	small       SmallModel
+	narrator    Narrator
+	commander   Commander
+	queuer      Queuer
+	screen      ScreenWatcher
 }
 
-// HookContext provides everything a hook handler needs without importing server.
-type HookContext struct {
-	DB       *store.Store
-	Mgr      *notifications.Manager
-	Terminal backend.Backend
-	// HITL paints helios's own prompt over a session's terminal so the person
-	// sitting at it can answer. Nil in contexts built for a single non-blocking
-	// call, and on backends that cannot draw over a session.
-	HITL   *hitl.Controller
-	Notify func(eventType string, data interface{}) // SSE broadcast
-	// SessionStarted marks a session as having reported in, which stops the
-	// trust-dialog watcher for it and releases anything waiting for the agent
-	// to finish booting.
-	SessionStarted func(sessionID string)
-	// PromptSubmitted marks a prompt as accepted by the agent. It is the only
-	// proof a prompt typed into a terminal actually landed.
-	PromptSubmitted func(sessionID string)
-	Report          func(event ReportEvent) // push event to Reporter for narration
-}
+var (
+	mu        sync.RWMutex
+	providers = map[string]*registration{}
+	order     []string
+)
 
-// HookHandler processes an incoming hook request and writes the response.
-type HookHandler func(ctx *HookContext, w http.ResponseWriter, r *http.Request, input json.RawMessage)
-
-// ActionHandler processes a user action for a specific notification type.
-type ActionHandler func(notif *store.Notification, body json.RawMessage) (notifications.Decision, error)
-
-var hookHandlers = map[string]HookHandler{}
-var actionHandlers = map[string]ActionHandler{}
-
-// RegisterHook registers a hook handler for a given type (e.g. "claude.permission").
-func RegisterHook(hookType string, handler HookHandler) {
-	hookHandlers[hookType] = handler
-}
-
-// RegisterAction registers an action handler for a given notification type.
-func RegisterAction(notifType string, handler ActionHandler) {
-	actionHandlers[notifType] = handler
-}
-
-// GetHookHandler returns the hook handler for a type, or nil.
-func GetHookHandler(hookType string) HookHandler {
-	return hookHandlers[hookType]
-}
-
-// GetActionHandler returns the action handler for a type, or nil.
-func GetActionHandler(notifType string) ActionHandler {
-	return actionHandlers[notifType]
-}
-
-// Command represents a slash command available in a provider's CLI.
-type Command struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Icon        string `json:"icon"`
-}
-
-var commands []Command
-
-// RegisterCommands registers slash commands for a provider.
-func RegisterCommands(cmds []Command) {
-	commands = append(commands, cmds...)
-}
-
-// GetCommands returns all registered slash commands.
-func GetCommands() []Command {
-	return commands
-}
-
-// ==================== Provider Registry ====================
-
-// ModelInfo describes a model available from a provider.
-type ModelInfo struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	ContextWindow string `json:"context_window,omitempty"`
-}
-
-// ProviderCapabilities describes what a provider supports.
-type ProviderCapabilities struct {
-	PromptQueue bool `json:"prompt_queue"` // supports queuing prompts while the agent is mid-turn
-}
-
-// ProviderInfo describes a registered session provider.
-type ProviderInfo struct {
-	ID           string               `json:"id"`
-	Name         string               `json:"name"`
-	Icon         string               `json:"icon"`
-	Capabilities ProviderCapabilities `json:"capabilities"`
-	// PermissionModes are the modes this provider's agent can run under, most
-	// restrictive first, or nil if it has no such concept. Served rather than
-	// hardcoded in clients: the vocabulary is the CLI's, and it has already
-	// gained a mode between releases.
-	PermissionModes []string `json:"permission_modes,omitempty"`
-}
-
-// SessionSpec is everything a provider needs to start a session. It is a
-// struct rather than a parameter list because it grows: permission mode
-// arrived after model, and whatever comes next should not break every caller.
-type SessionSpec struct {
-	SessionID string
-	Prompt    string
-	Model     string
-	CWD       string
-
-	// PermissionMode is the agent's permission mode. Empty means the
-	// provider's own default, which is not necessarily the agent's.
-	PermissionMode string
-
-	// SkipPermissions requests the agent's escape hatch for permission
-	// checks entirely, and overrides PermissionMode. Separate from the mode
-	// because the flag that spells it is provider-specific and, for Claude,
-	// is not simply a synonym for one of the modes.
-	SkipPermissions bool
-}
-
-// SessionBuilder builds the command to start a new session. It returns argv,
-// not a command line: terminals execute it directly, so a prompt full of
-// quotes and backticks reaches the agent as typed.
-type SessionBuilder func(SessionSpec) []string
-
-// ModelsFetcher returns available models for the provider.
-type ModelsFetcher func() ([]ModelInfo, error)
-
-var providers = map[string]ProviderInfo{}
-var sessionBuilders = map[string]SessionBuilder{}
-var modelsFetchers = map[string]ModelsFetcher{}
-
-// RegisterProvider registers a provider with its session builder and models fetcher.
-func RegisterProvider(info ProviderInfo, builder SessionBuilder, fetcher ModelsFetcher) {
-	providers[info.ID] = info
-	sessionBuilders[info.ID] = builder
-	modelsFetchers[info.ID] = fetcher
-}
-
-// GetProviders returns all registered providers.
-func GetProviders() []ProviderInfo {
-	result := make([]ProviderInfo, 0, len(providers))
-	for _, p := range providers {
-		result = append(result, p)
+// Register adds a provider and resolves its capabilities.
+//
+// Safe to call at any time, not only at start-up: a provider that is
+// discovered rather than compiled in cannot register from init().
+func Register(p Provider) error {
+	if p == nil {
+		return fmt.Errorf("provider: nil provider")
 	}
-	return result
-}
-
-// GetSessionBuilder returns the session builder for a provider, or nil.
-func GetSessionBuilder(providerID string) SessionBuilder {
-	return sessionBuilders[providerID]
-}
-
-// GetModelsFetcher returns the models fetcher for a provider, or nil.
-func GetModelsFetcher(providerID string) ModelsFetcher {
-	return modelsFetchers[providerID]
-}
-
-// GetCapabilities returns the capabilities for a provider.
-func GetCapabilities(providerID string) ProviderCapabilities {
-	if p, ok := providers[providerID]; ok {
-		return p.Capabilities
+	info := p.Info()
+	if info.ID == "" {
+		return fmt.Errorf("provider: empty ID")
 	}
-	return ProviderCapabilities{}
+	if info.ID != strings.ToLower(info.ID) {
+		return fmt.Errorf("provider %q: ID must be lower-case", info.ID)
+	}
+
+	reg := &registration{p: p}
+	reg.resume, _ = p.(Resumer)
+	reg.hooks, _ = p.(Hooker)
+	reg.installer, _ = p.(HookInstaller)
+	reg.actor, _ = p.(Actor)
+	reg.moder, _ = p.(Moder)
+	reg.models, _ = p.(ModelLister)
+	reg.transcriber, _ = p.(Transcriber)
+	reg.discoverer, _ = p.(Discoverer)
+	reg.titler, _ = p.(Titler)
+	reg.small, _ = p.(SmallModel)
+	reg.narrator, _ = p.(Narrator)
+	reg.commander, _ = p.(Commander)
+	reg.queuer, _ = p.(Queuer)
+	reg.screen, _ = p.(ScreenWatcher)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if _, dup := providers[info.ID]; dup {
+		return fmt.Errorf("provider %q: already registered", info.ID)
+	}
+	providers[info.ID] = reg
+	order = append(order, info.ID)
+	return nil
 }
 
-// ==================== Small Model Caller ====================
-
-// SmallModelCaller runs a provider's cheapest model for short text generation.
-// Used for narration, summarization, and other lightweight AI calls.
-// Implementations should use the provider's CLI to respect the user's existing auth.
-type SmallModelCaller func(ctx context.Context, system, prompt string) (string, error)
-
-var smallModelCallers = map[string]SmallModelCaller{}
-
-// RegisterSmallModelCaller registers a small model caller for a provider.
-func RegisterSmallModelCaller(providerID string, caller SmallModelCaller) {
-	smallModelCallers[providerID] = caller
+// MustRegister panics on a duplicate or malformed provider. For compiled-in
+// providers, where a failure is a programming error rather than bad input.
+func MustRegister(p Provider) {
+	if err := Register(p); err != nil {
+		panic(err)
+	}
 }
 
-// GetSmallModelCaller returns the small model caller for a provider, or nil.
-func GetSmallModelCaller(providerID string) SmallModelCaller {
-	return smallModelCallers[providerID]
+// Deregister removes a provider. A reloaded provider replaces itself with
+// Deregister then Register.
+func Deregister(id string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(providers, id)
+	for i, existing := range order {
+		if existing == id {
+			order = append(order[:i], order[i+1:]...)
+			break
+		}
+	}
 }
 
-// ==================== Event Types ====================
-
-// EventTypeInfo describes a reportable event type from a provider.
-type EventTypeInfo struct {
-	Type        string `json:"type"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Category    string `json:"category"` // "tools", "actions", "lifecycle", "context", "subagents", "other"
+func lookup(id string) *registration {
+	mu.RLock()
+	defer mu.RUnlock()
+	return providers[id]
 }
 
-var eventTypes = map[string][]EventTypeInfo{}
-
-// RegisterEventTypes registers event types for a provider.
-func RegisterEventTypes(providerID string, types []EventTypeInfo) {
-	eventTypes[providerID] = types
+// Get returns a provider by ID.
+func Get(id string) (Provider, bool) {
+	if reg := lookup(id); reg != nil {
+		return reg.p, true
+	}
+	return nil, false
 }
 
-// GetAllEventTypes returns all registered event types grouped by provider.
-func GetAllEventTypes() map[string][]EventTypeInfo {
-	return eventTypes
+// All returns every provider, in registration order.
+func All() []Provider {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make([]Provider, 0, len(order))
+	for _, id := range order {
+		if reg := providers[id]; reg != nil {
+			out = append(out, reg.p)
+		}
+	}
+	return out
+}
+
+// Infos returns every provider's identity, for the API.
+func Infos() []Info {
+	out := []Info{}
+	for _, p := range All() {
+		out = append(out, p.Info())
+	}
+	return out
+}
+
+// ==================== Capability accessors ====================
+//
+// Each returns nil when the provider does not offer the capability, or does
+// not exist. Every caller must handle nil by degrading, never by erroring:
+// that property is what lets a provider implement two methods and still be
+// useful.
+
+func ResumerFor(id string) Resumer {
+	if reg := lookup(id); reg != nil {
+		return reg.resume
+	}
+	return nil
+}
+
+func HookerFor(id string) Hooker {
+	if reg := lookup(id); reg != nil {
+		return reg.hooks
+	}
+	return nil
+}
+
+func InstallerFor(id string) HookInstaller {
+	if reg := lookup(id); reg != nil {
+		return reg.installer
+	}
+	return nil
+}
+
+func ActorFor(id string) Actor {
+	if reg := lookup(id); reg != nil {
+		return reg.actor
+	}
+	return nil
+}
+
+func ModerFor(id string) Moder {
+	if reg := lookup(id); reg != nil {
+		return reg.moder
+	}
+	return nil
+}
+
+func ModelListerFor(id string) ModelLister {
+	if reg := lookup(id); reg != nil {
+		return reg.models
+	}
+	return nil
+}
+
+func TranscriberFor(id string) Transcriber {
+	if reg := lookup(id); reg != nil {
+		return reg.transcriber
+	}
+	return nil
+}
+
+func DiscovererFor(id string) Discoverer {
+	if reg := lookup(id); reg != nil {
+		return reg.discoverer
+	}
+	return nil
+}
+
+func TitlerFor(id string) Titler {
+	if reg := lookup(id); reg != nil {
+		return reg.titler
+	}
+	return nil
+}
+
+func SmallModelFor(id string) SmallModel {
+	if reg := lookup(id); reg != nil {
+		return reg.small
+	}
+	return nil
+}
+
+func QueuerFor(id string) Queuer {
+	if reg := lookup(id); reg != nil {
+		return reg.queuer
+	}
+	return nil
+}
+
+func ScreenWatcherFor(id string) ScreenWatcher {
+	if reg := lookup(id); reg != nil {
+		return reg.screen
+	}
+	return nil
+}
+
+// ==================== Derived views ====================
+
+// Capabilities is what a client needs to know about a provider, derived from
+// the interfaces it implements rather than declared.
+type Capabilities struct {
+	Resume      bool `json:"resume"`
+	Hooks       bool `json:"hooks"`
+	Transcript  bool `json:"transcript"`
+	Titles      bool `json:"titles"`
+	Discovery   bool `json:"discovery"`
+	PromptQueue bool `json:"prompt_queue"`
+	// PermissionCards is whether this provider can raise something a client
+	// must answer. Derived from its action routes, not from a flag.
+	PermissionCards bool `json:"permission_cards"`
+}
+
+// CapabilitiesOf reports what a provider supports.
+func CapabilitiesOf(id string) Capabilities {
+	reg := lookup(id)
+	if reg == nil {
+		return Capabilities{}
+	}
+	caps := Capabilities{
+		Resume:      reg.resume != nil,
+		Hooks:       reg.hooks != nil,
+		Transcript:  reg.transcriber != nil,
+		Titles:      reg.titler != nil,
+		Discovery:   reg.discoverer != nil,
+		PromptQueue: reg.queuer != nil,
+	}
+	if reg.actor != nil {
+		for _, route := range reg.actor.ActionRoutes() {
+			if route.Blocking {
+				caps.PermissionCards = true
+				break
+			}
+		}
+	}
+	return caps
+}
+
+// PermissionModes returns a provider's modes, or nil when it has none.
+func PermissionModes(id string) []string {
+	if m := ModerFor(id); m != nil {
+		return m.PermissionModes()
+	}
+	return nil
+}
+
+// ValidMode reports whether a provider would accept a mode. False for a
+// provider with no modes at all, which is what callers want: there is nothing
+// valid to set.
+func ValidMode(id, mode string) bool {
+	if m := ModerFor(id); m != nil {
+		return m.ValidMode(mode)
+	}
+	return false
+}
+
+// HookHandlerFor resolves a dotted hook key — "claude.permission" — to its
+// handler.
+//
+// The provider ID is the first segment and the rest is the route, so a
+// provider owns its own namespace and two providers cannot collide.
+func HookHandlerFor(key string) HookHandler {
+	id, route, ok := strings.Cut(key, ".")
+	if !ok {
+		return nil
+	}
+	h := HookerFor(id)
+	if h == nil {
+		return nil
+	}
+	// Routes are registered with slashes, the key arrives with dots.
+	return h.HookRoutes()[strings.ReplaceAll(route, ".", "/")]
+}
+
+// ActionHandlerFor resolves a notification type to the handler that answers
+// it.
+func ActionHandlerFor(notifType string) ActionHandler {
+	id, _, ok := strings.Cut(notifType, ".")
+	if !ok {
+		return nil
+	}
+	a := ActorFor(id)
+	if a == nil {
+		return nil
+	}
+	route, found := a.ActionRoutes()[notifType]
+	if !found {
+		return nil
+	}
+	return route.Handler
+}
+
+// NotificationType is one entry of the catalogue served to clients.
+//
+// Clients used to hardcode this list, four times each, and adding a provider
+// meant editing every copy — with no error when one was missed. Served, it is
+// edited nowhere.
+type NotificationType struct {
+	Type         string `json:"type"`
+	Provider     string `json:"provider"`
+	Label        string `json:"label"`
+	Detail       string `json:"detail,omitempty"`
+	Blocking     bool   `json:"blocking"`
+	Group        string `json:"group"`
+	DefaultAlert bool   `json:"default_alert"`
+}
+
+// NotificationTypes returns every answerable notification type, sorted so the
+// order a client renders is stable across restarts.
+func NotificationTypes() []NotificationType {
+	out := []NotificationType{}
+	for _, p := range All() {
+		id := p.Info().ID
+		a := ActorFor(id)
+		if a == nil {
+			continue
+		}
+		for notifType, route := range a.ActionRoutes() {
+			out = append(out, NotificationType{
+				Type:         notifType,
+				Provider:     id,
+				Label:        route.Label,
+				Detail:       route.Detail,
+				Blocking:     route.Blocking,
+				Group:        route.Group,
+				DefaultAlert: route.DefaultAlert,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Provider != out[j].Provider {
+			return out[i].Provider < out[j].Provider
+		}
+		return out[i].Type < out[j].Type
+	})
+	return out
+}
+
+// Commands returns every provider's slash commands, keyed by provider ID.
+func Commands() map[string][]Command {
+	out := map[string][]Command{}
+	for _, p := range All() {
+		id := p.Info().ID
+		if reg := lookup(id); reg != nil && reg.commander != nil {
+			out[id] = reg.commander.Commands()
+		}
+	}
+	return out
+}
+
+// EventTypes returns every provider's reportable events, keyed by provider ID.
+func EventTypes() map[string][]EventTypeInfo {
+	out := map[string][]EventTypeInfo{}
+	for _, p := range All() {
+		id := p.Info().ID
+		if reg := lookup(id); reg != nil && reg.narrator != nil {
+			out[id] = reg.narrator.EventTypes()
+		}
+	}
+	return out
+}
+
+// DiscoverAll runs every provider's discovery scan.
+func DiscoverAll(db *store.Store) {
+	for _, p := range All() {
+		if d := DiscovererFor(p.Info().ID); d != nil {
+			d.Discover(db)
+		}
+	}
 }

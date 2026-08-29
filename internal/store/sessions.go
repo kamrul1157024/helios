@@ -34,6 +34,12 @@ type Session struct {
 	// record of it, a session that goes cold comes back in the default mode
 	// and silently discards whatever the user chose.
 	PermissionMode *string `json:"permission_mode,omitempty"`
+	// ResumeID is what the provider needs to wake this session, and is opaque
+	// to the daemon. It exists because helios mints the session id but not
+	// every agent will take one: Codex generates its own and offers no flag to
+	// set it, so the two ids differ and both must be kept. For Claude they are
+	// equal and this is nil.
+	ResumeID *string `json:"resume_id,omitempty"`
 	// Terminal is the handle of the session's live terminal host, injected by
 	// the daemon rather than stored: a cold session simply has none.
 	Terminal *string `json:"terminal,omitempty"`
@@ -215,12 +221,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 		        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-		        permission_mode, created_at, ended_at
+		        permission_mode, resume_id, created_at, ended_at
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 		&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
-		&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt)
+		&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -303,7 +309,7 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-	        permission_mode, created_at, ended_at, group_key
+	        permission_mode, resume_id, created_at, ended_at, group_key
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -327,7 +333,8 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 		if err := rows.Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
-			&sess.PermissionMode, &sess.CreatedAt, &sess.EndedAt, &held); err != nil {
+			&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt,
+			&held); err != nil {
 			return nil, err
 		}
 		result = append(result, sess)
@@ -563,4 +570,16 @@ func (s *Store) GetSubagent(agentID string) (*Subagent, error) {
 		return nil, nil
 	}
 	return sub, err
+}
+
+// UpdateSessionResumeID records what the provider needs to wake this session.
+//
+// Written by the provider's own session-start hook, because an agent that
+// mints its own id is the only thing that knows it.
+func (s *Store) UpdateSessionResumeID(sessionID, resumeID string) error {
+	_, err := s.db.Exec(
+		`UPDATE sessions SET resume_id = ? WHERE session_id = ?`,
+		resumeID, sessionID,
+	)
+	return err
 }

@@ -178,9 +178,9 @@ func TestResolveTerminalSocket_DaemonDown(t *testing.T) {
 // ==================== wrapCommand ====================
 
 func TestWrapCommand_ClaudeGetsMintedSessionID(t *testing.T) {
-	id, cmd, isClaude := wrapCommand([]string{"claude"})
-	if !isClaude {
-		t.Fatal("claude should be recognised")
+	id, cmd, providerID := wrapCommand([]string{"claude"})
+	if providerID != "claude" {
+		t.Fatalf("provider = %q, want claude", providerID)
 	}
 	if id == "" {
 		t.Fatal("a session ID should have been minted")
@@ -202,8 +202,8 @@ func TestWrapCommand_MintedIDPrecedesUserArgs(t *testing.T) {
 }
 
 func TestWrapCommand_ResumeReusesID(t *testing.T) {
-	id, cmd, isClaude := wrapCommand([]string{"claude", "--resume", "existing-id"})
-	if !isClaude {
+	id, cmd, providerID := wrapCommand([]string{"claude", "--resume", "existing-id"})
+	if providerID != "claude" {
 		t.Fatal("claude should be recognised")
 	}
 	if id != "existing-id" {
@@ -272,8 +272,8 @@ func TestExplicitPermissionMode_SkipRecordedAsBypass(t *testing.T) {
 }
 
 func TestWrapCommand_AbsolutePathToClaudeIsRecognised(t *testing.T) {
-	_, _, isClaude := wrapCommand([]string{"/opt/homebrew/bin/claude"})
-	if !isClaude {
+	_, _, providerID := wrapCommand([]string{"/opt/homebrew/bin/claude"})
+	if providerID != "claude" {
 		t.Error("a path ending in claude should be recognised")
 	}
 }
@@ -281,8 +281,8 @@ func TestWrapCommand_AbsolutePathToClaudeIsRecognised(t *testing.T) {
 // Anything else still gets a session so it is addressable, but its arguments
 // are left exactly as given.
 func TestWrapCommand_NonClaudeLeavesArgsAlone(t *testing.T) {
-	id, cmd, isClaude := wrapCommand([]string{"bash", "-l"})
-	if isClaude {
+	id, cmd, providerID := wrapCommand([]string{"bash", "-l"})
+	if providerID == "claude" {
 		t.Error("bash should not be treated as claude")
 	}
 	if id == "" {

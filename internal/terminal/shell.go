@@ -111,7 +111,7 @@ func (r *Registry) StartShell(parent, cwd string) (Terminal, error) {
 	sock := SocketPath(r.heliosDir, id)
 	RemoveHostFiles(r.heliosDir, id)
 
-	if err := r.spawn(id, cwd, LoginShellArgv()); err != nil {
+	if err := r.spawn(id, cwd, LoginShellArgv(), nil); err != nil {
 		return Terminal{}, fmt.Errorf("spawn shell for %s: %w", parent, err)
 	}
 	if !WaitForSocket(sock, hostStartTimeout) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"syscall"
 )
 
@@ -19,7 +20,7 @@ import (
 // Empty argv resumes the session's agent; otherwise argv is executed as given.
 // The host runs it directly rather than through a shell, so the caller's
 // environment is what the agent gets and nothing re-reads the user's rc file.
-func SpawnHost(heliosDir, sessionID, cwd string, argv []string) error {
+func SpawnHost(heliosDir, sessionID, cwd string, argv []string, env map[string]string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve helios binary: %w", err)
@@ -40,7 +41,7 @@ func SpawnHost(heliosDir, sessionID, cwd string, argv []string) error {
 		}
 	}()
 
-	cmd := exec.Command(exe, hostArgs(sessionID, cwd, argv)...)
+	cmd := exec.Command(exe, hostArgs(sessionID, cwd, argv, env)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	if logFile != nil {
@@ -65,7 +66,7 @@ func SpawnHost(heliosDir, sessionID, cwd string, argv []string) error {
 
 // hostArgs renders the ptyhost command line for a session. Each element of
 // argv gets its own flag, so no part of the command is ever parsed as text.
-func hostArgs(sessionID, cwd string, argv []string) []string {
+func hostArgs(sessionID, cwd string, argv []string, env map[string]string) []string {
 	args := []string{"ptyhost", sessionID}
 	if cwd != "" {
 		args = append(args, "--cwd", cwd)
@@ -75,6 +76,16 @@ func hostArgs(sessionID, cwd string, argv []string) []string {
 		for _, a := range argv[1:] {
 			args = append(args, "--arg", a)
 		}
+	}
+	// Sorted so the command line is stable, which keeps a test that compares
+	// it from depending on map order.
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--env", k+"="+env[k])
 	}
 	return args
 }

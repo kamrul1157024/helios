@@ -459,7 +459,8 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
   const [modes, setModes] = useState<string[] | null>(null)
   const [pending, setPending] = useState(false)
 
-  if (session.source !== 'claude') return null
+  // No source check: the modes come from whichever provider owns the session,
+  // and a provider with none returns an empty list, which renders nothing.
 
   const load = async (): Promise<void> => {
     if (modes) return

@@ -15,7 +15,7 @@ func TestAgentEnv_DropsTheParentAgentsMarks(t *testing.T) {
 		t.Setenv(v, "inherited")
 	}
 
-	for _, kv := range agentEnv() {
+	for _, kv := range agentEnv(nil) {
 		if key, _, ok := strings.Cut(kv, "="); ok && slices.Contains(agentVars, key) {
 			t.Errorf("env still carries %q", kv)
 		}
@@ -27,7 +27,7 @@ func TestAgentEnv_KeepsEverythingElse(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin")
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/cfg")
 
-	env := agentEnv()
+	env := agentEnv(nil)
 	if !slices.Contains(env, "PATH=/usr/bin") {
 		t.Error("PATH was dropped")
 	}

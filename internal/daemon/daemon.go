@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
-	"github.com/kamrul1157024/helios/internal/discovery"
 	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
+	codex "github.com/kamrul1157024/helios/internal/provider/codex"
 	"github.com/kamrul1157024/helios/internal/server"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/terminal"
@@ -76,16 +77,29 @@ func TunnelProviderConfig(cfg *Config) tunnel.ProviderConfig {
 //
 // Returning nil is the safe answer for anything we cannot look up — ptyhost's
 // fallback then applies, which is the behaviour that predates this.
-func resumeArgs(db *store.Store, sessionID string) []string {
+func resumeLaunch(db *store.Store, sessionID string) ([]string, map[string]string) {
 	sess, err := db.GetSession(sessionID)
-	if err != nil || sess == nil || sess.Source != "claude" {
-		return nil
+	if err != nil || sess == nil {
+		return nil, nil
+	}
+	r := provider.ResumerFor(sess.Source)
+	if r == nil {
+		return nil, nil
 	}
 	mode := ""
 	if sess.PermissionMode != nil {
 		mode = *sess.PermissionMode
 	}
-	return claude.ResumeArgs(sessionID, mode)
+	resumeID := sessionID
+	if sess.ResumeID != nil && *sess.ResumeID != "" {
+		resumeID = *sess.ResumeID
+	}
+	launch, err := r.Resume(sessionID, resumeID, mode)
+	if err != nil {
+		log.Printf("resume: %s: %v", sessionID, err)
+		return nil, nil
+	}
+	return launch.Argv, launch.Env
 }
 
 func startDaemon(cfg *Config) error {
@@ -119,23 +133,29 @@ func startDaemon(cfg *Config) error {
 	mgr := notifications.NewManager(db)
 	mgr.StartCleanup()
 
-	// Register providers. A zero port is how the provider is told to leave
-	// --mcp-config off the argv, which is what the flag being off means for a
-	// session Helios launches itself.
+	// Register providers. Two different uses of one number, and only one is
+	// behind the flag: a zero port tells the Claude provider to leave
+	// --mcp-config off the argv, while codex uses the port to reach the
+	// daemon's hook route, which is not optional.
 	mcpPort := 0
 	if featureflag.MCP() {
 		mcpPort = cfg.Server.InternalPort
 	}
-	claude.Register(mcpPort)
+	provider.MustRegister(claude.New(mcpPort))
+	provider.MustRegister(codex.New(cfg.Server.InternalPort))
 
 	// Terminal hosts are separate processes, so any that survived the last
 	// daemon are still serving; adopt them before anything else looks at
 	// session state.
-	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string) error {
+	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string, env map[string]string) error {
 		if len(argv) == 0 {
-			argv = resumeArgs(db, sessionID)
+			var resumeEnv map[string]string
+			argv, resumeEnv = resumeLaunch(db, sessionID)
+			if env == nil {
+				env = resumeEnv
+			}
 		}
-		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv)
+		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv, env)
 	})
 	if alive, cleaned, err := registry.Recover(); err != nil {
 		log.Printf("terminal: recover: %v", err)
@@ -150,9 +170,10 @@ func startDaemon(cfg *Config) error {
 
 	// Give the claude action handlers access to session terminals
 	claude.SetBackend(term)
+	codex.SetBackend(term)
 
 	// Discover existing Claude sessions from transcript files
-	go discovery.DiscoverClaudeSessions(db)
+	go provider.DiscoverAll(db)
 
 	// Create tunnel manager
 	tunnelMgr := tunnel.NewManager(HeliosDir())

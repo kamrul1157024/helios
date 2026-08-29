@@ -254,11 +254,11 @@ func TestSend_LiveSessionSkipsTheBootWait(t *testing.T) {
 // A prompt queued behind a turn in progress is the agent's to pick up when it
 // is done, so there is no acknowledgement coming and nothing to wait for.
 func TestSend_QueuedPromptDoesNotWaitForAnAcknowledgement(t *testing.T) {
-	provider.RegisterProvider(provider.ProviderInfo{
-		ID:           "queueing",
-		Name:         "Queueing",
-		Capabilities: provider.ProviderCapabilities{PromptQueue: true},
-	}, nil, nil)
+	provider.Deregister("queueing")
+	if err := provider.Register(&queueingProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	t.Cleanup(func() { provider.Deregister("queueing") })
 
 	s, shared, be := newSendTest(t)
 	if err := shared.DB.UpsertSession(&store.Session{
@@ -279,4 +279,21 @@ func TestSend_QueuedPromptDoesNotWaitForAnAcknowledgement(t *testing.T) {
 	if payload["queued"] != true {
 		t.Errorf("queued = %v, want true", payload["queued"])
 	}
+}
+
+// queueingProvider is a provider whose agent holds a prompt sent mid-turn.
+// Implementing Queuer is what declares that; there is no flag to set.
+type queueingProvider struct{ sent []string }
+
+func (q *queueingProvider) Info() provider.Info {
+	return provider.Info{ID: "queueing", Name: "Queueing", Kind: provider.KindNative}
+}
+
+func (q *queueingProvider) Launch(provider.SessionSpec) (provider.Launch, error) {
+	return provider.Launch{Argv: []string{"queueing"}}, nil
+}
+
+func (q *queueingProvider) QueuePrompt(sessionID, resumeID, text string) error {
+	q.sent = append(q.sent, text)
+	return nil
 }

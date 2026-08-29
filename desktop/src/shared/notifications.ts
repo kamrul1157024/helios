@@ -1,18 +1,42 @@
 import type { NotificationPrefs } from './models.ts'
 
 /**
- * Types that hold an agent until they are answered.
+ * The provider that raised a notification: "claude" from "claude.permission".
+ */
+export function providerOf(type: string): string {
+  const i = type.indexOf('.')
+  return i < 0 ? type : type.slice(0, i)
+}
+
+/**
+ * What kind of request this is, independent of who raised it: "permission"
+ * from "codex.permission", "elicitation.form" from "claude.elicitation.form".
+ *
+ * Every switch keys on this rather than the whole type. That one change is
+ * what makes a second provider cost nothing here: its permission request is
+ * the same request, and it gets the same card.
+ */
+export function kindOf(type: string): string {
+  const i = type.indexOf('.')
+  return i < 0 ? '' : type.slice(i + 1)
+}
+
+/**
+ * Kinds that hold an agent until they are answered.
  *
  * These go to the HUD, which can answer them; the rest are news, and a banner
  * is the right size for news.
+ *
+ * The daemon also serves this, on /api/notification-types. Until the renderer
+ * reads that, this list is the fallback — and it is keyed on kind, so an
+ * unrecognised provider's permission request still reaches the HUD instead of
+ * being quietly filed as news.
  */
+const BLOCKING_KINDS = ['permission', 'question', 'trust']
+
 export function isBlocking(type: string): boolean {
-  return (
-    type === 'claude.permission' ||
-    type === 'claude.question' ||
-    type === 'claude.trust' ||
-    type.startsWith('claude.elicitation')
-  )
+  const kind = kindOf(type)
+  return BLOCKING_KINDS.includes(kind) || kind.startsWith('elicitation')
 }
 
 /**

@@ -281,7 +281,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	emoji, _ := db.GetSetting("autotitle.emoji")
 	systemPrompt := titleSystemPrompt(custom, forceTitle)
 
-	caller := provider.GetSmallModelCaller("claude")
+	caller := provider.SmallModelFor("claude")
 	if caller == nil {
 		return ""
 	}
@@ -289,7 +289,7 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 	ctx, cancel := context.WithTimeout(context.Background(), titleCallTimeout)
 	defer cancel()
 
-	title, err := caller(ctx, systemPrompt, prompt)
+	title, err := caller.Complete(ctx, systemPrompt, prompt)
 	if err != nil || title == "" {
 		// Deliberately before the attempt is charged: the model never answered.
 		log.Printf("autotitle: haiku call failed for %s (attempt %d, not charged): %v", sessionID, attempt, err)
