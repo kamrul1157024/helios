@@ -522,11 +522,31 @@ Make `claude` a value implementing them. Add the registry accessors. Delete the
 seven maps and the three by-name imports. Write the conformance test, which is
 the first test `internal/provider` will have.
 
-No behaviour change. The existing Claude tests are the proof — though note that
-converting free functions to methods may force edits to test *call sites*. The
-contract is that no test *assertion* changes; the baseline is `go test ./...`
-with `internal/terminal`'s two e2e cases excluded, which fail on this machine
-for unrelated reasons.
+No behaviour change. The contract is that **no test assertion changes**.
+
+That contract is now costed rather than hoped for. Counting every call in
+`internal/provider/claude/*_test.go` that would take a receiver:
+
+| File | Calls to touch |
+|---|---|
+| `register_test.go` | 22 |
+| `actions_test.go` | 13 |
+| `hooks_test.go` | 1 |
+| `apierror_test.go`, `question_test.go`, `autotitle_test.go` | 0 |
+
+Thirty-six, plus five lines setting the `terminalBackend` and `mcpPort`
+package variables, which become struct fields. Every one is mechanical: add a
+receiver, or read `.Argv` off the returned `Launch`. No assertion moves.
+
+Two details make it this cheap. `callHook` takes the handler as a **function
+value** (`hooks_test.go:198`), so `p.handlePermission` substitutes for
+`handlePermission` unchanged. And the three files with zero edits test pure
+functions that do not belong to the provider value at all.
+
+The baseline is `go test ./...`. Everything passes except
+`internal/terminal`'s two Claude e2e cases, which fail on this machine for
+unrelated reasons — the assertion `"Welcome to Claude Code"` no longer matches
+what Claude Code renders. Worth fixing, but not in this change.
 
 **Stage 2 — Codex** as a second native provider. See
 [46](46-codex-provider.md). This is what proves the interface holds for a

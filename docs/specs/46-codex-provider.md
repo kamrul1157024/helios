@@ -311,8 +311,59 @@ None matches. Codex says "trust the **contents** of this directory" and "Yes,
 **continue**". So a Helios-launched Codex session in a new directory stops at
 a dialog nobody is told about, reporting `starting` until it times out.
 
-The dialog defaults to "1. Yes, continue", so `handleTrustAction`'s existing
-Enter keystroke should answer it — inferred from the layout, not measured.
+### ✗ Codex swallows a keystroke sent too early
+
+The dialog defaults to "1. Yes, continue", so `handleTrustAction`'s Enter
+should answer it. Measured, and it does — but not immediately.
+
+Sending `\r` as soon as the dialog appears on screen does nothing. Sending the
+same `\r` after a three-second settle dismisses it. Tried in order and only the
+last succeeded: CR, LF, `1`, `1`+CR, and the kitty-protocol `CSI 13 u` — all
+after a settle, at which point plain CR was already enough. So it is a timing
+race, not an encoding problem. `backend.KeyEnter` is `\r`
+(`internal/backend/host.go:319`) and is the correct key.
+
+Codex paints the dialog before its input loop consumes keys, and a keystroke in
+that window is dropped with no feedback.
+
+**This is a live hazard for the trust card.** The watcher raises the card the
+moment the dialog renders. A tap that arrives inside the dead window is
+swallowed, the dialog stays up, and the notification is already resolved — so
+nothing will ever answer it. A human tap usually takes longer than three
+seconds, which is exactly the kind of margin that holds until it does not.
+
+The provider's trust action should delay, retry until the screen changes, or
+both. Do not rely on the human being slow.
+
+### ✓ The HITL overlay paints over Codex
+
+Helios's own modal renders on top of Codex's full-screen TUI, and Codex's UI
+comes back intact when it clears. So a permission card is answerable at the
+terminal as well as the phone, which is the whole point of the HITL work.
+
+One trap found while proving it: only the **control** viewer may set an overlay
+(`internal/terminal/host.go:767`). An interactive viewer's `SetOverlay` is
+dropped in silence. The daemon holds that role in production, so this is a
+test-authoring hazard rather than a product one — but silence is again the
+failure mode.
+
+### The tests
+
+Three end-to-end tests now cover the above in
+`internal/terminal/e2e_codex_test.go`, modelled on the existing Claude ones:
+
+| Test | Claim |
+|---|---|
+| `TestE2ECodexBootsUnderHost` | codex boots, renders, and takes keystrokes through the PTY host |
+| `TestE2ECodexTrustDialogEvadesTheDaemonPatterns` | its trust wording does not match the daemon's Claude patterns |
+| `TestE2ECodexOverlayPaintsOverTheTUI` | the HITL modal paints over it and clears cleanly |
+
+They skip when codex is absent or logged out. `CODEX_HOME` is an isolated copy
+holding only `auth.json`, so a run never adds rows to the developer's own
+session history. An unauthenticated codex exits before the host settles, and
+the socket is torn down again — which surfaces as "socket never appeared" and
+blames the wrong component. That cost an hour; hence the comment in the
+helper.
 
 **This is the second silent stall.** Untrusted hooks are the first. A fresh
 Codex session in a new directory hits both at once, and neither reports
