@@ -48,6 +48,63 @@ only. The clients are the larger half.
 | Mobile (`mobile/lib`) | 9 | card registry, `isBlocking`, home-screen branch chain, default-prefs map, settings list, `source == 'claude'` gates, direct `providers/claude/*` imports |
 | **Total** | **~29** | |
 
+### What each client does with an unknown provider
+
+Read in full. Desktop was also run: built, launched under Xvfb against the live
+daemon, driven over CDP, and given a real `claude.permission` raised through
+`POST /hooks/claude/permission`.
+
+**Desktop works, and degrades visibly.** The app connects, lists real sessions,
+and a blocking notification opens a HUD window rendering
+`PERMISSION REQUEST / Bash / Approve / Deny / Edit before approving`.
+Abandoning the hook request retracts the card, so the retraction path is sound.
+
+The gap is `isBlocking` (`desktop/src/shared/notifications.ts:8`), a literal
+allowlist of `claude.*` strings. A `codex.permission` returns false, so it is
+classed as news: a banner instead of the HUD card that can answer it. The
+notification is visible and the agent waits for an answer no desktop surface
+offers.
+
+**Mobile is worse: it raises no OS notification at all.** The dispatch in
+`home_screen.dart:121-175` is an if/else chain over seven literal `claude.*`
+types **with no final else**. An unrecognised type falls out of the chain in
+silence.
+
+In-app it degrades: `dashboard_screen.dart:104` does
+`card ?? _buildStatusCard(...)`, so the notification is visible but not
+answerable. The phone is the surface Helios exists for — the Claude provider's
+own comment calls a session that stops on a permission question "a session the
+user cannot finish from the lock screen". A Codex session would do exactly
+that, with no buzz.
+
+One more, worth quoting because the comment is already ahead of the code:
+
+```dart
+/// Whether this notification needs user action (checks all registered providers).
+bool needsAction(HeliosNotification n) {
+  return n.needsClaudeAction;      // card_registry.dart:63
+}
+```
+
+**Two things already generalise, and are cheaper than they look.**
+`newsession.tsx` fetches the provider list and falls back to the first entry,
+so its `useState('claude')` is harmless. And `detail.tsx:538`'s
+`if (session.source !== 'claude') return null` guards code that already
+resolves modes per provider through `providers.find(p => p.id ===
+session.source)` — deleting the line is the whole fix.
+
+**The one good default, in both clients.** Alert lookup falls back to enabled
+(`shouldSound`'s `?? true`, `isAlertEnabled`'s `?? true`), so an unknown
+provider is noisy rather than silent. Silence would be the dangerous
+direction. Keep that shape when the catalogue moves to the daemon.
+
+`desktop/test/provider-coupling.test.ts` pins all of the above. Each assertion
+states today's behaviour, so the ones marked `GAP` fail when the gap closes —
+that failure is the signal to update the file.
+
+**Mobile could not be run.** Flutter is not installed on this machine, so every
+mobile claim here is from reading. It is the least-verified part of the plan.
+
 ### The clients own a catalogue they should be served
 
 Both clients hardcode the same thing four times each: the list of notification
