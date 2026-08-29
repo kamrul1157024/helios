@@ -233,3 +233,43 @@ func TestNotificationTypesAreServedAndSorted(t *testing.T) {
 		}
 	}
 }
+
+// Readiness gates the session picker, so it has to be honest in both
+// directions: an agent that is not installed must never read as ready, and a
+// fully configured one must not be held back by something unknowable.
+func TestReadinessGatesOnWhatCanBeFixed(t *testing.T) {
+	provider.Deregister("conformance-minimal")
+	if err := provider.Register(minimalProvider{}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	t.Cleanup(func() { provider.Deregister("conformance-minimal") })
+
+	// No Availability and no installer: nothing it can get wrong.
+	r := provider.ReadinessFor("conformance-minimal")
+	if !r.Ready {
+		t.Errorf("a provider with nothing to configure is not ready: %+v", r)
+	}
+
+	// An unknown provider is not ready, and says so rather than claiming to be.
+	if provider.ReadinessFor("no-such-provider").Ready {
+		t.Error("an unregistered provider reported ready")
+	}
+}
+
+// Every blocker must come with something the user can do. A blocker with no
+// hint is a dead end on a setup screen.
+func TestBlockersCarryAHint(t *testing.T) {
+	for _, p := range registered(t) {
+		id := p.Info().ID
+		provider.Deregister(id)
+		if err := provider.Register(p); err != nil {
+			t.Fatalf("register %s: %v", id, err)
+		}
+		t.Cleanup(func() { provider.Deregister(id) })
+
+		r := provider.ReadinessFor(id)
+		if r.Blocker != "" && r.Hint == "" {
+			t.Errorf("%s reports %q with no way to fix it", id, r.Blocker)
+		}
+	}
+}

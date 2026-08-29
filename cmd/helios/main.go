@@ -1048,7 +1048,7 @@ func handleCleanup(args []string) {
 
 func handleHooks(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove>")
+		fmt.Fprintln(os.Stderr, "Usage: helios hooks <install|show|remove> [--provider name] [--local]")
 		os.Exit(1)
 	}
 
@@ -1059,12 +1059,18 @@ func handleHooks(args []string) {
 	switch args[0] {
 	case "install":
 		local := false
-		for _, a := range args[1:] {
+		var only []string
+		for i, a := range args[1:] {
 			if a == "--local" {
 				local = true
 			}
+			// One agent at a time, so setup can be done per provider rather
+			// than as a single all-or-nothing step.
+			if a == "--provider" && i+2 < len(args) {
+				only = append(only, args[i+2])
+			}
 		}
-		if err := daemon.InstallHooks(local); err != nil {
+		if err := daemon.InstallHooks(local, only...); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

@@ -77,6 +77,10 @@ func (m StartModel) View() string {
 	switch m.screen {
 	case screenLoading:
 		return m.viewLoading()
+	case screenAgentMenu:
+		return m.viewAgentMenu()
+	case screenAgentSetup:
+		return m.viewAgentSetup()
 	case screenHooksInstall:
 		return m.viewHooksInstall()
 	case screenHooksUpdate:
@@ -673,4 +677,86 @@ func agentDisplayName(providerID string) string {
 		return p.Info().Name
 	}
 	return providerID
+}
+
+// viewAgentMenu lists the agents and lets the user set one up at a time.
+//
+// A menu rather than a single prompt because the decisions are separate: a
+// machine with two agents was being asked one yes/no for both, on a screen
+// that could only describe one of them.
+func (m StartModel) viewAgentMenu() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("helios — Agents"))
+	b.WriteString("\n\n")
+	b.WriteString(subtitleStyle.Render("  An agent is offered when you start a session only once it is set up."))
+	b.WriteString("\n\n")
+
+	for i, l := range m.hookLines {
+		cursor := "  "
+		if i == m.agentCursor {
+			cursor = selectedStyle.Render("▸ ")
+		}
+		b.WriteString(cursor + agentMenuRow(l) + "\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  ↑↓ choose  enter set up  tab skip  q quit"))
+	return b.String()
+}
+
+// agentMenuRow is one line: the agent, its state, and what is missing.
+func agentMenuRow(l hookLine) string {
+	name := agentDisplayName(l.Provider)
+	switch {
+	case !l.CLIPresent:
+		return subtitleStyle.Render(fmt.Sprintf("· %s — not installed", name))
+	case !l.Health.Installed:
+		return fmt.Sprintf("%s %s — hooks not installed", warnStyle.Render("✗"), name)
+	case !l.Health.Current:
+		return fmt.Sprintf("%s %s — hooks out of date", warnStyle.Render("~"), name)
+	case !l.Health.Effective:
+		return fmt.Sprintf("%s %s — set up, not yet seen running", warnStyle.Render("~"), name)
+	default:
+		return fmt.Sprintf("%s %s — ready", checkStyle.Render("✓"), name)
+	}
+}
+
+// viewAgentSetup explains one agent and what setting it up will do.
+func (m StartModel) viewAgentSetup() string {
+	var b strings.Builder
+	line, ok := m.agentAt(m.agentCursor)
+	name := agentDisplayName(m.agentSetup)
+
+	b.WriteString(titleStyle.Render("helios — " + name))
+	b.WriteString("\n\n")
+
+	if !ok || !line.CLIPresent {
+		// Helios cannot install someone else's agent, and should not pretend
+		// to. Say what to run and get out of the way.
+		b.WriteString(cross(name + " is not installed"))
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("  Install it, then run helios start again:"))
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("    " + agentInstallHint(m.agentSetup)))
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  enter back  tab back  q quit"))
+		return b.String()
+	}
+
+	b.WriteString("  " + agentMenuRow(line) + "\n\n")
+	b.WriteString(subtitleStyle.Render("  Hooks let helios see this agent's sessions and answer its"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  permission prompts from your phone."))
+	b.WriteString("\n")
+
+	// The one thing helios cannot do for the user, said only where it applies.
+	if line.Health.Installed && line.Health.Current && !line.Health.Effective && line.Health.Detail != "" {
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), line.Health.Detail))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  enter install hooks  tab back  q quit"))
+	return b.String()
 }

@@ -30,6 +30,8 @@ const (
 	screenLoading        screen = iota // checking daemon, starting if needed
 	screenHooksInstall                 // prompt to install Claude hooks
 	screenHooksUpdate                  // prompt to update outdated hooks
+	screenAgentMenu                    // pick an agent to set up
+	screenAgentSetup                   // set one agent up
 	screenShellSetup                   // prompt to install shell wrapper
 	screenMCPSetup                     // prompt to register the Helios MCP server
 	screenTunnelSelect                 // first time only: pick tunnel provider
@@ -198,9 +200,13 @@ type StartModel struct {
 	internalPort int
 
 	// Status check results
-	daemonOK      bool
-	hookLines     []hookLine
-	hooksOK       bool
+	daemonOK  bool
+	hookLines []hookLine
+	hooksOK   bool
+	// agentCursor is the highlighted row of the agent menu.
+	agentCursor int
+	// agentSetup is the agent the setup screen is working on.
+	agentSetup    string
 	hooksOutdated bool
 	// mcpRegistered reports whether Claude Code knows about the Helios MCP
 	// server. Unregistered is a suggestion, never a blocker: the explain panel
@@ -342,6 +348,25 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentsRefreshed:
+		m.hookLines = msg.lines
+		m.hooksOK = allHooksHealthy(msg.lines)
+		if m.agentCursor >= len(m.hookLines) {
+			m.agentCursor = 0
+		}
+		return m, nil
+
+	case agentInstallDone:
+		if msg.err != nil {
+			m.errMsg = fmt.Sprintf("Failed to set up %s: %v", msg.provider, msg.err)
+			m.screen = screenError
+			return m, nil
+		}
+		// Back to the menu with fresh state, so the user sees the tick land
+		// and can pick the next agent — or press tab to move on.
+		m.screen = screenAgentMenu
+		return m, refreshAgentsCmd()
+
 	case hooksInstallDone:
 		if msg.err != nil {
 			m.errMsg = fmt.Sprintf("Failed to install hooks: %v", msg.err)
@@ -415,7 +440,11 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
-		case screenHooksInstall, screenHooksUpdate, screenShellSetup, screenMCPSetup, screenError:
+		case screenAgentSetup:
+			m.screen = screenAgentMenu
+			return m, nil
+		case screenAgentMenu, screenHooksInstall, screenHooksUpdate,
+			screenShellSetup, screenMCPSetup, screenError:
 			return m, tea.Quit
 		case screenSettings:
 			m.screen = screenMain
@@ -423,6 +452,9 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "up", "k":
+		if m.screen == screenAgentMenu && m.agentCursor > 0 {
+			m.agentCursor--
+		}
 		if m.screen == screenTunnelSelect {
 			if m.tunnelCursor > 0 {
 				m.tunnelCursor--
@@ -435,6 +467,9 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down", "j":
+		if m.screen == screenAgentMenu && m.agentCursor < len(m.hookLines)-1 {
+			m.agentCursor++
+		}
 		if m.screen == screenTunnelSelect {
 			if m.tunnelCursor < len(tunnelProviders)-1 {
 				m.tunnelCursor++
@@ -509,6 +544,14 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		switch m.screen {
+		case screenAgentMenu:
+			// Skip the whole step. Setup must never be a wall: an agent left
+			// unconfigured is a provider missing from the session picker, not
+			// a broken helios.
+			return m.proceedAfterHooks()
+		case screenAgentSetup:
+			m.screen = screenAgentMenu
+			return m, nil
 		case screenHooksInstall, screenHooksUpdate:
 			return m.proceedAfterHooks()
 		case screenShellSetup:
@@ -529,15 +572,35 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.screen = screenError
 			return m, nil
 		}
+		// One agent at a time, chosen by the user. Installing everything from
+		// one Enter meant a machine with two agents got a single yes/no for
+		// two different decisions, and the screen could only describe one.
 		if !m.hooksOK {
-			m.screen = screenHooksInstall
-			return m, nil
-		}
-		if m.hooksOutdated {
-			m.screen = screenHooksUpdate
+			m.screen = screenAgentMenu
+			m.agentCursor = firstUnready(m.hookLines)
 			return m, nil
 		}
 		return m.proceedAfterHooks()
+
+	case screenAgentMenu:
+		line, ok := m.agentAt(m.agentCursor)
+		if !ok {
+			return m.proceedAfterHooks()
+		}
+		m.agentSetup = line.Provider
+		m.screen = screenAgentSetup
+		return m, nil
+
+	case screenAgentSetup:
+		line, ok := m.agentAt(m.agentCursor)
+		// Nothing to do for an agent that is not installed: helios cannot
+		// install it, and pretending otherwise would write hooks for a binary
+		// that is not there.
+		if !ok || !line.CLIPresent {
+			m.screen = screenAgentMenu
+			return m, nil
+		}
+		return m, installAgentHooksCmd(m.agentSetup)
 
 	case screenHooksInstall:
 		return m, installHooksCmd()
@@ -608,6 +671,22 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 
 	return m, nil
 }
+
+// agentAt returns the menu row at index i, or false when out of range.
+func (m StartModel) agentAt(i int) (hookLine, bool) {
+	if i < 0 || i >= len(m.hookLines) {
+		return hookLine{}, false
+	}
+	return m.hookLines[i], true
+}
+
+// refreshAgents re-reads every agent's state, so the menu shows the result of
+// what the user just did rather than what was true when the screen opened.
+func refreshAgentsCmd() tea.Cmd {
+	return func() tea.Msg { return agentsRefreshed{lines: hookLines()} }
+}
+
+type agentsRefreshed struct{ lines []hookLine }
 
 func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 	// Shell wrapper setup (skip if already installed or unsupported shell)
@@ -856,6 +935,45 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 
 		return result
 	}
+}
+
+// agentInstallDone reports one agent's setup finishing.
+type agentInstallDone struct {
+	provider string
+	err      error
+}
+
+// installAgentHooksCmd sets one agent up.
+//
+// Runs the same subcommand the user would, rather than calling the installer
+// in process: the TUI and the daemon are different processes with different
+// registries, and shelling out keeps one code path for both.
+func installAgentHooksCmd(providerID string) tea.Cmd {
+	return func() tea.Msg {
+		exe, err := os.Executable()
+		if err != nil {
+			return agentInstallDone{provider: providerID, err: err}
+		}
+		out, err := exec.Command(exe, "hooks", "install", "--provider", providerID).CombinedOutput()
+		if err != nil {
+			return agentInstallDone{
+				provider: providerID,
+				err:      fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out))),
+			}
+		}
+		return agentInstallDone{provider: providerID}
+	}
+}
+
+// firstUnready is the row the menu opens on: the first agent that needs
+// something, so the common case takes one Enter rather than an arrow key.
+func firstUnready(lines []hookLine) int {
+	for i, l := range lines {
+		if l.CLIPresent && (!l.Health.Installed || !l.Health.Current) {
+			return i
+		}
+	}
+	return 0
 }
 
 func installHooksCmd() tea.Cmd {

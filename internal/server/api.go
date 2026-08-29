@@ -1729,6 +1729,11 @@ type providerView struct {
 	provider.Info
 	Capabilities    provider.Capabilities `json:"capabilities"`
 	PermissionModes []string              `json:"permission_modes,omitempty"`
+	// Readiness is whether a session started now would work. Clients that
+	// offer session creation filter on it, so a user is not given a choice
+	// that fails; the setup surfaces show everything and use Blocker to say
+	// what is missing.
+	provider.Readiness
 }
 
 func (s *PublicServer) handleListProviders(w http.ResponseWriter, r *http.Request) {
@@ -1739,6 +1744,7 @@ func (s *PublicServer) handleListProviders(w http.ResponseWriter, r *http.Reques
 			Info:            p.Info(),
 			Capabilities:    provider.CapabilitiesOf(id),
 			PermissionModes: provider.PermissionModes(id),
+			Readiness:       provider.ReadinessFor(id),
 		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"providers": views})

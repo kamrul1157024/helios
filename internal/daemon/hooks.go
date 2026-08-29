@@ -17,14 +17,22 @@ import (
 //
 // One provider failing does not stop the others. A machine with Claude but not
 // Codex should still end up with working Claude hooks.
-func InstallHooks(local bool) error {
+// InstallHooks writes hook tables. An empty only means every provider.
+func InstallHooks(local bool, only ...string) error {
 	scope := provider.ScopeUser
 	if local {
 		scope = provider.ScopeProject
 	}
+	wanted := map[string]bool{}
+	for _, id := range only {
+		wanted[id] = true
+	}
 	var errs []error
 	for _, p := range provider.All() {
 		id := p.Info().ID
+		if len(wanted) > 0 && !wanted[id] {
+			continue
+		}
 		inst := provider.InstallerFor(id)
 		if inst == nil {
 			continue
