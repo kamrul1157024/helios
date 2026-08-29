@@ -609,4 +609,27 @@ func TestOneShotRunsAreNotTracked(t *testing.T) {
 	if len(sessions) != 0 {
 		t.Errorf("the session-start hook registered a one-shot run: %d rows", len(sessions))
 	}
+
+	// Every other hook too. Stop is the one that leaked: it filed a "Session
+	// completed" notification for the titler's own reply, and titled the
+	// session it had just heard from — which runs another exec, which stops.
+	w = httptest.NewRecorder()
+	stop, _ := json.Marshal(map[string]string{
+		"session_id":             "01a04dee-183a-7461-9bef-5f05c0aa510a",
+		"cwd":                    "/tmp",
+		"transcript_path":        rollout,
+		"last_assistant_message": "OK",
+	})
+	handleStop(ctx, w, httptest.NewRequest("POST", "/hooks/codex/stop", nil), stop)
+
+	if w.Code != 200 {
+		t.Errorf("stop hook answered %d, want 200", w.Code)
+	}
+	notifs, err := db.ListNotifications("", "", "")
+	if err != nil {
+		t.Fatalf("list notifications: %v", err)
+	}
+	if len(notifs) != 0 {
+		t.Errorf("a one-shot run raised %d notifications, want none", len(notifs))
+	}
 }

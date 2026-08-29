@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
@@ -96,13 +97,38 @@ func (p *Provider) HookRoutes() map[string]provider.HookHandler {
 }
 
 // decode reads a hook body, or writes the error and reports failure.
+//
+// It is also where a one-shot run is turned away. Hooks are configured for the
+// whole of Codex, so `codex exec` fires every one of them, and Helios runs an
+// exec each time it names a session. Turning away only the session-start hook
+// left the rest arriving for a session that does not exist: a "Session
+// completed" notification for the titler's own reply, and — because the stop
+// hook titles the session it just heard from — another exec, which stops,
+// which titles.
 func decode(w http.ResponseWriter, raw json.RawMessage) (*hookInput, bool) {
 	var in hookInput
 	if err := json.Unmarshal(raw, &in); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return nil, false
 	}
+	if in.TranscriptPath != "" && oneShot(in.TranscriptPath) {
+		ack(w)
+		return nil, false
+	}
 	return &in, true
+}
+
+// oneShot is IsOneShot, memoised. Hooks fire several times a turn and a
+// rollout's origin never changes, so it is read from disk once.
+var oneShotCache sync.Map
+
+func oneShot(rolloutPath string) bool {
+	if v, ok := oneShotCache.Load(rolloutPath); ok {
+		return v.(bool)
+	}
+	v := IsOneShot(rolloutPath)
+	oneShotCache.Store(rolloutPath, v)
+	return v
 }
 
 // ack writes the empty object Codex expects.
@@ -123,16 +149,6 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 		return
 	}
 	key := sessionKey(ctx, r, in)
-
-	// Hooks are configured for the whole of Codex, so a one-shot `codex exec`
-	// fires them too — including the ones Helios runs itself to name a session,
-	// which is how the list came to hold sessions whose first message was the
-	// title prompt. Nothing here can manage such a run: it has no terminal and
-	// it is over in seconds.
-	if in.TranscriptPath != "" && IsOneShot(in.TranscriptPath) {
-		ack(w)
-		return
-	}
 
 	var transcriptPath *string
 	if in.TranscriptPath != "" {
