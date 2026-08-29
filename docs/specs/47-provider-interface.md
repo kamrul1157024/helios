@@ -248,7 +248,23 @@ type Queuer interface {
     // terminal. Codex has `codex queue --thread`; Claude does not.
     Queue(sessionID, resumeID, text string) error
 }
+
+type ScreenWatcher interface {
+    // MatchScreen inspects rendered terminal text for a modal the agent is
+    // blocked on and that no hook reports. Returns the notification to raise,
+    // or nil. Called on screen change for sessions that have not reported in.
+    MatchScreen(screen string) *ScreenPrompt
+}
 ```
+
+`ScreenWatcher` exists because `internal/server/trust_watcher.go` is a provider
+concern living in the daemon. It matches four Claude-specific phrases
+(`trust_watcher.go:87`) and raises a hardcoded `claude.trust`.
+
+Codex has the same class of dialog with different wording, measured in
+[46](46-codex-provider.md), so the daemon's patterns miss it and the session
+stalls unreported. The daemon should keep the watching — the polling, the TTL,
+the screen source — and ask the provider what a screen means.
 
 ### Capabilities are derived, never declared
 

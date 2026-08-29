@@ -273,6 +273,53 @@ absent. That is the Helios permission card, end to end, over HTTP.
 `source: resume` in `SessionStart`, and the model recalled a number from the
 earlier turn. `resume_id` is stable across wakes.
 
+### ✓ Codex under the real Helios terminal host
+
+Run against the live daemon, not a harness. A `helios ptyhost` was spawned with
+`codex` as its child, registered through `POST /internal/wrap`, and attached.
+
+**The TUI renders correctly.** Box drawing, layout and the input line all come
+through Helios's PTY host and emulator intact. This was the largest unknown and
+it is now closed: the terminal layer needs no Codex-specific work.
+
+Two failures showed up that reading the code did not predict.
+
+**The session is filed as Claude.** The registered row came back
+`source: "claude"`. That is `api.go:1223`, confirmed live rather than inferred.
+
+**Codex has its own directory-trust dialog, and Helios cannot see it.** On
+first use of a directory Codex asks:
+
+```
+You are in /tmp/cxhost
+Do you trust the contents of this directory?
+Working with untrusted contents comes with higher risk of prompt injection.
+Trusting the directory allows project-local config, hooks, and exec policies to load.
+› 1. Yes, continue        2. No, quit
+```
+
+Same shape as Claude's, which Helios already handles with a screen watcher and
+a `claude.trust` card. But the watcher matches on Claude's wording
+(`internal/server/trust_watcher.go:87`):
+
+```go
+"yes, i trust this folder", "quick safety check",
+"one you trust", "trust the files in this"
+```
+
+None matches. Codex says "trust the **contents** of this directory" and "Yes,
+**continue**". So a Helios-launched Codex session in a new directory stops at
+a dialog nobody is told about, reporting `starting` until it times out.
+
+The dialog defaults to "1. Yes, continue", so `handleTrustAction`'s existing
+Enter keystroke should answer it — inferred from the layout, not measured.
+
+**This is the second silent stall.** Untrusted hooks are the first. A fresh
+Codex session in a new directory hits both at once, and neither reports
+anything. Any provider that can stall on a full-screen dialog needs the
+watcher, so the patterns and the notification type belong to the provider, not
+to `internal/server`.
+
 ### Four Codex limits that change the design
 
 **1. There is no `http` handler type.** Only `command` and `mcp_tool` work.
