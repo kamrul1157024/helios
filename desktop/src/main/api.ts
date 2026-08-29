@@ -508,9 +508,20 @@ export class ApiClient {
     return res.models ?? []
   }
 
+  /**
+   * Slash commands, flattened across providers.
+   *
+   * The daemon serves them keyed by provider id, because two agents can offer
+   * the same command name meaning different things. Nothing here needs that
+   * distinction yet, so they are flattened — but the wire shape is a map, and
+   * declaring it as an array made every consumer iterate an object.
+   */
   async commands(): Promise<CommandInfo[]> {
-    const res = await this.request<{ commands?: CommandInfo[] }>('GET', '/api/commands')
-    return res.commands ?? []
+    const res = await this.request<{ commands?: Record<string, CommandInfo[]> }>(
+      'GET',
+      '/api/commands',
+    )
+    return Object.values(res.commands ?? {}).flat()
   }
 
   settings(): Promise<Record<string, unknown>> {

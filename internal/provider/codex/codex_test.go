@@ -388,3 +388,100 @@ func hasFlagPair(argv []string, flag, value string) bool {
 	}
 	return false
 }
+
+// The hooks file is the user's. Helios owns the events it serves and nothing
+// else, so an install must not delete hooks somebody wrote by hand and an
+// uninstall must not take the file with it.
+func TestInstallAndRemovePreserveUserHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	path := filepath.Join(home, "hooks.json")
+
+	userHooks := `{"description":"mine","hooks":{"Notification":[{"matcher":"*",` +
+		`"hooks":[{"type":"command","command":"say hi"}]}]}}`
+	if err := os.WriteFile(path, []byte(userHooks), 0o600); err != nil {
+		t.Fatalf("seed hooks: %v", err)
+	}
+
+	p := New(7654)
+	if err := p.InstallHooks(provider.ScopeUser); err != nil {
+		t.Fatalf("InstallHooks: %v", err)
+	}
+
+	events := readEvents(t, path)
+	if _, kept := events["Notification"]; !kept {
+		t.Error("install deleted a hook the user wrote")
+	}
+	if _, added := events["PermissionRequest"]; !added {
+		t.Error("install did not add helios's own hooks")
+	}
+
+	if err := p.RemoveHooks(); err != nil {
+		t.Fatalf("RemoveHooks: %v", err)
+	}
+	events = readEvents(t, path)
+	if _, kept := events["Notification"]; !kept {
+		t.Error("uninstall deleted a hook the user wrote")
+	}
+	if _, present := events["PermissionRequest"]; present {
+		t.Error("uninstall left helios's hooks behind")
+	}
+}
+
+// A file holding only helios's hooks has no reason to survive an uninstall.
+func TestRemoveDeletesAFileWeFullyOwn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	p := New(7654)
+	if err := p.InstallHooks(provider.ScopeUser); err != nil {
+		t.Fatalf("InstallHooks: %v", err)
+	}
+	if err := p.RemoveHooks(); err != nil {
+		t.Fatalf("RemoveHooks: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "hooks.json")); !os.IsNotExist(err) {
+		t.Error("a file containing only our hooks should be removed")
+	}
+}
+
+// Health asks whether the events helios owns are current, not whether the file
+// as a whole matches — a user's own hook alongside ours is not "outdated".
+func TestHealthIgnoresHooksThatAreNotOurs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	p := New(7654)
+	if err := p.InstallHooks(provider.ScopeUser); err != nil {
+		t.Fatalf("InstallHooks: %v", err)
+	}
+
+	path := filepath.Join(home, "hooks.json")
+	cfg := map[string]interface{}{}
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	events := cfg["hooks"].(map[string]interface{})
+	events["Notification"] = []interface{}{map[string]interface{}{"matcher": "*"}}
+	out, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if !p.HookHealth().Current {
+		t.Error("a user's extra hook made helios report its own as outdated")
+	}
+}
+
+func readEvents(t *testing.T, path string) map[string]interface{} {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	events, _ := cfg["hooks"].(map[string]interface{})
+	return events
+}

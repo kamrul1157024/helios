@@ -5,14 +5,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/store"
 )
 
 // hookCommand renders the shell for one hook.
@@ -100,7 +103,32 @@ func (p *Provider) InstallHooks(scope provider.Scope) error {
 	if scope == provider.ScopeProject {
 		path = filepath.Join(".codex", "hooks.json")
 	}
-	cfg := hookConfig(p.port)
+	// Merge, never replace. The file is the user's, and it may hold hooks they
+	// wrote; owning it wholesale would delete them. Only the events helios
+	// serves are touched — the Claude installer merges the same way.
+	merged := map[string]interface{}{}
+	if existing, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(existing, &merged); err != nil {
+			merged = map[string]interface{}{}
+		}
+	}
+	events, _ := merged["hooks"].(map[string]interface{})
+	if events == nil {
+		events = map[string]interface{}{}
+	}
+	ours, ok := hookConfig(p.port)["hooks"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("build hooks: malformed config")
+	}
+	for event, entry := range ours {
+		events[event] = entry
+	}
+	merged["hooks"] = events
+	if merged["description"] == nil {
+		merged["description"] = "helios"
+	}
+	cfg := merged
+
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal hooks: %w", err)
@@ -130,8 +158,12 @@ func validateInstalled(path string, want map[string]interface{}) error {
 	if err := json.Unmarshal(data, &got); err != nil {
 		return fmt.Errorf("not valid JSON: %w", err)
 	}
-	if hashOf(got["hooks"]) != hashOf(want["hooks"]) {
-		return fmt.Errorf("written table does not match")
+	gotEvents, _ := got["hooks"].(map[string]interface{})
+	wantEvents, _ := want["hooks"].(map[string]interface{})
+	for event, entry := range wantEvents {
+		if hashOf(gotEvents[event]) != hashOf(entry) {
+			return fmt.Errorf("event %s was not written as intended", event)
+		}
 	}
 	return nil
 }
@@ -145,8 +177,21 @@ func hashOf(v interface{}) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// HookConfigHash is the hash of the table this build would write.
+// HookConfigHash is the hash of the events this build would write.
 func (p *Provider) HookConfigHash() string { return hashOf(hookConfig(p.port)["hooks"]) }
+
+// ourEventsCurrent reports whether every event helios owns is present and
+// matches this build. Events belonging to anyone else are not our business.
+func ourEventsCurrent(installed map[string]interface{}, port int) bool {
+	events, _ := installed["hooks"].(map[string]interface{})
+	ours, _ := hookConfig(port)["hooks"].(map[string]interface{})
+	for event, entry := range ours {
+		if hashOf(events[event]) != hashOf(entry) {
+			return false
+		}
+	}
+	return true
+}
 
 // HookHealth reports whether Codex will actually run our hooks.
 //
@@ -175,7 +220,7 @@ func (p *Provider) HookHealth() provider.HookHealth {
 		h.Detail = path + " is not valid JSON; codex ignores it in silence"
 		return h
 	}
-	h.Current = hashOf(got["hooks"]) == p.HookConfigHash()
+	h.Current = ourEventsCurrent(got, p.port)
 	if !h.Current {
 		h.Detail = "hooks are from an older helios; run `helios hooks install`"
 		return h
@@ -188,6 +233,20 @@ func (p *Provider) HookHealth() provider.HookHealth {
 	}
 	return h
 }
+
+// hookEvidenceKey is where the last-hook timestamp is persisted.
+//
+// In memory alone it resets with the daemon, so every restart reported
+// "installed but not trusted" until the next codex turn — permanently, for
+// anyone who has codex installed and is not using it today.
+const hookEvidenceKey = "codex.hooks.last_seen"
+
+// evidenceStore is set by the daemon once the database exists.
+var evidenceStore atomic.Pointer[store.Store]
+
+// SetStore gives the health check somewhere durable to record that hooks are
+// running.
+func SetStore(db *store.Store) { evidenceStore.Store(db) }
 
 // hookEvidence records that a Codex hook reached the daemon.
 //
@@ -208,9 +267,16 @@ func NoteHookReceivedFor(providerID string) {
 	if providerID != "codex" {
 		return
 	}
+	now := time.Now()
 	hookEvidence.mu.Lock()
-	defer hookEvidence.mu.Unlock()
-	hookEvidence.last = time.Now()
+	hookEvidence.last = now
+	hookEvidence.mu.Unlock()
+
+	if db := evidenceStore.Load(); db != nil {
+		if err := db.SetSetting(hookEvidenceKey, now.UTC().Format(time.RFC3339)); err != nil {
+			log.Printf("codex: record hook evidence: %v", err)
+		}
+	}
 }
 
 // hookEvidenceTTL is how long a received hook vouches for the install. Long
@@ -219,16 +285,54 @@ const hookEvidenceTTL = 24 * time.Hour
 
 func hooksSeenRecently() bool {
 	hookEvidence.mu.Lock()
-	defer hookEvidence.mu.Unlock()
-	return !hookEvidence.last.IsZero() && time.Since(hookEvidence.last) < hookEvidenceTTL
+	last := hookEvidence.last
+	hookEvidence.mu.Unlock()
+
+	if last.IsZero() {
+		if db := evidenceStore.Load(); db != nil {
+			if raw, err := db.GetSetting(hookEvidenceKey); err == nil && raw != "" {
+				last, _ = time.Parse(time.RFC3339, raw)
+			}
+		}
+	}
+	return !last.IsZero() && time.Since(last) < hookEvidenceTTL
 }
 
+// RemoveHooks deletes helios's entries and leaves everything else alone.
+//
+// Not os.Remove: the file may hold hooks the user wrote, and uninstalling
+// helios is not permission to delete them.
 func (p *Provider) RemoveHooks() error {
 	path := hooksPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove hooks: %w", err)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
 	}
-	return nil
+	if err != nil {
+		return fmt.Errorf("read hooks: %w", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parse hooks at %s: %w", path, err)
+	}
+	events, _ := cfg["hooks"].(map[string]interface{})
+	ours, _ := hookConfig(p.port)["hooks"].(map[string]interface{})
+	for event := range ours {
+		delete(events, event)
+	}
+	if len(events) == 0 {
+		// Nothing of anyone's left; the file has no reason to exist.
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove hooks: %w", err)
+		}
+		return nil
+	}
+	cfg["hooks"] = events
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal hooks: %w", err)
+	}
+	return os.WriteFile(path, out, 0o644)
 }
 
 // sendKeyWhenReady sends a key, waits, and sends it again if the screen has
@@ -255,4 +359,5 @@ func resetHookEvidence() {
 	hookEvidence.mu.Lock()
 	defer hookEvidence.mu.Unlock()
 	hookEvidence.last = time.Time{}
+	evidenceStore.Store(nil)
 }

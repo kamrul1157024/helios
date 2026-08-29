@@ -52,6 +52,30 @@ class NotificationService {
   /// keyed by kind keeps working. Then the kind. Then true — an unknown
   /// provider must be noisy rather than silent, because a blocked agent
   /// nobody hears is the failure that matters.
+  /// Rewrites settings saved when toggles were keyed by notification type.
+  ///
+  /// A user who silenced `claude.permission` before the upgrade would
+  /// otherwise keep that key for ever: the settings switch now reads the kind
+  /// and shows ON, flipping it writes `permission`, and the stale per-type key
+  /// still wins — silent notifications with no way back but "Reset to
+  /// defaults". Folding the old key onto its kind, off winning, drops the
+  /// setting the user actually chose in the right place.
+  @visibleForTesting
+  static Map<String, bool> migrateLegacyAlertKeys(Map<String, bool> stored) {
+    final out = <String, bool>{};
+    stored.forEach((key, value) {
+      final i = key.indexOf('.');
+      final kind = i < 0 ? key : key.substring(i + 1);
+      if (!_defaultAlertTypes.containsKey(kind)) {
+        // Not a kind we know; keep it verbatim rather than guessing.
+        out[key] = value;
+        return;
+      }
+      out[kind] = (out[kind] ?? true) && value;
+    });
+    return out;
+  }
+
   bool isAlertEnabled(String notifType) {
     final byType = _alertTypes[notifType];
     if (byType != null) return byType;
@@ -161,7 +185,7 @@ class NotificationService {
         final decoded = jsonDecode(alertJson) as Map<String, dynamic>;
         _alertTypes = {
           ..._defaultAlertTypes,
-          ...decoded.map((k, v) => MapEntry(k, v as bool)),
+          ...migrateLegacyAlertKeys(decoded.map((k, v) => MapEntry(k, v as bool))),
         };
       } catch (_) {
         _alertTypes = Map.of(_defaultAlertTypes);

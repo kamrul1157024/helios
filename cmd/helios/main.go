@@ -1021,6 +1021,10 @@ func handleHooks(args []string) {
 		os.Exit(1)
 	}
 
+	// The registry is per process, and this one is not the daemon: without
+	// this every branch below iterates nothing and reports success.
+	daemon.RegisterDefaultProviders()
+
 	switch args[0] {
 	case "install":
 		local := false

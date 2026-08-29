@@ -189,6 +189,7 @@ var agentVars = []string{
 	"CLAUDECODE",
 	"CLAUDE_CODE_SESSION_ID",
 	"CLAUDE_CODE_CHILD_SESSION",
+	heliosSessionVar,
 }
 
 // agentEnv returns this process's environment without the marks of the agent
@@ -198,6 +199,13 @@ var agentVars = []string{
 // ordinary, and the child inherits those variables through the wrap. The agent
 // then takes itself for a continuation of its parent: its hooks report the
 // wrong session and the new one never gets a title.
+// heliosSessionVar names the session a terminal belongs to. Listed in
+// agentVars so it is scrubbed from an inherited environment: an agent started
+// from inside another agent's session would otherwise report its parent's id,
+// and every hook it sent would be filed against the parent's row — including
+// the transcript path, which would then point at the wrong agent's file.
+const heliosSessionVar = "HELIOS_SESSION"
+
 func agentEnv(extra map[string]string) []string {
 	env := os.Environ()
 	out := make([]string, 0, len(env)+len(extra))

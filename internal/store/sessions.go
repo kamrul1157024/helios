@@ -593,14 +593,15 @@ func (s *Store) SessionByResumeID(resumeID string) (*Session, error) {
 	if resumeID == "" {
 		return nil, nil
 	}
-	rows, err := s.SearchSessions("", "", "", "")
+	var id string
+	err := s.db.QueryRow(
+		`SELECT session_id FROM sessions WHERE resume_id = ? LIMIT 1`, resumeID,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	for i := range rows {
-		if rows[i].ResumeID != nil && *rows[i].ResumeID == resumeID {
-			return &rows[i], nil
-		}
-	}
-	return nil, nil
+	return s.GetSession(id)
 }

@@ -783,6 +783,9 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 		// Check hooks
 		result.hooksOK = hooksInstalled()
 		if result.hooksOK {
+			// This process is not the daemon, so the registry starts empty
+			// and the check would silently pass.
+			daemon.RegisterDefaultProviders()
 			result.hooksOutdated = daemon.HooksOutdated()
 		}
 

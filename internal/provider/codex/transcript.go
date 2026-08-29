@@ -270,7 +270,14 @@ func (p *Provider) Discover(db *store.Store) {
 		if id == "" {
 			return nil
 		}
+		// Two lookups, because a session helios launched is keyed by the id
+		// helios minted and carries the codex id in resume_id. Checking only
+		// the primary key would miss it and insert a second, terminated row
+		// for a conversation already being tracked — on every daemon start.
 		if existing, err := db.GetSession(id); err == nil && existing != nil {
+			return nil
+		}
+		if existing, err := db.SessionByResumeID(id); err == nil && existing != nil {
 			return nil
 		}
 		meta := readSessionMeta(path)

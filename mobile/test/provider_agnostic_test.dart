@@ -17,6 +17,7 @@ HeliosNotification notif(String type, {String status = 'pending'}) =>
     );
 
 void main() {
+  _migrationTests();
   group('a type splits into its provider and its kind', () {
     test('the split is where the first dot is', () {
       expect(notif('codex.permission').provider, 'codex');
@@ -113,6 +114,44 @@ void main() {
     test('the fallback describes the request, not the agent', () {
       expect(notif('codex.permission').displayTitle, 'Permission request');
       expect(notif('claude.permission').displayTitle, 'Permission request');
+    });
+  });
+}
+
+// Alert settings moved from per-type keys to per-kind ones. A user who
+// silenced a type before that would otherwise keep the old key for ever: the
+// settings switch reads the kind and shows ON, flipping it writes the kind,
+// and the stale per-type key still wins. Silent, with no way back but a reset.
+void _migrationTests() {
+  group('legacy alert keys', () {
+    test('a silenced type carries over to its kind', () {
+      final migrated = NotificationService.migrateLegacyAlertKeys({
+        'claude.permission': false,
+        'claude.done': true,
+      });
+      expect(migrated['permission'], isFalse,
+          reason: 'the silence the user chose must survive');
+      expect(migrated.containsKey('claude.permission'), isFalse,
+          reason: 'the stale key must not linger and override the switch');
+      expect(migrated['done'], isTrue);
+    });
+
+    test('off wins when two providers disagree', () {
+      final migrated = NotificationService.migrateLegacyAlertKeys({
+        'claude.permission': true,
+        'codex.permission': false,
+      });
+      expect(migrated['permission'], isFalse);
+    });
+
+    test('keys already stored by kind pass through', () {
+      final migrated = NotificationService.migrateLegacyAlertKeys({'permission': false});
+      expect(migrated['permission'], isFalse);
+    });
+
+    test('a key naming no kind we know is kept verbatim rather than guessed', () {
+      final migrated = NotificationService.migrateLegacyAlertKeys({'weird.thing': false});
+      expect(migrated['weird.thing'], isFalse);
     });
   });
 }
