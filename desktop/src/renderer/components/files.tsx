@@ -4,7 +4,7 @@ import { api, statusOf } from '../bridge.ts'
 import { isMarkdownPath, languageForPath, renderMarkdownBlocks } from '../markdown.ts'
 import { store, useStore } from '../store.ts'
 import { byLastTouched, type Worktree } from '../../shared/models.ts'
-import { CodeEditor, type Cursor } from './editor.tsx'
+import { CodeEditor, type Cursor, type ReadingPosition } from './editor.tsx'
 import { FileTree } from './file-tree.tsx'
 import { FindInFiles } from './find-in-files.tsx'
 import { Chevron } from './icons.tsx'
@@ -15,6 +15,12 @@ import { SelectionMenu, useTextSelection, type MenuAction } from './selection-me
 
 /** Past this the editor is read-only: CodeMirror is not a log viewer. */
 const MAX_EDIT_BYTES = 1_000_000
+
+/**
+ * How long scrolling has to stop before the position is written down. Every
+ * wheel tick is a scroll event, and none of them is worth a write on its own.
+ */
+const VIEW_SETTLE = 500
 
 interface OpenFile {
   path: string
@@ -56,6 +62,15 @@ export function FilesPanel({
   const [worktrees, setWorktrees] = useState<Worktree[]>([])
   const [files, setFiles] = useState<OpenFile[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
+  /**
+   * The directories open in the tree, held here rather than in the tree itself.
+   *
+   * The tree used to keep them and reset on a change of root, which is not the
+   * same thing as a change of session: two sessions in one repository share a
+   * root, so one silently inherited the other's open folders, and two sessions
+   * in different repositories lost them on every switch.
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [side, setSide] = useState<'tree' | 'find'>('tree')
   const [findSeq, setFindSeq] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
@@ -66,6 +81,26 @@ export function FilesPanel({
 
   // Drafts live outside React state: a keystroke should not re-render the tree.
   const drafts = useRef<Record<string, string>>({})
+  /**
+   * Where each open file was last being read, by path.
+   *
+   * A ref for the same reason as the drafts — scrolling should not re-render
+   * the panel — with a counter to wake the save below once the reader settles.
+   */
+  const views = useRef<Record<string, ReadingPosition>>({})
+  const [viewTick, setViewTick] = useState(0)
+  const viewTimer = useRef<number | null>(null)
+  const noteView = useCallback((path: string, at: ReadingPosition): void => {
+    views.current[path] = at
+    if (viewTimer.current !== null) window.clearTimeout(viewTimer.current)
+    viewTimer.current = window.setTimeout(() => setViewTick((tick) => tick + 1), VIEW_SETTLE)
+  }, [])
+  useEffect(
+    () => () => {
+      if (viewTimer.current !== null) window.clearTimeout(viewTimer.current)
+    },
+    [],
+  )
   const filesRef = useRef<OpenFile[]>(files)
   filesRef.current = files
 
@@ -152,7 +187,17 @@ export function FilesPanel({
   // A session is looked away from and come back to all day; losing the tabs
   // every time makes the panel a viewer rather than a place to work.
   const memory = `helios.files.${hostId}.${sessionId}`
-  const restored = useRef<string | null>(null)
+  /**
+   * Which session the tabs below currently belong to, or null mid-restore.
+   *
+   * State rather than a ref, because the save effect has to see this change in
+   * the same commit as `files`. A ref was visible to the render that still held
+   * the outgoing session's tabs: switching to a session with nothing saved left
+   * the restore with nothing to await, so it ran to completion synchronously
+   * and marked itself done before React had flushed the clear — and the save
+   * that followed wrote the previous session's files under the new key.
+   */
+  const [loadedFor, setLoadedFor] = useState<string | null>(null)
   // Set when something asked for a specific file while the restore below was
   // still running. Opening the panel *by* asking for a file is the common case
   // — an agent's helios_show mounts it — and the restore finishes last, so
@@ -160,7 +205,7 @@ export function FilesPanel({
   const claimed = useRef(false)
 
   useEffect(() => {
-    restored.current = null
+    setLoadedFor(null)
     claimed.current = false
     setFiles([])
     setActivePath(null)
@@ -169,6 +214,8 @@ export function FilesPanel({
 
     const saved = readWorkspace(memory)
     setRootOverride(saved?.root ?? null)
+    setExpanded(new Set(saved?.expanded ?? []))
+    views.current = saved?.view ?? {}
 
     let cancelled = false
     void (async () => {
@@ -180,7 +227,7 @@ export function FilesPanel({
       }
       if (cancelled) return
       if (saved?.active && !claimed.current) setActivePath(saved.active)
-      restored.current = memory
+      setLoadedFor(memory)
     })()
     return () => {
       cancelled = true
@@ -190,13 +237,19 @@ export function FilesPanel({
   useEffect(() => {
     // Not before the restore for this session has finished, or the empty state
     // it starts from would overwrite what is on disk.
-    if (restored.current !== memory) return
+    if (loadedFor !== memory) return
     writeWorkspace(memory, {
       root: rootOverride,
       open: files.map((file) => file.path),
       active: activePath,
+      expanded: [...expanded],
+      // Pruned to what is open: a closed tab's position is not worth carrying,
+      // and the record would otherwise grow for the life of the session.
+      view: Object.fromEntries(
+        files.map((file) => [file.path, views.current[file.path]]).filter(([, at]) => at !== undefined),
+      ) as Record<string, ReadingPosition>,
     })
-  }, [memory, rootOverride, files, activePath])
+  }, [memory, loadedFor, rootOverride, files, activePath, expanded, viewTick])
 
   const save = useCallback(
     async (path: string): Promise<void> => {
@@ -408,6 +461,8 @@ export function FilesPanel({
             root={root}
             selected={activePath}
             reveal={reveal}
+            expanded={expanded}
+            onExpandedChange={setExpanded}
             onOpen={(path) => void openFile(path)}
           />
         ) : (
@@ -458,6 +513,8 @@ export function FilesPanel({
             onMode={(mode) =>
               setFiles((current) => current.map((f) => (f.path === active.path ? { ...f, mode } : f)))
             }
+            restore={views.current[active.path] ?? null}
+            onPositionChange={(at) => noteView(active.path, at)}
           />
         ) : (
           <div className="ws-blank">
@@ -504,6 +561,8 @@ function FileView({
   onSave,
   onReload,
   onMode,
+  restore,
+  onPositionChange,
 }: {
   file: OpenFile
   root: string
@@ -514,6 +573,9 @@ function FileView({
   onSave: () => void
   onReload: () => void
   onMode: (mode: 'edit' | 'preview') => void
+  /** Where this file was last left, or null if it has not been opened before. */
+  restore: ReadingPosition | null
+  onPositionChange: (at: ReadingPosition) => void
 }): JSX.Element {
   const markdown = isMarkdownPath(file.path)
   const rendered = markdown && file.mode === 'preview'
@@ -697,6 +759,8 @@ function FileView({
           onChange={onChange}
           onSave={onSave}
           cursor={file.cursor}
+          restore={restore}
+          onViewChange={onPositionChange}
           onContextMenu={(at) => setMenu({ x: at.x, y: at.y, range: { start: at.startLine, end: at.endLine } })}
         />
       )}
@@ -804,6 +868,10 @@ interface Workspace {
   root: string | null
   open: string[]
   active: string | null
+  /** Directories open in the tree. Absent in records written before this. */
+  expanded?: string[]
+  /** Where each file was left, by path. Absent in older records. */
+  view?: Record<string, ReadingPosition>
 }
 
 function readWorkspace(key: string): Workspace | null {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
 import type { FileEntry } from '../../shared/models.ts'
@@ -11,6 +11,13 @@ interface Props {
   selected: string | null
   /** A file to scroll to and expand the ancestors of, e.g. from quick open. */
   reveal: string | null
+  /**
+   * Directories to show open. Owned by the panel because it is remembered per
+   * session, and a root is not a session: two sessions in one repository share
+   * one.
+   */
+  expanded: Set<string>
+  onExpandedChange: (next: Set<string>) => void
   onOpen: (path: string) => void
 }
 
@@ -21,10 +28,21 @@ interface Props {
  * agent's repository is big enough that reading it all up front would stall the
  * panel, and small enough that holding what was opened costs nothing.
  */
-export function FileTree({ hostId, root, selected, reveal, onOpen }: Props): JSX.Element {
+export function FileTree({
+  hostId,
+  root,
+  selected,
+  reveal,
+  expanded,
+  onExpandedChange,
+  onOpen,
+}: Props): JSX.Element {
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({})
-  const [expanded, setExpanded] = useState<Set<string>>(new Set([root]))
   const [busy, setBusy] = useState<Set<string>>(new Set())
+  // Read by the reveal effect, which adds to what is already open without
+  // wanting to re-run every time that changes.
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(
@@ -49,46 +67,44 @@ export function FileTree({ hostId, root, selected, reveal, onOpen }: Props): JSX
     [hostId],
   )
 
-  // A new root is a different session's directory: start over.
+  // A new root is a different directory: nothing listed for the old one means
+  // anything here.
   useEffect(() => {
     setChildren({})
-    setExpanded(new Set([root]))
     void load(root)
   }, [hostId, root, load])
 
+  // Whatever is open has to be listed, wherever the instruction came from — a
+  // restore for this session, a reveal, or a click. Listing converges because
+  // it fills `children`, and `busy` keeps a slow directory from being asked for
+  // twice.
+  useEffect(() => {
+    for (const dir of expanded) {
+      if (dir.startsWith(root) && !children[dir] && !busy.has(dir)) void load(dir)
+    }
+  }, [expanded, children, busy, root, load])
+
   const toggle = (dir: string): void => {
-    setExpanded((current) => {
-      const next = new Set(current)
-      if (next.has(dir)) next.delete(dir)
-      else {
-        next.add(dir)
-        if (!children[dir]) void load(dir)
-      }
-      return next
-    })
+    const next = new Set(expanded)
+    if (next.has(dir)) next.delete(dir)
+    else next.add(dir)
+    onExpandedChange(next)
   }
 
   // Opening a file from quick open or the transcript should show where it
   // lives, which means listing every directory between it and the root.
   useEffect(() => {
     if (!reveal || !reveal.startsWith(root)) return
-    let cancelled = false
-    const expand = async (): Promise<void> => {
-      const parts = reveal.slice(root.length).split('/').filter(Boolean)
-      parts.pop()
-      let dir = root
-      for (const part of parts) {
-        dir = `${dir}/${part}`
-        if (cancelled) return
-        setExpanded((current) => new Set(current).add(dir))
-        if (!children[dir]) await load(dir)
-      }
+    const parts = reveal.slice(root.length).split('/').filter(Boolean)
+    parts.pop()
+    const next = new Set(expandedRef.current)
+    let dir = root
+    for (const part of parts) {
+      dir = `${dir}/${part}`
+      next.add(dir)
     }
-    void expand()
-    return () => {
-      cancelled = true
-    }
-  }, [reveal, root, load])
+    onExpandedChange(next)
+  }, [reveal, root, onExpandedChange])
 
   const rows: JSX.Element[] = []
   const push = (dir: string, depth: number): void => {
