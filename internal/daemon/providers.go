@@ -41,6 +41,17 @@ func RegisterProviders(internalPort int) {
 
 // RegisterDefaultProviders registers against the configured internal port, for
 // callers that have not loaded config themselves.
+//
+// The configured port, read from config.yaml — not the compiled-in default.
+// DefaultConfig alone ignores the file, so on a machine that had changed
+// internal_port, `helios hooks install` wrote every hook URL pointing at 7654
+// while the daemon listened elsewhere. The agent then called a port with
+// nothing on it, the daemon received nothing, and every session sat at
+// "starting" with no error anywhere to say why.
 func RegisterDefaultProviders() {
-	RegisterProviders(DefaultConfig().Server.InternalPort)
+	port := DefaultConfig().Server.InternalPort
+	if cfg, err := LoadConfig(); err == nil && cfg.Server.InternalPort != 0 {
+		port = cfg.Server.InternalPort
+	}
+	RegisterProviders(port)
 }

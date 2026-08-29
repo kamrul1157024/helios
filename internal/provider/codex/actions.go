@@ -73,6 +73,10 @@ func handleDoneAction(notif *store.Notification, body json.RawMessage) (notifica
 // feedback: the dialog stays up and the notification is already resolved, so
 // nothing will ever answer it. Measured at three seconds against 0.150.1; see
 // docs/specs/46-codex-provider.md.
+// trustAffirmative is the wording of the "yes" option in Codex's directory
+// trust dialog.
+const trustAffirmative = "yes, continue"
+
 func handleTrustAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
 		Action string `json:"action"`
@@ -90,9 +94,13 @@ func handleTrustAction(notif *store.Notification, body json.RawMessage) (notific
 	}
 
 	if req.Action == "trust" {
-		// The dialog opens with "1. Yes, continue" selected, so Return accepts.
-		if err := sendKeyWhenReady(sessionID, backend.KeyEnter); err != nil {
-			return notifications.Decision{}, fmt.Errorf("send Enter to session %s: %w", sessionID, err)
+		// The affirmative option is found on screen rather than assumed to be
+		// the default, for the same reason as Claude: a default is the agent's
+		// to change, and answering the wrong row here quits the session.
+		if err := settleThen(sessionID, func() error {
+			return provider.ConfirmChoice(terminalBackend, sessionID, trustAffirmative)
+		}); err != nil {
+			return notifications.Decision{}, fmt.Errorf("approve trust for %s: %w", sessionID, err)
 		}
 		log.Printf("codex trust-action: approved trust for session %s", sessionID)
 		return notifications.Decision{Status: "approved"}, nil
