@@ -629,36 +629,24 @@ func cross(msg string) string {
 // Claude working and Codex installed-but-untrusted, and Codex says nothing
 // about the latter itself. The detail comes from the provider, so it can name
 // the command that fixes it.
+// renderHookLines reports each agent on its own line.
+//
+// One line per agent rather than a single tick for all of them, because the
+// states differ and the difference is the point: a machine can have Claude
+// working and Codex not.
+//
+// The row itself comes from agentMenuRow — literally the same function the
+// agent menu uses. It was a second implementation, and the two drifted within
+// a day: the dashboard called an agent "~ not run them yet" while the menu one
+// keypress away called the same agent "✓ ready". Two screens of one program
+// disagreeing about the same fact is worse than either wording.
 func renderHookLines(lines []hookLine) string {
 	if len(lines) == 0 {
 		return cross("No agents registered")
 	}
 	var b strings.Builder
 	for _, l := range lines {
-		name := agentDisplayName(l.Provider)
-		switch {
-		case l.Skipped:
-			b.WriteString(fmt.Sprintf("  %s %s\n",
-				subtitleStyle.Render("·"), subtitleStyle.Render(name+" skipped")))
-		case !l.CLIPresent:
-			// Neither a tick nor a cross: nothing is broken and nothing here
-			// can fix it. Listed so the agent is discoverable at all.
-			b.WriteString(fmt.Sprintf("  %s %s\n",
-				subtitleStyle.Render("·"),
-				subtitleStyle.Render(name+" not installed — "+agentInstallHint(l.Provider))))
-		case l.Health.Installed && l.Health.Current && l.Health.Effective:
-			b.WriteString(check(name + " hooks installed"))
-		case !l.Health.Installed:
-			b.WriteString(cross(name + " hooks not installed"))
-		default:
-			// Installed but stale, or installed and being ignored. The
-			// provider knows which, and what to do about it.
-			detail := l.Health.Detail
-			if detail == "" {
-				detail = "hooks need attention"
-			}
-			b.WriteString(fmt.Sprintf("  %s %s: %s\n", warnStyle.Render("~"), name, detail))
-		}
+		b.WriteString("  " + agentMenuRow(l) + "\n")
 	}
 	return b.String()
 }
