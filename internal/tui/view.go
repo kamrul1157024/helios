@@ -658,8 +658,9 @@ func renderHookLines(lines []hookLine) string {
 // them, so say what to check without asserting which it is.
 func agentFirstRunNote(providerID string) string {
 	if providerID == "codex" {
-		return "This clears after codex's next session. If it does not, the hooks " +
-			"need approving: run /hooks inside codex."
+		return "Codex asks to approve these at the start of its next session — " +
+			"choose \"Trust all and continue\". Helios will also offer it as a " +
+			"notification. Inside a running session, /hooks does the same."
 	}
 	return "This clears after the agent's next session."
 }

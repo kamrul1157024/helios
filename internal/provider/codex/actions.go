@@ -75,7 +75,10 @@ func handleDoneAction(notif *store.Notification, body json.RawMessage) (notifica
 // docs/specs/46-codex-provider.md.
 // trustAffirmative is the wording of the "yes" option in Codex's directory
 // trust dialog.
-const trustAffirmative = "yes, continue"
+// Codex asks two different questions with one card behind them: the directory
+// dialog and, on a fresh install, the hook one. Tried in order, because a
+// screen shows only one of them.
+var trustAffirmatives = []string{"yes, continue", "trust all and continue"}
 
 func handleTrustAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
@@ -98,7 +101,13 @@ func handleTrustAction(notif *store.Notification, body json.RawMessage) (notific
 		// the default, for the same reason as Claude: a default is the agent's
 		// to change, and answering the wrong row here quits the session.
 		if err := settleThen(sessionID, func() error {
-			return provider.ConfirmChoice(terminalBackend, sessionID, trustAffirmative)
+			var last error
+			for _, want := range trustAffirmatives {
+				if last = provider.ConfirmChoice(terminalBackend, sessionID, want); last == nil {
+					return nil
+				}
+			}
+			return last
 		}); err != nil {
 			return notifications.Decision{}, fmt.Errorf("approve trust for %s: %w", sessionID, err)
 		}

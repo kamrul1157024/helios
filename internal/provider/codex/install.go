@@ -226,7 +226,11 @@ func (p *Provider) HookHealth() provider.HookHealth {
 
 	h.Effective = hooksSeenRecently()
 	if !h.Effective {
-		h.Detail = "set up, but codex has not run them yet — approve with /hooks"
+		// Codex asks on its own, inline, at the start of the next session —
+		// "Trust all and continue". /hooks is the way to do it from inside a
+		// session already running, which is the less likely case and was the
+		// only one this used to mention.
+		h.Detail = "set up; codex will ask to approve them on its next session"
 	}
 	return h
 }

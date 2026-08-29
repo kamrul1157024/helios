@@ -227,8 +227,35 @@ var trustPromptPatterns = []string{
 	"do you trust the contents",
 }
 
+// hookTrustPromptPatterns are phrases from the *second* dialog Codex shows on
+// a fresh install, immediately after the directory one:
+//
+//	11 hooks are new or changed.
+//	Hooks can run outside the sandbox after you trust them.
+//	› 1. Review hooks
+//	  2. Trust all and continue
+//	  3. Continue without trusting (hooks won't run)
+//
+// Two blocking dialogs back to back, and helios used to surface only the
+// first. A session then sat at "starting" with the phone showing nothing —
+// and choosing wrongly here is what leaves hooks installed but never run.
+var hookTrustPromptPatterns = []string{
+	"hooks are new or changed",
+	"hooks can run outside the sandbox",
+}
+
 func (p *Provider) MatchScreen(screen string) *provider.ScreenPrompt {
 	lower := strings.ToLower(screen)
+	for _, pattern := range hookTrustPromptPatterns {
+		if strings.Contains(lower, pattern) {
+			return &provider.ScreenPrompt{
+				Type:  "codex.trust",
+				Title: "Approve helios hooks",
+				Detail: "Codex is asking whether to run the hooks helios installed. " +
+					"Without them helios cannot see this session.",
+			}
+		}
+	}
 	for _, pattern := range trustPromptPatterns {
 		if strings.Contains(lower, pattern) {
 			return &provider.ScreenPrompt{
