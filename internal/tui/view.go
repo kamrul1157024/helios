@@ -627,12 +627,18 @@ func cross(msg string) string {
 // the command that fixes it.
 func renderHookLines(lines []hookLine) string {
 	if len(lines) == 0 {
-		return cross("No agent CLI found (install claude or codex)")
+		return cross("No agents registered")
 	}
 	var b strings.Builder
 	for _, l := range lines {
 		name := agentDisplayName(l.Provider)
 		switch {
+		case !l.CLIPresent:
+			// Neither a tick nor a cross: nothing is broken and nothing here
+			// can fix it. Listed so the agent is discoverable at all.
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				subtitleStyle.Render("·"),
+				subtitleStyle.Render(name+" not installed — "+agentInstallHint(l.Provider))))
 		case l.Health.Installed && l.Health.Current && l.Health.Effective:
 			b.WriteString(check(name + " hooks installed"))
 		case !l.Health.Installed:
@@ -648,6 +654,18 @@ func renderHookLines(lines []hookLine) string {
 		}
 	}
 	return b.String()
+}
+
+// agentInstallHint tells the user how to get an agent they do not have.
+func agentInstallHint(providerID string) string {
+	switch providerID {
+	case "claude":
+		return "npm i -g @anthropic-ai/claude-code"
+	case "codex":
+		return "npm i -g @openai/codex"
+	default:
+		return "see the provider's own docs"
+	}
 }
 
 func agentDisplayName(providerID string) string {

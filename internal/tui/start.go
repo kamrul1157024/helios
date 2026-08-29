@@ -80,14 +80,19 @@ var tunnelProviders = []struct {
 }
 
 // Messages
-// hookLine is one provider's hook state, for the status panel.
+// hookLine is one provider's state, for the status panel.
 type hookLine struct {
 	Provider string
-	Health   provider.HookHealth
+	// CLIPresent is whether the agent itself is on this machine. A provider
+	// whose CLI is absent has nothing wrong with it and nothing to install;
+	// it is listed so the user learns it exists.
+	CLIPresent bool
+	Health     provider.HookHealth
 }
 
-// allHooksHealthy reports whether every installed agent's hook table is
-// written and current.
+// allHooksHealthy reports whether every *installed* agent's hook table is
+// written and current. A provider whose CLI is absent is skipped: there is
+// nothing to hook and nothing to fix.
 //
 // Deliberately not Effective. That asks whether the agent is *running* the
 // hooks, which for Codex cannot be known until a Codex session actually sends
@@ -99,6 +104,9 @@ type hookLine struct {
 // Vacuously true when no agent is installed, which is not a problem to report.
 func allHooksHealthy(lines []hookLine) bool {
 	for _, l := range lines {
+		if !l.CLIPresent {
+			continue
+		}
 		if !l.Health.Installed || !l.Health.Current {
 			return false
 		}
@@ -1013,20 +1021,27 @@ func registerMCPCmd(internalPort int) tea.Cmd {
 	}
 }
 
-// hookLines describes each installed agent's hooks, one line per provider.
+// hookLines describes every provider, one line each.
 //
 // Per provider, because the answer differs: a machine may have Claude working
 // and Codex installed but untrusted, and one "hooks installed" tick cannot say
-// so. A provider whose agent is not installed at all is left out rather than
-// reported as broken — nothing is wrong, there is just nothing to hook.
+// so.
+//
+// Every provider, including those whose CLI is absent. Leaving those out was
+// the first attempt and it hid the second agent completely on any machine that
+// did not already have it — so the only people told Codex exists were the ones
+// who had already installed it.
 func hookLines() []hookLine {
 	daemon.RegisterDefaultProviders()
+	health := daemon.HooksHealth()
 	var out []hookLine
-	for id, h := range daemon.HooksHealth() {
-		if !agentInstalled(id) {
-			continue
-		}
-		out = append(out, hookLine{Provider: id, Health: h})
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		out = append(out, hookLine{
+			Provider:   id,
+			CLIPresent: agentInstalled(id),
+			Health:     health[id],
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
 	return out
