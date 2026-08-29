@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/notification.dart';
 import '../services/daemon_api_service.dart';
-import 'claude/cards.dart';
-import 'claude/notification_ext.dart';
+import 'cards.dart';
+import 'notification_ext.dart';
 
 /// Signature for a notification card builder.
 typedef CardBuilder = Widget Function({
@@ -12,44 +12,50 @@ typedef CardBuilder = Widget Function({
   required VoidCallback onSelectionChanged,
 });
 
-/// Maps notification type → card builder widget.
-/// Returns null if no card is registered for the type.
+/// Maps a notification to the card that renders it.
+///
+/// Keyed on [HeliosNotification.kind] — the part of the type after the
+/// provider prefix — so `codex.permission` and `claude.permission` get the
+/// same card. A permission request is the same request whoever raised it.
+///
+/// Returns null when no card is registered, which callers render as a plain
+/// status card rather than nothing.
 Widget? buildCardForType({
   required HeliosNotification notification,
   required DaemonAPIService sse,
   required Set<String> selected,
   required VoidCallback onSelectionChanged,
 }) {
-  switch (notification.type) {
-    case 'claude.permission':
-      return ClaudePermissionCard(
+  switch (notification.kind) {
+    case 'permission':
+      return PermissionCard(
         notification: notification,
         sse: sse,
         selected: selected,
         onSelectionChanged: onSelectionChanged,
       );
-    case 'claude.question':
-      return ClaudeQuestionCard(
+    case 'question':
+      return QuestionCard(
         notification: notification,
         sse: sse,
       );
-    case 'claude.elicitation.form':
-      return ClaudeElicitationFormCard(
+    case 'elicitation.form':
+      return ElicitationFormCard(
         notification: notification,
         sse: sse,
       );
-    case 'claude.elicitation.url':
-      return ClaudeElicitationUrlCard(
+    case 'elicitation.url':
+      return ElicitationUrlCard(
         notification: notification,
         sse: sse,
       );
-    case 'claude.trust':
-      return ClaudeTrustCard(
+    case 'trust':
+      return TrustCard(
         notification: notification,
         sse: sse,
       );
-    case 'claude.error':
-      return ClaudeErrorCard(
+    case 'error':
+      return ErrorCard(
         notification: notification,
         sse: sse,
       );
@@ -58,21 +64,28 @@ Widget? buildCardForType({
   }
 }
 
-/// Whether this notification needs user action (checks all registered providers).
-bool needsAction(HeliosNotification n) {
-  return n.needsClaudeAction;
-}
+/// Whether this notification needs user action, for any provider.
+bool needsAction(HeliosNotification n) => n.needsAction;
+
+/// Kinds of request that need an answer.
+///
+/// The daemon also serves this, on /api/notification-types. Until the app
+/// reads that, this list is the fallback — and it is keyed on kind, so an
+/// unrecognised provider's permission request is still treated as actionable
+/// rather than quietly filed as news.
+const _actionableKinds = {'permission', 'question', 'trust', 'error'};
 
 /// Whether this notification type blocks the agent until someone answers.
-/// Type-level counterpart to [needsAction], for when only the type string is in
-/// hand (an SSE payload) rather than a parsed notification. Kept in sync with
-/// `needsClaudeAction` minus its `isPending` term.
-bool isActionableType(String type) =>
-    type == 'claude.permission' ||
-    type == 'claude.question' ||
-    type == 'claude.trust' ||
-    type == 'claude.error' ||
-    type.startsWith('claude.elicitation.');
+///
+/// Type-level counterpart to [needsAction], for when only the type string is
+/// in hand (an SSE payload) rather than a parsed notification. Kept in sync
+/// with `needsAction` minus its `isPending` term.
+bool isActionableType(String type) {
+  final i = type.indexOf('.');
+  if (i < 0) return false;
+  final kind = type.substring(i + 1);
+  return _actionableKinds.contains(kind) || kind.startsWith('elicitation.');
+}
 
 /// Whether an incoming notification event should raise an OS notification.
 ///
@@ -91,4 +104,57 @@ bool shouldRaiseNotification({
     return false;
   }
   return !alreadyPosted;
+}
+
+/// The kind of request a type names, or "" when it names none.
+///
+/// The type-string counterpart to [HeliosNotification.kind], for the SSE path
+/// where only the string has arrived.
+String kindOfType(String type) {
+  final i = type.indexOf('.');
+  return i < 0 ? '' : type.substring(i + 1);
+}
+
+/// A heading for a kind of request, used when the server sent no title.
+///
+/// Deliberately says nothing about which agent asked: the same words have to
+/// read correctly for every provider.
+String labelForKind(String kind) {
+  switch (kind) {
+    case 'permission':
+      return 'Permission needed';
+    case 'question':
+      return 'A question is waiting';
+    case 'elicitation.form':
+      return 'Input requested';
+    case 'elicitation.url':
+      return 'Authentication required';
+    case 'trust':
+      return 'Workspace trust required';
+    case 'done':
+      return 'Task completed';
+    case 'error':
+      return 'Session error';
+    default:
+      return 'Helios';
+  }
+}
+
+/// The body shown when the server sent no detail.
+String bodyForKind(String kind) {
+  switch (kind) {
+    case 'question':
+      return 'Answer required';
+    case 'elicitation.form':
+    case 'elicitation.url':
+      return 'Input required';
+    case 'trust':
+      return 'The agent is asking to trust this workspace.';
+    case 'done':
+      return 'The agent finished a task.';
+    case 'error':
+      return 'The agent stopped due to an error.';
+    default:
+      return 'The agent needs your attention.';
+  }
 }

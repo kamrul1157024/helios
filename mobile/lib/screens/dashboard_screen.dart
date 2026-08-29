@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
-import '../providers/claude/notification_ext.dart';
+import '../providers/notification_ext.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
@@ -166,7 +166,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildBatchActions(List<HeliosNotification> pending, HostManager hm) {
-    final permissionIds = pending.where((n) => n.isClaudePermission).toList();
+    final permissionIds = pending.where((n) => n.isPermission).toList();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),

@@ -1,7 +1,9 @@
 import 'dart:math';
 
-/// Whimsical verbs shown while Claude is working — rotated every 15 seconds.
-const claudeVerbs = [
+/// Whimsical verbs shown while an agent is working — rotated every 15
+/// seconds. Not tied to any one provider, so a Codex session does not get
+/// told it is "Clauding".
+const workingVerbs = [
   'Accomplishing',
   'Actioning',
   'Actualizing',
@@ -30,7 +32,6 @@ const claudeVerbs = [
   'Channelling',
   'Choreographing',
   'Churning',
-  'Clauding',
   'Coalescing',
   'Cogitating',
   'Combobulating',
@@ -194,6 +195,6 @@ const claudeVerbs = [
 final _random = Random();
 
 /// Returns a random verb from the list.
-String randomClaudeVerb() {
-  return claudeVerbs[_random.nextInt(claudeVerbs.length)];
+String randomVerb() {
+  return workingVerbs[_random.nextInt(workingVerbs.length)];
 }

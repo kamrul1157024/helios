@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:helios/models/notification.dart';
 import 'package:helios/providers/card_registry.dart';
-import 'package:helios/providers/claude/notification_ext.dart';
+import 'package:helios/providers/notification_ext.dart';
 
 HeliosNotification _notif(String type, String status) => HeliosNotification(
       id: 'n1',
@@ -29,19 +29,19 @@ void main() {
     // The two predicates answer the same question from different inputs, and
     // they drift apart silently: one gates the OS notification, the other gates
     // the in-app card.
-    test('agrees with needsClaudeAction for every type when pending', () {
+    test('agrees with needsAction for every type when pending', () {
       for (final type in _allTypes) {
         expect(
           isActionableType(type),
-          _notif(type, 'pending').needsClaudeAction,
+          _notif(type, 'pending').needsAction,
           reason: 'disagreement on $type',
         );
       }
     });
 
-    test('is status-independent, unlike needsClaudeAction', () {
+    test('is status-independent, unlike needsAction', () {
       expect(isActionableType('claude.permission'), isTrue);
-      expect(_notif('claude.permission', 'approved').needsClaudeAction, isFalse);
+      expect(_notif('claude.permission', 'approved').needsAction, isFalse);
     });
 
     test('does not treat terminal types as actionable', () {

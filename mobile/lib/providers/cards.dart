@@ -1,19 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../../models/notification.dart';
-import '../../services/daemon_api_service.dart';
+import '../models/notification.dart';
+import '../services/daemon_api_service.dart';
 import 'notification_ext.dart';
 
 // ==================== Permission Card ====================
 
-class ClaudePermissionCard extends StatefulWidget {
+class PermissionCard extends StatefulWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
   final Set<String> selected;
   final VoidCallback onSelectionChanged;
 
-  const ClaudePermissionCard({
+  const PermissionCard({
     super.key,
     required this.notification,
     required this.sse,
@@ -22,10 +22,10 @@ class ClaudePermissionCard extends StatefulWidget {
   });
 
   @override
-  State<ClaudePermissionCard> createState() => _ClaudePermissionCardState();
+  State<PermissionCard> createState() => _PermissionCardState();
 }
 
-class _ClaudePermissionCardState extends State<ClaudePermissionCard> {
+class _PermissionCardState extends State<PermissionCard> {
   final Map<String, TextEditingController> _editControllers = {};
   bool _isEditing = false;
   int? _selectedPermissionIdx;
@@ -83,7 +83,7 @@ class _ClaudePermissionCardState extends State<ClaudePermissionCard> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    n.claudeDisplayTitle,
+                    n.displayTitle,
                     style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -292,21 +292,21 @@ class _ClaudePermissionCardState extends State<ClaudePermissionCard> {
 
 // ==================== Question Card ====================
 
-class ClaudeQuestionCard extends StatefulWidget {
+class QuestionCard extends StatefulWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const ClaudeQuestionCard({
+  const QuestionCard({
     super.key,
     required this.notification,
     required this.sse,
   });
 
   @override
-  State<ClaudeQuestionCard> createState() => _ClaudeQuestionCardState();
+  State<QuestionCard> createState() => _QuestionCardState();
 }
 
-class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
+class _QuestionCardState extends State<QuestionCard> {
   /// Question index → chosen option index. Indices rather than labels: the
   /// daemon resolves them against the question it raised, and two options can
   /// share a label.
@@ -366,7 +366,7 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    n.claudeDisplayTitle,
+                    n.displayTitle,
                     style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -482,11 +482,11 @@ class _ClaudeQuestionCardState extends State<ClaudeQuestionCard> {
 
 // ==================== Elicitation Form Card (Stub) ====================
 
-class ClaudeElicitationFormCard extends StatelessWidget {
+class ElicitationFormCard extends StatelessWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const ClaudeElicitationFormCard({
+  const ElicitationFormCard({
     super.key,
     required this.notification,
     required this.sse,
@@ -598,11 +598,11 @@ class ClaudeElicitationFormCard extends StatelessWidget {
 
 // ==================== Trust Card ====================
 
-class ClaudeTrustCard extends StatelessWidget {
+class TrustCard extends StatelessWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const ClaudeTrustCard({
+  const TrustCard({
     super.key,
     required this.notification,
     required this.sse,
@@ -714,11 +714,11 @@ class ClaudeTrustCard extends StatelessWidget {
 
 // ==================== Elicitation URL Card ====================
 
-class ClaudeElicitationUrlCard extends StatelessWidget {
+class ElicitationUrlCard extends StatelessWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const ClaudeElicitationUrlCard({
+  const ElicitationUrlCard({
     super.key,
     required this.notification,
     required this.sse,
@@ -843,21 +843,21 @@ class ClaudeElicitationUrlCard extends StatelessWidget {
 
 /// A turn that died on an API error. Retry sends "continue", which is what a
 /// user types in the terminal to pick the turn up where it stopped.
-class ClaudeErrorCard extends StatefulWidget {
+class ErrorCard extends StatefulWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const ClaudeErrorCard({
+  const ErrorCard({
     super.key,
     required this.notification,
     required this.sse,
   });
 
   @override
-  State<ClaudeErrorCard> createState() => _ClaudeErrorCardState();
+  State<ErrorCard> createState() => _ErrorCardState();
 }
 
-class _ClaudeErrorCardState extends State<ClaudeErrorCard> {
+class _ErrorCardState extends State<ErrorCard> {
   Timer? _ticker;
   bool _sending = false;
 
@@ -951,7 +951,7 @@ class _ClaudeErrorCardState extends State<ClaudeErrorCard> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    n.claudeDisplayTitle,
+                    n.displayTitle,
                     style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                     overflow: TextOverflow.ellipsis,
                   ),

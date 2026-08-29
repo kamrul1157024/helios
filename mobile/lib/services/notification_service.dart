@@ -23,14 +23,19 @@ class NotificationService {
   static const _keyVibrationEnabled = 'notif_vibration_enabled';
   static const _keyAlertTypes = 'notif_alert_types';
 
+  /// Defaults keyed by the kind of request, not by provider.
+  ///
+  /// A toggle is about what the notification asks of you — approve something,
+  /// answer something — which is the same question whoever raised it. Keying
+  /// on kind means a new provider needs no new rows and no new defaults.
   static const Map<String, bool> _defaultAlertTypes = {
-    'claude.permission':       true,
-    'claude.question':         true,
-    'claude.elicitation.form': true,
-    'claude.elicitation.url':  true,
-    'claude.trust':            true,
-    'claude.done':             true,
-    'claude.error':            true,
+    'permission':       true,
+    'question':         true,
+    'elicitation.form': true,
+    'elicitation.url':  true,
+    'trust':            true,
+    'done':             true,
+    'error':            true,
   };
 
   bool _soundEnabled = true;
@@ -41,7 +46,22 @@ class NotificationService {
   bool get vibrationEnabled => _vibrationEnabled;
   Map<String, bool> get alertTypes => Map.unmodifiable(_alertTypes);
 
-  bool isAlertEnabled(String notifType) => _alertTypes[notifType] ?? true;
+  /// Whether this notification type may buzz.
+  ///
+  /// A per-type setting wins, so anything a user silenced before toggles were
+  /// keyed by kind keeps working. Then the kind. Then true — an unknown
+  /// provider must be noisy rather than silent, because a blocked agent
+  /// nobody hears is the failure that matters.
+  bool isAlertEnabled(String notifType) {
+    final byType = _alertTypes[notifType];
+    if (byType != null) return byType;
+    final i = notifType.indexOf('.');
+    if (i >= 0) {
+      final byKind = _alertTypes[notifType.substring(i + 1)];
+      if (byKind != null) return byKind;
+    }
+    return true;
+  }
 
   Future<void> setSoundEnabled(bool value) async {
     _soundEnabled = value;

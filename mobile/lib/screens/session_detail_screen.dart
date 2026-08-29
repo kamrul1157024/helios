@@ -8,8 +8,8 @@ import '../models/message.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
-import '../providers/claude/notification_ext.dart';
-import '../providers/claude/verbs.dart';
+import '../providers/notification_ext.dart';
+import '../providers/verbs.dart';
 import '../services/api_client.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
@@ -59,7 +59,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   /// not the whole conversation: the rest arrives as the reader scrolls.
   static const int _pageSize = 50;
   StreamSubscription<SSEEvent>? _eventSub;
-  String _currentVerb = randomClaudeVerb();
+  String _currentVerb = randomVerb();
   Timer? _verbTimer;
   Timer? _transcriptDebounce;
   List<Timer> _resendReads = [];
@@ -90,7 +90,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     _loadTranscript();
     _loadGitStatus();
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (mounted) setState(() => _currentVerb = randomClaudeVerb());
+      if (mounted) setState(() => _currentVerb = randomVerb());
     });
     final sse = context.read<HostManager>().serviceFor(widget.session.hostId);
     _eventSub = sse?.events.listen((event) {
@@ -612,7 +612,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
                 child: FilledButton.tonal(
                   onPressed: () {
                     final ids = notifs
-                        .where((n) => n.isClaudePermission)
+                        .where((n) => n.isPermission)
                         .map((n) => n.id)
                         .toList();
                     if (ids.isNotEmpty) {
@@ -813,7 +813,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
     // Permission mode. Shown always so the mode is visible at a glance;
     // tappable only when idle, because switching restarts the agent.
-    if (session.source == 'claude') {
+    //
+    // Shown for any provider whose modes the daemon serves, rather than for a
+    // named one. A provider with no modes serves an empty list and gets no
+    // button.
+    if (_providerHasModes(session)) {
       final mode = PermissionMode.of(session.permissionMode ?? '');
       actions.add(
         IconButton(
@@ -955,6 +959,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   /// Offers the modes the daemon says this provider has. Picking one
   /// restarts the agent, so the sheet says so rather than letting the restart
   /// look like a crash.
+  /// Whether the session's provider offers permission modes at all.
+  ///
+  /// Unknown until the provider list has loaded, and false is the right answer
+  /// then: a button that appears a moment later is better than one that opens
+  /// an empty sheet.
+  bool _providerHasModes(Session session) {
+    final sse = _sse;
+    if (sse == null) return false;
+    for (final p in sse.providers) {
+      if (p.id == session.source) return p.permissionModes.isNotEmpty;
+    }
+    return false;
+  }
+
   void _showPermissionModeSheet(Session session) {
     final sse = _sse;
     final provider = sse?.providers

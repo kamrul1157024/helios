@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:helios/models/notification.dart';
-import 'package:helios/providers/claude/notification_ext.dart';
+import 'package:helios/providers/notification_ext.dart';
 
 HeliosNotification errorNotif(Map<String, dynamic> payload,
         {String status = 'pending'}) =>
@@ -96,20 +96,20 @@ void main() {
     });
   });
 
-  group('needsClaudeAction', () {
+  group('needsAction', () {
     // It has a Retry button now, so it belongs in the dashboard's pending
     // bucket rather than the passive "active" one.
     test('a pending error needs action', () {
-      expect(errorNotif({'retryable': true}).needsClaudeAction, isTrue);
+      expect(errorNotif({'retryable': true}).needsAction, isTrue);
     });
 
     test('a resolved error does not', () {
       expect(
-        errorNotif({'retryable': true}, status: 'approved').needsClaudeAction,
+        errorNotif({'retryable': true}, status: 'approved').needsAction,
         isFalse,
       );
       expect(
-        errorNotif({'retryable': true}, status: 'dismissed').needsClaudeAction,
+        errorNotif({'retryable': true}, status: 'dismissed').needsAction,
         isFalse,
       );
     });
@@ -124,7 +124,7 @@ void main() {
         'status': 'pending',
         'created_at': '2026-01-01T00:00:00Z',
       });
-      expect(done.needsClaudeAction, isFalse);
+      expect(done.needsAction, isFalse);
     });
   });
 }
