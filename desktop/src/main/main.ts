@@ -217,9 +217,28 @@ function createWindow(): void {
   })
 
   window.once('ready-to-show', () => window?.show())
+
+  /*
+   * The close button puts the window away; it does not end the app.
+   *
+   * Staying resident is the point of the tray, and tearing the window down took
+   * every terminal with it — so the app that was still "running" had dropped
+   * exactly the connections it was staying alive to keep. Hiding keeps them,
+   * and reopening is then instant rather than a reconnect.
+   *
+   * The dock icon goes with the window. An icon in the dock says there is
+   * something to switch to, and after this there is not: the tray is where the
+   * app now lives, and it has an Open Helios item to come back through.
+   */
+  window.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    window?.hide()
+    if (process.platform === 'darwin') app.dock?.hide()
+  })
+
   window.on('closed', () => {
     window = null
-    terminals?.closeAll()
   })
 
   // Nothing in this app should navigate. Links open in the user's browser, and
@@ -279,6 +298,9 @@ function serveBackdrops(): void {
 }
 
 function focusWindow(): void {
+  // Put the icon back before the window, so the app is a switchable one again
+  // by the time it appears.
+  if (process.platform === 'darwin') void app.dock?.show()
   if (!window) {
     createWindow()
     return
