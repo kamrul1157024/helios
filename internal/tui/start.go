@@ -213,7 +213,11 @@ type StartModel struct {
 	// agentMenuFromMain is whether the menu was opened from the dashboard
 	// rather than reached during setup, which decides where leaving it goes.
 	agentMenuFromMain bool
-	hooksOutdated     bool
+	// agentMsg acknowledges the last action on the agent screens. Without it,
+	// setting up an agent that was already set up returned to an identical
+	// screen and read as the key doing nothing.
+	agentMsg      string
+	hooksOutdated bool
 	// mcpRegistered reports whether Claude Code knows about the Helios MCP
 	// server. Unregistered is a suggestion, never a blocker: the explain panel
 	// is one feature, and a user who does not want it should not be nagged past
@@ -368,6 +372,7 @@ func (m StartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = screenError
 			return m, nil
 		}
+		m.agentMsg = agentDisplayName(msg.provider) + " hooks written"
 		// Back to the menu with fresh state, so the user sees the tick land
 		// and can pick the next agent — or press tab to move on.
 		m.screen = screenAgentMenu
@@ -557,6 +562,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.screen = screenAgentMenu
+			m.agentMsg = ""
 			if !line.Skipped {
 				// Move past it. Leaving the cursor put meant the next Enter
 				// opened setup for the agent the user had just dismissed.
@@ -572,6 +578,7 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// working setup might still want.
 		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
 			m.agentMenuFromMain = true
+			m.agentMsg = ""
 			m.screen = screenAgentMenu
 			m.agentCursor = firstUnready(m.hookLines)
 			return m, refreshAgentsCmd()
@@ -642,6 +649,7 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 			return m.proceedAfterHooks()
 		}
 		m.agentSetup = line.Provider
+		m.agentMsg = ""
 		m.screen = screenAgentSetup
 		if line.Skipped {
 			// Opening a skipped agent is changing your mind. Un-skip it, or

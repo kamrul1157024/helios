@@ -663,6 +663,19 @@ func renderHookLines(lines []hookLine) string {
 	return b.String()
 }
 
+// agentFirstRunNote explains a caveat helios cannot clear itself.
+//
+// The line goes away on its own once the agent runs a hook. Until then it is
+// indistinguishable from an agent that has read the hooks and declined to run
+// them, so say what to check without asserting which it is.
+func agentFirstRunNote(providerID string) string {
+	if providerID == "codex" {
+		return "This clears after codex's next session. If it does not, the hooks " +
+			"need approving: run /hooks inside codex."
+	}
+	return "This clears after the agent's next session."
+}
+
 // agentInstallHint tells the user how to get an agent they do not have.
 func agentInstallHint(providerID string) string {
 	switch providerID {
@@ -703,6 +716,11 @@ func (m StartModel) viewAgentMenu() string {
 		b.WriteString(cursor + agentMenuRow(l) + "\n")
 	}
 
+	if m.agentMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(check(m.agentMsg))
+	}
+
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  ↑↓ choose  enter set up  s skip this agent  tab skip all  q quit"))
 	return b.String()
@@ -723,7 +741,11 @@ func agentMenuRow(l hookLine) string {
 	case !l.Health.Current:
 		return fmt.Sprintf("%s %s — hooks out of date", warnStyle.Render("~"), name)
 	case !l.Health.Effective:
-		return fmt.Sprintf("%s %s — set up, not yet seen running", warnStyle.Render("~"), name)
+		// A tick, not a warning: everything helios can do is done, and
+		// readiness already counts this agent as startable. The note is a
+		// caveat, and it clears itself after the agent's first session.
+		return fmt.Sprintf("%s %s — ready %s", checkStyle.Render("✓"), name,
+			subtitleStyle.Render("(awaiting its first session)"))
 	default:
 		return fmt.Sprintf("%s %s — ready", checkStyle.Render("✓"), name)
 	}
@@ -757,13 +779,28 @@ func (m StartModel) viewAgentSetup() string {
 	b.WriteString(subtitleStyle.Render("  permission prompts from your phone."))
 	b.WriteString("\n")
 
-	// The one thing helios cannot do for the user, said only where it applies.
-	if line.Health.Installed && line.Health.Current && !line.Health.Effective && line.Health.Detail != "" {
+	done := line.Health.Installed && line.Health.Current
+	action := "enter install hooks"
+
+	if done {
+		// Nothing left for helios to do. Saying "install hooks" here offered
+		// an action that rewrote the same file and returned to an identical
+		// screen, which reads as the key being broken.
+		action = "enter reinstall hooks"
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), line.Health.Detail))
+		b.WriteString(check("Hooks are installed and up to date"))
+		if !line.Health.Effective {
+			b.WriteString("\n")
+			b.WriteString(subtitleStyle.Render("  " + agentFirstRunNote(m.agentSetup)))
+		}
+	}
+
+	if m.agentMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(check(m.agentMsg))
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter install hooks  s skip this agent  tab back  q quit"))
+	b.WriteString(helpStyle.Render("  " + action + "  s skip this agent  tab back  q quit"))
 	return b.String()
 }
