@@ -3,7 +3,6 @@ package codex
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,51 +77,30 @@ func (p *Provider) LocateTranscript(sessionID string) string {
 	return FindRollout(sessionID)
 }
 
-func (p *Provider) ParseTranscript(path string, limit, offset int) (*transcript.TranscriptResult, error) {
-	msgs, err := parseRollout(path)
-	if err != nil {
-		return nil, err
+// ParseLine reads one rollout record.
+//
+// The sequence number is the record's own ordinal, so seq is ignored: a
+// rollout numbers its records itself, and counting rendered messages instead
+// would give two readers of the same file different numbers for one message.
+func (p *Provider) ParseLine(line []byte, _ int) []transcript.Message {
+	var entry rolloutEntry
+	if json.Unmarshal(line, &entry) != nil {
+		return nil
 	}
-	return transcript.Paginate(msgs, limit, offset), nil
-}
-
-// parseRollout turns a rollout file into provider-neutral messages.
-func parseRollout(path string) ([]transcript.Message, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open rollout: %w", err)
+	// Only response_item carries conversation. event_msg, turn_context,
+	// world_state and session_meta are bookkeeping.
+	if entry.Type != "response_item" {
+		return nil
 	}
-	defer f.Close()
-
-	msgs := []transcript.Message{}
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
-			continue
-		}
-		var entry rolloutEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
-		}
-		// Only response_item carries conversation. event_msg, turn_context,
-		// world_state and session_meta are bookkeeping.
-		if entry.Type != "response_item" {
-			continue
-		}
-		var payload rolloutPayload
-		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-			continue
-		}
-		if m := messageFrom(&entry, &payload); m != nil {
-			msgs = append(msgs, *m)
-		}
+	var payload rolloutPayload
+	if json.Unmarshal(entry.Payload, &payload) != nil {
+		return nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read rollout: %w", err)
+	m := messageFrom(&entry, &payload)
+	if m == nil {
+		return nil
 	}
-	return msgs, nil
+	return []transcript.Message{*m}
 }
 
 func messageFrom(entry *rolloutEntry, payload *rolloutPayload) *transcript.Message {

@@ -5,8 +5,39 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/kamrul1157024/helios/internal/transcript"
 )
+
+// titledProvider stands in for a registered agent whose log is Claude-shaped.
+// The titler reads a transcript through the provider that wrote it, so a test
+// about reading one needs a provider in the registry to read it with.
+type titledProvider struct{}
+
+func (titledProvider) Info() Info {
+	return Info{ID: titledProviderID, Name: "Autotitle test", Kind: KindNative}
+}
+func (titledProvider) Launch(SessionSpec) (Launch, error) { return Launch{}, nil }
+func (titledProvider) LocateTranscript(string) string     { return "" }
+func (titledProvider) ParseLine(line []byte, seq int) []transcript.Message {
+	return transcript.ParseClaudeLine(line, seq)
+}
+
+const titledProviderID = "autotitle-test"
+
+var registerTitled sync.Once
+
+func withTitledProvider(t *testing.T) string {
+	t.Helper()
+	registerTitled.Do(func() {
+		if err := Register(titledProvider{}); err != nil {
+			t.Fatalf("register test provider: %v", err)
+		}
+	})
+	return titledProviderID
+}
 
 func TestTitlePrompt_GlyphsAreDistinct(t *testing.T) {
 	seen := map[string]string{}
@@ -332,7 +363,7 @@ func TestReadSession_TakesTheMessageFromTheTranscript(t *testing.T) {
 		{"assistant", "Profiling it now."},
 	})
 
-	pairs, latest := readSession("", path, 5)
+	pairs, latest := readSession(withTitledProvider(t), path, 5)
 
 	if latest != "check the helios app debug why it using that much" {
 		t.Errorf("latest: got %q", latest)
@@ -350,7 +381,7 @@ func TestReadSession_LooksPastASlashCommand(t *testing.T) {
 		{"user", "/clear"},
 	})
 
-	_, latest := readSession("", path, 5)
+	_, latest := readSession(withTitledProvider(t), path, 5)
 
 	if latest != "add multipart upload to the daemon" {
 		t.Errorf("a slash command was taken as the subject: %q", latest)

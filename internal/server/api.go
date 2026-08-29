@@ -421,8 +421,13 @@ func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// The transcript is the agent's own log, in the agent's own format, so the
+	// provider that wrote it is the only thing that can read it. A session
+	// whose provider this build does not have has an unreadable log, which is
+	// an empty transcript rather than an error.
 	transcriptPath := s.resolveTranscriptPath(session)
-	if transcriptPath == "" {
+	transcriber := provider.TranscriberFor(session.Source)
+	if transcriptPath == "" || transcriber == nil {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
 			"messages": []interface{}{},
 			"total":    0,
@@ -450,9 +455,9 @@ func (s *PublicServer) handleSessionTranscript(w http.ResponseWriter, r *http.Re
 	if a := r.URL.Query().Get("after_seq"); a != "" {
 		afterSeq := -1
 		fmt.Sscanf(a, "%d", &afterSeq)
-		result, err = transcript.Delta(transcriptPath, r.URL.Query().Get("epoch"), afterSeq, limit)
+		result, err = transcript.Delta(transcriber.ParseLine, transcriptPath, r.URL.Query().Get("epoch"), afterSeq, limit)
 	} else {
-		result, err = transcript.Page(transcriptPath, limit, offset)
+		result, err = transcript.Page(transcriber.ParseLine, transcriptPath, limit, offset)
 	}
 	if err != nil {
 		jsonError(w, fmt.Sprintf("failed to read transcript: %v", err), http.StatusInternalServerError)

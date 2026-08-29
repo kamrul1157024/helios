@@ -186,11 +186,18 @@ type ModelLister interface {
 }
 
 // Transcriber reads the agent's own conversation log.
+//
+// A line at a time, not a file at a time. The transcript store parses only the
+// bytes appended since it last looked, and it can only do that for a provider
+// whose records are independent of each other — which every agent's log is.
 type Transcriber interface {
 	// LocateTranscript finds a session's transcript when the recorded path has
 	// gone stale, or returns "".
 	LocateTranscript(sessionID string) string
-	ParseTranscript(path string, limit, offset int) (*transcript.TranscriptResult, error)
+	// ParseLine turns one line of the transcript into the messages it holds.
+	// seq counts the messages before this line, for a format that does not
+	// number its own records.
+	ParseLine(line []byte, seq int) []transcript.Message
 }
 
 // Discoverer finds sessions the user started outside Helios.

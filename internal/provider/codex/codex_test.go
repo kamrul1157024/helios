@@ -268,9 +268,9 @@ func TestParsesARealRollout(t *testing.T) {
 		t.Fatalf("write rollout: %v", err)
 	}
 
-	res, err := New(0).ParseTranscript(path, 50, 0)
+	res, err := transcript.Page(New(0).ParseLine, path, 50, 0)
 	if err != nil {
-		t.Fatalf("ParseTranscript: %v", err)
+		t.Fatalf("Page: %v", err)
 	}
 
 	var roles []transcript.MessageRole
@@ -331,9 +331,9 @@ func TestPagingFollowsTheSharedContract(t *testing.T) {
 	}
 	p := New(0)
 
-	res, err := p.ParseTranscript(path, 2, 0)
+	res, err := transcript.Page(p.ParseLine, path, 2, 0)
 	if err != nil {
-		t.Fatalf("ParseTranscript: %v", err)
+		t.Fatalf("Page: %v", err)
 	}
 	if res.Total != 5 || res.Returned != 2 || !res.HasMore {
 		t.Errorf("newest page = %+v, want total 5, returned 2, more", res)
@@ -342,12 +342,12 @@ func TestPagingFollowsTheSharedContract(t *testing.T) {
 		t.Errorf("last message = %q, want the newest", res.Messages[1].Content)
 	}
 
-	res, _ = p.ParseTranscript(path, 0, 0)
+	res, _ = transcript.Page(p.ParseLine, path, 0, 0)
 	if res.Returned != 0 {
 		t.Errorf("limit 0 returned %d messages, want none", res.Returned)
 	}
 
-	res, _ = p.ParseTranscript(path, 2, 4)
+	res, _ = transcript.Page(p.ParseLine, path, 2, 4)
 	if res.Returned != 1 || res.HasMore {
 		t.Errorf("oldest page = %+v, want 1 message and no more", res)
 	}

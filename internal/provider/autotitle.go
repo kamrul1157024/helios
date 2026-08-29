@@ -359,13 +359,15 @@ func generateTitle(db *store.Store, sessionID, cwd, transcriptPath string, notif
 // can proceed with creating…", having taken the transcript for its own
 // orders. Nothing in it is addressed to the titler, so it is marked as
 // material to read rather than instructions to follow.
-// readTranscript asks the provider's own parser, falling back to the Claude
-// reader for a session whose provider offers none.
+// readTranscript reads through the provider's own parser. There is no fallback:
+// reading one agent's log with another's parser yields no messages, and a
+// session with no messages is one the titler silently leaves untitled.
 func readTranscript(providerID, path string) (*transcript.TranscriptResult, error) {
-	if t := TranscriberFor(providerID); t != nil {
-		return t.ParseTranscript(path, 200, 0)
+	t := TranscriberFor(providerID)
+	if t == nil {
+		return nil, fmt.Errorf("no transcript reader for provider %q", providerID)
 	}
-	return transcript.Page(path, 200, 0)
+	return transcript.Page(t.ParseLine, path, 200, 0)
 }
 
 func buildTitlePrompt(project, userMsg string, pairs []exchangePair) string {

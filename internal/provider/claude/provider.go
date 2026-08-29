@@ -191,8 +191,8 @@ func (p *Provider) LocateTranscript(sessionID string) string {
 	return discovery.FindClaudeTranscript(sessionID)
 }
 
-func (p *Provider) ParseTranscript(path string, limit, offset int) (*transcript.TranscriptResult, error) {
-	return transcript.ParseClaudeTranscript(path, limit, offset)
+func (p *Provider) ParseLine(line []byte, seq int) []transcript.Message {
+	return transcript.ParseClaudeLine(line, seq)
 }
 
 func (p *Provider) Discover(db *store.Store) { discovery.DiscoverClaudeSessions(db) }
