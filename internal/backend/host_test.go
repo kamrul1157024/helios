@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -293,5 +294,37 @@ func TestKeySequence(t *testing.T) {
 	}
 	if _, err := keySequence(Key("nope")); err == nil {
 		t.Fatal("unknown key should error")
+	}
+}
+
+// A host that dies takes its socket with it, but the registry keeps the entry
+// until the reaper next runs — twenty minutes later. Handle is what fills the
+// `terminal` field every client reads as "there is a terminal here", and the
+// desktop dialled the dead path and retried the ENOENT forever.
+func TestHostBackendHandleDropsADeadHost(t *testing.T) {
+	h, dir := newHostBackend(t)
+
+	if _, err := h.Start("sess-handle", dir, []string{"sleep", "30"}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, ok := h.Handle("sess-handle"); !ok {
+		t.Fatal("a live host should have a handle")
+	}
+
+	// Killed rather than h.Kill()ed: Kill forgets the session, and the case
+	// that broke is a host that goes away without telling the registry.
+	car, err := terminal.ReadSidecar(terminal.SidecarPath(filepath.Join(dir, ".helios"), "sess-handle"))
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	if err := syscall.Kill(car.PID, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill host: %v", err)
+	}
+	if !waitFor(t, 10*time.Second, func() bool { return !h.Alive("sess-handle") }) {
+		t.Fatal("host never went away")
+	}
+
+	if handle, ok := h.Handle("sess-handle"); ok {
+		t.Errorf("handle = %q for a host that is gone, want none", handle)
 	}
 }
