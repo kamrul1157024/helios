@@ -98,6 +98,13 @@ export class Hud {
       show: false,
       frame: false,
       transparent: true,
+      // An NSPanel rather than an ordinary window, which is what lets the HUD
+      // be clicked without Helios becoming the frontmost app. A normal window
+      // can be made key, and `acceptFirstMouse` below means the first click
+      // both presses the button and activates — so answering an approval
+      // dragged application focus across with it, and a tiling window manager
+      // followed. A non-activating panel hosts controls without any of that.
+      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
       // The cards draw their own shadow; a window shadow would outline the
       // transparent region instead of the cards.
       hasShadow: false,
