@@ -132,17 +132,12 @@ func handleDaemon(args []string) {
 					newArgs = append(newArgs, a)
 				}
 			}
-			proc, err := os.StartProcess(exe, append([]string{exe}, newArgs...), &os.ProcAttr{
-				Dir:   "/",
-				Env:   os.Environ(),
-				Files: []*os.File{os.Stdin, nil, nil},
-			})
+			pid, err := daemon.SpawnDetached(exe, newArgs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error starting background daemon: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("helios daemon started in background (pid %d)\n", proc.Pid)
-			proc.Release()
+			fmt.Printf("helios daemon started in background (pid %d)\n", pid)
 			return
 		}
 		// Run under supervisor so panics/crashes get auto-restarted

@@ -947,25 +947,11 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 			if exeErr != nil {
 				exe = "helios"
 			}
-			dnIn, _ := os.Open(os.DevNull)
-			dnOut, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-			dnErr, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-			proc, startErr := os.StartProcess(exe, []string{exe, "daemon", "start"}, &os.ProcAttr{
-				Dir:   "/",
-				Env:   os.Environ(),
-				Files: []*os.File{dnIn, dnOut, dnErr},
-			})
-			if dnIn != nil {
-				dnIn.Close()
-			}
-			if dnOut != nil {
-				dnOut.Close()
-			}
-			if dnErr != nil {
-				dnErr.Close()
-			}
+			// Detached, or the daemon shares this TUI's process group and dies
+			// with the terminal it was started from — Ctrl-C here took the
+			// daemon with it and left the agents' hooks failing.
+			_, startErr := daemon.SpawnDetached(exe, []string{"daemon", "start"})
 			if startErr == nil {
-				proc.Release()
 				// Wait for daemon to be ready
 				for i := 0; i < 20; i++ {
 					time.Sleep(250 * time.Millisecond)
