@@ -1047,10 +1047,14 @@ func hookLines() []hookLine {
 	return out
 }
 
-// agentInstalled reports whether the provider's CLI is on this machine.
+// agentInstalled asks the provider, which knows how to find its own binary.
+//
+// A bare exec.LookPath here reported "not installed" for an agent the user
+// could run by hand: the TUI does not always carry the interactive PATH that
+// puts ~/.local/bin on it, and the providers already fall back to a login
+// shell for exactly that reason.
 func agentInstalled(providerID string) bool {
-	_, err := exec.LookPath(providerID)
-	return err == nil
+	return provider.AvailableFor(providerID)
 }
 
 func installHooksQuietly() {

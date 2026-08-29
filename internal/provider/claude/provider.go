@@ -277,3 +277,10 @@ func (p *Provider) QueuePrompt(sessionID, resumeID, text string) error {
 	}
 	return terminalBackend.SendText(sessionID, text)
 }
+
+// Available reports whether the claude CLI is on this machine. Resolved on
+// every call, so installing the agent takes effect without a daemon restart.
+func (p *Provider) Available() bool {
+	_, found := provider.LookAgent("claude")
+	return found
+}

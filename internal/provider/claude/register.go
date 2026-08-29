@@ -3,10 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"slices"
-	"strings"
 
 	"github.com/kamrul1157024/helios/internal/provider"
 )
@@ -15,22 +12,8 @@ import (
 // The daemon runs in a non-interactive context that may not have the user's
 // full PATH, so we fall back to a login shell lookup if LookPath fails.
 func findClaude() string {
-	if p, err := exec.LookPath("claude"); err == nil && p != "" {
-		return p
-	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	out, err := exec.Command(shell, "-l", "-c", "which claude").Output()
-	if err == nil {
-		if p := strings.TrimSpace(string(out)); p != "" {
-			if info, statErr := os.Stat(p); statErr == nil && !info.IsDir() {
-				return p
-			}
-		}
-	}
-	return "claude" // fallback: let exec resolve it at call time
+	path, _ := provider.LookAgent("claude")
+	return path
 }
 
 // DefaultPermissionMode is the permission mode every Helios-started Claude

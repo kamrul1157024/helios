@@ -50,22 +50,18 @@ func (p *Provider) Info() provider.Info {
 // a non-interactive context that may not have the user's full PATH, so we fall
 // back to a login shell lookup.
 func findCodex() string {
-	if p, err := exec.LookPath("codex"); err == nil && p != "" {
-		return p
-	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	out, err := exec.Command(shell, "-l", "-c", "which codex").Output()
-	if err == nil {
-		if p := strings.TrimSpace(string(out)); p != "" {
-			if info, statErr := os.Stat(p); statErr == nil && !info.IsDir() {
-				return p
-			}
-		}
-	}
-	return "codex"
+	path, _ := provider.LookAgent("codex")
+	return path
+}
+
+// Available reports whether the codex CLI is on this machine.
+//
+// Resolved on every call rather than cached at construction: the daemon may
+// start before the user installs the agent, and a stale "not installed" would
+// outlive the install.
+func (p *Provider) Available() bool {
+	_, found := provider.LookAgent("codex")
+	return found
 }
 
 // ==================== Permission modes ====================
