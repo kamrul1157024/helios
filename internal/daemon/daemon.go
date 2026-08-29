@@ -367,6 +367,12 @@ func Stop() error {
 	if err != nil {
 		return fmt.Errorf("process not found: %w", err)
 	}
+	// The pid file is written by a daemon and removed by a deferred call that a
+	// killed daemon never reaches, so the number in it can belong to anything.
+	if !isHeliosProcess(pid) {
+		os.Remove(pidPath)
+		return fmt.Errorf("daemon not running (pid %d is not helios)", pid)
+	}
 
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("send signal: %w", err)

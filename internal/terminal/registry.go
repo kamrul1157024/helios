@@ -231,6 +231,11 @@ func (r *Registry) Evict(sessionID string) error {
 			pid = s.PID
 		}
 	}
+	// Only if the pid is still this session's host. See IsHostProcess: a
+	// recorded pid can belong to anything by the time it is used.
+	if !IsHostProcess(pid, sessionID) {
+		pid = 0
+	}
 	if pid > 0 {
 		if p, err := os.FindProcess(pid); err == nil {
 			p.Signal(syscall.SIGTERM)
@@ -243,7 +248,7 @@ func (r *Registry) Evict(sessionID string) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if pid > 0 && Probe(e.socket) {
+	if pid > 0 && Probe(e.socket) && IsHostProcess(pid, sessionID) {
 		if p, err := os.FindProcess(pid); err == nil {
 			p.Signal(syscall.SIGKILL)
 		}

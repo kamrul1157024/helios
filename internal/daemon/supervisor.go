@@ -149,8 +149,9 @@ func StopSupervisor() error {
 		return Stop()
 	}
 
-	// Check if supervisor is actually alive
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	// Alive, and still helios: the pid file outlives a killed supervisor, and
+	// the number in it belongs to whatever was started next.
+	if err := proc.Signal(syscall.Signal(0)); err != nil || !isHeliosProcess(pid) {
 		os.Remove(pidPath)
 		return Stop()
 	}

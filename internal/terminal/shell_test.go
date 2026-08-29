@@ -110,10 +110,18 @@ func TestEvictFindsThePidInTheSidecar(t *testing.T) {
 	e.add(id, 0)
 
 	// A sleeping process stands in for the host, so the test can tell whether
-	// Evict actually found a pid to signal.
-	victim := exec.Command("sleep", "30")
+	// Evict actually found a pid to signal. Its command line has to name the
+	// session: Evict signals a recorded pid only once it has confirmed the pid
+	// still belongs to that host, since pids are recycled.
+	victim := exec.Command("/bin/sh")
+	// Two commands, so sh does not exec-replace itself with sleep and drop
+	// the argv this check reads.
+	victim.Args = []string{"helios", "-c", "sleep 30; :", "ptyhost", id}
 	if err := victim.Start(); err != nil {
 		t.Fatalf("start victim: %v", err)
+	}
+	for i := 0; i < 50 && !IsHostProcess(victim.Process.Pid, id); i++ {
+		time.Sleep(20 * time.Millisecond)
 	}
 	t.Cleanup(func() { victim.Process.Kill() })
 
