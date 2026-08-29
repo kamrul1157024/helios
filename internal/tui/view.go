@@ -174,7 +174,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString("\n")
 		}
 
-		keys := "  enter continue  t change tunnel  N notifications  s settings  q quit"
+		keys := "  enter continue  a agents  t change tunnel  N notifications  s settings  q quit"
 		if featureflag.MCP() && !m.mcpRegistered {
 			keys = "  m agent tools" + keys
 		}
@@ -566,7 +566,7 @@ func (m StartModel) viewMain() string {
 
 	// The MCP key is advertised only while there is something to do with it,
 	// so the bar does not carry a permanently dead binding.
-	keys := "  t change tunnel  N notifications  s settings  q quit"
+	keys := "  a agents  t change tunnel  N notifications  s settings  q quit"
 	if featureflag.MCP() && !m.mcpRegistered {
 		keys = "  m agent tools" + keys
 	}

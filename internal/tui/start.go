@@ -209,8 +209,11 @@ type StartModel struct {
 	// agentCursor is the highlighted row of the agent menu.
 	agentCursor int
 	// agentSetup is the agent the setup screen is working on.
-	agentSetup    string
-	hooksOutdated bool
+	agentSetup string
+	// agentMenuFromMain is whether the menu was opened from the dashboard
+	// rather than reached during setup, which decides where leaving it goes.
+	agentMenuFromMain bool
+	hooksOutdated     bool
 	// mcpRegistered reports whether Claude Code knows about the Helios MCP
 	// server. Unregistered is a suggestion, never a blocker: the explain panel
 	// is one feature, and a user who does not want it should not be nagged past
@@ -446,7 +449,16 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case screenAgentSetup:
 			m.screen = screenAgentMenu
 			return m, nil
-		case screenAgentMenu, screenHooksInstall, screenHooksUpdate,
+		case screenAgentMenu:
+			// Opened from the dashboard, q goes back to it rather than
+			// quitting helios out from under someone who only looked.
+			if m.agentMenuFromMain {
+				m.agentMenuFromMain = false
+				m.screen = screenMain
+				return m, nil
+			}
+			return m, tea.Quit
+		case screenHooksInstall, screenHooksUpdate,
 			screenShellSetup, screenMCPSetup, screenError:
 			return m, tea.Quit
 		case screenSettings:
@@ -553,6 +565,18 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, toggleSkipCmd(line.Provider, !line.Skipped)
 		}
 
+	case "a", "A":
+		// The menu is otherwise only reachable when setup is unfinished, so a
+		// machine where everything is installed had no way to reach it — and
+		// no way to skip an agent, which is the one thing there that a
+		// working setup might still want.
+		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
+			m.agentMenuFromMain = true
+			m.screen = screenAgentMenu
+			m.agentCursor = firstUnready(m.hookLines)
+			return m, refreshAgentsCmd()
+		}
+
 	case "m":
 		// The summary screen is where this is usually read: a set-up install
 		// sits there waiting on enter, and never reaches the dashboard.
@@ -565,6 +589,11 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		switch m.screen {
 		case screenAgentMenu:
+			if m.agentMenuFromMain {
+				m.agentMenuFromMain = false
+				m.screen = screenMain
+				return m, nil
+			}
 			// Skip the whole step. Setup must never be a wall: an agent left
 			// unconfigured is a provider missing from the session picker, not
 			// a broken helios.
@@ -605,6 +634,11 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 	case screenAgentMenu:
 		line, ok := m.agentAt(m.agentCursor)
 		if !ok {
+			if m.agentMenuFromMain {
+				m.agentMenuFromMain = false
+				m.screen = screenMain
+				return m, nil
+			}
 			return m.proceedAfterHooks()
 		}
 		m.agentSetup = line.Provider
