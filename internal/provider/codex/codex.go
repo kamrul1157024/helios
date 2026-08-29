@@ -14,6 +14,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -267,6 +268,15 @@ func (p *Provider) QueuePrompt(sessionID, resumeID, text string) error {
 
 // ==================== Small model and titles ====================
 
+// titleReasoningEffort is what the titler asks the model for.
+//
+// Not "minimal", which reads like the cheapest option and is not a value the
+// API accepts: the request comes back 400 with "Unsupported value: 'minimal'
+// is not supported with the ... model. Supported values are: 'none', 'low',
+// 'medium', 'high', 'xhigh', and 'max'". Codex exits 1, and every Codex
+// session on the machine stayed untitled.
+const titleReasoningEffort = "low"
+
 // Complete runs the CLI non-interactively with its cheapest reasoning effort,
 // which respects whatever auth the user already has rather than asking for a
 // key.
@@ -278,7 +288,7 @@ func (p *Provider) Complete(ctx context.Context, system, prompt string) (string,
 	cmd := exec.CommandContext(ctx, p.bin,
 		"-s", "read-only", "-a", "never",
 		"exec", "--skip-git-repo-check",
-		"-c", "model_reasoning_effort=\"minimal\"",
+		"-c", "model_reasoning_effort=\""+titleReasoningEffort+"\"",
 		system+"\n\n"+prompt,
 	)
 	// A session's own directory is irrelevant to naming it, and running in one
@@ -287,6 +297,14 @@ func (p *Provider) Complete(ctx context.Context, system, prompt string) (string,
 
 	out, err := cmd.Output()
 	if err != nil {
+		// Codex reports a rejected request on stderr and exits 1, so without
+		// this the whole diagnosis is "exit status 1" — which is what an
+		// unsupported reasoning effort looked like while every Codex session
+		// went unnamed.
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+			return "", fmt.Errorf("codex exec: %w: %s", err, lastMeaningfulLine(string(exit.Stderr)))
+		}
 		return "", fmt.Errorf("codex exec: %w", err)
 	}
 	return lastMeaningfulLine(string(out)), nil
