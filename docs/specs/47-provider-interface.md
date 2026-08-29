@@ -236,26 +236,45 @@ handler and writes it with `DB.UpdateSessionResumeID`.
 ### 2. Hook installation
 
 ```go
+// HookHealth is what the daemon can tell a user about an install.
+type HookHealth struct {
+    Installed bool   // the table is on disk
+    Current   bool   // and it matches this build's hash
+    Effective bool   // and the agent will actually run it
+    Detail    string // what to do when one of the above is false
+}
+
 type HookInstaller interface {
     Install(scope Scope) error   // Scope is User or Project
     Hash() string                // of the table this build would write
-    Installed() (hash string, ok bool)
+    Health() HookHealth
     Remove() error
 }
 func RegisterHookInstaller(providerID string, h HookInstaller)
 ```
 
-This is the one place a real Go interface earns its keep. The four methods are
-always implemented together, and `daemon/hooks.go` already has all four as
-free functions for Claude.
+This is the one place a real Go interface earns its keep. The methods are
+always implemented together, and `daemon/hooks.go` already has Claude's as free
+functions.
 
-`Hash` and `Installed` drive the outdated check that already exists. Keep it:
-it is what tells a user their hooks are stale after an upgrade.
+**`Effective` is separate from `Installed` because of a measurement.** Codex
+refuses to run untrusted hooks and reports nothing at all: the file is read,
+the hooks are skipped, the turn succeeds. A daemon checking only "is the file
+there, does the hash match" would report healthy while receiving no events and
+leaving every session at `starting` forever. See
+[46-codex-provider.md](46-codex-provider.md) for the run.
 
-**Installers must validate their own writes.** Codex ignores a malformed
-`hooks.json` in total silence — no warning, no error, no exit code. See
-[46-codex-provider.md](46-codex-provider.md). A provider cannot rely on the CLI
-to report a bad install.
+Claude's implementation sets `Effective` from `Installed && Current` and is
+done. Any provider that can disable a present hook must answer the third
+question honestly, by reading the agent's trust state or by probing.
+
+**Installers must also validate their own writes.** Codex ignores a malformed
+`hooks.json` in the same silence. A provider cannot rely on the CLI to report a
+bad install — that is two silent failure modes from one agent.
+
+The general rule this yields, worth stating once: **a provider must never infer
+health from its own last write.** Health is what the agent does, not what the
+daemon intended.
 
 ### 3. Transcript
 

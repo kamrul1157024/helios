@@ -131,9 +131,17 @@ turns each one from a shortcut into a bug.
 ## Part 2 — what Codex gives us
 
 Codex CLI **0.150.1** is installed at `~/.local/bin/codex`. It was released
-2026-08-27. Everything below marked ✓ was checked against that binary on
-2026-08-29. Two claims still need a logged-in session; they are marked and
-listed in "Still open".
+2026-08-27. Everything below marked ✓ was measured against that binary on
+2026-08-29, with a logged-in ChatGPT account and live turns.
+
+The rig: a throwaway `CODEX_HOME` holding a copy of `auth.json` and a
+`hooks.json` that curls all eleven events at a local HTTP receiver. The
+receiver logs each payload and replies with a decision read from a file, so a
+hook's answer can be changed between runs. That is the Helios architecture in
+miniature, which is the point — it tests the design, not just the CLI.
+
+**Every claim in this spec is now measured.** Nothing is left resting on the
+docs, and the docs were wrong four times.
 
 ### Codex has a hook engine
 
@@ -145,28 +153,125 @@ an inline `[hooks]` table in either `config.toml`.
 ✓ `codex features list` reports `hooks  stable  true`. The engine is stable and
 on by default. `[features] hooks = false` turns it off.
 
-⚠ **A malformed `hooks.json` is ignored in silence.** A file with an unknown
-event name and an unknown handler type produced no warning, no error and no
-exit code. Compare `config.toml`, which fails loudly and names the bad key.
-Helios must therefore validate its own hook install rather than trust Codex to
-complain. Add that check to the health check that already reports hook trust.
+### ✗ Hook trust blocks everything, and says nothing
+
+This is the finding that costs the most, and it was not visible from the docs.
+
+A first live run installed all eleven hooks and ran a turn that used a tool.
+**Zero hooks fired.** No warning. No error. The turn completed normally.
+
+The hooks file was parsed — Codex printed
+`warning: clamping SessionEnd hook timeout to 3s in .../hooks.json`, which it
+can only know by reading the file. It read the hooks, then declined to run
+them, and told nobody.
+
+The same run with `--dangerously-bypass-hook-trust` fired all six applicable
+events. Trust was the only variable.
+
+| Run | Hooks fired |
+|---|---|
+| default | 0 |
+| `--dangerously-bypass-hook-trust` | 6 |
+
+**Consequence for Helios.** An untrusted install is indistinguishable from a
+working one: sessions start, the agent runs, and the daemon simply never hears
+anything. Every session sits at `starting` forever. There is no error to
+report because Codex reports none.
+
+So the health check is not a nicety. It is the only thing standing between a
+user and a Helios that appears broken for no visible reason. It must:
+
+1. Verify the hook table on disk matches this build's hash.
+2. Verify hooks are actually *trusted*, not merely present.
+3. Say plainly what to run: `/hooks` inside a Codex session.
+
+Point 2 needs a probe. Trust state is not in `hooks.json` and `codex doctor`
+does not report it. Finding where Codex persists trust, and whether it can be
+read, is the first task of stage 2.
+
+⚠ **A malformed `hooks.json` is also ignored in silence.** A file with an
+unknown event name and an unknown handler type produced no warning, no error
+and no exit code. Compare `config.toml`, which fails loudly and names the bad
+key. Two silent failure modes, same remedy: Helios validates its own install.
 
 Events: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`,
 `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
 `SubagentStart`, `SubagentStop`, `Stop`.
 
-The payload matches Claude's closely. Every event carries `session_id`,
-`transcript_path`, `cwd`, `hook_event_name` and `model`. Most carry
-`permission_mode`, and the values are Claude's own vocabulary: `default`,
-`acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`. Tool events carry
-`tool_name`, `tool_use_id` and `tool_input`.
+### ✓ The measured payloads
 
-`PermissionRequest` answers with the shape Helios already writes:
+Captured from live turns. Every event carries these five:
 
-```json
-{"hookSpecificOutput": {"hookEventName": "PermissionRequest",
- "decision": {"behavior": "allow"}}}
 ```
+session_id       01a04ccb-c3f1-7ed0-b035-3c973b28645b
+transcript_path  ~/.codex/sessions/2026/08/29/rollout-<ts>-<session_id>.jsonl
+cwd              /tmp/hxtest/work
+hook_event_name  PreToolUse
+model            gpt-5.6-sol
+```
+
+Then, per event:
+
+| Event | Adds |
+|---|---|
+| `SessionStart` | `permission_mode`, `source` (`startup` \| `resume`) |
+| `UserPromptSubmit` | `permission_mode`, `turn_id`, `prompt` |
+| `PreToolUse` | `permission_mode`, `turn_id`, `tool_name`, `tool_input`, `tool_use_id` |
+| `PostToolUse` | the above plus `tool_response` |
+| `PermissionRequest` | `permission_mode`, `turn_id`, `tool_name`, `tool_input` |
+| `Stop` | `permission_mode`, `turn_id`, `stop_hook_active`, `last_assistant_message` |
+| `SessionEnd` | `reason` — and **no** `permission_mode` |
+
+Three details Helios depends on:
+
+**`transcript_path` is in every payload.** It points at the rollout file. For a
+live session Helios never has to locate a transcript; it is handed one on the
+first hook, exactly as with Claude.
+
+**`PermissionRequest` has no `tool_use_id`.** `PreToolUse` does. So a permission
+card cannot be correlated to its tool call by id. Match on `tool_name` the way
+`resolveToolPermissions` already does for Claude
+(`internal/provider/claude/hooks.go:966`).
+
+**`permission_mode` reuses Claude's vocabulary.** Observed `default` under
+interactive `-a on-request`, and `bypassPermissions` under `codex exec`. The
+column Helios already has needs no new values.
+
+✓ `tool_name` normalises. A shell command arrives as `Bash` with
+`tool_input.command`, and a file write as `apply_patch` with the patch in
+`tool_input.command` — even when Code Mode wraps the actual call in JavaScript
+underneath. The hook layer is the stable surface; the rollout is not.
+
+### ✓ The architecture works, measured
+
+Four runs settle the design questions this spec was written to answer.
+
+**1. A hook's stdout, delivered by curl, becomes the decision.** The receiver
+replied to `PreToolUse` with a deny. Codex printed `hook: PreToolUse Blocked`,
+refused the tool, and handed the reason to the model, which reported:
+
+```
+Command blocked by PreToolUse hook: Blocked by helios test harness.
+```
+
+**2. Codex waits.** The receiver held its reply for 20 s. The hook held 20.0 s
+and the turn took 28 s end to end. A human on a phone has as long as the
+`timeout` allows. This is what makes the Helios card possible at all.
+
+**3. A daemon that is down does not wedge the agent.** With the receiver
+stopped, every hook printed `Failed` and the turn finished in 8 s — no stall,
+no retry storm. `curl -sS -f` is the right invocation: `-f` suppresses the
+error body, so nothing malformed reaches Codex's parser.
+
+**4. The whole remote-approval flow works.** In interactive mode under
+`-s read-only -a on-request`, a file write raised `PermissionRequest`. The
+receiver answered `{"decision": {"behavior": "allow"}}` and the file was
+written **with nobody at the keyboard**. Answering `deny` left the file
+absent. That is the Helios permission card, end to end, over HTTP.
+
+✓ Resume is equally clean. A session was resumed by id: same `session_id`,
+`source: resume` in `SessionStart`, and the model recalled a number from the
+earlier turn. `resume_id` is stable across wakes.
 
 ### Four Codex limits that change the design
 
@@ -247,6 +352,45 @@ status. Archived sessions move to `~/.codex/archived_sessions/`.
 recent one in the current directory. Resume accepts the same global flags, so
 the sandbox and approval flags replay the same way Claude's mode does.
 
+### ✓ The rollout schema
+
+Every line is `{timestamp, ordinal, type, payload}`. `ordinal` counts from 0
+and maps directly onto `transcript.Message.Seq`, which is better than Claude's
+file, where Helios has to count lines itself.
+
+| `type` | `payload.type` | Maps to |
+|---|---|---|
+| `session_meta` | — | session id, cwd, cli version, model provider |
+| `response_item` | `message` | a `user` / `assistant` / `developer` turn |
+| `response_item` | `custom_tool_call` | `RoleToolUse` |
+| `response_item` | `custom_tool_call_output` | `RoleToolResult` |
+| `event_msg` | `task_started`, `token_count`, `task_complete`, `item_completed` | skip |
+| `turn_context`, `world_state` | — | skip |
+
+Two traps for the parser, both measured:
+
+**Filter `role: developer`.** Those records hold the system prompt, the skills
+block and the multi-agent preamble. Rendering them would put thousands of words
+of framework text at the top of every history panel.
+
+**Filter injected user messages.** Not every `role: user` record is the user.
+The first one in a fresh session was a `<recommended_plugins>` block Codex
+injected. Match and drop the wrappers, or the panel shows the user saying
+things they never typed.
+
+**Do not parse tool calls from the rollout if the hooks can tell you instead.**
+With Code Mode active a shell command is recorded as a `custom_tool_call` named
+`exec` whose `input` is *JavaScript*:
+
+```
+const r = await tools.exec_command({"cmd":"echo daemon-down-ok", ...})
+```
+
+The same call arrived at the `PreToolUse` hook as `tool_name: "Bash"` with
+`tool_input: {"command": "echo daemon-down-ok"}`. The hook layer is normalised
+and stable; the rollout is an implementation detail that changes with a feature
+flag. Prefer the hook everywhere the hook fires.
+
 `-c key=value` sets any config key for one invocation, above every config file.
 `-c 'mcp_servers.helios={url="...", http_headers={...}}'` is how the Helios MCP
 server reaches a Codex session.
@@ -269,6 +413,28 @@ throwaway Codex install, and it is how the facts in this spec were checked.
 
 ✓ **`codex exec` prints `session id: <uuid>`** on its startup banner. Helios
 does not use `exec` for sessions, but the small-model caller can.
+
+✗ **`codex exec` forces `approval: never`.** Passing `-a on-request` is
+accepted and then ignored; the banner reports `approval: never` and
+`PermissionRequest` never fires. Exec is non-interactive by design. This does
+not hurt Helios — it drives a PTY — but it means every approval test must go
+through the interactive path, and the small-model caller can never raise a
+card.
+
+✗ **`SessionEnd` cannot block.** Its timeout is clamped to 3 s, with a warning
+naming the file: `clamping SessionEnd hook timeout to 3s`. Treat `SessionEnd`
+as advisory. Nothing that must succeed may live there.
+
+⚠ **Flag placement is not uniform.** `-s` and `-a` are global and must precede
+`exec`. `--skip-git-repo-check` is exec-only and must follow it. Getting it
+wrong is a hard argument error, so the session builder's argv order is part of
+the contract and needs a test.
+
+⚠ **Codex narrates hooks into the terminal.** Each one prints `hook: <Event>`
+then `hook: <Event> Completed` — or `Failed`, or `Blocked`. With eleven hooks
+installed this is a visible band of noise in every Helios terminal view, and
+users will ask about it. There is no observed flag to quieten it. Worth
+raising upstream.
 
 ---
 
@@ -304,6 +470,11 @@ The handler reads the header. When it is set, it looks the row up by the Helios
 id and writes `resume_id` from the payload's `session_id`. When it is empty —
 a Codex session the user started by hand — it falls back to the Codex id as the
 key. Hand-started sessions then appear in Helios for free.
+
+✓ **Measured.** `HELIOS_SESSION=helios-abc-123` in the launching environment
+arrived as `X-Helios-Session: helios-abc-123` on every one of the six hooks in
+the turn, including `SessionEnd`. Correlation through the environment works,
+and it is the piece the whole identity design rests on.
 
 ### Problem 2: hook transport
 
@@ -447,16 +618,17 @@ interrupted turn keeps the `active` status until the next hook fires. Accept
 the stale status, or build a terminal-output watcher. Decide this in stage 3,
 when the permission card makes the cost visible.
 
-**Two facts need a logged-in Codex.** `codex login status` reports *Not logged
-in* on this machine, so no turn has run. Both of these gate stage 3:
+**How to read trust state.** Hook trust silently disables everything, so the
+health check has to detect it. Trust is not recorded in `hooks.json` and
+`codex doctor` does not report it. Locate where Codex persists it and whether
+Helios may read it. If it cannot be read, fall back to a probe: install a
+trivial hook that pings the daemon at session start, and treat silence as
+untrusted. First task of stage 2.
 
-1. That a blocking `command` hook returns its decision through curl's stdout,
-   and that Codex waits for it.
-2. The exact payload field names for `SessionStart` and `PermissionRequest`.
-
-Run one Codex turn with a hook that logs its stdin to a file. That settles both
-in a minute. Until then, stage 2 can proceed: it needs the argv and the install
-path, which are checked.
+**Hook narration in the terminal.** Eleven hooks means a `hook: X` /
+`hook: X Completed` pair around every event, in the user's terminal view. No
+flag to suppress it was found. Decide whether to live with it, install fewer
+hooks, or raise it upstream.
 
 ---
 
@@ -490,10 +662,35 @@ This has no bearing on Helios. Helios wraps whatever CLI the user has already
 authenticated. It does not choose the model backend, and the Codex provider does
 not need to care which one is configured.
 
+## How to reproduce the measurements
+
+```bash
+export CODEX_HOME=/tmp/hxtest/home            # throwaway config dir
+cp ~/.codex/auth.json $CODEX_HOME/            # keep the real one untouched
+# hooks.json: one command hook per event, each curling a local receiver:
+#   cat | curl -sS -f -X POST -H 'Content-Type: application/json' \
+#     -H "X-Helios-Session: $HELIOS_SESSION" -d @- http://127.0.0.1:7799/hooks/codex/<event>
+
+# non-interactive, for lifecycle and tool hooks:
+HELIOS_SESSION=probe codex -s workspace-write --dangerously-bypass-hook-trust \
+  exec --skip-git-repo-check "Run: echo hi"
+
+# interactive over a PTY, the only way to raise PermissionRequest:
+#   codex -s read-only -a on-request --dangerously-bypass-hook-trust --no-alt-screen "<prompt>"
+```
+
+The receiver logs each payload and replies from a per-event file, so a
+decision can be changed between runs without a restart. Drop
+`--dangerously-bypass-hook-trust` to reproduce the silent-trust failure.
+
 ## Sources
 
-Documentation read 2026-08-29. Every ✓ claim was checked against
-`codex-cli 0.150.1` on the same day.
+Documentation read 2026-08-29. Every ✓ and ✗ claim was measured against
+`codex-cli 0.150.1` on the same day, with live turns on a logged-in account.
+Where the documentation and the binary disagree, the binary is recorded here.
+They disagreed four times: `--ask-for-approval` values,
+`--dangerously-bypass-hook-trust` existing, `wire_api` accepting only
+`responses`, and hook trust failing silently rather than warning.
 
 - [Codex hooks reference](https://learn.chatgpt.com/docs/hooks)
 - [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
