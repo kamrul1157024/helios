@@ -30,6 +30,7 @@ the Claude trust dialog showed its long form.
 | `resume_id` captured | n/a | pass |
 | Cold session resumed with history | not reached | pass |
 | Agent completed a turn | **blocked** — see L-1 | pass |
+| First run from an empty HOME | not reached | pass, after BUG-5 |
 
 Codex's turn, in full:
 
@@ -173,6 +174,12 @@ Hooks can run outside the sandbox after you trust them.
 Now raised as its own card, with its own wording, and the action tries both
 affirmatives so one card answers either dialog.
 
+Half of this was a second defect in the watcher. `PendingSession.NotifSent`
+was a single flag, so once *any* dialog had been surfaced for a session no
+further one could be. Even with the pattern added, the hook card never
+appeared. It tracks a set of dialog keys now. Verified on a clean rig: card
+one, answer it, card two appears, answer it, the session runs.
+
 The health text was wrong about this too. It said to run `/hooks`; Codex asks
 on its own at the start of the next session, and `/hooks` is only for a
 session already running. Reworded.
@@ -202,6 +209,23 @@ tapped an approval on a phone.
 
 **L-3 — one machine.** Linux, bash. The two most recent field bugs on this
 project were both macOS-and-zsh specific.
+
+## Clean-rig first run
+
+Repeated from an empty `HOME` after every fix, because a first run is what a
+demo is:
+
+```
+card 1  Directory trust required
+        → answered
+card 2  Approve helios hooks
+        → answered
+› say exactly FIRSTRUN-OK
+• FIRSTRUN-OK
+
+1 codex.session.start   1 codex.prompt.submit   1 codex.stop
+status=idle mode=workspace-write resume_id=01a04f6f-81e transcript=True
+```
 
 ## Suites
 

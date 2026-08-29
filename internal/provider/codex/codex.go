@@ -259,6 +259,7 @@ func (p *Provider) MatchScreen(screen string) *provider.ScreenPrompt {
 	for _, pattern := range trustPromptPatterns {
 		if strings.Contains(lower, pattern) {
 			return &provider.ScreenPrompt{
+				Key:    "directory-trust",
 				Type:   "codex.trust",
 				Title:  "Directory trust required",
 				Detail: "Codex is asking to trust this directory before it can run.",

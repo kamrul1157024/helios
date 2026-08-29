@@ -266,6 +266,10 @@ type Queuer interface {
 
 // ScreenPrompt is a modal found on a session's screen that no hook reports.
 type ScreenPrompt struct {
+	// Key names this dialog, so a session that shows more than one can raise
+	// a card for each. Distinct from Type, which several dialogs may share
+	// when one action answers them all.
+	Key string
 	// Type is the notification type to raise, prefixed with the provider ID.
 	Type string
 	// Title and Detail are user-facing.
