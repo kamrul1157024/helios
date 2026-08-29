@@ -210,9 +210,18 @@ type StartModel struct {
 	agentCursor int
 	// agentSetup is the agent the setup screen is working on.
 	agentSetup string
-	// agentMenuFromMain is whether the menu was opened from the dashboard
-	// rather than reached during setup, which decides where leaving it goes.
-	agentMenuFromMain bool
+	// agentMenuReturn is the screen to go back to when leaving the agent
+	// menu, or screenLoading's zero value when the menu was reached as a step
+	// in setup rather than opened deliberately.
+	//
+	// The screen matters, not just "was it the dashboard": returning to
+	// screenMain from the summary screen skipped the step that creates the
+	// pairing token, so the dashboard sat on "Generating pairing code..." for
+	// ever with nothing in flight.
+	agentMenuReturn screen
+	// agentMenuOpened is whether the menu was opened deliberately rather than
+	// reached during setup.
+	agentMenuOpened bool
 	// agentMsg acknowledges the last action on the agent screens. Without it,
 	// setting up an agent that was already set up returned to an identical
 	// screen and read as the key doing nothing.
@@ -455,12 +464,10 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenAgentMenu
 			return m, nil
 		case screenAgentMenu:
-			// Opened from the dashboard, q goes back to it rather than
-			// quitting helios out from under someone who only looked.
-			if m.agentMenuFromMain {
-				m.agentMenuFromMain = false
-				m.screen = screenMain
-				return m, nil
+			// Opened deliberately, q goes back rather than quitting helios out
+			// from under someone who only looked.
+			if m.agentMenuOpened {
+				return m.leaveAgentMenu()
 			}
 			return m, tea.Quit
 		case screenHooksInstall, screenHooksUpdate,
@@ -577,7 +584,8 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// no way to skip an agent, which is the one thing there that a
 		// working setup might still want.
 		if m.screen == screenMain || (m.screen == screenLoading && m.daemonOK) {
-			m.agentMenuFromMain = true
+			m.agentMenuReturn = m.screen
+			m.agentMenuOpened = true
 			m.agentMsg = ""
 			m.screen = screenAgentMenu
 			m.agentCursor = firstUnready(m.hookLines)
@@ -596,10 +604,8 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		switch m.screen {
 		case screenAgentMenu:
-			if m.agentMenuFromMain {
-				m.agentMenuFromMain = false
-				m.screen = screenMain
-				return m, nil
+			if m.agentMenuOpened {
+				return m.leaveAgentMenu()
 			}
 			// Skip the whole step. Setup must never be a wall: an agent left
 			// unconfigured is a provider missing from the session picker, not
@@ -641,10 +647,8 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 	case screenAgentMenu:
 		line, ok := m.agentAt(m.agentCursor)
 		if !ok {
-			if m.agentMenuFromMain {
-				m.agentMenuFromMain = false
-				m.screen = screenMain
-				return m, nil
+			if m.agentMenuOpened {
+				return m.leaveAgentMenu()
 			}
 			return m.proceedAfterHooks()
 		}
@@ -755,6 +759,18 @@ func refreshAgentsCmd() tea.Cmd {
 }
 
 type agentsRefreshed struct{ lines []hookLine }
+
+// leaveAgentMenu returns to whichever screen the menu was opened from.
+//
+// Back to that screen, not to the dashboard. Opening the menu from the summary
+// screen and being returned to the dashboard skipped everything between them —
+// including the pairing token — and the dashboard then waited for a token
+// nothing had asked for.
+func (m StartModel) leaveAgentMenu() (tea.Model, tea.Cmd) {
+	m.agentMenuOpened = false
+	m.screen = m.agentMenuReturn
+	return m, nil
+}
 
 func (m StartModel) proceedAfterHooks() (tea.Model, tea.Cmd) {
 	// Shell wrapper setup (skip if already installed or unsupported shell)
