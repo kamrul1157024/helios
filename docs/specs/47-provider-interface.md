@@ -614,7 +614,22 @@ harness with different assumptions about session identity and hook transport.
 It is also the only real test of the design: an interface derived from one
 provider is a description, not an abstraction.
 
-Stages 1 and 2 ship together in one pull request, in separate commits.
+**Stage 3 — the clients.** Both, in the same pull request. The notification
+cards stop being Claude's and become the app's: dispatch moves from the full
+type string to the **kind** — the part after the provider prefix — so
+`codex.permission` and `claude.permission` render the same card. Mobile also
+gains the fallback that stops an unknown type being dropped in silence.
+
+Mobile is specified and handed off in
+[48-mobile-provider-support.md](48-mobile-provider-support.md), because it
+could not be run on the machine these specs were written on. Desktop makes the
+identical change to `notification-card.tsx`, and is smaller.
+
+Making the cards generic is required, not preferred. A per-provider card
+directory is how the third provider becomes another fortnight instead of a
+config entry.
+
+All three stages ship together in one pull request, in separate commits.
 
 **Not now:** third-party provider kinds. Part 3 lists the six seams that keep
 them cheap. Build nothing else toward them — no loader, no config format, no

@@ -9,6 +9,15 @@ not. Every claim here comes from reading `mobile/lib`, never from running it.
 
 Flutter `^3.32.0`, Dart SDK `^3.8.0`, package `helios`, in `mobile/`.
 
+**Work on branch `docs/provider-interface-and-codex`, the same pull request as
+the rest of this change.** Commit in your own commits; do not rebase or amend
+the existing ones. The Go and desktop work is already there and touches
+`desktop/src/renderer/components/notification-card.tsx`, which section 2.3
+also asks you to change — pull before you start.
+
+Section 2.3 is required, not a choice. The rest is negotiable if you find
+better.
+
 Read [47-provider-interface.md](47-provider-interface.md) for the daemon-side
 interface this depends on, and [46-codex-provider.md](46-codex-provider.md)
 for the provider that motivates it. You do not need either to do the work
@@ -137,30 +146,86 @@ bool needsAction(HeliosNotification n) {
 }
 ```
 
-### 2.3 The card switch — `lib/providers/card_registry.dart:23-58`
+### 2.3 The cards must become generic — required
 
-Six cases, `default: return null`. Callers handle null differently:
+This is a decision, not an option. The Claude cards become **the** cards. Do
+not add a `codex/` directory, and do not leave a per-provider card behind.
+
+#### First, the primitive everything else keys off
+
+A notification type is `<provider>.<kind>`. Nothing in the app can read that
+today. Add it to `HeliosNotification` in `lib/models/notification.dart`:
+
+```dart
+/// The provider that raised this: "claude" for "claude.permission".
+String get provider {
+  final i = type.indexOf('.');
+  return i < 0 ? type : type.substring(0, i);
+}
+
+/// What kind of request this is, independent of who raised it:
+/// "permission" for "codex.permission", "elicitation.form" for
+/// "claude.elicitation.form".
+String get kind {
+  final i = type.indexOf('.');
+  return i < 0 ? '' : type.substring(i + 1);
+}
+```
+
+Every switch in the app moves from `type` to `kind`. That single change is
+what makes a second provider free rather than another edit.
+
+#### Then the move
+
+| From | To |
+|---|---|
+| `lib/providers/claude/cards.dart` | `lib/providers/cards/*.dart`, one file per card |
+| `ClaudePermissionCard` | `PermissionCard` |
+| `ClaudeQuestionCard` | `QuestionCard` |
+| `ClaudeElicitationFormCard` | `ElicitationFormCard` |
+| `ClaudeElicitationUrlCard` | `ElicitationUrlCard` |
+| `ClaudeTrustCard` | `TrustCard` |
+| `ClaudeErrorCard` | `ErrorCard` |
+
+`lib/providers/claude/notification_ext.dart` goes the same way. The
+`ClaudeNotification` extension is a set of payload accessors —
+`toolName`, `toolInput`, `questions`, `mcpServerName`, `errorText`,
+`isRateLimit` — and none of them is Claude-specific in substance. Rename the
+extension, drop the `isClaudeX` type predicates in favour of `kind`, and move
+it to `lib/providers/notification_ext.dart`.
+
+Delete `lib/providers/claude/` when it is empty except `verbs.dart` (2.6).
+
+`buildCardForType` then switches on `notification.kind` with the same six
+cases and the same `default: return null`.
+
+#### What must stay conditional
+
+Generic does not mean identical. Two payload-driven branches, both already
+expressible with what the card receives:
+
+- **"Allow, and don't ask again"** renders only when
+  `permissionSuggestions` is non-empty. Codex cannot offer it —
+  `updatedPermissions` is reserved and fails closed — so the button must
+  disappear on payload, not on provider. Check `ClaudePermissionCard` does
+  this already rather than assuming it.
+- **The permission detail** comes from `tool_input`. Codex sends
+  `{"command": "..."}` for `Bash` and the patch text for `apply_patch`, the
+  same shape Claude sends. If a payload lacks the field, show the raw JSON
+  rather than an empty card.
+
+#### Do the same on desktop
+
+`desktop/src/renderer/components/notification-card.tsx` has the identical
+per-type switch, and `label()` beside it. Move both to `kind`. The two clients
+should not diverge on this, and the change is smaller there.
+
+Callers of a null card differ and should be left alone for now:
 
 | Caller | Behaviour on null |
 |---|---|
 | `dashboard_screen.dart:104` | `card ?? _buildStatusCard(n, hm)` — visible, not answerable |
 | `session_detail_screen.dart:641` | `if (card != null)` — nothing rendered |
-
-**Change.** The Claude cards in `lib/providers/claude/cards.dart` are mostly
-generic already: `ClaudePermissionCard` renders a tool name, a tool input and
-Approve/Deny. Decide between two routes and say which you took:
-
-- **Rename and reuse.** Move the cards to `lib/providers/cards/` as
-  `PermissionCard`, `QuestionCard`, `TrustCard`, `ErrorCard`, dispatching on
-  the type suffix. Cheapest, and correct if the payloads match.
-- **Keep per-provider cards** and add a `codex/` directory. Only worth it if
-  Codex's payloads diverge.
-
-Check the payload shapes before choosing. Spec 46 records that Codex's
-`PermissionRequest` carries `tool_name` and `tool_input` like Claude's, **but
-has no `tool_use_id`** and cannot offer "don't ask again" — so
-`ClaudePermissionCard`'s permission-suggestion UI must be conditional on the
-payload rather than always shown.
 
 ### 2.4 The alert catalogue — three places
 
@@ -248,8 +313,31 @@ Step 6 is the one that counts. The rest is scaffolding around it.
 
 - Whether Part 1 reproduced. If it did not, the reading was wrong and the rest
   of this document is suspect.
-- Which route you took in 2.3, and why.
+- Whether step 6 — a real blocking notification answered from a real device or
+  emulator — actually ran. It is the only step that proves the fix. Say so
+  plainly if you could not run it.
 - Whether `/api/notification-types` existed, and what you did about it.
 - Anything here that was wrong. This document was written without running the
   app, and the line numbers, the payload assumptions and the claim about
   `_handleNotificationAction` being provider-agnostic are all worth doubting.
+
+## Review
+
+The author of this document will review the result against the following, and
+these are the questions worth pre-empting:
+
+1. **No literal `claude.` string decides behaviour.** `grep -rn "'claude\." mobile/lib`
+   should return only labels and defaults, never a branch. The same for
+   `desktop/src`.
+2. **`kind` is the dispatch key everywhere**, not `type`, and not a
+   `startsWith('claude.')`.
+3. **The regression test fails without the fix.** Show it failing. A test
+   written after the fix that passes immediately proves nothing.
+4. **`isAlertEnabled` still falls back to `true`.** An unknown type must stay
+   noisy. This is the easiest thing to lose in a refactor and the most
+   damaging.
+5. **The "don't ask again" button is conditional on payload**, not on
+   provider.
+6. **`flutter analyze` clean, `flutter test` green**, and the Go and desktop
+   suites unchanged — `go test ./...` has two pre-existing failures in
+   `internal/terminal` (Claude e2e, stale assertion) and nothing else.
