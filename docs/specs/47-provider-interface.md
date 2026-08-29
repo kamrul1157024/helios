@@ -103,7 +103,10 @@ states today's behaviour, so the ones marked `GAP` fail when the gap closes —
 that failure is the signal to update the file.
 
 **Mobile could not be run.** Flutter is not installed on this machine, so every
-mobile claim here is from reading. It is the least-verified part of the plan.
+mobile claim here is from reading. It is the least-verified part of the plan,
+and it holds the worst defect. The work is handed off in
+[48-mobile-provider-support.md](48-mobile-provider-support.md), written for
+someone who can install Flutter and verify it.
 
 ### The clients own a catalogue they should be served
 
