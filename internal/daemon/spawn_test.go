@@ -6,6 +6,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // The daemon has to leave the session of whatever started it. In its own
@@ -28,7 +30,7 @@ func TestSpawnDetachedLeavesTheCallersSession(t *testing.T) {
 	// readable the instant StartProcess returns.
 	var sid int
 	for i := 0; i < 50; i++ {
-		if sid, err = syscall.Getsid(pid); err == nil && sid != 0 {
+		if sid, err = unix.Getsid(pid); err == nil && sid != 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -37,7 +39,7 @@ func TestSpawnDetachedLeavesTheCallersSession(t *testing.T) {
 		t.Fatalf("getsid(%d): %v", pid, err)
 	}
 
-	mine, err := syscall.Getsid(os.Getpid())
+	mine, err := unix.Getsid(os.Getpid())
 	if err != nil {
 		t.Fatalf("getsid(self): %v", err)
 	}
