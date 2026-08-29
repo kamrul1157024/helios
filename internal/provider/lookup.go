@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 )
 
 // LookAgent finds an agent's binary and reports whether it exists.
@@ -20,6 +22,76 @@ import (
 // time, by which point the environment may be right. Callers that need to
 // know whether it is really there read the second value.
 func LookAgent(name string) (string, bool) {
+	if path, found, fresh := cachedLookup(name); fresh {
+		return path, found
+	}
+	path, found := lookAgentUncached(name)
+	rememberLookup(name, path, found)
+	return path, found
+}
+
+// lookupCache keeps the answer for a while.
+//
+// The fallback spawns a login shell, and that is not free: a zsh profile with
+// a plugin manager in it takes a second or more. ReadinessFor runs on every
+// /api/providers request, and a machine with several paired devices polling
+// turned one lookup into a steady stream of shell startups — enough to make
+// the daemon slow to answer anything, including the pairing request the setup
+// screen waits on.
+//
+// Positive answers are held longer than negative ones: an installed agent
+// rarely disappears, while an absent one may be installed at any moment and
+// should be noticed soon after.
+var lookupCache struct {
+	sync.Mutex
+	entries map[string]lookupEntry
+}
+
+type lookupEntry struct {
+	path    string
+	found   bool
+	checked time.Time
+}
+
+const (
+	lookupFoundTTL   = 5 * time.Minute
+	lookupMissingTTL = 15 * time.Second
+)
+
+func cachedLookup(name string) (path string, found, fresh bool) {
+	lookupCache.Lock()
+	defer lookupCache.Unlock()
+	e, ok := lookupCache.entries[name]
+	if !ok {
+		return "", false, false
+	}
+	ttl := lookupMissingTTL
+	if e.found {
+		ttl = lookupFoundTTL
+	}
+	if time.Since(e.checked) > ttl {
+		return "", false, false
+	}
+	return e.path, e.found, true
+}
+
+func rememberLookup(name, path string, found bool) {
+	lookupCache.Lock()
+	defer lookupCache.Unlock()
+	if lookupCache.entries == nil {
+		lookupCache.entries = map[string]lookupEntry{}
+	}
+	lookupCache.entries[name] = lookupEntry{path: path, found: found, checked: time.Now()}
+}
+
+// ForgetLookups drops the cache, so the next call asks the system again.
+func ForgetLookups() {
+	lookupCache.Lock()
+	defer lookupCache.Unlock()
+	lookupCache.entries = nil
+}
+
+func lookAgentUncached(name string) (string, bool) {
 	if p, err := exec.LookPath(name); err == nil && p != "" {
 		return p, true
 	}
