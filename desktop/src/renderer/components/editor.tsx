@@ -22,6 +22,20 @@ export interface Cursor {
   seq: number
 }
 
+/**
+ * Where a file was last being read.
+ *
+ * The scroll offset is kept as well as the caret because the two are not the
+ * same answer: a caret scrolled back into view lands wherever the editor
+ * chooses to put it, which is rarely where the reader had it.
+ */
+export interface ReadingPosition {
+  line: number
+  column: number
+  /** Pixels down the scroller. */
+  top: number
+}
+
 /** Where the pointer was, and the lines it was pointing at. */
 export interface ContextTarget {
   x: number
@@ -38,6 +52,9 @@ interface Props {
   onChange: (text: string) => void
   onSave: () => void
   cursor?: Cursor | null
+  /** Where the file was left last time. Applied once, as the buffer is built. */
+  restore?: ReadingPosition | null
+  onViewChange?: (at: ReadingPosition) => void
   onContextMenu?: (target: ContextTarget) => void
 }
 
@@ -56,13 +73,27 @@ export function CodeEditor({
   onChange,
   onSave,
   cursor,
+  restore,
+  onViewChange,
   onContextMenu,
 }: Props): JSX.Element {
   const host = useRef<HTMLDivElement | null>(null)
   const view = useRef<EditorView | null>(null)
   // Held in refs so a new callback identity does not tear down the editor.
-  const handlers = useRef({ onChange, onSave, onContextMenu })
-  handlers.current = { onChange, onSave, onContextMenu }
+  const handlers = useRef({ onChange, onSave, onContextMenu, onViewChange })
+  handlers.current = { onChange, onSave, onContextMenu, onViewChange }
+  // Read once, when the buffer is built. As a prop it would rebuild the editor
+  // every time the position it describes changed, which is every keystroke.
+  const restoreRef = useRef(restore)
+  restoreRef.current = restore
+
+  const report = (editor: EditorView): void => {
+    const handle = handlers.current.onViewChange
+    if (!handle) return
+    const head = editor.state.selection.main.head
+    const line = editor.state.doc.lineAt(head)
+    handle({ line: line.number, column: head - line.from + 1, top: editor.scrollDOM.scrollTop })
+  }
 
   useEffect(() => {
     if (!host.current) return
@@ -88,6 +119,7 @@ export function CodeEditor({
         EditorView.editable.of(!readOnly),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) handlers.current.onChange(update.state.doc.toString())
+          if (update.docChanged || update.selectionSet) report(update.view)
         }),
         EditorView.domEventHandlers({
           contextmenu: (event, editor) => {
@@ -115,7 +147,23 @@ export function CodeEditor({
     const created = new EditorView({ state, parent: host.current })
     view.current = created
     created.focus()
+
+    const start = restoreRef.current
+    if (start) {
+      const line = created.state.doc.line(Math.min(Math.max(start.line, 1), created.state.doc.lines))
+      created.dispatch({ selection: { anchor: Math.min(line.from + Math.max(start.column - 1, 0), line.to) } })
+      // After a frame: the scroller has no height until the buffer is laid out,
+      // and a scrollTop set against a zero height is silently clamped to nought.
+      requestAnimationFrame(() => {
+        if (view.current === created) created.scrollDOM.scrollTop = start.top
+      })
+    }
+
+    const onScroll = (): void => report(created)
+    created.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
+
     return () => {
+      created.scrollDOM.removeEventListener('scroll', onScroll)
       created.destroy()
       view.current = null
     }
