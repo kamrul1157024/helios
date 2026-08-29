@@ -136,6 +136,11 @@ func (m *Mirror) pump() {
 				m.lastState = st.State
 				m.lastViewers = st.Viewers
 				m.mu.Unlock()
+				// The host's real geometry, which the mirror's fixed grid is
+				// only a guess at. An agent draws for the terminal it has, and
+				// a scroll region taller than this grid is what drove the
+				// emulator past its buffer.
+				m.matchSize(st.Cols, st.Rows)
 			}
 		case FrameExit:
 			m.mu.Lock()
@@ -304,4 +309,27 @@ func (m *Mirror) Close() {
 		close(m.done)
 		m.client.Close()
 	})
+}
+
+// matchSize grows the mirror to the host's geometry.
+//
+// Only grows. A mirror is an observer whose grid exists to hold what the agent
+// draws, and shrinking to follow a small viewer would throw away rows the agent
+// is still using. Growing costs a few hundred KB and removes the mismatch that
+// made an agent's scroll region point past the buffer.
+func (m *Mirror) matchSize(cols, rows int) {
+	if cols <= 0 || rows <= 0 {
+		return
+	}
+	have, haveRows := m.screen.Size()
+	if cols <= have && rows <= haveRows {
+		return
+	}
+	if cols < have {
+		cols = have
+	}
+	if rows < haveRows {
+		rows = haveRows
+	}
+	m.screen.Resize(cols, rows)
 }

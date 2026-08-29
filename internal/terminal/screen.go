@@ -3,6 +3,7 @@ package terminal
 import (
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 
@@ -33,6 +34,9 @@ type Screen struct {
 	drainOnce sync.Once
 	closeOnce sync.Once
 	done      chan struct{}
+
+	// panics counts emulator panics recovered by Write.
+	panics int
 }
 
 // NewScreen returns a Screen of the given size. Call StartDrain before the
@@ -83,10 +87,51 @@ func (s *Screen) StartDrain(w io.Writer) {
 // The drain goroutine deliberately does not take mu: the emulator's reply pipe
 // must stay readable while a write is in progress, or a write that generates a
 // reply would deadlock against its own drain.
-func (s *Screen) Write(p []byte) (int, error) {
+//
+// Recovered, because this is where untrusted input meets a parser. An agent
+// draws with whatever escapes it likes, and one of them — a scroll region
+// taller than this grid, followed by a reverse index — indexes past the
+// emulator's buffer and panics inside the library. In the daemon that Write
+// runs on a mirror goroutine, so the panic took down every session at once and
+// left no trace: the runtime prints to stderr, which a detached daemon did not
+// keep. One session's redraw is not worth the process.
+func (s *Screen) Write(p []byte) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			s.panics++
+			// Logged once. A screen that panics on one sequence panics on the
+			// next one like it, and a redrawing TUI would fill the log.
+			if s.panics == 1 {
+				log.Printf("screen: emulator panicked on %d bytes at %dx%d: %v",
+					len(p), s.cols, s.rows, r)
+			}
+			// The margins are what it choked on, and they outlive the panic:
+			// every later write lands in a scroll region that does not fit, so
+			// the screen renders nothing until they are cleared. DECSTBM with
+			// no parameters restores them to the full grid.
+			s.resetMargins()
+			// Reported as written: the bytes are gone either way, and a short
+			// write would only make the caller retry them.
+			n, err = len(p), nil
+		}
+	}()
 	return s.em.Write(p)
+}
+
+// resetMargins clears the scroll region. Callers hold mu.
+func (s *Screen) resetMargins() {
+	defer func() { _ = recover() }()
+	s.em.Write([]byte("\x1b[r"))
+}
+
+// Panics is how many times the emulator has panicked on this screen. A screen
+// with any is rendering something other than what the agent drew.
+func (s *Screen) Panics() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.panics
 }
 
 // Resize changes the emulator grid. The caller is responsible for resizing
