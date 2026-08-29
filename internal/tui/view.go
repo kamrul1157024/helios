@@ -183,11 +183,13 @@ func (m StartModel) viewLoading() string {
 func (m StartModel) viewHooksInstall() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Claude Hooks"))
+	// Named for the agents actually on this machine, because installing is
+	// per agent and the screen used to promise only Claude while writing both.
+	b.WriteString(titleStyle.Render("helios — Agent Hooks"))
 	b.WriteString("\n\n")
-	b.WriteString(cross("Claude hooks not installed"))
+	b.WriteString(renderHookLines(m.hookLines))
 	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("  Hooks let helios intercept Claude Code permission prompts"))
+	b.WriteString(subtitleStyle.Render("  Hooks let helios intercept an agent's permission prompts"))
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  and forward them to your phone for approval."))
 	b.WriteString("\n")
@@ -199,9 +201,9 @@ func (m StartModel) viewHooksInstall() string {
 func (m StartModel) viewHooksUpdate() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("helios — Claude Hooks"))
+	b.WriteString(titleStyle.Render("helios — Agent Hooks"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks are outdated"))
+	b.WriteString(renderHookLines(m.hookLines))
 	b.WriteString("\n")
 	b.WriteString(subtitleStyle.Render("  A newer hook configuration is available."))
 	b.WriteString("\n")

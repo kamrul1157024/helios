@@ -86,11 +86,20 @@ type hookLine struct {
 	Health   provider.HookHealth
 }
 
-// allHooksHealthy reports whether every installed agent's hooks will run.
+// allHooksHealthy reports whether every installed agent's hook table is
+// written and current.
+//
+// Deliberately not Effective. That asks whether the agent is *running* the
+// hooks, which for Codex cannot be known until a Codex session actually sends
+// one — so gating setup on it made the install prompt reappear on every
+// `helios start`, with Enter installing files that were already there and
+// changing nothing. Setup asks a question it can answer; the dashboard
+// reports the rest.
+//
 // Vacuously true when no agent is installed, which is not a problem to report.
 func allHooksHealthy(lines []hookLine) bool {
 	for _, l := range lines {
-		if !l.Health.Installed || !l.Health.Current || !l.Health.Effective {
+		if !l.Health.Installed || !l.Health.Current {
 			return false
 		}
 	}
