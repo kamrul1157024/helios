@@ -39,10 +39,11 @@ func New(internalPort int) *Provider {
 
 func (p *Provider) Info() provider.Info {
 	return provider.Info{
-		ID:   "codex",
-		Name: "OpenAI Codex",
-		Icon: "smart_toy",
-		Kind: provider.KindNative,
+		ID:      "codex",
+		Name:    "OpenAI Codex",
+		Icon:    "smart_toy",
+		Kind:    provider.KindNative,
+		Command: "codex",
 	}
 }
 

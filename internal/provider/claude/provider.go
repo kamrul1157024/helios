@@ -48,10 +48,11 @@ func (p *Provider) SetBackend(b backend.Backend) { SetBackend(b) }
 
 func (p *Provider) Info() provider.Info {
 	return provider.Info{
-		ID:   "claude",
-		Name: "Claude Code",
-		Icon: "terminal",
-		Kind: provider.KindNative,
+		ID:      "claude",
+		Name:    "Claude Code",
+		Icon:    "terminal",
+		Kind:    provider.KindNative,
+		Command: "claude",
 	}
 }
 

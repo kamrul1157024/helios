@@ -41,6 +41,11 @@ type Info struct {
 	Name string `json:"name"`
 	Icon string `json:"icon"`
 	Kind Kind   `json:"kind"`
+	// Command is what the user types to start the agent by hand, which is not
+	// always the provider's id and is not the resolved path either. The shell
+	// wrapper is built from it: a provider Helios knows about but cannot name
+	// a command for is one it can never adopt from a terminal.
+	Command string `json:"command,omitempty"`
 }
 
 // SessionSpec is everything a provider needs to start a session. It is a

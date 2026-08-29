@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/kamrul1157024/helios/internal/provider"
 )
 
 const shellMarkerStart = "# >>> helios claude wrapper >>>"
@@ -42,31 +44,53 @@ func DetectShell() ShellInfo {
 	}
 }
 
-// ShellWrapperSnippet returns the shell wrapper code for the given shell syntax.
-func ShellWrapperSnippet(syntax string) string {
-	switch syntax {
-	// The wrapper delegates unconditionally, including inside a helios terminal:
-	// a session started from in there is a session of its own and needs to be
-	// registered like any other. It cannot recurse — a host executes its agent
-	// directly, so the rc file this lives in is never read again inside one.
-	case "posix":
-		return fmt.Sprintf(`%s
-claude() {
-  helios wrap -- claude "$@"
-}
-%s`, shellMarkerStart, shellMarkerEnd)
-	case "fish":
-		return fmt.Sprintf(`%s
-function claude
-  helios wrap -- claude $argv
-end
-%s`, shellMarkerStart, shellMarkerEnd)
-	default:
-		return ""
+// wrappedCommands returns the command every registered provider is started by.
+//
+// Read from the registry rather than written out here. The wrapper named only
+// claude, so a codex session started in a terminal ran outside Helios: no host
+// to attach to, and waking it later meant a second `codex resume` against a
+// rollout the live process still holds, which Codex refuses outright.
+func wrappedCommands() []string {
+	var out []string
+	for _, info := range provider.Infos() {
+		if info.Command != "" {
+			out = append(out, info.Command)
+		}
 	}
+	return out
 }
 
-// ShellWrapperInstalled checks if the wrapper is already in the rc file.
+// ShellWrapperSnippet returns the shell wrapper code for the given shell syntax.
+//
+// The wrapper delegates unconditionally, including inside a helios terminal: a
+// session started from in there is a session of its own and needs to be
+// registered like any other. It cannot recurse — a host executes its agent
+// directly, so the rc file this lives in is never read again inside one.
+func ShellWrapperSnippet(syntax string) string {
+	var body strings.Builder
+	for _, cmd := range wrappedCommands() {
+		switch syntax {
+		case "posix":
+			fmt.Fprintf(&body, "%s() {\n  helios wrap -- %s \"$@\"\n}\n", cmd, cmd)
+		case "fish":
+			fmt.Fprintf(&body, "function %s\n  helios wrap -- %s $argv\nend\n", cmd, cmd)
+		default:
+			return ""
+		}
+	}
+	if body.Len() == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s\n%s%s", shellMarkerStart, body.String(), shellMarkerEnd)
+}
+
+// ShellWrapperInstalled reports whether the wrapper is live in the rc file.
+//
+// The marker has to be the whole line. It is itself a comment, so a block the
+// user commented out still contains it — "# # >>> helios claude wrapper >>>" —
+// and a substring test called that installed. Helios then reported a green
+// tick for a wrapper the shell never defines, which is how a machine came to
+// run every agent unwrapped while setup insisted it was done.
 func ShellWrapperInstalled(info ShellInfo) bool {
 	if info.RCPath == "" {
 		return false
@@ -75,7 +99,20 @@ func ShellWrapperInstalled(info ShellInfo) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), shellMarkerStart)
+	return markerLine(string(data), shellMarkerStart) >= 0
+}
+
+// markerLine returns the offset of the marker where it stands as a line of its
+// own, or -1.
+func markerLine(content, marker string) int {
+	offset := 0
+	for _, line := range strings.SplitAfter(content, "\n") {
+		if strings.TrimRight(line, " \t\r\n") == marker {
+			return offset
+		}
+		offset += len(line)
+	}
+	return -1
 }
 
 // InstallShellWrapper appends the wrapper to the user's shell rc file.
@@ -128,13 +165,16 @@ func RemoveShellWrapper(info ShellInfo) error {
 		return fmt.Errorf("read %s: %w", info.RCPath, err)
 	}
 
+	// Whole lines, for the same reason the install check uses them: a block the
+	// user commented out holds both markers too, and a substring search finds
+	// that one first — removing the dead copy and leaving the live wrapper.
 	content := string(data)
-	startIdx := strings.Index(content, shellMarkerStart)
+	startIdx := markerLine(content, shellMarkerStart)
 	if startIdx < 0 {
 		return nil // not installed
 	}
 
-	endIdx := strings.Index(content, shellMarkerEnd)
+	endIdx := markerLine(content, shellMarkerEnd)
 	if endIdx < 0 {
 		return fmt.Errorf("found start marker but no end marker in %s — edit manually", info.RCPath)
 	}
@@ -164,7 +204,9 @@ func ManualShellInstructions(info ShellInfo, err error) string {
 
 	if info.Syntax == "unknown" {
 		b.WriteString("  Add a wrapper function for your shell that runs:\n")
-		b.WriteString("    helios wrap -- claude <args>\n")
+		for _, cmd := range wrappedCommands() {
+			b.WriteString(fmt.Sprintf("    helios wrap -- %s <args>\n", cmd))
+		}
 		return b.String()
 	}
 

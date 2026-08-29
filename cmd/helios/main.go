@@ -275,6 +275,10 @@ func handleStart() {
 	// an older install would fire alongside it.
 	reapLegacyNotifier()
 
+	// The setup screens read the registry: which agents are installed, and
+	// which commands the shell wrapper has to cover.
+	daemon.RegisterProviders(cfg.Server.InternalPort)
+
 	// The TUI runs in this terminal. Sessions live in their own terminal hosts,
 	// so there is no multiplexer to open a window in or attach to.
 	if err := tui.RunStart(cfg.Server.InternalPort, cfg.Server.PublicPort); err != nil {
@@ -1100,6 +1104,9 @@ func handleSetup(args []string) {
 	// "all" is kept as an alias: setup once configured editors too, and there
 	// is nothing left to configure now that sessions bring their own terminal.
 	case "shell", "all":
+		// The snippet names one function per registered provider, so an empty
+		// registry would install a wrapper that wraps nothing.
+		daemon.RegisterDefaultProviders()
 		info := daemon.DetectShell()
 		if daemon.ShellWrapperInstalled(info) {
 			fmt.Printf("Shell wrapper already installed in %s\n", info.RCPath)
@@ -1187,7 +1194,7 @@ Commands:
   tunnel status         Show tunnel status (works without daemon)
   tunnel stop           Stop the tunnel (prompts for confirmation)
 
-  setup shell           Install shell wrapper (claude → helios wrap)
+  setup shell           Install shell wrapper (agent commands → helios wrap)
   setup tailscale       Check Tailscale readiness for Serve and Funnel
 
   auth init             Generate pairing QR (non-interactive)
