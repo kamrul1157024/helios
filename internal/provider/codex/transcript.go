@@ -83,7 +83,7 @@ func (p *Provider) ParseTranscript(path string, limit, offset int) (*transcript.
 	if err != nil {
 		return nil, err
 	}
-	return pageMessages(msgs, limit, offset), nil
+	return transcript.Paginate(msgs, limit, offset), nil
 }
 
 // parseRollout turns a rollout file into provider-neutral messages.
@@ -224,34 +224,6 @@ func summarizeToolInput(input string) string {
 	return truncate(strings.TrimSpace(input), 200)
 }
 
-// pageMessages slices a parsed transcript, newest page first when no offset is
-// given, matching the Claude reader's contract.
-func pageMessages(msgs []transcript.Message, limit, offset int) *transcript.TranscriptResult {
-	total := len(msgs)
-	if limit <= 0 || limit > total {
-		limit = total
-	}
-	start := total - offset - limit
-	if start < 0 {
-		start = 0
-	}
-	end := total - offset
-	if end < 0 {
-		end = 0
-	}
-	if end > total {
-		end = total
-	}
-	page := msgs[start:end]
-	return &transcript.TranscriptResult{
-		Messages: page,
-		Total:    total,
-		Returned: len(page),
-		Offset:   offset,
-		HasMore:  start > 0,
-	}
-}
-
 // ==================== Discovery ====================
 
 // sessionsDir is where Codex keeps rollout files:
@@ -312,13 +284,21 @@ func (p *Provider) Discover(db *store.Store) {
 			TranscriptPath: &path,
 			Status:         "terminated",
 			LastEvent:      strPtr("Discovered"),
-			ResumeID:       &id,
 		}
 		if meta.model != "" {
 			sess.Model = &meta.model
 		}
-		if err := db.UpsertSession(sess); err != nil {
+		// INSERT OR IGNORE, not an upsert: a scan must never write over a
+		// session that is alive. The GetSession check above is a fast path,
+		// not a lock.
+		if err := db.InsertDiscoveredSession(sess); err != nil {
 			return nil //nolint:nilerr // one bad row must not stop the scan
+		}
+		// Separately, because the discovery insert does not carry it — and
+		// without it `codex resume` has no id and the session cannot be woken
+		// at all, which is most of the point of discovering it.
+		if err := db.UpdateSessionResumeID(id, id); err != nil {
+			return nil //nolint:nilerr
 		}
 		return nil
 	})

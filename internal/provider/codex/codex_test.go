@@ -2,12 +2,12 @@ package codex
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/transcript"
@@ -220,7 +220,7 @@ func TestHookHealthReportsAnUninstalledTable(t *testing.T) {
 // until a hook actually arrives.
 func TestHookHealthSeparatesInstalledFromEffective(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
-	hookEvidence.last = time.Time{}
+	resetHookEvidence()
 
 	p := New(7654)
 	if err := p.InstallHooks(provider.ScopeUser); err != nil {
@@ -265,7 +265,7 @@ func TestParsesARealRollout(t *testing.T) {
 		t.Fatalf("write rollout: %v", err)
 	}
 
-	res, err := New(0).ParseTranscript(path, 0, 0)
+	res, err := New(0).ParseTranscript(path, 50, 0)
 	if err != nil {
 		t.Fatalf("ParseTranscript: %v", err)
 	}
@@ -308,6 +308,45 @@ func TestParsesARealRollout(t *testing.T) {
 	}
 	if strings.HasPrefix(res.Messages[2].Summary, "Script completed") {
 		t.Errorf("tool output kept its preamble: %q", res.Messages[2].Summary)
+	}
+}
+
+// Paging is the transcript package's contract, shared so that the same API
+// call answers identically whichever provider parsed the file. limit <= 0
+// means an empty page, not the whole transcript.
+func TestPagingFollowsTheSharedContract(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"timestamp":"t","ordinal":%d,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"m%d"}]}}`,
+			i, i))
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+	p := New(0)
+
+	res, err := p.ParseTranscript(path, 2, 0)
+	if err != nil {
+		t.Fatalf("ParseTranscript: %v", err)
+	}
+	if res.Total != 5 || res.Returned != 2 || !res.HasMore {
+		t.Errorf("newest page = %+v, want total 5, returned 2, more", res)
+	}
+	if res.Messages[1].Content != "m4" {
+		t.Errorf("last message = %q, want the newest", res.Messages[1].Content)
+	}
+
+	res, _ = p.ParseTranscript(path, 0, 0)
+	if res.Returned != 0 {
+		t.Errorf("limit 0 returned %d messages, want none", res.Returned)
+	}
+
+	res, _ = p.ParseTranscript(path, 2, 4)
+	if res.Returned != 1 || res.HasMore {
+		t.Errorf("oldest page = %+v, want 1 message and no more", res)
 	}
 }
 

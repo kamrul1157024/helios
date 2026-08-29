@@ -53,13 +53,18 @@ const heliosSessionHeader = "X-Helios-Session"
 
 // sessionKey is the row a hook belongs to.
 //
-// The header when Helios launched the session, and the Codex id otherwise —
-// which is the case for a session the user started by hand. Falling back
-// rather than dropping the event is what makes hand-started sessions visible
-// for free.
-func sessionKey(r *http.Request, in *hookInput) string {
+// Three answers, in order. The header, when Helios launched the session. Then
+// a row already bound to this Codex id, which covers a hook that lost the
+// environment — a subagent, a re-exec, a shell that scrubbed it — and which
+// without this lookup would mint a second, ghost row for a session already
+// being tracked. Then the Codex id itself, which is a session the user started
+// by hand and is how those become visible for free.
+func sessionKey(ctx *provider.HookContext, r *http.Request, in *hookInput) string {
 	if id := r.Header.Get(heliosSessionHeader); id != "" {
 		return id
+	}
+	if sess, err := ctx.DB.SessionByResumeID(in.SessionID); err == nil && sess != nil {
+		return sess.SessionID
 	}
 	return in.SessionID
 }
@@ -117,7 +122,7 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 
 	var transcriptPath *string
 	if in.TranscriptPath != "" {
@@ -173,7 +178,7 @@ func handleSessionEnd(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 
 	if ctx.Terminal != nil {
 		ctx.Terminal.Forget(key)
@@ -198,7 +203,7 @@ func handlePromptSubmit(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 
 	ctx.DB.UpdateSessionStatus(key, "active", "UserPromptSubmit")
 	updateTranscript(ctx, key, in)
@@ -226,7 +231,7 @@ func handleStop(ctx *provider.HookContext, w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 
 	ctx.DB.UpdateSessionStatus(key, "idle", "Stop")
 	updateTranscript(ctx, key, in)
@@ -272,7 +277,7 @@ func handleToolPre(ctx *provider.HookContext, w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 	ctx.DB.UpdateSessionStatus(key, "active", "PreToolUse:"+in.ToolName)
 	updateTranscript(ctx, key, in)
 	ctx.Notify("session_status", map[string]interface{}{
@@ -290,7 +295,7 @@ func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 	ctx.DB.UpdateSessionStatus(key, "active", "PostToolUse:"+in.ToolName)
 	updateTranscript(ctx, key, in)
 	// The tool ran, so any permission card for it is settled whichever surface
@@ -342,7 +347,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 
 	ctx.DB.UpdateSessionStatus(key, "waiting_permission", "PermissionRequest")
 	updateTranscript(ctx, key, in)
@@ -434,7 +439,7 @@ func compactStatus(ctx *provider.HookContext, w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 	ctx.DB.UpdateSessionStatus(key, status, event)
 	updateTranscript(ctx, key, in)
 	renameSessionWindow(ctx, key, status, in.CWD)
@@ -448,7 +453,7 @@ func handleSubagentStart(ctx *provider.HookContext, w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 	sub := &store.Subagent{AgentID: in.AgentID, ParentSessionID: key, Status: "active"}
 	if in.AgentType != "" {
 		sub.AgentType = &in.AgentType
@@ -467,7 +472,7 @@ func handleSubagentStop(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	key := sessionKey(r, in)
+	key := sessionKey(ctx, r, in)
 	ctx.DB.UpdateSubagentStatus(in.AgentID, "completed")
 	ctx.Notify("subagent_status", map[string]interface{}{
 		"agent_id": in.AgentID, "parent_session_id": key, "status": "completed",

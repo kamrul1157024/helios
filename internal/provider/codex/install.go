@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
@@ -192,16 +193,24 @@ func (p *Provider) HookHealth() provider.HookHealth {
 //
 // It is the only signal that hooks are trusted, since Codex neither exposes
 // trust state nor complains when it skips them.
+//
+// Guarded: every inbound hook writes it, from its own goroutine, while the
+// health endpoint reads it. The test suite never delivers two hooks at once,
+// so the race detector would not have caught this.
 var hookEvidence struct {
+	mu   sync.Mutex
 	last time.Time
 }
 
 // NoteHookReceivedFor records an inbound hook for a provider. Only Codex needs
 // the evidence, so anything else is ignored.
 func NoteHookReceivedFor(providerID string) {
-	if providerID == "codex" {
-		hookEvidence.last = time.Now()
+	if providerID != "codex" {
+		return
 	}
+	hookEvidence.mu.Lock()
+	defer hookEvidence.mu.Unlock()
+	hookEvidence.last = time.Now()
 }
 
 // hookEvidenceTTL is how long a received hook vouches for the install. Long
@@ -209,6 +218,8 @@ func NoteHookReceivedFor(providerID string) {
 const hookEvidenceTTL = 24 * time.Hour
 
 func hooksSeenRecently() bool {
+	hookEvidence.mu.Lock()
+	defer hookEvidence.mu.Unlock()
 	return !hookEvidence.last.IsZero() && time.Since(hookEvidence.last) < hookEvidenceTTL
 }
 
@@ -237,4 +248,11 @@ func sendKeyWhenReady(sessionID string, key backend.Key) error {
 		return nil
 	}
 	return terminalBackend.SendKey(sessionID, key)
+}
+
+// resetHookEvidence forgets that any hook has arrived. For tests.
+func resetHookEvidence() {
+	hookEvidence.mu.Lock()
+	defer hookEvidence.mu.Unlock()
+	hookEvidence.last = time.Time{}
 }

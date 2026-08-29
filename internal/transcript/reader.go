@@ -141,6 +141,17 @@ func parseSegment(src io.Reader, max, firstSeq int) (msgs []Message, consumed in
 }
 
 // page slices a window off the end of msgs: offset=0 gets the last `limit`.
+// Paginate is the shared paging contract, exported so every provider's parser
+// answers a given limit and offset identically.
+//
+// It was briefly reimplemented in the codex parser, where limit <= 0 came to
+// mean "everything" rather than "nothing" — the same API call would have
+// returned a whole transcript from one provider and an empty page from the
+// other.
+func Paginate(msgs []Message, limit, offset int) *TranscriptResult {
+	return page(msgs, limit, offset)
+}
+
 func page(msgs []Message, limit, offset int) *TranscriptResult {
 	total := len(msgs)
 

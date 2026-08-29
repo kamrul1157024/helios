@@ -583,3 +583,24 @@ func (s *Store) UpdateSessionResumeID(sessionID, resumeID string) error {
 	)
 	return err
 }
+
+// SessionByResumeID finds a session by the id its provider uses to wake it.
+//
+// The reverse lookup exists because an agent that mints its own id knows only
+// that one. Correlating on it lets a hook find its session even when the
+// helios id did not reach the agent's environment.
+func (s *Store) SessionByResumeID(resumeID string) (*Session, error) {
+	if resumeID == "" {
+		return nil, nil
+	}
+	rows, err := s.SearchSessions("", "", "", "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if rows[i].ResumeID != nil && *rows[i].ResumeID == resumeID {
+			return &rows[i], nil
+		}
+	}
+	return nil, nil
+}

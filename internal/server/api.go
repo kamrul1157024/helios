@@ -1231,11 +1231,15 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 // it just cannot host that provider's sessions.
 func startTerminal(b backend.Backend, sessionID, cwd string, launch provider.Launch) (string, error) {
 	if len(launch.Env) > 0 {
-		if es, ok := b.(backend.EnvStarter); ok {
-			return es.StartWithEnv(sessionID, cwd, launch.Argv, launch.Env)
+		es, ok := b.(backend.EnvStarter)
+		if !ok {
+			// Refused rather than started without it. A provider only asks for
+			// an environment when its hooks cannot name the session any other
+			// way, so starting anyway produces an agent that runs and is never
+			// heard from — the failure this change exists to remove.
+			return "", fmt.Errorf("backend %s cannot set the environment this provider needs", b.Name())
 		}
-		log.Printf("start: backend %s cannot set environment; %s may not report in",
-			b.Name(), sessionID)
+		return es.StartWithEnv(sessionID, cwd, launch.Argv, launch.Env)
 	}
 	return b.Start(sessionID, cwd, launch.Argv)
 }
