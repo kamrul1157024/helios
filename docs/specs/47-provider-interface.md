@@ -177,38 +177,66 @@ type Queuer interface {
 
 ### Capabilities are derived, never declared
 
-```go
-func CapabilitiesOf(p Provider) Capabilities {
-    _, resume := p.(Resumer)
-    _, hooks  := p.(Hooker)
-    _, queue  := p.(Queuer)
-    // ...
-}
-```
-
 The earlier draft carried a hand-written `ProviderCapabilities` struct and then
 warned that a provider declaring `Questions: true` with no question hook is a
 lie the compiler cannot catch. Deriving the flags removes the lie. A provider
 cannot claim resume without a `Resume` method.
 
-For the finer-grained flags a client needs — can this provider raise a
-permission card, a question, an elicitation — derive from the registered hook
-and action routes rather than from a boolean:
+### Resolve capabilities in the registry, not at the call site
+
+The obvious form is a type assertion wherever the daemon needs one:
 
 ```go
-_, ok := p.(Actor); ok && routes["<id>.permission"] != nil
+if r, ok := p.(Resumer); ok { ... }   // do not do this
 ```
 
-### The registry shrinks to three functions
+Do not. It works for a Go provider and fails for every other kind. A provider
+loaded from a file or spoken to over a pipe is **one Go type serving many
+different agents**, so it either implements `Resumer` for all of them or none.
+Type assertion cannot express "this instance resumes, that one does not".
+
+Resolve once, at registration:
 
 ```go
+type registration struct {
+    p Provider
+
+    // Each is nil when the provider does not offer it.
+    resume      Resumer
+    hooks       Hooker
+    installer   HookInstaller
+    actor       Actor
+    transcriber Transcriber
+    // ...
+}
+
 func Register(p Provider) error       // rejects a duplicate or empty ID
 func Get(id string) (Provider, bool)
 func All() []Provider
+
+// Capability accessors. Nil means the provider does not offer it.
+func ResumerFor(id string) Resumer
+func HookerFor(id string) Hooker
+func TranscriberFor(id string) Transcriber
+// ...
 ```
 
-Everything else the daemon needs is a type assertion at the call site. The
-seven maps go away, and so do the seven `Get*` accessors.
+`Register` fills the fields by type assertion. That is the only place an
+assertion appears. Call sites ask the registry and check for nil, exactly as
+they check for nil today.
+
+The gain is that a later provider kind fills the same fields from whatever it
+knows — a list of methods a subprocess advertises, a set of sections present in
+a file — and **not one call site changes**. This is the single most important
+decision in the spec for keeping the next step cheap, and it costs nothing now.
+
+### Registration must work after startup
+
+Do not register from `init()`. Guard the registry with a mutex and let
+`Register` be called at any time. Native providers still register at daemon
+start; a kind that is discovered by scanning a directory cannot. Add
+`Deregister(id)` at the same time — a reloaded provider needs to replace
+itself, and it is three lines now versus a locking audit later.
 
 ### The health contract
 
@@ -231,164 +259,66 @@ write.** Health is what the agent does, not what the daemon intended.
 
 ---
 
-## Part 3 — three kinds of provider
+## Part 3 — third-party providers: designed for, not built
 
-The same interface, three ways to satisfy it. This is what makes "bring your
-own harness" real rather than aspirational.
+Helios will one day accept providers it did not write. **Nothing in that
+direction is being built now.** This section exists so the interface does not
+have to be reopened when it is.
 
-```
-                   provider.Provider
-                          |
-      +-------------------+-------------------+
-      |                   |                   |
-   native             manifest             external
-   (Go, in-tree)      (a TOML file)        (a subprocess)
-   claude, codex      no code at all       any language
-```
+The likely shapes, for context only:
 
-| | native | manifest | external |
-|---|---|---|---|
-| Written in | Go | TOML | anything |
-| Ships with Helios | yes | no | no |
-| Can parse a transcript | yes | no | yes |
-| Can call a small model | yes | no | yes |
-| Needs a Helios rebuild | yes | no | no |
-| Expected share of providers | 2 | most | few |
+| Kind | Written in | Status |
+|---|---|---|
+| native | Go, in-tree | **now** — claude, codex |
+| declarative | a config file | later, own spec |
+| external | a subprocess over stdio | later, own spec |
 
-**Do not use Go's `plugin` package.** It requires the host and the plugin to be
-built with the identical Go toolchain and identical versions of every shared
+The bet behind both later kinds: most agent CLIs need no code. The Claude
+provider is argv construction, a hook table, a field mapping, and decision
+replies. Only the transcript parser and the small-model caller are algorithms.
+Neither kind is designed here — that is a separate spec when the time comes.
+
+### The seams that must exist now
+
+Six decisions make the later work cheap. Every one is free today, and every one
+is expensive to retrofit.
+
+| Seam | Why it must be now |
+|---|---|
+| Capability accessors on the registry | a non-Go provider is one type serving many agents; type assertion at the call site cannot express per-instance capability. **The one that matters most.** |
+| `Register` works after startup, with a mutex, plus `Deregister` | a scanned-from-disk provider cannot register at `init()` |
+| `Launch` carries `Env` | a provider must inject its own environment; needed by Codex today anyway |
+| `Info.Kind` exists and clients show it | later kinds need a trust state to hang off; native is trusted by definition |
+| IDs namespace hook routes and notification types | third-party IDs must not collide with `claude.` or `codex.` |
+| Hook dispatch goes through the registry, not a package-level map | a second dispatch path becomes one function rather than a rewrite |
+
+Keep `Kind` even though it has one value today. A field nobody reads is
+cheaper than a migration.
+
+### One thing to avoid designing around
+
+`HookHandler` takes a `*HookContext` full of concrete daemon types — a
+`*store.Store`, a `*notifications.Manager`, a `backend.Backend`. None of that
+crosses a pipe or comes out of a config file. A non-Go provider will eventually
+need a different shape: it reports *what happened*, and the daemon decides what
+to do.
+
+**Do not build that now.** Native providers want the direct access, the
+translation is guesswork until a second kind exists, and inventing an event
+vocabulary before there is a consumer is how specs rot. The seam above — hook
+dispatch through the registry — is enough to add a second path later beside
+`Hooker` rather than in place of it.
+
+**Do not use Go's `plugin` package**, whenever the time comes. It requires host
+and plugin to share an identical Go toolchain and identical versions of every
 dependency. It cannot unload. It has no Windows support. Helios ships a
-codesigned macOS binary, and `dlopen` of an unsigned object there is its own
-problem. The failure mode is a panic at load with an unreadable message. Rule
-it out explicitly so nobody proposes it again.
+codesigned macOS binary, where `dlopen` of an unsigned object is its own
+problem. The failure mode is a panic at load with an unreadable message.
+Recorded here so nobody proposes it later.
 
 ---
 
-## Part 4 — manifest providers
-
-Most agent CLIs need no code. Look at what the Claude provider actually does:
-build argv, write a hook table, map hook fields onto Helios status, and reply
-to blocking hooks with a decision. Only the transcript parser and the
-small-model caller are algorithms.
-
-So a declarative file covers most of it.
-
-```toml
-# ~/.helios/providers/aider.toml
-id   = "aider"
-name = "Aider"
-icon = "terminal"
-
-[launch]
-command = "aider"
-args    = ["--model", "{{.Model}}"]
-# Positional last: anything after it reads as more prompt.
-prompt  = { position = "last" }
-env     = { HELIOS_SESSION = "{{.SessionID}}" }
-
-[resume]
-args = ["--restore-chat-history"]
-# resume_id travels as {{.ResumeID}} when the agent mints its own.
-
-[modes]
-values  = ["ask", "auto"]
-default = "ask"
-ask     = []                  # extra argv per mode
-auto    = ["--yes-always"]
-
-[hooks.install]
-kind     = "file"             # or "none"
-path     = "~/.aider.conf.yml"
-format   = "yaml"
-template = "hooks.yml.tmpl"
-
-# One block per event the agent can send.
-[[hooks.event]]
-path       = "session/start"  # POST /hooks/aider/session/start
-status     = "idle"
-session_id = "{{.session_id}}"
-transcript = "{{.transcript_path}}"
-started    = true             # fires SessionStarted
-
-[[hooks.event]]
-path   = "tool/pre"
-status = "active"
-report = { type = "tool_pre", tool = "{{.tool_name}}" }
-
-[[hooks.event]]
-path     = "permission"
-blocking = true
-status   = "waiting_permission"
-timeout  = "inherit"          # uses HookTimeoutSeconds
-notification = { type = "aider.permission",
-                 title = "{{.tool_name}}",
-                 detail = "{{.tool_input.command}}" }
-choices = ["Allow once", "Deny"]        # painted over the terminal too
-reply.approved = '{"decision":"allow"}'
-reply.denied   = '{"decision":"deny","message":"Denied via helios"}'
-
-[[hooks.event]]
-path    = "stop"
-status  = "idle"
-resolve = "session"           # clear this session's pending notifications
-reply   = "{}"
-```
-
-A `manifest.Provider` value implements `Provider`, `Hooker`, `HookInstaller`,
-`Actor`, `Moder` and `Commander` by interpreting that file. It implements
-`Transcriber`, `SmallModel` and `Titler` never — and the tier model in Part 6
-already says what a session then loses.
-
-The template data is the hook payload, decoded to `map[string]any`. Use Go's
-`text/template`, which is already in the binary.
-
-**Validate the manifest at load, not at use.** A field that names a status
-Helios does not have, or a template that will not parse, must fail when the
-file is read. The Codex lesson applies to Helios itself: a silent skip is worse
-than a loud refusal.
-
----
-
-## Part 5 — external providers
-
-For the parts a manifest cannot express. An external provider is a subprocess.
-Helios speaks to it over stdin and stdout in line-delimited JSON.
-
-```
-→ {"id":1,"method":"info"}
-← {"id":1,"result":{"id":"myagent","name":"My Agent","icon":"robot"}}
-
-→ {"id":2,"method":"launch","params":{"session_id":"...","prompt":"...","cwd":"..."}}
-← {"id":2,"result":{"argv":["myagent","--session","..."],"env":{},"mode":"ask"}}
-
-→ {"id":3,"method":"parse_transcript","params":{"path":"...","limit":50,"offset":0}}
-← {"id":3,"result":{"messages":[...],"total":120}}
-```
-
-The method set is the interface, one method per capability method. A provider
-answers `method not found` for anything it does not implement, and Helios
-records that as the capability being absent. So the same discovery rule holds:
-capabilities are found, not declared.
-
-Line-delimited JSON over stdio rather than gRPC. It needs no schema compiler,
-no new dependency, and it can be implemented in twenty lines of Python or
-Node — which is the point of the feature. Helios already speaks JSON to
-everything else it talks to.
-
-A manifest may name a helper for the parts it cannot express:
-
-```toml
-[external]
-command = ["python3", "~/.helios/providers/myagent/parse.py"]
-methods = ["parse_transcript", "complete"]
-```
-
-That mixes the two kinds: declarative for the common parts, a subprocess for
-the algorithms. It is the shape most third-party providers should take.
-
----
-
-## Part 6 — tiers
+## Part 4 — tiers
 
 A provider does not have to implement everything. Each tier adds function.
 
@@ -401,59 +331,62 @@ A provider does not have to implement everything. Each tier adds function.
 | 4 | `+ Transcriber, Discoverer` | the history panel; hand-started sessions |
 | 5 | `+ SmallModel, Titler, Narrator` | auto-titles and narration |
 
-Tier 0 is the only requirement. Every `p.(SomeInterface)` at a call site must
-handle the failed assertion by degrading, never by erroring. That property is
-what lets a twenty-line manifest be a legitimate provider.
+Tier 0 is the only requirement. Every capability accessor returning nil must be
+handled by degrading, never by erroring.
+
+Enforce that now, while there are two providers and both are near the top of
+the table. It is the property that later lets a very small provider be a
+legitimate one, and it cannot be added retroactively — it has to be true at
+every call site, and the only cheap time to make it true is when the call sites
+are being touched anyway.
 
 ---
 
-## Part 7 — trust
+## Part 5 — trust
 
-A manifest specifies argv. Dropping a file into `~/.helios/providers/` is
-arbitrary code execution on the next session start. An external provider is a
-subprocess Helios spawns. Both need a trust gate.
+Nothing to build now. Native providers are the binary, so they are trusted by
+definition.
 
-Take the design Codex got right and skip the part it got wrong:
+Recorded because it constrains the seam. Any later kind decides argv from data
+outside the binary, which is arbitrary code execution on the next session
+start. So a trust gate is not optional then, and `Info.Kind` is where its state
+will hang. That is the whole reason `Kind` exists today with one value.
 
-- **Right:** trust binds to a hash of the file. Editing it re-flags it.
+When it is built, take the design Codex got right and refuse the part it got
+wrong:
+
+- **Right:** trust binds to a hash. Editing the source re-flags it.
 - **Wrong:** failing silently. Codex skips untrusted hooks and tells nobody,
-  which is the single worst finding in [46](46-codex-provider.md).
-
-So:
-
-1. A manifest or external provider loads only after the user trusts its hash.
-2. An untrusted provider still appears in `helios providers`, marked
-   **untrusted**, with the command to trust it. It never launches.
-3. `helios providers trust <id>` records the hash. A changed file returns to
-   untrusted.
-4. Native providers are trusted by definition. They are the binary.
-
-Say it loudly, in the list and in the health check. Silence is the bug.
+  which is the worst finding in [46](46-codex-provider.md). An untrusted
+  provider must appear in the list, marked untrusted, with the command to fix
+  it — and must never launch.
 
 ---
 
-## Part 8 — what this costs
+## Part 6 — what this costs
 
 Three honest costs.
 
-**A manifest engine is a small language, and it will grow.** Every provider
-that nearly fits will ask for one more field. The counter-pressure is Part 5:
-when a manifest is not enough, the answer is a subprocess, not a new keyword.
-Hold that line or the TOML becomes a programming language with no debugger.
+**Optional interfaces move errors from compile time to run time.** The compiler
+will not tell a provider it forgot `Resumer`; the feature is simply missing.
+Part 7 answers that with a conformance test, which is now the only test in
+`internal/provider` — the package has none today.
 
-**Declarative mappings are harder to debug than Go.** A wrong template
-produces an empty notification detail, not a stack trace. Manifest providers
-need `helios providers test <id> --event permission --payload file.json`, which
-renders the mapping against a recorded payload and prints what Helios would
-do. Build it with the engine, not after.
+**Capability accessors add a layer.** `provider.ResumerFor(id)` is one hop more
+than `p.(Resumer)`, and for the two native providers in the tree it buys
+nothing. It is paid now so the third kind costs no call-site changes. If
+third-party providers never happen, this was waste — a small, contained amount
+of it, in one file.
 
-**Type assertions move errors from compile time to run time.** The compiler
-will not tell a native provider it forgot `Resumer`. Part 9 answers that with a
-conformance test.
+**Two providers is a thin basis for an interface.** Claude and Codex are
+similar: both are terminal CLIs with hook engines and JSONL transcripts. An
+agent that is none of those will strain this design. The tiers are the hedge —
+a provider that fits badly implements less rather than forcing a change — but
+the hedge is untested until something strains it.
 
 ---
 
-## Part 9 — conformance
+## Part 7 — conformance
 
 `internal/provider/conformance_test.go` runs over every registered provider,
 whatever its kind.
@@ -469,12 +402,12 @@ whatever its kind.
 7. `PermissionModes()` has no duplicates and no empty strings.
 8. `Resume` output argv is non-empty when `Resumer` is implemented.
 
-Manifest and external providers run the same test through a fixture, which is
-the point of them satisfying the same interface.
+The test is table-driven over `provider.All()`, so a later kind is covered by
+registering it — no new test. That is deliberate and free.
 
 ---
 
-## Part 10 — what the daemon keeps
+## Part 8 — what the daemon keeps
 
 | Daemon owns | Why |
 |---|---|
@@ -494,22 +427,24 @@ A provider that reaches around any of these is doing something wrong.
 ## Staging
 
 **Stage 1 — the interface.** Define `Provider` and the capability interfaces.
-Make `claude` a value implementing them. Delete the seven maps and the three
-by-name imports. No behaviour change; the existing Claude tests are the proof
-and must pass unedited.
+Make `claude` a value implementing them. Add the registry accessors. Delete the
+seven maps and the three by-name imports. Write the conformance test, which is
+the first test `internal/provider` will have.
+
+No behaviour change. The existing Claude tests are the proof — though note that
+converting free functions to methods may force edits to test *call sites*. The
+contract is that no test *assertion* changes; the baseline is `go test ./...`
+with `internal/terminal`'s two e2e cases excluded, which fail on this machine
+for unrelated reasons.
 
 **Stage 2 — Codex** as a second native provider. See
 [46](46-codex-provider.md). This is what proves the interface holds for a
 harness with different assumptions about session identity and hook transport.
+It is also the only real test of the design: an interface derived from one
+provider is a description, not an abstraction.
 
-**Stage 3 — manifest providers.** The loader, the template engine, the trust
-gate, and `helios providers test`. Prove it by rewriting a native provider as a
-manifest and showing the conformance test passes for both.
+Stages 1 and 2 ship together in one pull request, in separate commits.
 
-**Stage 4 — external providers.** The stdio protocol and the manifest
-`[external]` block.
-
-Stages 1 and 2 ship together, as already agreed. Stages 3 and 4 are separate
-and need their own specs. Nothing in stages 1 and 2 should be shaped around
-them beyond what is written here — the interface is the commitment, the plugin
-kinds are implementations of it.
+**Not now:** third-party provider kinds. Part 3 lists the six seams that keep
+them cheap. Build nothing else toward them — no loader, no config format, no
+protocol. Each is its own spec when there is a reason.
