@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
 )
 
@@ -518,4 +520,93 @@ func resetInMemoryEvidence() {
 	hookEvidence.mu.Lock()
 	defer hookEvidence.mu.Unlock()
 	hookEvidence.last = time.Time{}
+}
+
+// Naming a session costs one `codex exec`, and hooks are configured for the
+// whole of Codex, so Helios's own titler reported itself as a session — five
+// of the eight Codex rows on the machine this was found on, each one titled
+// with the title prompt.
+func TestOneShotRunsAreRecognised(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, meta string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(meta+"\n"), 0o600); err != nil {
+			t.Fatalf("write rollout: %v", err)
+		}
+		return path
+	}
+
+	oneShot := write("exec.jsonl",
+		`{"timestamp":"t","ordinal":0,"type":"session_meta","payload":{"cwd":"/tmp","source":"exec","originator":"codex_exec"}}`)
+	interactive := write("cli.jsonl",
+		`{"timestamp":"t","ordinal":0,"type":"session_meta","payload":{"cwd":"/work","source":"cli","originator":"codex-tui"}}`)
+
+	if !IsOneShot(oneShot) {
+		t.Error("a codex exec rollout was not recognised as one-shot")
+	}
+	if IsOneShot(interactive) {
+		t.Error("an interactive session was taken for a one-shot run")
+	}
+	// A rollout that is not there, or not yet written, is not evidence of a
+	// one-shot run — and guessing wrong there loses a real session.
+	if IsOneShot(filepath.Join(dir, "absent.jsonl")) {
+		t.Error("a missing rollout was taken for a one-shot run")
+	}
+}
+
+// The whole point of recognising a one-shot run: it must not reach the
+// database, from either direction — the hook it fires as it starts, or the
+// rollout it leaves behind for discovery to find.
+func TestOneShotRunsAreNotTracked(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	day := filepath.Join(home, "sessions", "2026", "08", "29")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatalf("sessions dir: %v", err)
+	}
+	rollout := filepath.Join(day, "rollout-2026-08-29T20-30-44-01a04dee-183a-7461-9bef-5f05c0aa510a.jsonl")
+	if err := os.WriteFile(rollout, []byte(
+		`{"timestamp":"t","ordinal":0,"type":"session_meta","payload":{"cwd":"/tmp","source":"exec","originator":"codex_exec"}}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	New(0).Discover(db)
+	sessions, err := db.ListSessions()
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("discovery registered %d one-shot runs, want none", len(sessions))
+	}
+
+	ctx := &provider.HookContext{
+		DB:             db,
+		Notify:         func(string, interface{}) {},
+		Report:         func(provider.ReportEvent) {},
+		SessionStarted: func(string) {},
+	}
+	body, _ := json.Marshal(map[string]string{
+		"session_id":      "01a04dee-183a-7461-9bef-5f05c0aa510a",
+		"cwd":             "/tmp",
+		"transcript_path": rollout,
+	})
+	w := httptest.NewRecorder()
+	handleSessionStart(ctx, w, httptest.NewRequest("POST", "/hooks/codex/session/start", nil), body)
+
+	if w.Code != 200 {
+		t.Errorf("hook answered %d, want 200 — Codex reads anything else as a failure", w.Code)
+	}
+	sessions, err = db.ListSessions()
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("the session-start hook registered a one-shot run: %d rows", len(sessions))
+	}
 }

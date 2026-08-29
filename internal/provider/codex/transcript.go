@@ -259,7 +259,7 @@ func (p *Provider) Discover(db *store.Store) {
 			return nil
 		}
 		meta := readSessionMeta(path)
-		if meta.cwd == "" {
+		if meta.cwd == "" || meta.source == execSource {
 			return nil
 		}
 		sess := &store.Session{
@@ -301,8 +301,27 @@ func rolloutSessionID(name string) string {
 }
 
 type sessionMeta struct {
-	cwd   string
-	model string
+	cwd    string
+	model  string
+	source string
+}
+
+// execSource is what a `codex exec` run records as its source; an interactive
+// one records "cli".
+const execSource = "exec"
+
+// IsOneShot reports whether a rollout came from `codex exec` rather than the
+// interactive CLI.
+//
+// A one-shot run is not a session anybody manages: it has no terminal to
+// attach to and ends on its own. Helios makes these itself — naming a session
+// costs one `codex exec` — and each one fired the session hooks and appeared
+// in the list as a session whose first message was the title prompt.
+//
+// Codex draws the same line: `codex resume` hides them unless asked for with
+// --include-non-interactive.
+func IsOneShot(rolloutPath string) bool {
+	return readSessionMeta(rolloutPath).source == execSource
 }
 
 // readSessionMeta reads the first line, which is always session_meta.
@@ -323,11 +342,12 @@ func readSessionMeta(path string) sessionMeta {
 		return sessionMeta{}
 	}
 	var meta struct {
-		CWD   string `json:"cwd"`
-		Model string `json:"model"`
+		CWD    string `json:"cwd"`
+		Model  string `json:"model"`
+		Source string `json:"source"`
 	}
 	if err := json.Unmarshal(entry.Payload, &meta); err != nil {
 		return sessionMeta{}
 	}
-	return sessionMeta{cwd: meta.CWD, model: meta.Model}
+	return sessionMeta{cwd: meta.CWD, model: meta.Model, source: meta.Source}
 }

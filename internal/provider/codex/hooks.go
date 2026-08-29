@@ -124,6 +124,16 @@ func handleSessionStart(ctx *provider.HookContext, w http.ResponseWriter, r *htt
 	}
 	key := sessionKey(ctx, r, in)
 
+	// Hooks are configured for the whole of Codex, so a one-shot `codex exec`
+	// fires them too — including the ones Helios runs itself to name a session,
+	// which is how the list came to hold sessions whose first message was the
+	// title prompt. Nothing here can manage such a run: it has no terminal and
+	// it is over in seconds.
+	if in.TranscriptPath != "" && IsOneShot(in.TranscriptPath) {
+		ack(w)
+		return
+	}
+
 	var transcriptPath *string
 	if in.TranscriptPath != "" {
 		transcriptPath = &in.TranscriptPath
