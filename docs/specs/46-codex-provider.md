@@ -367,29 +367,70 @@ file, where Helios has to count lines itself.
 | `event_msg` | `task_started`, `token_count`, `task_complete`, `item_completed` | skip |
 | `turn_context`, `world_state` | — | skip |
 
-Two traps for the parser, both measured:
+Also present and absent from the table above: `response_item` /
+**`reasoning`**. It did not occur in a scripted `codex exec` run and appears
+throughout real interactive ones. `transcript.Message` has no reasoning role,
+so skip it, or carry it in `Metadata` for a client that wants it later.
 
-**Filter `role: developer`.** Those records hold the system prompt, the skills
-block and the multi-agent preamble. Rendering them would put thousands of words
-of framework text at the top of every history panel.
+### Parser traps, corrected against real sessions
 
-**Filter injected user messages.** Not every `role: user` record is the user.
-The first one in a fresh session was a `<recommended_plugins>` block Codex
-injected. Match and drop the wrappers, or the panel shows the user saying
-things they never typed.
+The rules below were first written from a scripted run. Re-checking them
+against two real interactive sessions — 75 and 57 records, from ordinary use —
+broke one of them. That is worth recording as a method note: a synthetic
+session is not a sample.
 
-**Do not parse tool calls from the rollout if the hooks can tell you instead.**
+**Filter `role: developer`.** Holds the system prompt, the skills block and the
+multi-agent preamble. Seven such records across the two sessions, up to 9,947
+characters each. Rendering them puts framework text at the top of every panel.
+✓ Rule holds.
+
+**Filter injected user messages — but not by tag name.** Not every `role: user`
+record is the user. The scripted run injected `<recommended_plugins>`; the real
+sessions injected `<environment_context>` with cwd, shell, date and permission
+profile. A fixed tag list would have shipped and then missed the common case.
+
+Match structurally instead: drop a `role: user` record whose content is
+*wholly* one XML-ish element.
+
+```
+^<([a-z_]+)>.*</\1>\s*$
+```
+
+Applied to both real sessions, that leaves exactly the turns the user typed —
+`hi`, `read the helios dameon provider code`, `fix what is missing`, `run
+them` — and nothing else.
+
+**`ordinal` is monotonic but not dense.** Rendered messages landed on
+8, 11, 19, 22, 24, 25 … because `event_msg` rows consume ordinals too. Fine for
+`Seq`, which only needs to be stable and increasing, but no client may assume
+consecutive numbering.
+
+**Trim the tool-output preamble.** `custom_tool_call_output` text begins
+`Script completed\nWall time 0.1 seconds\nOutput:\n` before the real output.
+
+### The Code Mode problem is worse than first written
+
 With Code Mode active a shell command is recorded as a `custom_tool_call` named
 `exec` whose `input` is *JavaScript*:
 
-```
-const r = await tools.exec_command({"cmd":"echo daemon-down-ok", ...})
+```js
+const r = await tools.exec_command({cmd:"rg --files -g 'AGENTS.md'", workdir:"..."})
 ```
 
-The same call arrived at the `PreToolUse` hook as `tool_name: "Bash"` with
-`tool_input: {"command": "echo daemon-down-ok"}`. The hook layer is normalised
-and stable; the rollout is an implementation detail that changes with a feature
-flag. Prefer the hook everywhere the hook fires.
+The same call reached the `PreToolUse` hook as `tool_name: "Bash"`,
+`tool_input: {"command": "..."}`. So the earlier guidance — prefer the hook,
+the rollout is an implementation detail — is right for a session Helios hosts.
+
+**It is wrong for the sessions that need the parser most.** Discovery reads
+transcripts of sessions Helios never hosted, where no hook ever fired. There
+the JavaScript wrapper is the only record of what ran, and the parser has to
+extract the command from it or show the user a line of JS.
+
+Options, none clean: parse the argument object out of the JS with a regex and
+accept that it breaks on a computed argument; show the JS as-is; or show the
+tool name only and drop the detail. Pick one in stage 4, with the history panel
+in front of you. This spec should not have implied the hook layer removes the
+problem — it defers it to the code path that has no hooks.
 
 `-c key=value` sets any config key for one invocation, above every config file.
 `-c 'mcp_servers.helios={url="...", http_headers={...}}'` is how the Helios MCP

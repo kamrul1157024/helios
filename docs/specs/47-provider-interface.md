@@ -35,6 +35,81 @@ Three packages import one provider by name. That is the scattering. A registry
 of functions cannot fix it, because there is no value to pass around. An
 interface can.
 
+## What this actually touches
+
+Counted, not estimated. An earlier draft said "sixteen call sites" and meant Go
+only. The clients are the larger half.
+
+| Where | Files | The coupling |
+|---|---|---|
+| Go daemon | ~10 | `Source: "claude"` on new rows, source gates, three by-name imports, `reporter.New("claude")` |
+| Desktop (`desktop/src`) | 8 | `ALERT_TYPES` list, alert-settings groups, two card switches, notify routing, provider default |
+| Desktop tests | 2 | hardcoded type lists |
+| Mobile (`mobile/lib`) | 9 | card registry, `isBlocking`, home-screen branch chain, default-prefs map, settings list, `source == 'claude'` gates, direct `providers/claude/*` imports |
+| **Total** | **~29** | |
+
+### The clients own a catalogue they should be served
+
+Both clients hardcode the same thing four times each: the list of notification
+types, their labels and descriptions, which are blocking, and their default
+alert preference.
+
+```ts
+// desktop/src/shared/notifications.ts:23
+export const ALERT_TYPES = [
+  'claude.permission', 'claude.question', 'claude.elicitation.form',
+  'claude.elicitation.url', 'claude.trust', 'claude.done', 'claude.error',
+] as const
+```
+
+```dart
+// mobile/lib/providers/card_registry.dart:71
+type == 'claude.permission' || type == 'claude.question' || ...
+```
+
+The daemon serves `event_types` for the reporter (`api.go:1620`) — a different
+list, for a different purpose. Nothing serves the notification catalogue.
+
+So adding a provider means editing both clients in four places each, and
+forgetting one is silent. Desktop half-anticipates this: `settings.tsx:54`
+computes `MISSING` for alert types absent from its own groups. A Codex type
+would be in neither list, so it would not even be missing.
+
+**This is the same mistake `PermissionModes` already avoided.** That list is
+served rather than hardcoded, precisely because the vocabulary belongs to the
+provider. The notification catalogue belongs to the provider too.
+
+Add to the daemon, from what providers register:
+
+```go
+GET /api/notification-types
+→ [{"type":"claude.permission","provider":"claude","label":"Permission requests",
+    "detail":"...","blocking":true,"group":"action_required","default_alert":true}]
+```
+
+Clients render the catalogue instead of enumerating it, and gain nothing to
+edit when a provider is added. This means `Actor` needs metadata alongside
+each route:
+
+```go
+type ActionRoute struct {
+    Handler  ActionHandler
+    Label    string
+    Detail   string
+    Blocking bool
+    Group    string
+}
+
+type Actor interface {
+    ActionRoutes() map[string]ActionRoute
+}
+```
+
+That is a bigger change than a rename, and it is the honest cost of a second
+provider. Doing it as part of stage 1 is cheaper than doing it twice.
+
+---
+
 ## The house already has the pattern
 
 `internal/tunnel` solved this shape of problem already:
