@@ -53,6 +53,22 @@ type contentBlock struct {
 // worth naming.
 var wrapperOpen = regexp.MustCompile(`(?s)\A<([a-z_]+)>(.*)\z`)
 
+// injectedHeading matches the context Codex prepends as a user turn, which is
+// a Markdown heading rather than an element.
+//
+// A literal prefix, deliberately. The structural rule below catches anything
+// wholly wrapped in a tag; this one cannot be generalised without risking a
+// real user message that happens to open with a heading, and hiding something
+// the user typed is far worse than showing something they did not. Extend it
+// as more injections are found, one measured shape at a time.
+var injectedHeading = regexp.MustCompile(`(?m)\A# (AGENTS|CLAUDE)\.md instructions for `)
+
+// isInjectedContext reports whether a user-role record is something Codex put
+// there rather than something the user typed.
+func isInjectedContext(text string) bool {
+	return isWrapperElement(text) || injectedHeading.MatchString(text)
+}
+
 // isWrapperElement reports whether text is wholly one XML-ish element.
 //
 // Codex injects context as user-role records — <environment_context> with the
@@ -113,7 +129,7 @@ func messageFrom(entry *rolloutEntry, payload *rolloutPayload) *transcript.Messa
 		switch payload.Role {
 		case "user":
 			// Not every user record is the user.
-			if isWrapperElement(text) {
+			if isInjectedContext(text) {
 				return nil
 			}
 			return &transcript.Message{
