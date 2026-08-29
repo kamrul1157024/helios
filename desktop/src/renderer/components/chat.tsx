@@ -89,6 +89,11 @@ export function ChatPanel({
       try {
         const page = await api(hostId).transcript(session.session_id, PAGE, 0)
         if (cancelled) return
+        // Written here as well as in the effect below, because the delta effect
+        // runs first in the same commit: it is declared above the one that
+        // syncs the ref, and reading a stale empty ref asks for everything
+        // since seq -1, which is the page just loaded, appended to itself.
+        messagesRef.current = page.messages
         setMessages(page.messages)
         setTotal(page.total)
         setHasMore(page.has_more)
