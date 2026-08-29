@@ -637,6 +637,9 @@ func renderHookLines(lines []hookLine) string {
 	for _, l := range lines {
 		name := agentDisplayName(l.Provider)
 		switch {
+		case l.Skipped:
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				subtitleStyle.Render("·"), subtitleStyle.Render(name+" skipped")))
 		case !l.CLIPresent:
 			// Neither a tick nor a cross: nothing is broken and nothing here
 			// can fix it. Listed so the agent is discoverable at all.
@@ -701,7 +704,7 @@ func (m StartModel) viewAgentMenu() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  ↑↓ choose  enter set up  tab skip  q quit"))
+	b.WriteString(helpStyle.Render("  ↑↓ choose  enter set up  s skip this agent  tab skip all  q quit"))
 	return b.String()
 }
 
@@ -709,6 +712,10 @@ func (m StartModel) viewAgentMenu() string {
 func agentMenuRow(l hookLine) string {
 	name := agentDisplayName(l.Provider)
 	switch {
+	case l.Skipped:
+		// Dim, and stated as the user's choice rather than a fault, because
+		// it is one. Reversible with the same key that set it.
+		return subtitleStyle.Render(fmt.Sprintf("· %s — skipped", name))
 	case !l.CLIPresent:
 		return subtitleStyle.Render(fmt.Sprintf("· %s — not installed", name))
 	case !l.Health.Installed:
@@ -740,7 +747,7 @@ func (m StartModel) viewAgentSetup() string {
 		b.WriteString("\n")
 		b.WriteString(subtitleStyle.Render("    " + agentInstallHint(m.agentSetup)))
 		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("  enter back  tab back  q quit"))
+		b.WriteString(helpStyle.Render("  s skip this agent  enter back  tab back  q quit"))
 		return b.String()
 	}
 
@@ -757,6 +764,6 @@ func (m StartModel) viewAgentSetup() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter install hooks  tab back  q quit"))
+	b.WriteString(helpStyle.Render("  enter install hooks  s skip this agent  tab back  q quit"))
 	return b.String()
 }

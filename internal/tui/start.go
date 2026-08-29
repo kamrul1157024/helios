@@ -89,7 +89,10 @@ type hookLine struct {
 	// whose CLI is absent has nothing wrong with it and nothing to install;
 	// it is listed so the user learns it exists.
 	CLIPresent bool
-	Health     provider.HookHealth
+	// Skipped is the user saying they do not want this one set up. It stops
+	// setup asking again; it does not hide an agent that already works.
+	Skipped bool
+	Health  provider.HookHealth
 }
 
 // allHooksHealthy reports whether every *installed* agent's hook table is
@@ -106,7 +109,7 @@ type hookLine struct {
 // Vacuously true when no agent is installed, which is not a problem to report.
 func allHooksHealthy(lines []hookLine) bool {
 	for _, l := range lines {
-		if !l.CLIPresent {
+		if !l.CLIPresent || l.Skipped {
 			continue
 		}
 		if !l.Health.Installed || !l.Health.Current {
@@ -532,6 +535,23 @@ func (m StartModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsCursor = 0
 			return m, loadGeneralSettings(m.client)
 		}
+		// On the agent screens the same key skips one agent. Per agent, not
+		// per step: skipping the step leaves the prompt to return next start,
+		// while skipping an agent is the user saying they do not use it, and
+		// setup stops asking. Pressing it again undoes that.
+		if m.screen == screenAgentMenu || m.screen == screenAgentSetup {
+			line, ok := m.agentAt(m.agentCursor)
+			if !ok {
+				return m, nil
+			}
+			m.screen = screenAgentMenu
+			if !line.Skipped {
+				// Move past it. Leaving the cursor put meant the next Enter
+				// opened setup for the agent the user had just dismissed.
+				m.agentCursor = nextActionable(m.hookLines, m.agentCursor)
+			}
+			return m, toggleSkipCmd(line.Provider, !line.Skipped)
+		}
 
 	case "m":
 		// The summary screen is where this is usually read: a set-up install
@@ -589,6 +609,12 @@ func (m StartModel) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		m.agentSetup = line.Provider
 		m.screen = screenAgentSetup
+		if line.Skipped {
+			// Opening a skipped agent is changing your mind. Un-skip it, or
+			// the screen would offer to set up something still labelled
+			// skipped and setup would keep ignoring the result.
+			return m, toggleSkipCmd(line.Provider, false)
+		}
 		return m, nil
 
 	case screenAgentSetup:
@@ -967,13 +993,40 @@ func installAgentHooksCmd(providerID string) tea.Cmd {
 
 // firstUnready is the row the menu opens on: the first agent that needs
 // something, so the common case takes one Enter rather than an arrow key.
+// nextActionable is the next agent worth landing on after from, wrapping to
+// the start. Falls back to from when nothing else qualifies, so the cursor
+// never leaves the list.
+func nextActionable(lines []hookLine, from int) int {
+	for i := 1; i <= len(lines); i++ {
+		j := (from + i) % len(lines)
+		l := lines[j]
+		if !l.Skipped && l.CLIPresent && (!l.Health.Installed || !l.Health.Current) {
+			return j
+		}
+	}
+	return from
+}
+
 func firstUnready(lines []hookLine) int {
 	for i, l := range lines {
-		if l.CLIPresent && (!l.Health.Installed || !l.Health.Current) {
+		if l.Skipped || !l.CLIPresent {
+			continue
+		}
+		if !l.Health.Installed || !l.Health.Current {
 			return i
 		}
 	}
 	return 0
+}
+
+// toggleSkipCmd records, or undoes, a decision to leave an agent alone.
+func toggleSkipCmd(providerID string, skip bool) tea.Cmd {
+	return func() tea.Msg {
+		if err := daemon.SetProviderSkipped(providerID, skip); err != nil {
+			return agentInstallDone{provider: providerID, err: err}
+		}
+		return agentsRefreshed{lines: hookLines()}
+	}
 }
 
 func installHooksCmd() tea.Cmd {
@@ -1152,12 +1205,14 @@ func registerMCPCmd(internalPort int) tea.Cmd {
 func hookLines() []hookLine {
 	daemon.RegisterDefaultProviders()
 	health := daemon.HooksHealth()
+	skipped := daemon.SkippedProviders()
 	var out []hookLine
 	for _, p := range provider.All() {
 		id := p.Info().ID
 		out = append(out, hookLine{
 			Provider:   id,
 			CLIPresent: agentInstalled(id),
+			Skipped:    skipped[id],
 			Health:     health[id],
 		})
 	}
