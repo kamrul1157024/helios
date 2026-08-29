@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/featureflag"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -78,8 +80,26 @@ var tunnelProviders = []struct {
 }
 
 // Messages
+// hookLine is one provider's hook state, for the status panel.
+type hookLine struct {
+	Provider string
+	Health   provider.HookHealth
+}
+
+// allHooksHealthy reports whether every installed agent's hooks will run.
+// Vacuously true when no agent is installed, which is not a problem to report.
+func allHooksHealthy(lines []hookLine) bool {
+	for _, l := range lines {
+		if !l.Health.Installed || !l.Health.Current || !l.Health.Effective {
+			return false
+		}
+	}
+	return true
+}
+
 type statusCheckDone struct {
 	daemonOK       bool
+	hookLines      []hookLine
 	hooksOK        bool
 	hooksOutdated  bool
 	mcpRegistered  bool
@@ -162,6 +182,7 @@ type StartModel struct {
 
 	// Status check results
 	daemonOK      bool
+	hookLines     []hookLine
 	hooksOK       bool
 	hooksOutdated bool
 	// mcpRegistered reports whether Claude Code knows about the Helios MCP
@@ -611,6 +632,7 @@ func (m StartModel) enterTunnelSelect() (tea.Model, tea.Cmd) {
 
 func (m StartModel) handleStatusCheck(msg statusCheckDone) (tea.Model, tea.Cmd) {
 	m.daemonOK = msg.daemonOK
+	m.hookLines = msg.hookLines
 	m.hooksOK = msg.hooksOK
 	m.hooksOutdated = msg.hooksOutdated
 	m.shellInfo = msg.shellInfo
@@ -781,11 +803,9 @@ func checkStatus(c *client, publicPort int) tea.Cmd {
 		result.daemonOK = h.Status == "ok"
 
 		// Check hooks
-		result.hooksOK = hooksInstalled()
+		result.hookLines = hookLines()
+		result.hooksOK = allHooksHealthy(result.hookLines)
 		if result.hooksOK {
-			// This process is not the daemon, so the registry starts empty
-			// and the check would silently pass.
-			daemon.RegisterDefaultProviders()
 			result.hooksOutdated = daemon.HooksOutdated()
 		}
 
@@ -984,13 +1004,29 @@ func registerMCPCmd(internalPort int) tea.Cmd {
 	}
 }
 
-func hooksInstalled() bool {
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(home + "/.claude/settings.json")
-	if err != nil {
-		return false
+// hookLines describes each installed agent's hooks, one line per provider.
+//
+// Per provider, because the answer differs: a machine may have Claude working
+// and Codex installed but untrusted, and one "hooks installed" tick cannot say
+// so. A provider whose agent is not installed at all is left out rather than
+// reported as broken — nothing is wrong, there is just nothing to hook.
+func hookLines() []hookLine {
+	daemon.RegisterDefaultProviders()
+	var out []hookLine
+	for id, h := range daemon.HooksHealth() {
+		if !agentInstalled(id) {
+			continue
+		}
+		out = append(out, hookLine{Provider: id, Health: h})
 	}
-	return strings.Contains(string(data), "/hooks/claude/permission")
+	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
+	return out
+}
+
+// agentInstalled reports whether the provider's CLI is on this machine.
+func agentInstalled(providerID string) bool {
+	_, err := exec.LookPath(providerID)
+	return err == nil
 }
 
 func installHooksQuietly() {

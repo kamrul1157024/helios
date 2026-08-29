@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tui"
@@ -456,15 +458,36 @@ func handleTunnel(args []string) {
 	}
 }
 
+// availableProviders lists the agents this machine can actually start, for
+// the usage line. A provider whose CLI is absent is not offered.
+func availableProviders() []string {
+	daemon.RegisterDefaultProviders()
+	var out []string
+	for _, p := range provider.All() {
+		id := p.Info().ID
+		if _, err := exec.LookPath(id); err == nil {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"none found"}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func handleNew(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios new \"prompt\" [--model model] [--cwd /path/to/dir]")
+		fmt.Fprintln(os.Stderr,
+			"Usage: helios new \"prompt\" [--provider name] [--model model] [--cwd /path/to/dir]")
+		fmt.Fprintln(os.Stderr, "Providers: "+strings.Join(availableProviders(), ", "))
 		os.Exit(1)
 	}
 
 	prompt := args[0]
 	cwd, _ := os.Getwd()
 	model := ""
+	providerID := ""
 
 	for i, a := range args {
 		if a == "--cwd" && i+1 < len(args) {
@@ -472,6 +495,9 @@ func handleNew(args []string) {
 		}
 		if a == "--model" && i+1 < len(args) {
 			model = args[i+1]
+		}
+		if a == "--provider" && i+1 < len(args) {
+			providerID = args[i+1]
 		}
 	}
 
@@ -484,6 +510,11 @@ func handleNew(args []string) {
 	}
 	if model != "" {
 		reqBody["model"] = model
+	}
+	// Left unset when the user names none, so the daemon applies its own
+	// default rather than the CLI guessing at one that may not be registered.
+	if providerID != "" {
+		reqBody["provider"] = providerID
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -1131,8 +1162,9 @@ Commands:
   start                 Start helios (daemon + tunnel + device pairing TUI)
   stop                  Stop daemon (tunnel stays alive)
   devices               Device management (TUI)
-  new "prompt" [flags]  Launch Claude in a helios-managed terminal
-                        --cwd PATH  Working directory (default: current)
+  new "prompt" [flags]  Launch an agent in a helios-managed terminal
+                        --cwd PATH       Working directory (default: current)
+                        --provider NAME  Agent to launch (default: claude)
   attach <session>      Attach this terminal to a session (^\ d to detach)
   wrap -- <cmd> [args]  Run a command in a helios-managed terminal
                         Example: helios wrap -- claude

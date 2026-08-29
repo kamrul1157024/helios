@@ -1,4 +1,4 @@
-package claude
+package provider
 
 import (
 	"fmt"
@@ -332,7 +332,7 @@ func TestReadSession_TakesTheMessageFromTheTranscript(t *testing.T) {
 		{"assistant", "Profiling it now."},
 	})
 
-	pairs, latest := readSession(path, 5)
+	pairs, latest := readSession("", path, 5)
 
 	if latest != "check the helios app debug why it using that much" {
 		t.Errorf("latest: got %q", latest)
@@ -350,7 +350,7 @@ func TestReadSession_LooksPastASlashCommand(t *testing.T) {
 		{"user", "/clear"},
 	})
 
-	_, latest := readSession(path, 5)
+	_, latest := readSession("", path, 5)
 
 	if latest != "add multipart upload to the daemon" {
 		t.Errorf("a slash command was taken as the subject: %q", latest)
@@ -358,11 +358,11 @@ func TestReadSession_LooksPastASlashCommand(t *testing.T) {
 }
 
 func TestReadSession_NoTranscriptIsNotAnError(t *testing.T) {
-	pairs, latest := readSession("", 5)
+	pairs, latest := readSession("", "", 5)
 	if pairs != nil || latest != "" {
 		t.Errorf("got %v / %q, want nothing", pairs, latest)
 	}
-	pairs, latest = readSession("/nonexistent/session.jsonl", 5)
+	pairs, latest = readSession("", "/nonexistent/session.jsonl", 5)
 	if pairs != nil || latest != "" {
 		t.Errorf("got %v / %q for a missing file, want nothing", pairs, latest)
 	}

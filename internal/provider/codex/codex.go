@@ -13,6 +13,8 @@
 package codex
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/store"
 )
 
 // Provider drives the Codex CLI.
@@ -263,4 +266,72 @@ func (p *Provider) QueuePrompt(sessionID, resumeID, text string) error {
 		return errNoTerminal
 	}
 	return terminalBackend.SendText(sessionID, text)
+}
+
+// ==================== Small model and titles ====================
+
+// Complete runs the CLI non-interactively with its cheapest reasoning effort,
+// which respects whatever auth the user already has rather than asking for a
+// key.
+//
+// `exec` and not the interactive path: this is a one-shot with no human in it,
+// and exec is the mode built for that. --skip-git-repo-check because a title
+// is wanted for a session in any directory, git or not.
+func (p *Provider) Complete(ctx context.Context, system, prompt string) (string, error) {
+	cmd := exec.CommandContext(ctx, p.bin,
+		"-s", "read-only", "-a", "never",
+		"exec", "--skip-git-repo-check",
+		"-c", "model_reasoning_effort=\"minimal\"",
+		system+"\n\n"+prompt,
+	)
+	// A session's own directory is irrelevant to naming it, and running in one
+	// would let the sandbox refuse.
+	cmd.Dir = os.TempDir()
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("codex exec: %w", err)
+	}
+	return lastMeaningfulLine(string(out)), nil
+}
+
+// lastMeaningfulLine pulls the answer out of `codex exec` output.
+//
+// exec prints a banner, then the turn, then a token count. The answer is the
+// last non-empty line that is none of those. Fragile by nature — there is no
+// --output-format json for exec the way Claude has — so it fails to an empty
+// string, which the caller reads as "no title" rather than as a title made of
+// banner text.
+func lastMeaningfulLine(out string) string {
+	skip := []string{"tokens used", "workdir:", "model:", "provider:", "session id:",
+		"reasoning ", "sandbox:", "approval:", "--------", "OpenAI Codex", "user", "codex"}
+	lines := strings.Split(out, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		noise := false
+		for _, s := range skip {
+			if strings.HasPrefix(lower, strings.ToLower(s)) {
+				noise = true
+				break
+			}
+		}
+		if !noise {
+			return line
+		}
+	}
+	return ""
+}
+
+// Title and AutoTitle delegate to the shared implementation, which reads the
+// rollout through this provider's parser and narrates with Complete above.
+func (p *Provider) Title(db *store.Store, sessionID, cwd, transcriptPath string, notify provider.Notify) string {
+	return provider.RegenerateTitle(db, sessionID, cwd, transcriptPath, notify)
+}
+
+func (p *Provider) AutoTitle(ctx *provider.HookContext, sessionID, cwd, transcriptPath string, notify provider.Notify) {
+	provider.TriggerAutoTitle(ctx, sessionID, cwd, transcriptPath, notify)
 }

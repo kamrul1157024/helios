@@ -238,3 +238,38 @@ func TestSessionArgsOmitsMCPConfigWithoutAPort(t *testing.T) {
 		t.Fatalf("argv = %v, want no --mcp-config when no port is known", argv)
 	}
 }
+
+// The hook URL and the MCP config answer different questions, and only the
+// second is optional. Conflating them wrote every hook URL as
+// http://localhost:0 whenever the MCP feature flag was off, and the daemon
+// heard nothing from any session.
+func TestHookURLsIgnoreTheMCPPort(t *testing.T) {
+	cfg := hookConfig(7654)
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "localhost:0") {
+		t.Fatalf("a hook URL points at port 0:\n%s", encoded)
+	}
+	if !strings.Contains(string(encoded), "localhost:7654/hooks/claude") {
+		t.Errorf("hook URLs do not use the port given:\n%s", encoded)
+	}
+}
+
+// MCP off means no --mcp-config on the argv, and nothing else.
+func TestMCPPortOffLeavesHooksAlone(t *testing.T) {
+	p := New(7654, 0)
+	launch, err := p.Launch(provider.SessionSpec{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	for _, a := range launch.Argv {
+		if a == "--mcp-config" {
+			t.Error("MCP config injected while the feature is off")
+		}
+	}
+	if p.hookPort != 7654 {
+		t.Errorf("hookPort = %d, want 7654", p.hookPort)
+	}
+}

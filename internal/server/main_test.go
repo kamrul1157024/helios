@@ -16,7 +16,7 @@ import (
 // every one of those look like "not supported" and the tests fail for a reason
 // that has nothing to do with what they check.
 func TestMain(m *testing.M) {
-	provider.MustRegister(claude.New(0))
+	provider.MustRegister(claude.New(0, 0))
 	provider.MustRegister(codex.New(0))
 	os.Exit(m.Run())
 }

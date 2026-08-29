@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kamrul1157024/helios/internal/featureflag"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 )
 
@@ -119,13 +120,7 @@ func (m StartModel) viewLoading() string {
 			b.WriteString(cross("Daemon not running"))
 		}
 
-		if m.hooksOK && !m.hooksOutdated {
-			b.WriteString(check("Claude hooks installed"))
-		} else if m.hooksOK && m.hooksOutdated {
-			b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
-		} else {
-			b.WriteString(cross("Claude hooks not installed"))
-		}
+		b.WriteString(renderHookLines(m.hookLines))
 
 		if featureflag.MCP() {
 			if m.mcpRegistered {
@@ -440,11 +435,7 @@ func (m StartModel) viewMain() string {
 
 	// Status
 	b.WriteString(check("Daemon running"))
-	if m.hooksOK && !m.hooksOutdated {
-		b.WriteString(check("Claude hooks installed"))
-	} else if m.hooksOK {
-		b.WriteString(fmt.Sprintf("  %s %s\n", warnStyle.Render("~"), "Claude hooks outdated"))
-	}
+	b.WriteString(renderHookLines(m.hookLines))
 	if featureflag.MCP() {
 		if m.mcpRegistered {
 			b.WriteString(check("Agent tools registered with Claude Code"))
@@ -623,4 +614,43 @@ func check(msg string) string {
 
 func cross(msg string) string {
 	return fmt.Sprintf("  %s %s\n", crossStyle.Render("✗"), msg)
+}
+
+// renderHookLines reports each installed agent's hooks on its own line.
+//
+// One line per provider rather than one tick for all of them, because the
+// states differ and the difference is the whole point: a machine can have
+// Claude working and Codex installed-but-untrusted, and Codex says nothing
+// about the latter itself. The detail comes from the provider, so it can name
+// the command that fixes it.
+func renderHookLines(lines []hookLine) string {
+	if len(lines) == 0 {
+		return cross("No agent CLI found (install claude or codex)")
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		name := agentDisplayName(l.Provider)
+		switch {
+		case l.Health.Installed && l.Health.Current && l.Health.Effective:
+			b.WriteString(check(name + " hooks installed"))
+		case !l.Health.Installed:
+			b.WriteString(cross(name + " hooks not installed"))
+		default:
+			// Installed but stale, or installed and being ignored. The
+			// provider knows which, and what to do about it.
+			detail := l.Health.Detail
+			if detail == "" {
+				detail = "hooks need attention"
+			}
+			b.WriteString(fmt.Sprintf("  %s %s: %s\n", warnStyle.Render("~"), name, detail))
+		}
+	}
+	return b.String()
+}
+
+func agentDisplayName(providerID string) string {
+	if p, ok := provider.Get(providerID); ok {
+		return p.Info().Name
+	}
+	return providerID
 }

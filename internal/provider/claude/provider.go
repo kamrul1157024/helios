@@ -22,13 +22,24 @@ import (
 // function values.
 type Provider struct {
 	bin string
+	// hookPort is where the agent's hooks reach the daemon. Always the real
+	// internal port: hooks are how helios sees a session at all.
+	hookPort int
 }
 
-// New returns the Claude provider. internalPort is where sessions reach the
-// Helios MCP server; zero means no MCP config is injected at all.
-func New(internalPort int) *Provider {
-	mcpPort = internalPort
-	return &Provider{bin: findClaude()}
+// New returns the Claude provider.
+//
+// Two ports, because they answer different questions and only one is optional.
+// hookPort is where the agent's hooks call back, and must always be the
+// daemon's real internal port. mcpPort is where a session reaches the Helios
+// MCP server, and is zero when that feature is off — which is how the provider
+// is told to leave --mcp-config off the argv.
+//
+// They were briefly one parameter. With MCP disabled that wrote every hook URL
+// as http://localhost:0 and the daemon heard nothing.
+func New(hookPort, mcpPort int) *Provider {
+	setMCPPort(mcpPort)
+	return &Provider{bin: findClaude(), hookPort: hookPort}
 }
 
 // SetBackend gives the action handlers access to session terminals. Called by
@@ -186,12 +197,15 @@ func (p *Provider) ParseTranscript(path string, limit, offset int) (*transcript.
 
 func (p *Provider) Discover(db *store.Store) { discovery.DiscoverClaudeSessions(db) }
 
+// Title and AutoTitle delegate to the shared implementation, which reads the
+// transcript through this provider's own parser and narrates with its own
+// small model. Nothing about naming a session is Claude-specific.
 func (p *Provider) Title(db *store.Store, sessionID, cwd, transcriptPath string, notify provider.Notify) string {
-	return RegenerateTitle(db, sessionID, cwd, transcriptPath, notify)
+	return provider.RegenerateTitle(db, sessionID, cwd, transcriptPath, notify)
 }
 
 func (p *Provider) AutoTitle(ctx *provider.HookContext, sessionID, cwd, transcriptPath string, notify provider.Notify) {
-	TriggerAutoTitle(ctx, sessionID, cwd, transcriptPath, notify)
+	provider.TriggerAutoTitle(ctx, sessionID, cwd, transcriptPath, notify)
 }
 
 // Complete runs the CLI with the cheapest model, which respects whatever auth

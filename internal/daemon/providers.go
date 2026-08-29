@@ -22,17 +22,15 @@ var registerOnce sync.Once
 // reach here.
 func RegisterProviders(internalPort int) {
 	registerOnce.Do(func() {
-		// Two different uses of one number, and only one is behind the MCP
-		// feature flag. A zero port tells the Claude provider to leave
-		// --mcp-config off the argv, which is what the flag being off means.
-		// Codex uses the port to reach the daemon's hook route, which is not
-		// optional: gating it would leave every codex hook curling
-		// http://localhost:0 and the daemon hearing nothing.
+		// Only the MCP port is behind the flag. Every provider's hooks call
+		// back on the real internal port whatever the flag says — gating that
+		// would write every hook URL as http://localhost:0, and the daemon
+		// would simply never hear from the agent.
 		mcpPort := 0
 		if featureflag.MCP() {
 			mcpPort = internalPort
 		}
-		provider.MustRegister(claude.New(mcpPort))
+		provider.MustRegister(claude.New(internalPort, mcpPort))
 		provider.MustRegister(codex.New(internalPort))
 	})
 }

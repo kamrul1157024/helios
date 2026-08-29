@@ -121,6 +121,10 @@ func LaunchPermissionMode(spec provider.SessionSpec) string {
 // config is injected at all.
 var mcpPort int
 
+// setMCPPort records where sessions reach the Helios MCP server. Zero means
+// no MCP config is injected at all.
+func setMCPPort(port int) { mcpPort = port }
+
 // mcpConfig builds the --mcp-config value that points a session at the Helios
 // MCP server and names the session it belongs to. The id travels in a header,
 // so the agent never has to know its own id or pass it to a tool.

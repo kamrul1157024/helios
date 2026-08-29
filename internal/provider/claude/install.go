@@ -331,7 +331,7 @@ func RemoveHooks() error {
 // ==================== provider.HookInstaller ====================
 
 func (p *Provider) InstallHooks(scope provider.Scope) error {
-	return InstallHooks(mcpPort, scope == provider.ScopeProject)
+	return InstallHooks(p.hookPort, scope == provider.ScopeProject)
 }
 
 // HookHealth reports whether the hooks Claude would run match this build.
@@ -340,7 +340,7 @@ func (p *Provider) InstallHooks(scope provider.Scope) error {
 // without a trust gate, so there is no third question to ask — unlike Codex,
 // which reads a hook table and then silently declines to run it.
 func (p *Provider) HookHealth() provider.HookHealth {
-	installed, current := hookState(mcpPort)
+	installed, current := hookState(p.hookPort)
 	h := provider.HookHealth{Installed: installed, Current: current, Effective: current}
 	switch {
 	case !installed:
