@@ -178,9 +178,6 @@ func startDaemon(cfg *Config) error {
 	// Give the claude action handlers access to session terminals
 	claude.SetBackend(term)
 	codex.SetBackend(term)
-	// Somewhere durable to record that codex hooks are actually running, so a
-	// daemon restart does not read as "installed but not trusted".
-	codex.SetStore(db)
 
 	// Discover existing Claude sessions from transcript files
 	go provider.DiscoverAll(db)

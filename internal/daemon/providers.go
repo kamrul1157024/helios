@@ -31,6 +31,10 @@ func RegisterProviders(internalPort int) {
 			mcpPort = internalPort
 		}
 		provider.MustRegister(claude.New(internalPort, mcpPort))
+		// Where to record that codex hooks are running. Every process that
+		// registers providers needs it, not only the daemon: the setup TUI
+		// reads the same evidence to decide what to report.
+		codex.SetStateDir(HeliosDir())
 		provider.MustRegister(codex.New(internalPort))
 	})
 }

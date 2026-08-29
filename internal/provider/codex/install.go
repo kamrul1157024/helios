@@ -15,7 +15,6 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/provider"
-	"github.com/kamrul1157024/helios/internal/store"
 )
 
 // hookCommand renders the shell for one hook.
@@ -228,25 +227,34 @@ func (p *Provider) HookHealth() provider.HookHealth {
 
 	h.Effective = hooksSeenRecently()
 	if !h.Effective {
-		h.Detail = "codex has not run these hooks. They are installed but not " +
-			"trusted: open a codex session and run /hooks to approve them."
+		h.Detail = "set up, but codex has not run them yet — approve with /hooks"
 	}
 	return h
 }
 
-// hookEvidenceKey is where the last-hook timestamp is persisted.
+// evidenceFile is where the last-hook timestamp is persisted.
 //
-// In memory alone it resets with the daemon, so every restart reported
-// "installed but not trusted" until the next codex turn — permanently, for
-// anyone who has codex installed and is not using it today.
-const hookEvidenceKey = "codex.hooks.last_seen"
+// A file, not the daemon's database, because two processes need it: the
+// daemon writes it when a hook arrives, and the setup TUI reads it to decide
+// what to report. Kept in the database it was invisible to the TUI, which
+// then said "installed but not trusted" for ever — including to people whose
+// hooks were trusted and working.
+const evidenceFile = "codex-hooks-seen"
 
-// evidenceStore is set by the daemon once the database exists.
-var evidenceStore atomic.Pointer[store.Store]
+// stateDir is where helios keeps its own files. Set by whoever registers the
+// provider, since this package cannot import the daemon that owns the path.
+var stateDir atomic.Pointer[string]
 
-// SetStore gives the health check somewhere durable to record that hooks are
-// running.
-func SetStore(db *store.Store) { evidenceStore.Store(db) }
+// SetStateDir tells the provider where to record that hooks are running.
+func SetStateDir(dir string) { stateDir.Store(&dir) }
+
+func evidencePath() string {
+	dir := stateDir.Load()
+	if dir == nil || *dir == "" {
+		return ""
+	}
+	return filepath.Join(*dir, evidenceFile)
+}
 
 // hookEvidence records that a Codex hook reached the daemon.
 //
@@ -272,10 +280,13 @@ func NoteHookReceivedFor(providerID string) {
 	hookEvidence.last = now
 	hookEvidence.mu.Unlock()
 
-	if db := evidenceStore.Load(); db != nil {
-		if err := db.SetSetting(hookEvidenceKey, now.UTC().Format(time.RFC3339)); err != nil {
-			log.Printf("codex: record hook evidence: %v", err)
-		}
+	path := evidencePath()
+	if path == "" {
+		return
+	}
+	stamp := []byte(now.UTC().Format(time.RFC3339))
+	if err := os.WriteFile(path, stamp, 0o644); err != nil {
+		log.Printf("codex: record hook evidence: %v", err)
 	}
 }
 
@@ -289,9 +300,9 @@ func hooksSeenRecently() bool {
 	hookEvidence.mu.Unlock()
 
 	if last.IsZero() {
-		if db := evidenceStore.Load(); db != nil {
-			if raw, err := db.GetSetting(hookEvidenceKey); err == nil && raw != "" {
-				last, _ = time.Parse(time.RFC3339, raw)
+		if path := evidencePath(); path != "" {
+			if raw, err := os.ReadFile(path); err == nil {
+				last, _ = time.Parse(time.RFC3339, strings.TrimSpace(string(raw)))
 			}
 		}
 	}
@@ -359,5 +370,7 @@ func resetHookEvidence() {
 	hookEvidence.mu.Lock()
 	defer hookEvidence.mu.Unlock()
 	hookEvidence.last = time.Time{}
-	evidenceStore.Store(nil)
+	if path := evidencePath(); path != "" {
+		os.Remove(path)
+	}
 }

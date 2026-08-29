@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/transcript"
@@ -219,7 +220,9 @@ func TestHookHealthReportsAnUninstalledTable(t *testing.T) {
 // table and declines to run it without saying so, so Effective stays false
 // until a hook actually arrives.
 func TestHookHealthSeparatesInstalledFromEffective(t *testing.T) {
-	t.Setenv("CODEX_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	SetStateDir(home)
 	resetHookEvidence()
 
 	p := New(7654)
@@ -484,4 +487,35 @@ func readEvents(t *testing.T, path string) map[string]interface{} {
 	}
 	events, _ := cfg["hooks"].(map[string]interface{})
 	return events
+}
+
+// The daemon writes the evidence and the setup TUI reads it — different
+// processes. Held in the daemon's database it was invisible to the TUI, which
+// then reported "not trusted" for ever, including to people whose hooks were
+// trusted and working.
+func TestHookEvidenceIsVisibleToAnotherProcess(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	SetStateDir(home)
+	resetHookEvidence()
+
+	p := New(7654)
+	if err := p.InstallHooks(provider.ScopeUser); err != nil {
+		t.Fatalf("InstallHooks: %v", err)
+	}
+	NoteHookReceivedFor("codex")
+
+	// A fresh process: nothing in memory, only what is on disk.
+	resetInMemoryEvidence()
+	if !New(7654).HookHealth().Effective {
+		t.Error("evidence did not survive into a process that never saw the hook")
+	}
+}
+
+// resetInMemoryEvidence forgets the timestamp without deleting the file, which
+// is what a restarted process looks like.
+func resetInMemoryEvidence() {
+	hookEvidence.mu.Lock()
+	defer hookEvidence.mu.Unlock()
+	hookEvidence.last = time.Time{}
 }
