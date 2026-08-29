@@ -475,11 +475,55 @@ func (h *Host) applyNegotiatedSize() {
 	// PTY, and a client that does not hear about it renders at the wrong size.
 	h.broadcastStatus()
 
+	// And the screen at that geometry, because nothing else will produce one.
+	// A resize reflows each viewer's own emulator, which for a full-screen
+	// application means a grid of blanks until the application repaints — and
+	// an idle agent does not repaint. On a phone the keyboard opening is a
+	// resize, so opening the keyboard emptied the terminal and only leaving
+	// the screen and coming back filled it in.
+	//
+	// After the status, so a viewer has adopted the new size before the
+	// snapshot arrives: a snapshot is rows padded to this host's width and
+	// ending in an absolute cursor position, and it only lands correctly on a
+	// viewer of exactly these dimensions.
+	h.broadcastSnapshot()
+
 	// An application blocked in a hook will not redraw itself, so without this
 	// the modal would sit at the old geometry until something else moved.
 	if h.overlayActive() {
 		h.repaint()
 		h.stampOverlay()
+	}
+}
+
+// broadcastSnapshot hands every viewer the screen as this host renders it now.
+//
+// Queued like output, so it lands in order with the bytes around it rather
+// than racing them.
+func (h *Host) broadcastSnapshot() {
+	seq := h.ring.Seq()
+	ansi := []byte(h.screen.RenderSnapshot(SnapshotScrollbackLines))
+
+	// Read outside the lock: overlayBytes takes the same RLock, and taking a
+	// read lock twice deadlocks the moment a writer is queued between them.
+	overlay := h.overlayBytes()
+
+	h.mu.RLock()
+	vs := make([]*viewer, 0, len(h.viewers))
+	for v := range h.viewers {
+		vs = append(vs, v)
+	}
+	h.mu.RUnlock()
+
+	for _, v := range vs {
+		payload := ansi
+		// The modal is composited on the way out and is not in the byte
+		// stream, so a snapshot that replaces a viewer's screen has to carry
+		// it — except to the control viewer, which draws it.
+		if v.role != RoleControl && len(overlay) > 0 {
+			payload = append(append([]byte(nil), ansi...), overlay...)
+		}
+		v.send(outMsg{typ: FrameSnapshot, payload: EncodeSnapshot(seq, payload)})
 	}
 }
 

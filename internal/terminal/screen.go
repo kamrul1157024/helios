@@ -276,9 +276,15 @@ func (s *Screen) RenderSnapshot(scrollbackLines int) string {
 	}
 
 	var sb strings.Builder
+	// DECSTBM with no parameters first, because a snapshot is a whole screen
+	// and the receiver may still hold a scroll region from before it. Codex
+	// sets one on nearly every frame, so after a shrink the region is taller
+	// than the grid it lands on and the rows below it never appear: opening the
+	// keyboard on a phone emptied the terminal and nothing refilled it.
+	//
 	// 3J clears the receiver's scrollback as well, so replaying a snapshot
 	// twice does not stack two copies of the history.
-	sb.WriteString("\x1b[H\x1b[3J\x1b[2J")
+	sb.WriteString("\x1b[r\x1b[H\x1b[3J\x1b[2J")
 
 	var cur uv.Style
 	total := s.em.ScrollbackLen()
