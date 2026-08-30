@@ -245,6 +245,7 @@ func (p *Provider) MatchScreen(screen string) *provider.ScreenPrompt {
 	for _, pattern := range trustPromptPatterns {
 		if strings.Contains(lower, pattern) {
 			return &provider.ScreenPrompt{
+				Key:    "workspace-trust",
 				Type:   "claude.trust",
 				Title:  "Workspace trust required",
 				Detail: "Claude is asking to trust this folder before it can run.",

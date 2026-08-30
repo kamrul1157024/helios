@@ -239,8 +239,12 @@ func TestHookHealthSeparatesInstalledFromEffective(t *testing.T) {
 	if h.Effective {
 		t.Error("Effective is true before any hook has arrived")
 	}
-	if !strings.Contains(h.Detail, "/hooks") {
-		t.Errorf("detail %q does not tell the user how to trust them", h.Detail)
+	// Says what happens next rather than naming one command. It used to
+	// require "/hooks", which is the way to approve from inside a session
+	// already running — the less likely case. Codex asks on its own at the
+	// start of the next session.
+	if !strings.Contains(strings.ToLower(h.Detail), "approve") {
+		t.Errorf("detail %q does not say what will resolve this", h.Detail)
 	}
 
 	NoteHookReceivedFor("codex")
@@ -631,5 +635,39 @@ func TestOneShotRunsAreNotTracked(t *testing.T) {
 	}
 	if len(notifs) != 0 {
 		t.Errorf("a one-shot run raised %d notifications, want none", len(notifs))
+	}
+}
+
+// A fresh install shows two blocking dialogs back to back. Surfacing only the
+// first left the session at "starting" with nothing on the phone to answer.
+// Both captured verbatim from codex-cli 0.150.1 under a helios ptyhost.
+func TestBothTrustDialogsAreRecognised(t *testing.T) {
+	const directory = `You are in /w
+  Do you trust the contents of this directory? Working with untrusted contents
+› 1. Yes, continue
+  2. No, quit`
+
+	const hooks = `  11 hooks are new or changed.
+  Hooks can run outside the sandbox after you trust them.
+› 1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)`
+
+	p := New(0)
+	d := p.MatchScreen(directory)
+	if d == nil || d.Type != "codex.trust" {
+		t.Fatalf("directory dialog not recognised: %+v", d)
+	}
+	h := p.MatchScreen(hooks)
+	if h == nil || h.Type != "codex.trust" {
+		t.Fatalf("hook dialog not recognised: %+v", h)
+	}
+	// Different questions deserve different words, or the card tells the user
+	// to approve a directory when it is asking about hooks.
+	if d.Title == h.Title {
+		t.Errorf("both dialogs share the title %q", d.Title)
+	}
+	if p.MatchScreen("just an ordinary prompt") != nil {
+		t.Error("matched a screen with no dialog on it")
 	}
 }

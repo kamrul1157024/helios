@@ -21,7 +21,13 @@ type PendingSession struct {
 	SessionID string
 	CWD       string
 	CreatedAt time.Time
-	NotifSent bool
+	// SentPrompts is the set of dialog keys already raised for this session.
+	//
+	// Not a single flag. Codex shows two blocking dialogs back to back on a
+	// first run — directory trust, then hook trust — and one flag meant the
+	// second was never surfaced: the session stopped again on a prompt no
+	// client showed.
+	SentPrompts map[string]bool
 }
 
 // PendingSessionMap is a thread-safe set of sessions awaiting first contact.
@@ -74,13 +80,16 @@ func (m *PendingSessionMap) Get(sessionID string) (PendingSession, bool) {
 	return *p, true
 }
 
-// MarkNotifSent records that a trust notification already went out, so the
+// MarkNotifSent records that a dialog's notification already went out, so the
 // same dialog does not produce one per screen update.
-func (m *PendingSessionMap) MarkNotifSent(sessionID string) {
+func (m *PendingSessionMap) MarkNotifSent(sessionID, key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p, ok := m.sessions[sessionID]; ok {
-		p.NotifSent = true
+		if p.SentPrompts == nil {
+			p.SentPrompts = map[string]bool{}
+		}
+		p.SentPrompts[key] = true
 	}
 }
 
@@ -150,7 +159,7 @@ func StartTrustWatcher(shared *Shared) {
 // session that is not pending costs one map lookup.
 func checkTrustPrompt(shared *Shared, sessionID string) {
 	p, ok := shared.Pending.Get(sessionID)
-	if !ok || p.NotifSent {
+	if !ok {
 		return
 	}
 	screen, err := shared.Backend.Capture(sessionID)
@@ -158,11 +167,11 @@ func checkTrustPrompt(shared *Shared, sessionID string) {
 		return
 	}
 	prompt := matchTrustPrompt(screen)
-	if prompt == nil {
+	if prompt == nil || p.SentPrompts[prompt.Key] {
 		return
 	}
 	log.Printf("trust-watcher: %s detected in session %s", prompt.Type, sessionID)
-	shared.Pending.MarkNotifSent(sessionID)
+	shared.Pending.MarkNotifSent(sessionID, prompt.Key)
 	createTrustNotification(shared, &p, prompt)
 }
 

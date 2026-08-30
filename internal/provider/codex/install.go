@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/provider"
 )
 
@@ -227,7 +226,11 @@ func (p *Provider) HookHealth() provider.HookHealth {
 
 	h.Effective = hooksSeenRecently()
 	if !h.Effective {
-		h.Detail = "set up, but codex has not run them yet — approve with /hooks"
+		// Codex asks on its own, inline, at the start of the next session —
+		// "Trust all and continue". /hooks is the way to do it from inside a
+		// session already running, which is the less likely case and was the
+		// only one this used to mention.
+		h.Detail = "set up; codex will ask to approve them on its next session"
 	}
 	return h
 }
@@ -346,23 +349,15 @@ func (p *Provider) RemoveHooks() error {
 	return os.WriteFile(path, out, 0o644)
 }
 
-// sendKeyWhenReady sends a key, waits, and sends it again if the screen has
-// not changed.
+// settleThen waits for Codex's input loop before acting.
 //
-// Codex drops a keystroke that arrives while a dialog is still painting. One
-// retry is enough in practice and costs nothing when the first key lands: a
-// second Return at an ordinary prompt submits an empty line.
-func sendKeyWhenReady(sessionID string, key backend.Key) error {
-	before, _ := terminalBackend.Capture(sessionID)
-	if err := terminalBackend.SendKey(sessionID, key); err != nil {
-		return err
-	}
+// Codex paints a dialog before it consumes keys, and a keystroke that arrives
+// in that window is dropped with no feedback: the dialog stays up and the
+// notification is already resolved, so nothing will ever answer it. Measured
+// at three seconds against codex-cli 0.150.1.
+func settleThen(sessionID string, act func() error) error {
 	time.Sleep(3 * time.Second)
-	after, err := terminalBackend.Capture(sessionID)
-	if err != nil || !strings.EqualFold(before, after) {
-		return nil
-	}
-	return terminalBackend.SendKey(sessionID, key)
+	return act()
 }
 
 // resetHookEvidence forgets that any hook has arrived. For tests.

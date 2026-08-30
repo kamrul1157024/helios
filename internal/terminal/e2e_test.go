@@ -410,9 +410,7 @@ func TestE2EClaudeCodeBootsUnderHost(t *testing.T) {
 
 	// Reaching the UI at all proves the emulator answered Claude's startup
 	// queries (DSR, DA1, XTVERSION). Without replies it would hang here.
-	if !view.waitForText(t, "Welcome to Claude Code", 45*time.Second) {
-		t.Fatal("claude never rendered its UI under the host")
-	}
+	waitForAgentUI(t, view)
 	if !view.waitForText(t, "Choose the text style", 30*time.Second) {
 		t.Fatal("claude never reached an interactive prompt")
 	}
@@ -476,8 +474,16 @@ func TestE2EClaudeSnapshotCatchesUpLateViewer(t *testing.T) {
 	}
 	defer desktop.Close()
 	dv := newViewerScreen(t, desktop, 100, 30)
-	if !dv.waitForText(t, "Welcome to Claude Code", 45*time.Second) {
-		t.Fatal("claude never rendered")
+	waitForAgentUI(t, dv)
+
+	// Wait for the session to have a past before joining, which is what
+	// "late" means here. Joining the moment the first recognisable text
+	// appears left nothing scrolled off and no styled output yet, so the test
+	// measured a session that had barely started.
+	if !dv.waitUntil(t, 30*time.Second, func(string) bool {
+		return dv.screen.ScrollbackLen() > 0
+	}) {
+		t.Fatal("nothing scrolled off; there is no catch-up to test")
 	}
 
 	// Mobile joins late. Its catch-up is the raw stream while the ring holds
@@ -500,24 +506,30 @@ func TestE2EClaudeSnapshotCatchesUpLateViewer(t *testing.T) {
 		t.Error("snapshot lost truecolor styling; the UI would render flat")
 	}
 
-	// The snapshot on its own must reconstruct the session. "Welcome to Claude
-	// Code" is the load-bearing assertion: Claude renders inline rather than on
-	// the alternate screen, so by now the banner has scrolled off the grid. A
-	// viewport-only snapshot would lose it, and with it every earlier turn of a
-	// real conversation.
+	// The snapshot on its own must reconstruct the session. Claude renders
+	// inline rather than on the alternate screen, so by now the start of the
+	// session has scrolled off the grid; a viewport-only snapshot would lose
+	// it, and with it every earlier turn of a real conversation.
+	//
+	// Asserted against what the desktop itself scrolled past rather than
+	// against a phrase from Claude's banner. That phrase was "Welcome to
+	// Claude Code", and onboarding stopped printing it — the test then failed
+	// for a year-old copy change while the behaviour it guards was fine.
 	mv := NewScreen(100, 30)
 	defer mv.Close()
 	mv.StartDrain(&syncBuf{})
 	mv.Write(ansi)
-	if !strings.Contains(mv.Text(), "Choose the text style") {
-		t.Errorf("snapshot did not reconstruct the viewport:\n%s", mv.Text())
+	if strings.TrimSpace(mv.Text()) == "" {
+		t.Fatalf("snapshot reconstructed an empty viewport")
 	}
 	if mv.ScrollbackLen() == 0 {
 		t.Fatal("snapshot carried no scrollback")
 	}
-	if !strings.Contains(scrollbackText(mv), "Welcome to Claude Code") {
-		t.Errorf("scrolled-off history lost in the snapshot; scrollback was:\n%s",
-			scrollbackText(mv))
+	if want := lastNonEmptyLine(scrollbackText(dv.screen)); want != "" {
+		if !strings.Contains(scrollbackText(mv), want) {
+			t.Errorf("the snapshot lost history the desktop already has.\nmissing: %q\nsnapshot scrollback:\n%s",
+				want, scrollbackText(mv))
+		}
 	}
 }
 
@@ -616,6 +628,47 @@ func (v *viewerScreen) waitUntil(t *testing.T, d time.Duration, cond func(text s
 // directly: there is no shell between the host and the command, so an
 // argument keeps its spaces and metacharacters instead of being re-parsed.
 // A prompt sent from the phone is exactly this — arbitrary user text.
+// waitForAgentUI blocks until the agent has drawn something recognisable.
+//
+// Several markers, any of which will do, because each is a piece of Claude's
+// own copy and that copy changes. The claim being tested is that the emulator
+// answered the startup queries and the TUI drew at all — not that any
+// particular sentence is still in it.
+func waitForAgentUI(t *testing.T, v *viewerScreen) {
+	t.Helper()
+	// Each is a whole line of Claude's own chrome. Nothing short or generic:
+	// "claude.ai" matched a startup line before the UI had drawn, and the
+	// tests then measured a session that had barely begun.
+	markers := []string{
+		"Welcome to Claude Code",
+		"Let's get started",
+		"Choose the text style",
+	}
+	ok := v.waitUntil(t, 45*time.Second, func(text string) bool {
+		for _, m := range markers {
+			if strings.Contains(text, m) {
+				return true
+			}
+		}
+		return false
+	})
+	if !ok {
+		t.Fatalf("claude drew nothing recognisable under the host.\nLooked for any of %q", markers)
+	}
+}
+
+// lastNonEmptyLine is the most recent line of scrolled-off output, used as a
+// marker that a later viewer must also have.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if trimmed := strings.TrimSpace(lines[i]); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func TestE2EArgvReachesTheChildWhole(t *testing.T) {
 	e := newE2E(t)
 	const sid = "e2e-argv"

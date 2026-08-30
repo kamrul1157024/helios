@@ -118,20 +118,30 @@ func TestPendingSessionMapAddRemove(t *testing.T) {
 
 func TestPendingSessionMapMarkNotifSent(t *testing.T) {
 	m := NewPendingSessionMap()
-	m.Add("sess", "/tmp")
+	m.Add("sess", "/tmp/p")
 
-	if p, _ := m.Get("sess"); p.NotifSent {
-		t.Fatal("NotifSent should start false")
+	if p, _ := m.Get("sess"); p.SentPrompts["workspace-trust"] {
+		t.Fatal("nothing should be marked sent on a fresh session")
 	}
-	m.MarkNotifSent("sess")
-	if p, _ := m.Get("sess"); !p.NotifSent {
-		t.Fatal("NotifSent should be true after marking")
+	m.MarkNotifSent("sess", "workspace-trust")
+	if p, _ := m.Get("sess"); !p.SentPrompts["workspace-trust"] {
+		t.Fatal("marking did not take")
 	}
-	// Marking an unknown session must not panic or create an entry.
-	m.MarkNotifSent("nope")
-	if _, ok := m.Get("nope"); ok {
-		t.Fatal("marking should not create entries")
+
+	// Per dialog, not per session. Codex shows two blocking dialogs back to
+	// back on a first run, and a single flag meant the second was never
+	// surfaced — the session stopped again on a prompt no client showed.
+	if p, _ := m.Get("sess"); p.SentPrompts["hook-trust"] {
+		t.Error("marking one dialog suppressed a different one")
 	}
+	m.MarkNotifSent("sess", "hook-trust")
+	p, _ := m.Get("sess")
+	if !p.SentPrompts["workspace-trust"] || !p.SentPrompts["hook-trust"] {
+		t.Errorf("both dialogs should be marked, got %v", p.SentPrompts)
+	}
+
+	// An unknown session is a no-op, not a panic.
+	m.MarkNotifSent("nope", "workspace-trust")
 }
 
 func TestPendingSessionMapListIsASnapshot(t *testing.T) {

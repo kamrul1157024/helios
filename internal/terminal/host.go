@@ -185,6 +185,12 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	}
 	cmd.Env = setEnv(cmd.Env,
 		"TERM=xterm-256color",
+		// Declared, not inherited, for the same reason TERM is: the terminal
+		// the agent talks to is helios's emulator, not whatever launched the
+		// daemon. Every viewer renders truecolor, so an agent that fell back
+		// to 256 colours because a service manager had no COLORTERM would be
+		// duller than the terminal it is actually drawing on.
+		"COLORTERM=truecolor",
 		fmt.Sprintf("COLUMNS=%d", cfg.Cols),
 		fmt.Sprintf("LINES=%d", cfg.Rows),
 		// Tells anything in here which session it belongs to. Starting a

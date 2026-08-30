@@ -7,6 +7,7 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
 )
 
@@ -145,6 +146,11 @@ func handleErrorAction(notif *store.Notification, body json.RawMessage) (notific
 	return notifications.Decision{Status: "approved"}, nil
 }
 
+// trustAffirmative is the wording of the "yes" option in Claude's workspace
+// trust dialog. Matched case-insensitively as a substring, so the surrounding
+// copy can change without breaking the answer.
+const trustAffirmative = "trust this folder"
+
 func handleTrustAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
 		Action string `json:"action"` // "trust" or "deny"
@@ -170,9 +176,12 @@ func handleTrustAction(notif *store.Notification, body json.RawMessage) (notific
 	}
 
 	if req.Action == "trust" {
-		// The trust dialog opens with "Yes, proceed" selected, so Enter accepts.
-		if err := terminalBackend.SendKey(payload.SessionID, backend.KeyEnter); err != nil {
-			return notifications.Decision{}, fmt.Errorf("send Enter to session %s: %w", payload.SessionID, err)
+		// The affirmative option is found on screen, not assumed to be the
+		// default. It used to be, and a bare Return was sent: Claude has since
+		// made "No, exit" the default, so approving trust from a phone quit
+		// the agent instead. Measured 2026-08-29 against Claude Code 2.1.x.
+		if err := provider.ConfirmChoice(terminalBackend, payload.SessionID, trustAffirmative); err != nil {
+			return notifications.Decision{}, fmt.Errorf("approve trust for %s: %w", payload.SessionID, err)
 		}
 		log.Printf("trust-action: approved trust for session %s", payload.SessionID)
 		return notifications.Decision{Status: "approved"}, nil
