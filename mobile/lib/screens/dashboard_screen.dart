@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import '../providers/daemon_providers.dart';
 import '../models/notification.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/notification_ext.dart';
@@ -7,21 +10,22 @@ import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
-class DashboardScreen extends StatefulWidget {
+class DashboardScreen extends rp.ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  rp.ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
   final Set<String> _selected = {};
 
   @override
   Widget build(BuildContext context) {
     return Consumer<HostManager>(
       builder: (context, hm, _) {
-        if (!hm.notificationsLoaded) {
+        final held = ref.watch(visibleNotificationsProvider);
+        if (held.valueOrNull == null) {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: const [
@@ -32,7 +36,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         }
 
-        final notifications = hm.filteredNotifications;
+        final notifications = held.valueOrNull!;
 
         final pendingActions = <HeliosNotification>[];
         final activeStatuses = <HeliosNotification>[];
@@ -53,8 +57,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         return RefreshIndicator(
           onRefresh: () => hm.activeHostId != null
-              ? hm.refreshHost(hm.activeHostId!)
-              : hm.refreshAll(),
+              ? ref.refreshHost(hm.activeHostId!)
+              : ref.refreshAllHosts(),
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -82,10 +86,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _navigateToSession(String hostId, String sourceSession) {
     if (sourceSession.isEmpty) return;
-    final hm = context.read<HostManager>();
-    final service = hm.serviceFor(hostId);
-    if (service == null) return;
-    final match = service.sessions.where((s) => s.sessionId == sourceSession);
+    final held = ref.read(sessionsProvider(allSessionsKey(hostId))).valueOrNull;
+    if (held == null) return;
+    final match = held.where((s) => s.sessionId == sourceSession);
     if (match.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => SessionDetailScreen(session: match.first)),

@@ -112,7 +112,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     await Future.wait(hm.hosts.map((host) async {
       final order = byHost[host.id] ?? const <String>[];
       if (manual && order.isNotEmpty) {
-        await hm.serviceFor(host.id)?.setSessionOrder(order);
+        await ref.read(sessionsProvider(allSessionsKey(host.id)).notifier).reorder(order);
       }
       await ref.read(hostSettingsProvider(host.id).notifier).setManualOrder(manual);
     }));
@@ -122,7 +122,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     final ids = visible.map((s) => s.sessionId).toList();
     if (to > from) to -= 1;
     ids.insert(to, ids.removeAt(from));
-    await service.setSessionOrder(ids);
+    await ref
+        .read(sessionsProvider(allSessionsKey(service.hostId)).notifier)
+        .reorder(ids);
   }
 
   String get _filterParam {
@@ -136,29 +138,24 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     }
   }
 
+    /// What the list is currently asking the daemon for. Also its cache key, so
+  /// changing the search re-reads under a different entry rather than
+  /// overwriting the unfiltered one.
+  SessionQuery get _query {
+    final q = _searchController.text.trim();
+    return SessionQuery(
+      q: q.isNotEmpty ? q : null,
+      filter: _filterParam,
+      cwd: _cwdFilter,
+    );
+  }
+
+  /// Debounced so a keystroke does not cost a request, and a setState because
+  /// the query is the key: rebuilding under the new one is the fetch.
   void _triggerSearch() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
-      if (!mounted) return;
-      final hm = context.read<HostManager>();
-      final q = _searchController.text.trim();
-      if (hm.activeHostId != null) {
-        hm.serviceFor(hm.activeHostId!)?.fetchSessions(
-          q: q.isNotEmpty ? q : null,
-          filter: _filterParam,
-          cwd: _cwdFilter,
-          updateFilters: true,
-        );
-      } else {
-        for (final host in hm.hosts) {
-          hm.serviceFor(host.id)?.fetchSessions(
-            q: q.isNotEmpty ? q : null,
-            filter: _filterParam,
-            cwd: _cwdFilter,
-            updateFilters: true,
-          );
-        }
-      }
+      if (mounted) setState(() {});
     });
   }
 
@@ -264,11 +261,10 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   }
 
   Future<void> _batchPin(bool pin) async {
-    final hm = context.read<HostManager>();
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        hm.serviceFor(parts[0])?.patchSession(parts[1], pinned: pin);
+        ref.read(sessionsProvider(allSessionsKey(parts[0])).notifier).patch(parts[1], pinned: pin);
       }
     }
     _exitMultiSelect();
@@ -297,7 +293,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   }
 
   Future<void> _batchTerminate(HostManager hm) async {
-    final chosen = hm.filteredSessions
+    final chosen = (ref.read(visibleSessionsProvider).valueOrNull ?? const [])
         .where((s) => _selected.contains(_compositeKey(s)))
         .toList();
     if (!await _confirmTerminate(chosen)) return;
@@ -335,11 +331,10 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    final hm = context.read<HostManager>();
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        hm.serviceFor(parts[0])?.deleteSession(parts[1]);
+        ref.read(sessionsProvider(allSessionsKey(parts[0])).notifier).delete(parts[1]);
       }
     }
     _exitMultiSelect();
@@ -349,10 +344,10 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   Widget build(BuildContext context) {
     return Consumer<HostManager>(
       builder: (context, hm, _) {
-        final sessions = hm.filteredSessions;
-        final loaded = hm.sessionsLoaded;
+        final held = ref.watch(visibleSessionsForProvider(_query));
+        final sessions = held.valueOrNull ?? const <Session>[];
 
-        if (!loaded) {
+        if (held.valueOrNull == null) {
           return ListView(
             padding: const EdgeInsets.all(12),
             children: const [
@@ -389,8 +384,8 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                   ? _buildEmptyFilterState()
                   : RefreshIndicator(
                       onRefresh: () => hm.activeHostId != null
-                          ? hm.refreshHost(hm.activeHostId!)
-                          : hm.refreshAll(),
+                          ? ref.refreshHost(hm.activeHostId!)
+                          : ref.refreshAllHosts(),
                       child: manual && orderable != null
                           ? ReorderableListView.builder(
                               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -653,7 +648,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
             ),
           );
           if (confirmed == true) {
-            service?.deleteSession(session.sessionId);
+            ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).delete(session.sessionId);
           }
           return false;
         }
@@ -906,7 +901,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                 title: Text(session.pinned ? 'Unpin' : 'Pin'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  service?.patchSession(sessionId, pinned: !session.pinned);
+                  ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).patch(sessionId, pinned: !session.pinned);
                 },
               ),
               ListTile(
@@ -946,7 +941,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                     ),
                   );
                   if (confirmed == true) {
-                    service?.deleteSession(sessionId);
+                    ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).delete(sessionId);
                   }
                 },
               ),
@@ -990,8 +985,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
 
   void _showRenameDialog(Session session, HostManager hm) {
     final sessionId = session.sessionId;
-    final service = hm.serviceFor(session.hostId);
-    if (service == null) return;
+    final hostId = session.hostId;
 
     showDialog<String>(
       context: context,
@@ -1022,7 +1016,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       },
     ).then((title) {
       if (title != null && title.isNotEmpty) {
-        service.patchSession(sessionId, title: title);
+        ref.read(sessionsProvider(allSessionsKey(hostId)).notifier).patch(sessionId, title: title);
       }
     });
   }

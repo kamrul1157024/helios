@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import '../providers/daemon_providers.dart';
 import '../models/host_connection.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
@@ -16,14 +19,14 @@ import 'new_session_sheet.dart';
 import 'dashboard_screen.dart';
 import 'settings_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends rp.ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  rp.ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingObserver {
   late HostManager _hm;
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
@@ -499,8 +502,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         final offlineHosts = hm.visibleOfflineHosts;
 
-        final allNotifications = hm.allNotifications;
-        final allSessions = hm.allSessions;
+        final allNotifications =
+            ref.watch(allHostNotificationsProvider).valueOrNull ?? const [];
+        final allSessions =
+            ref.watch(allHostSessionsProvider).valueOrNull ?? const [];
         final pendingCount = allNotifications.where((n) => registry.needsAction(n)).length;
         final activeSessionCount = allSessions.where((s) => s.isActive).length;
 

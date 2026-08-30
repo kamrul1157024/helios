@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cache_effects.dart';
@@ -46,7 +48,28 @@ class SessionsNotifier
     final (hostId, query) = arg;
     final service = ref.watch(serviceProvider(hostId));
     if (service == null) return const [];
+
+    // The whole list opens from disk and refreshes behind it, so the dashboard
+    // draws immediately rather than showing a spinner over data it already
+    // has. Only the unfiltered list: seeding from a search result would open
+    // the app on whatever the user last typed.
+    if (query.isUnfiltered) {
+      final seed = await service.cachedSessions();
+      if (seed != null && seed.isNotEmpty) {
+        unawaited(_refreshBehind(service, query));
+        return seed;
+      }
+    }
     return service.listSessions(query);
+  }
+
+  Future<void> _refreshBehind(DaemonAPIService service, SessionQuery query) async {
+    try {
+      final fresh = await service.listSessions(query);
+      state = AsyncData(fresh);
+    } catch (_) {
+      // The seed is still on screen and still the best answer available.
+    }
   }
 
   /// Applies a status the server just announced, without a round trip.
@@ -57,6 +80,73 @@ class SessionsNotifier
     final held = state.valueOrNull;
     if (held == null) return;
     state = AsyncData(patchSessionRow(held, sessionId, status, terminal));
+  }
+
+  /// Pins or renames a row, painting it before the daemon answers.
+  ///
+  /// The paint is deferred by a microtask because the sheet that triggered it
+  /// is usually mid-pop, and rebuilding its dependents inside that transition
+  /// trips the framework's `_dependents.isEmpty` assertion.
+  Future<bool> patch(String sessionId, {bool? pinned, String? title}) async {
+    final service = ref.read(serviceProvider(arg.$1));
+    final previous = state.valueOrNull;
+    if (service == null) return false;
+
+    if (previous != null) {
+      final next = [
+        for (final s in previous)
+          if (s.sessionId == sessionId)
+            s.copyWith(pinned: pinned ?? s.pinned, title: title ?? s.title)
+          else
+            s,
+      ];
+      await Future.microtask(() => state = AsyncData(next));
+    }
+
+    if (await service.patchSession(sessionId, pinned: pinned, title: title)) {
+      return true;
+    }
+    if (previous != null) state = AsyncData(previous);
+    return false;
+  }
+
+  /// Writes a hand-made arrangement, painting it so the drag lands without
+  /// waiting for the round trip.
+  Future<bool> reorder(List<String> sessionIds) async {
+    final service = ref.read(serviceProvider(arg.$1));
+    final previous = state.valueOrNull;
+    if (service == null || previous == null) return false;
+
+    final positions = {
+      for (var i = 0; i < sessionIds.length; i++) sessionIds[i]: i,
+    };
+    state = AsyncData([
+      for (final s in previous)
+        if (positions.containsKey(s.sessionId))
+          s.copyWith(sortOrder: positions[s.sessionId])
+        else
+          s,
+    ]);
+
+    if (await service.setSessionOrder(sessionIds)) return true;
+    state = AsyncData(previous);
+    return false;
+  }
+
+  /// Removes a row, putting it back if the daemon refuses.
+  Future<bool> delete(String sessionId) async {
+    final service = ref.read(serviceProvider(arg.$1));
+    final previous = state.valueOrNull;
+    if (service == null) return false;
+
+    if (previous != null) {
+      final next = previous.where((s) => s.sessionId != sessionId).toList();
+      await Future.microtask(() => state = AsyncData(next));
+    }
+
+    if (await service.deleteSession(sessionId)) return true;
+    if (previous != null) state = AsyncData(previous);
+    return false;
   }
 }
 
@@ -82,6 +172,73 @@ final notificationsProvider =
   if (service == null) return const [];
   return service.listNotifications();
 });
+
+// ─── Across hosts ───────────────────────────────────────────────────────────
+
+/// The reads the dashboard and the session list actually make.
+///
+/// These replace `HostManager`'s aggregating getters. The list is per host in
+/// the cache — it has to be, because a host is what answers for it — but every
+/// screen above the host picker wants them merged, and the counts on the
+/// dashboard are across all of them.
+
+/// Every host's sessions, merged.
+final allHostSessionsProvider = Provider<AsyncValue<List<Session>>>((ref) {
+  final hosts = ref.watch(hostManagerProvider).hosts;
+  return _merge(
+    hosts.map((h) => ref.watch(sessionsProvider(allSessionsKey(h.id)))),
+  );
+});
+
+/// Every host's pending notifications, merged.
+final allHostNotificationsProvider =
+    Provider<AsyncValue<List<HeliosNotification>>>((ref) {
+  final hosts = ref.watch(hostManagerProvider).hosts;
+  return _merge(hosts.map((h) => ref.watch(notificationsProvider(h.id))));
+});
+
+/// The sessions under one query: from the checked-out host, or merged across
+/// all of them.
+///
+/// The query is the key, which is why the service no longer has to remember
+/// the filters of the last fetch in order to repeat it.
+final visibleSessionsForProvider =
+    Provider.family<AsyncValue<List<Session>>, SessionQuery>((ref, query) {
+  final active = ref.watch(hostManagerProvider).activeHostId;
+  if (active != null) return ref.watch(sessionsProvider((active, query)));
+  final hosts = ref.watch(hostManagerProvider).hosts;
+  return _merge(hosts.map((h) => ref.watch(sessionsProvider((h.id, query)))));
+});
+
+/// The unfiltered list for the current filter.
+final visibleSessionsProvider = Provider<AsyncValue<List<Session>>>(
+  (ref) => ref.watch(visibleSessionsForProvider(SessionQuery.all)),
+);
+
+/// The notifications for the current filter.
+final visibleNotificationsProvider =
+    Provider<AsyncValue<List<HeliosNotification>>>((ref) {
+  final active = ref.watch(hostManagerProvider).activeHostId;
+  if (active == null) return ref.watch(allHostNotificationsProvider);
+  return ref.watch(notificationsProvider(active));
+});
+
+/// Flattens per-host answers into one.
+///
+/// Any host that has answered contributes; the whole is only "loading" while
+/// none of them has. One unreachable host must not blank the hosts that are
+/// up, which is what returning the first error would do.
+AsyncValue<List<T>> _merge<T>(Iterable<AsyncValue<List<T>>> parts) {
+  final merged = <T>[];
+  var anyData = false;
+  for (final part in parts) {
+    final value = part.valueOrNull;
+    if (value == null) continue;
+    anyData = true;
+    merged.addAll(value);
+  }
+  return anyData ? AsyncData(merged) : const AsyncLoading();
+}
 
 // ─── Providers, models, directories, settings ───────────────────────────────
 
@@ -368,3 +525,24 @@ final subagentsProvider =
   if (service == null) return const [];
   return service.fetchSubagents(sessionId);
 });
+
+// ─── Refreshing by hand ─────────────────────────────────────────────────────
+
+/// Pull-to-refresh.
+///
+/// Awaits the re-read rather than only dropping the entries, so the spinner
+/// stays up until the answer lands instead of snapping back at once.
+extension RefreshHosts on WidgetRef {
+  Future<void> refreshHost(String hostId) {
+    invalidate(sessionsProvider(allSessionsKey(hostId)));
+    invalidate(notificationsProvider(hostId));
+    return Future.wait([
+      read(sessionsProvider(allSessionsKey(hostId)).future),
+      read(notificationsProvider(hostId).future),
+    ]);
+  }
+
+  Future<void> refreshAllHosts() => Future.wait(
+        read(hostManagerProvider).hosts.map((h) => refreshHost(h.id)),
+      );
+}

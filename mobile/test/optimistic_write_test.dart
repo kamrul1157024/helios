@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:helios/models/session.dart';
 import 'package:helios/providers/daemon_providers.dart';
 import 'package:helios/services/api_client.dart';
 import 'package:helios/services/daemon_api_service.dart';
@@ -58,83 +60,104 @@ Map<String, dynamic> sessionJson(String id, {int order = 0, bool pinned = false,
       'title': ?title,
     };
 
-/// Loads the service's session list by answering one list fetch.
-Future<DaemonAPIService> serviceHolding(
+/// A container whose session list has loaded with [sessions], and whose writes
+/// are answered by [onWrite].
+Future<ProviderContainer> containerHolding(
   List<Map<String, dynamic>> sessions,
   http.Response Function(http.Request) onWrite,
 ) async {
-  var listed = false;
   final svc = serviceReturning(clientWhere((req) {
-    if (!listed && req.url.path == '/api/sessions') {
-      listed = true;
+    if (req.method == 'GET' && req.url.path == '/api/sessions') {
       return http.Response(jsonEncode({'sessions': sessions}), 200);
     }
     return onWrite(req);
   }));
-  await svc.fetchSessions();
-  return svc;
+  final container = ProviderContainer(
+    overrides: [serviceProvider('h1').overrideWithValue(svc)],
+  );
+  addTearDown(container.dispose);
+  await container.read(sessionsProvider(allSessionsKey('h1')).future);
+  return container;
 }
+
+List<Session> rowsOf(ProviderContainer c) =>
+    c.read(sessionsProvider(allSessionsKey('h1'))).valueOrNull!;
+
+SessionsNotifier writerOf(ProviderContainer c) =>
+    c.read(sessionsProvider(allSessionsKey('h1')).notifier);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // The unfiltered list opens from disk before it fetches, so the store has to
+  // exist even when it is empty.
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  group('setSessionOrder', () {
+  group('reorder', () {
     test('paints the new order before the daemon answers', () async {
-      final svc = await serviceHolding(
+      final c = await containerHolding(
         [sessionJson('a', order: 0), sessionJson('b', order: 1)],
         (_) => http.Response('{}', 200),
       );
 
-      final write = svc.setSessionOrder(['b', 'a']);
+      final write = writerOf(c).reorder(['b', 'a']);
 
-      expect(svc.sessions.firstWhere((s) => s.sessionId == 'b').sortOrder, 0);
-      expect(svc.sessions.firstWhere((s) => s.sessionId == 'a').sortOrder, 1);
+      expect(rowsOf(c).firstWhere((s) => s.sessionId == 'b').sortOrder, 0);
+      expect(rowsOf(c).firstWhere((s) => s.sessionId == 'a').sortOrder, 1);
       expect(await write, isTrue);
     });
 
     test('puts the old order back when the daemon refuses', () async {
-      final svc = await serviceHolding(
+      final c = await containerHolding(
         [sessionJson('a', order: 0), sessionJson('b', order: 1)],
         (_) => http.Response('nope', 500),
       );
 
-      expect(await svc.setSessionOrder(['b', 'a']), isFalse);
-      expect(svc.sessions.firstWhere((s) => s.sessionId == 'a').sortOrder, 0);
-      expect(svc.sessions.firstWhere((s) => s.sessionId == 'b').sortOrder, 1);
+      expect(await writerOf(c).reorder(['b', 'a']), isFalse);
+      expect(rowsOf(c).firstWhere((s) => s.sessionId == 'a').sortOrder, 0);
+      expect(rowsOf(c).firstWhere((s) => s.sessionId == 'b').sortOrder, 1);
     });
   });
 
-  group('patchSession', () {
+  group('patch', () {
     test('puts the original row back when the daemon refuses', () async {
-      final svc = await serviceHolding(
+      final c = await containerHolding(
         [sessionJson('a', title: 'before')],
         (_) => http.Response('nope', 500),
       );
 
-      expect(await svc.patchSession('a', title: 'after', pinned: true), isFalse);
-      final row = svc.sessions.single;
+      expect(await writerOf(c).patch('a', title: 'after', pinned: true), isFalse);
+      final row = rowsOf(c).single;
       expect(row.title, 'before');
       expect(row.pinned, isFalse);
     });
 
-    // The notify is deferred by a microtask so a sheet that triggered the write
-    // finishes popping first — otherwise the framework trips its
-    // _dependents.isEmpty assertion. Deferred means not synchronous: a listener
-    // must not have run by the time the call returns to its caller.
-    test('defers the notification past the current synchronous turn', () async {
-      final svc = await serviceHolding(
+    // The paint is deferred by a microtask so a sheet that triggered the write
+    // finishes popping first — rebuilding its dependents inside that transition
+    // trips the framework's _dependents.isEmpty assertion.
+    test('defers the paint past the current synchronous turn', () async {
+      final c = await containerHolding(
         [sessionJson('a', title: 'before')],
         (_) => http.Response(jsonEncode({'ok': true}), 200),
       );
 
-      var notified = false;
-      svc.addListener(() => notified = true);
+      final write = writerOf(c).patch('a', title: 'after');
+      expect(rowsOf(c).single.title, 'before',
+          reason: 'must not repaint synchronously');
 
-      svc.patchSession('a', title: 'after');
-      expect(notified, isFalse, reason: 'notify must not fire synchronously');
+      await write;
+      expect(rowsOf(c).single.title, 'after', reason: 'the paint still arrives');
+    });
+  });
 
-      await Future<void>.delayed(Duration.zero);
-      expect(notified, isTrue, reason: 'notify must still arrive');
+  group('delete', () {
+    test('drops the row, and puts it back when the daemon refuses', () async {
+      final c = await containerHolding(
+        [sessionJson('a'), sessionJson('b')],
+        (_) => http.Response('nope', 500),
+      );
+
+      expect(await writerOf(c).delete('a'), isFalse);
+      expect(rowsOf(c).map((s) => s.sessionId), ['a', 'b']);
     });
   });
 

@@ -487,7 +487,9 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
             onSubmitted: (_) {
               Navigator.pop(ctx);
               final title = controller.text.trim();
-              _sse?.patchSession(widget.session.sessionId, title: title);
+              ref
+                  .read(sessionsProvider(allSessionsKey(widget.session.hostId)).notifier)
+                  .patch(widget.session.sessionId, title: title);
             },
           ),
           actions: [
@@ -499,7 +501,9 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
               onPressed: () {
                 Navigator.pop(ctx);
                 final title = controller.text.trim();
-                _sse?.patchSession(widget.session.sessionId, title: title);
+                ref
+                  .read(sessionsProvider(allSessionsKey(widget.session.hostId)).notifier)
+                  .patch(widget.session.sessionId, title: title);
               },
               child: const Text('Save'),
             ),
@@ -522,11 +526,12 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
   }
 
   /// Get pending notifications for this session.
-  List<HeliosNotification> _pendingNotifications(DaemonAPIService sse) {
-    return sse.notifications
-        .where(
-          (n) => n.sourceSession == widget.session.sessionId && n.isPending,
-        )
+  List<HeliosNotification> _pendingNotifications() {
+    final held =
+        ref.watch(notificationsProvider(widget.session.hostId)).valueOrNull;
+    if (held == null) return const [];
+    return held
+        .where((n) => n.sourceSession == widget.session.sessionId && n.isPending)
         .toList();
   }
 
@@ -535,16 +540,16 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     return Consumer<HostManager>(
       builder: (context, hm, _) {
         final sse = hm.serviceFor(widget.session.hostId);
-        final session =
-            sse?.sessions.firstWhere(
+        final held = ref
+            .watch(sessionsProvider(allSessionsKey(widget.session.hostId)))
+            .valueOrNull;
+        final session = held?.firstWhere(
               (s) => s.sessionId == widget.session.sessionId,
               orElse: () => widget.session,
             ) ??
             widget.session;
         _updateBreathAnimation(session);
-        final pendingNotifs = sse != null
-            ? _pendingNotifications(sse)
-            : <HeliosNotification>[];
+        final pendingNotifs = _pendingNotifications();
 
         return Scaffold(
           appBar: AppBar(
