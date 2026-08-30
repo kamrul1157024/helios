@@ -160,7 +160,6 @@ class DaemonAPIService extends ChangeNotifier {
     await _loadSessionCache();
     fetchSessions();
     fetchNotifications();
-    fetchSortMode();
     if (!_connected) _startPolling();
   }
 
@@ -911,25 +910,9 @@ class DaemonAPIService extends ChangeNotifier {
   static const budgetMax = 0.9;
   static const budgetDefault = 0.25;
 
-  bool _autoTitleEnabled = false;
-  bool _autoTitleEmoji = false;
-  bool _evictEnabled = false;
-  double _budgetFraction = budgetDefault;
-  bool _hostSettingsLoaded = false;
-
-  bool get autoTitleEnabled => _autoTitleEnabled;
-  bool get autoTitleEmoji => _autoTitleEmoji;
-  bool get evictEnabled => _evictEnabled;
-  double get budgetFraction => _budgetFraction;
-
-  /// False until this host has answered once. A host that has never been read
-  /// shows nothing, rather than a default that is probably not its value.
-  bool get hostSettingsLoaded => _hostSettingsLoaded;
-
   /// Reads every daemon-owned setting in one request. The sort mode arrives in
   /// the same response, so fetching it on its own would ask the host the same
   /// question twice.
-  /// Reads the host settings and parses them into typed fields.
   ///
   /// The daemon answers with the map under a `settings` key. Reading the
   /// envelope as though it were the map gives a default for every setting,
@@ -942,101 +925,10 @@ class DaemonAPIService extends ChangeNotifier {
     );
   }
 
-  Future<void> fetchHostSettings() async {
-    final HostSettings s;
-    try {
-      s = await loadHostSettings();
-    } catch (_) {
-      return;
-    }
-    _manualOrder = s.manualOrder;
-    _autoTitleEnabled = s.autoTitleEnabled;
-    _autoTitleEmoji = s.autoTitleEmoji;
-    _evictEnabled = s.evictEnabled;
-    _budgetFraction = s.budgetFraction;
-    _hostSettingsLoaded = true;
-    notifyListeners();
-  }
-
-  Future<bool> setAutoTitleEnabled(bool value) {
-    final previous = _autoTitleEnabled;
-    return _writeHostSetting(
-      settingAutoTitle,
-      value ? 'true' : 'false',
-      () => _autoTitleEnabled = value,
-      () => _autoTitleEnabled = previous,
-    );
-  }
-
-  Future<bool> setAutoTitleEmoji(bool value) {
-    final previous = _autoTitleEmoji;
-    return _writeHostSetting(
-      settingAutoTitleEmoji,
-      value ? 'true' : 'false',
-      () => _autoTitleEmoji = value,
-      () => _autoTitleEmoji = previous,
-    );
-  }
-
-  Future<bool> setEvictEnabled(bool value) {
-    final previous = _evictEnabled;
-    return _writeHostSetting(
-      settingEvict,
-      value ? 'true' : 'false',
-      () => _evictEnabled = value,
-      () => _evictEnabled = previous,
-    );
-  }
-
-  Future<bool> setBudgetFraction(double value) {
-    final previous = _budgetFraction;
-    final clamped = value.clamp(budgetMin, budgetMax);
-    return _writeHostSetting(
-      settingBudgetFraction,
-      clamped.toStringAsFixed(2),
-      () => _budgetFraction = clamped,
-      () => _budgetFraction = previous,
-    );
-  }
-
-  /// Paints the new value first so the control answers the tap, and puts the
-  /// old one back if the host refuses or cannot be reached. Returning the
-  /// verdict is the point: a switch that flips and then quietly did nothing is
-  /// worse than one that says it failed.
-  Future<bool> _writeHostSetting(
-    String key,
-    String value,
-    void Function() apply,
-    void Function() revert,
-  ) async {
-    apply();
-    notifyListeners();
-    if (await updateSettings({key: value})) return true;
-    revert();
-    notifyListeners();
-    return false;
-  }
-
   // ==================== Session order ====================
 
   /// The daemon owns the mode, so every client of this host agrees on it.
   static const settingSortMode = 'sessions.sort';
-  bool _manualOrder = false;
-  bool get manualOrder => _manualOrder;
-
-  /// The name the session list calls. The mode comes back with the rest of the
-  /// host's settings.
-  Future<void> fetchSortMode() => fetchHostSettings();
-
-  /// Switching to manual freezes [visibleOrder] as it stands, so the list does
-  /// not jump the moment it stops sorting itself.
-  Future<void> setManualOrder(bool manual, {List<String> visibleOrder = const []}) async {
-    if (manual && visibleOrder.isNotEmpty) await setSessionOrder(visibleOrder);
-    final ok = await updateSettings({settingSortMode: manual ? 'manual' : 'activity'});
-    if (!ok) return;
-    _manualOrder = manual;
-    notifyListeners();
-  }
 
   /// Writes the arrangement, painting it locally first so the drag lands
   /// without waiting for the round trip.

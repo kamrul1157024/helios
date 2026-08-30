@@ -99,12 +99,23 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     return hm.serviceFor(hm.activeHostId!);
   }
 
+  /// Flips every host between sorting itself and holding still.
+  ///
+  /// Switching to manual freezes what is on screen as the starting
+  /// arrangement, so the list does not jump the moment it stops sorting.
   Future<void> _toggleManualOrder(HostManager hm, List<Session> visible) async {
     final byHost = <String, List<String>>{};
     for (final session in visible) {
       byHost.putIfAbsent(session.hostId, () => []).add(session.sessionId);
     }
-    await hm.setManualOrder(!hm.manualOrder, byHost);
+    final manual = !ref.read(manualOrderProvider);
+    await Future.wait(hm.hosts.map((host) async {
+      final order = byHost[host.id] ?? const <String>[];
+      if (manual && order.isNotEmpty) {
+        await hm.serviceFor(host.id)?.setSessionOrder(order);
+      }
+      await ref.read(hostSettingsProvider(host.id).notifier).setManualOrder(manual);
+    }));
   }
 
   Future<void> _onReorder(DaemonAPIService service, List<Session> visible, int from, int to) async {
@@ -360,7 +371,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           return _buildEmptyState();
         }
 
-        final manual = hm.manualOrder;
+        final manual = ref.watch(manualOrderProvider);
         final orderable = manual ? _orderableService(hm) : null;
         final matching = _filterSessions(sessions);
         final filtered = _sortSessions(
@@ -467,11 +478,13 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
         const Spacer(),
         IconButton(
           icon: Icon(
-            hm.manualOrder ? Icons.swap_vert : Icons.sort,
+            ref.watch(manualOrderProvider) ? Icons.swap_vert : Icons.sort,
             size: 20,
-            color: hm.manualOrder ? Theme.of(context).colorScheme.primary : null,
+            color: ref.watch(manualOrderProvider)
+                ? Theme.of(context).colorScheme.primary
+                : null,
           ),
-          tooltip: hm.manualOrder
+          tooltip: ref.watch(manualOrderProvider)
               ? 'Sort: Manual — long-press a session to move it. Tap to sort by activity instead.'
               : 'Sort: Activity — active first, then most recent. Tap to arrange them by hand instead.',
           visualDensity: VisualDensity.compact,

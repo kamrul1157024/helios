@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:helios/providers/daemon_providers.dart';
 import 'package:helios/services/api_client.dart';
 import 'package:helios/services/daemon_api_service.dart';
 
@@ -136,8 +138,10 @@ void main() {
     });
   });
 
-  group('the settings scalars', () {
-    test('a refused write reverts only the toggle that was written', () async {
+  group('the settings document', () {
+    /// A container wired to one host, whose settings read succeeds and whose
+    /// writes are refused.
+    ProviderContainer containerRefusingWrites() {
       final svc = serviceReturning(clientWhere((req) {
         if (req.method == 'GET') {
           return http.Response(
@@ -152,14 +156,55 @@ void main() {
         }
         return http.Response('nope', 500);
       }));
-      await svc.fetchHostSettings();
-      expect(svc.autoTitleEnabled, isTrue);
-      expect(svc.evictEnabled, isTrue);
+      final container = ProviderContainer(
+        overrides: [serviceProvider('h1').overrideWithValue(svc)],
+      );
+      addTearDown(container.dispose);
+      return container;
+    }
 
-      expect(await svc.setEvictEnabled(false), isFalse);
+    test('a refused write reverts only the field that was written', () async {
+      final container = containerRefusingWrites();
+      final settings = await container.read(hostSettingsProvider('h1').future);
+      expect(settings.autoTitleEnabled, isTrue);
+      expect(settings.evictEnabled, isTrue);
 
-      expect(svc.evictEnabled, isTrue, reason: 'the refused write reverts');
-      expect(svc.autoTitleEnabled, isTrue, reason: 'its neighbour is untouched');
+      final ok = await container
+          .read(hostSettingsProvider('h1').notifier)
+          .setEvictEnabled(false);
+      expect(ok, isFalse);
+
+      final after = container.read(hostSettingsProvider('h1')).valueOrNull!;
+      expect(after.evictEnabled, isTrue, reason: 'the refused write reverts');
+      expect(after.autoTitleEnabled, isTrue, reason: 'its neighbour is untouched');
+    });
+
+    // The daemon merges by key, so the cache has to merge by field. Replacing
+    // the document would blank whatever the other panes own.
+    test('a write leaves the fields it did not name alone', () async {
+      final container = containerRefusingWrites();
+      await container.read(hostSettingsProvider('h1').future);
+
+      // Paints before the refusal lands, so the neighbour is observable mid-write.
+      final pending = container
+          .read(hostSettingsProvider('h1').notifier)
+          .setEvictEnabled(false);
+      final during = container.read(hostSettingsProvider('h1')).valueOrNull!;
+      expect(during.evictEnabled, isFalse, reason: 'painted before the answer');
+      expect(during.autoTitleEnabled, isTrue, reason: 'not named, not touched');
+      await pending;
+    });
+
+    test('the budget is clamped to the slider travel', () async {
+      final container = containerRefusingWrites();
+      await container.read(hostSettingsProvider('h1').future);
+
+      final pending = container
+          .read(hostSettingsProvider('h1').notifier)
+          .setBudgetFraction(5);
+      final during = container.read(hostSettingsProvider('h1')).valueOrNull!;
+      expect(during.budgetFraction, DaemonAPIService.budgetMax);
+      await pending;
     });
   });
 }

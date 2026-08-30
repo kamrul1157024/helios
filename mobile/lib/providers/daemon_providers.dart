@@ -118,11 +118,85 @@ final directoriesProvider =
   return service.fetchDirectories();
 });
 
-final hostSettingsProvider =
-    FutureProvider.family<HostSettings, String>((ref, hostId) async {
-  final service = ref.watch(serviceProvider(hostId));
-  if (service == null) return const HostSettings();
-  return service.loadHostSettings();
+/// A host's settings, and the writes against them.
+///
+/// The writes paint before the daemon answers and put the old value back when
+/// it refuses — which is what the service's `_writeHostSetting` did, moved
+/// rather than reinvented. `copyWith` is what keeps them merging by field:
+/// several screens own disjoint parts of this document and must not blank each
+/// other's.
+class HostSettingsNotifier extends FamilyAsyncNotifier<HostSettings, String> {
+  @override
+  Future<HostSettings> build(String hostId) async {
+    final service = ref.watch(serviceProvider(hostId));
+    if (service == null) return const HostSettings();
+    return service.loadHostSettings();
+  }
+
+  Future<bool> _write(
+    String key,
+    String value,
+    HostSettings Function(HostSettings) apply,
+  ) async {
+    final service = ref.read(serviceProvider(arg));
+    final previous = state.valueOrNull;
+    if (service == null || previous == null) return false;
+
+    state = AsyncData(apply(previous));
+    if (await service.updateSettings({key: value})) return true;
+    state = AsyncData(previous);
+    return false;
+  }
+
+  Future<bool> setAutoTitleEnabled(bool value) => _write(
+        DaemonAPIService.settingAutoTitle,
+        value ? 'true' : 'false',
+        (s) => s.copyWith(autoTitleEnabled: value),
+      );
+
+  Future<bool> setAutoTitleEmoji(bool value) => _write(
+        DaemonAPIService.settingAutoTitleEmoji,
+        value ? 'true' : 'false',
+        (s) => s.copyWith(autoTitleEmoji: value),
+      );
+
+  Future<bool> setEvictEnabled(bool value) => _write(
+        DaemonAPIService.settingEvict,
+        value ? 'true' : 'false',
+        (s) => s.copyWith(evictEnabled: value),
+      );
+
+  Future<bool> setBudgetFraction(double value) {
+    final clamped = value.clamp(
+      DaemonAPIService.budgetMin,
+      DaemonAPIService.budgetMax,
+    );
+    return _write(
+      DaemonAPIService.settingBudgetFraction,
+      clamped.toStringAsFixed(2),
+      (s) => s.copyWith(budgetFraction: clamped),
+    );
+  }
+
+  Future<bool> setManualOrder(bool value) => _write(
+        DaemonAPIService.settingSortMode,
+        value ? 'manual' : 'activity',
+        (s) => s.copyWith(manualOrder: value),
+      );
+}
+
+final hostSettingsProvider = AsyncNotifierProvider.family<HostSettingsNotifier,
+    HostSettings, String>(HostSettingsNotifier.new);
+
+/// Whether any host is sorting by hand.
+///
+/// One switch for every host: the arrangement is stored per daemon, but a list
+/// that sorts itself on one host and holds still on another is neither.
+final manualOrderProvider = Provider<bool>((ref) {
+  final hosts = ref.watch(hostManagerProvider).hosts;
+  return hosts.any(
+    (h) => ref.watch(hostSettingsProvider(h.id)).valueOrNull?.manualOrder ?? false,
+  );
 });
 
 // ─── Git ────────────────────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import '../providers/daemon_providers.dart';
 import '../models/host_connection.dart';
 import '../providers/theme_provider.dart';
-import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
@@ -10,14 +12,14 @@ import 'host_detail_screen.dart';
 import 'notification_settings_screen.dart';
 import 'setup_screen.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends rp.ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  rp.ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
   late bool _soundEnabled;
   late bool _vibrationEnabled;
 
@@ -33,21 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _soundEnabled = NotificationService.instance.soundEnabled;
     _vibrationEnabled = NotificationService.instance.vibrationEnabled;
-    _loadHostSettings();
     _loadVersionAndCheckUpdate();
-  }
-
-  /// Asks every reachable host what it is set to, so each row can summarise
-  /// itself. These settings live in the daemon, so there are as many answers
-  /// as there are hosts — reading one host and showing it as the app's
-  /// settings is what this replaces.
-  void _loadHostSettings() {
-    final hm = context.read<HostManager>();
-    for (final host in hm.hosts) {
-      final service = hm.serviceFor(host.id);
-      if (service == null || !service.connected) continue;
-      service.fetchHostSettings();
-    }
   }
 
   Future<void> _loadVersionAndCheckUpdate() async {
@@ -217,11 +205,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// What a host is set to, in one line, so the list says it without a tap.
   /// Null until the host has answered: a default shown here would be a claim
   /// about a machine nobody has asked yet.
-  String? _hostSettingsSummary(DaemonAPIService? service) {
-    if (service == null || !service.hostSettingsLoaded) return null;
-    final title = service.autoTitleEnabled ? 'Auto title on' : 'Auto title off';
-    final memory = service.evictEnabled
-        ? 'Save memory ${(service.budgetFraction * 100).round()}%'
+  String? _hostSettingsSummary(String hostId) {
+    final settings = ref.watch(hostSettingsProvider(hostId)).valueOrNull;
+    if (settings == null) return null;
+    final title = settings.autoTitleEnabled ? 'Auto title on' : 'Auto title off';
+    final memory = settings.evictEnabled
+        ? 'Save memory ${(settings.budgetFraction * 100).round()}%'
         : 'Save memory off';
     return '$title · $memory';
   }
@@ -229,7 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildHostTile(HostConnection host, HostManager hm) {
     final service = hm.serviceFor(host.id);
     final isConnected = service?.connected == true;
-    final summary = _hostSettingsSummary(service);
+    final summary = _hostSettingsSummary(host.id);
 
     return ListTile(
       leading: Container(
