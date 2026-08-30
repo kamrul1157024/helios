@@ -11,6 +11,7 @@ import '../models/notification.dart';
 import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/daemon_providers.dart';
+import '../providers/transcript.dart';
 import '../providers/notification_ext.dart';
 import '../providers/verbs.dart';
 import '../services/api_client.dart';
@@ -47,20 +48,19 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
   String? _pastedBlock;
   String _lastPrompt = '';
   final _scrollController = ScrollController();
-  List<Message> _messages = [];
-  bool _loading = true;
   bool _sending = false;
-  int _total = 0;
-  bool _hasMore = false;
-  bool _loadingOlder = false;
 
-  /// Which parse the held seq numbers count against, quoted back when asking
-  /// for a delta so the daemon can say when it no longer holds.
-  String _epoch = '';
+  /// The transcript as of the last build, so the callbacks below read what the
+  /// frame was drawn from rather than watching outside a build.
+  Transcript _transcript = const Transcript();
+  bool _loading = true;
 
-  /// Messages per request. A page is what fills a screen and a little more,
-  /// not the whole conversation: the rest arrives as the reader scrolls.
-  static const int _pageSize = 50;
+  List<Message> get _messages => _transcript.messages;
+  int get _total => _transcript.total;
+  bool get _hasMore => _transcript.hasMore;
+
+  (String, String) get _transcriptKey =>
+      (widget.session.hostId, widget.session.sessionId);
   StreamSubscription<SSEEvent>? _eventSub;
   String _currentVerb = randomVerb();
   Timer? _verbTimer;
@@ -90,7 +90,6 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
       _breathController.repeat(reverse: true);
       _breathingActive = true;
     }
-    _loadTranscript();
     _loadGitStatus();
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomVerb());
@@ -170,95 +169,11 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
   DaemonAPIService? get _sse =>
       context.read<HostManager>().serviceFor(widget.session.hostId);
 
-  Future<void> _loadTranscript() async {
-    final sid = widget.session.sessionId;
-    debugPrint(
-      '[Transcript][$sid] _loadTranscript start, _loading=$_loading messages=${_messages.length}',
-    );
-    final sse = _sse;
-    if (sse == null) {
-      debugPrint('[Transcript][$sid] no SSE service, aborting');
-      return;
-    }
-    final result = await sse.fetchTranscript(sid, limit: _pageSize);
-    debugPrint(
-      '[Transcript][$sid] fetchTranscript result=${result == null ? "null" : "total=${result.total} returned=${result.messages.length} hasMore=${result.hasMore}"}',
-    );
-    if (result != null && mounted) {
-      setState(() {
-        _messages = result.messages;
-        _total = result.total;
-        _hasMore = result.hasMore;
-        _epoch = result.epoch;
-        _loading = false;
-      });
-    } else if (mounted) {
-      debugPrint(
-        '[Transcript][$sid] result null — setting loading=false, messages unchanged (${_messages.length})',
-      );
-      setState(() => _loading = false);
-    }
-  }
+  Future<void> _loadNewMessages() =>
+      ref.read(transcriptProvider(_transcriptKey).notifier).pullNew();
 
-  /// Pulls what the agent has written since the last message held.
-  ///
-  /// A status event fires several times a turn, and the answer to it is
-  /// usually one message. Asking for the page again would rebuild the list and
-  /// throw away where the reader was.
-  Future<void> _loadNewMessages() async {
-    final sse = _sse;
-    if (sse == null) return;
-    if (_messages.isEmpty || _epoch.isEmpty) {
-      await _loadTranscript();
-      return;
-    }
-
-    final result = await sse.fetchTranscript(
-      widget.session.sessionId,
-      limit: _pageSize,
-      afterSeq: _messages.last.seq,
-      epoch: _epoch,
-    );
-    if (result == null || !mounted) return;
-
-    setState(() {
-      if (result.epochChanged) {
-        // The transcript those seq numbers counted against is gone — forked,
-        // or replaced. Start from what is there now.
-        _messages = result.messages;
-        _epoch = result.epoch;
-        _hasMore = result.hasMore;
-      } else if (result.messages.isNotEmpty) {
-        _messages = [..._messages, ...result.messages];
-      }
-      _total = result.total;
-      _loading = false;
-    });
-  }
-
-  /// Reads the page before the oldest message held, for a reader scrolling
-  /// back through the conversation.
-  Future<void> _loadOlder() async {
-    final sse = _sse;
-    if (sse == null || _loadingOlder || !_hasMore) return;
-    setState(() => _loadingOlder = true);
-
-    final result = await sse.fetchTranscript(
-      widget.session.sessionId,
-      limit: _pageSize,
-      offset: _messages.length,
-    );
-    if (!mounted) return;
-
-    setState(() {
-      if (result != null) {
-        _messages = [...result.messages, ..._messages];
-        _hasMore = result.hasMore;
-        _total = result.total;
-      }
-      _loadingOlder = false;
-    });
-  }
+  Future<void> _loadOlder() =>
+      ref.read(transcriptProvider(_transcriptKey).notifier).loadOlder();
 
   /// Reads the repository's state: this session's status, the worktrees beside
   /// it, and a status per worktree for the diff counts.
@@ -446,7 +361,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         _pastedBlock = null;
       });
       await Future.delayed(const Duration(milliseconds: 500));
-      await _loadTranscript();
+      await _loadNewMessages();
       // The agent writes the prompt to its transcript a moment after accepting
       // it, so the read above can land before the line exists — and a turn
       // that does nothing hook-worthy afterwards never prompts another.
@@ -455,7 +370,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
       }
       _resendReads = [5, 10]
           .map((seconds) => Timer(Duration(seconds: seconds), () {
-                if (mounted) _loadTranscript();
+                if (mounted) _loadNewMessages();
               }))
           .toList();
     } else if (mounted) {
@@ -540,6 +455,9 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     return Consumer<HostManager>(
       builder: (context, hm, _) {
         final sse = hm.serviceFor(widget.session.hostId);
+        final transcript = ref.watch(transcriptProvider(_transcriptKey));
+        _transcript = transcript.valueOrNull ?? const Transcript();
+        _loading = transcript.isLoading;
         final held = ref
             .watch(sessionsProvider(allSessionsKey(widget.session.hostId)))
             .valueOrNull;
