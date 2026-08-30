@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
-// Both packages export `Provider`, `ChangeNotifierProvider` and `Consumer`.
-// Every file that imports the two has to disambiguate; here only ProviderScope
-// is wanted from Riverpod.
-import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderScope;
+// Both packages export `Provider`, `ChangeNotifierProvider` and `Consumer`, so
+// every file that imports the two has to disambiguate.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import 'providers/cache_invalidator.dart';
 import 'providers/daemon_providers.dart';
 import 'providers/theme_provider.dart';
 import 'services/host_manager.dart';
@@ -23,7 +23,7 @@ void main() async {
   final hostManager = HostManager();
 
   runApp(
-    ProviderScope(
+    rp.ProviderScope(
       overrides: [hostManagerProvider.overrideWithValue(hostManager)],
       child: MultiProvider(
         providers: [
@@ -36,11 +36,14 @@ void main() async {
   );
 }
 
-class HeliosApp extends StatelessWidget {
+class HeliosApp extends rp.ConsumerWidget {
   const HeliosApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, rp.WidgetRef ref) {
+    // Nothing reads its value; watching it is what keeps the cache subscribed
+    // to the daemon's events for as long as the app is up.
+    ref.watch(cacheInvalidatorProvider);
     final themeMode = context.watch<ThemeProvider>().mode;
     return MaterialApp(
       title: 'Helios',

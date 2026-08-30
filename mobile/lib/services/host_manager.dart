@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -36,6 +37,16 @@ class HostManager extends ChangeNotifier {
   List<HostConnection> _hosts = [];
   String? _activeHostId;
   final Map<String, DaemonAPIService> _services = {};
+
+  final _sseEvents =
+      StreamController<({String hostId, SSEEvent event})>.broadcast();
+
+  /// Every host's SSE events on one stream, tagged with which host sent them.
+  ///
+  /// The cache invalidator listens here rather than to each service: hosts come
+  /// and go, and a subscription per service would have to be torn down and
+  /// rebuilt on every pairing.
+  Stream<({String hostId, SSEEvent event})> get sseEvents => _sseEvents.stream;
 
   bool _isLoading = true;
   bool _isPendingApproval = false;
@@ -208,6 +219,7 @@ class HostManager extends ChangeNotifier {
   void _onServiceSSEEvent(String hostId, SSEEvent event) {
     // HostManager gets notified of all SSE events from all hosts.
     // HomeScreen will listen to this for OS notification dispatch.
+    _sseEvents.add((hostId: hostId, event: event));
     notifyListeners();
   }
 
@@ -588,6 +600,7 @@ Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String de
       service.dispose();
     }
     _services.clear();
+    _sseEvents.close();
     super.dispose();
   }
 }
