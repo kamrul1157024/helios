@@ -416,9 +416,16 @@ $ helios new "fix the auth bug in login.go"
 └──────────────────────────────────────────────┘
 ```
 
-Claude asks for permission → your phone buzzes → you tap approve → Claude
-continues. Open the app to see every session across every paired host, drill
-into a live transcript, and answer Claude's questions — all from your phone:
+Claude asks for permission → your phone buzzes → you tap approve → Claude continues:
+
+<p align="center">
+  <img src="docs/assets/mobile/push-notification.jpg" width="250" alt="Push notification on phone" />
+  <img src="docs/assets/mobile/notifications.jpg" width="250" alt="Notifications tab" />
+  <img src="docs/assets/mobile/question-notification.jpg" width="250" alt="Question notification" />
+</p>
+
+Open the app to see every session across every paired host, drill into a live
+transcript, and switch the permission mode — all from your phone:
 
 <p align="center">
   <img src="docs/assets/mobile/sessions.png" width="250" alt="Sessions tab" />
