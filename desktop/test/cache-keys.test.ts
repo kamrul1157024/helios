@@ -169,12 +169,6 @@ test('a notification invalidates the sessions as well as the notifications', () 
   }
 })
 
-test('terminal_opened invalidates that session terminals', () => {
-  assert.deepEqual(effectsFor(HOST, { type: 'terminal_opened', data: { session_id: 's1' } }), [
-    { kind: 'invalidate', queryKey: keys.terminals(HOST, 's1') },
-  ])
-})
-
 test('session_evicted takes out the whole host', () => {
   assert.deepEqual(effectsFor(HOST, { type: 'session_evicted', data: {} }), [
     { kind: 'invalidate', queryKey: keys.host(HOST) },
@@ -182,8 +176,10 @@ test('session_evicted takes out the whole host', () => {
 })
 
 test('events that are not about data touch no keys', () => {
-  // 'show' instructs the window; 'terminal_closed' tears down a connection.
+  // 'show' instructs the window; the terminal events move connections, and the
+  // store attaches or tears down the tab itself.
   assert.deepEqual(effectsFor(HOST, { type: 'show', data: {} }), [])
+  assert.deepEqual(effectsFor(HOST, { type: 'terminal_opened', data: { session_id: 's1' } }), [])
   assert.deepEqual(effectsFor(HOST, { type: 'terminal_closed', data: { terminal_id: 't1' } }), [])
   assert.deepEqual(effectsFor(HOST, { type: 'something_new', data: {} }), [])
 })
