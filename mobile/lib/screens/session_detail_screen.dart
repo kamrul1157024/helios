@@ -2,12 +2,15 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
+import '../providers/daemon_providers.dart';
 import '../providers/notification_ext.dart';
 import '../providers/verbs.dart';
 import '../services/api_client.dart';
@@ -21,16 +24,16 @@ import 'file_browser_screen.dart';
 import 'git_status_screen.dart';
 import 'terminal_screen.dart';
 
-class SessionDetailScreen extends StatefulWidget {
+class SessionDetailScreen extends rp.ConsumerStatefulWidget {
   final Session session;
 
   const SessionDetailScreen({super.key, required this.session});
 
   @override
-  State<SessionDetailScreen> createState() => _SessionDetailScreenState();
+  rp.ConsumerState<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionDetailScreenState extends State<SessionDetailScreen>
+class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     with SingleTickerProviderStateMixin {
   // Persisted across session switches (static = app-lifetime)
   static final _worktreeSelections =
@@ -257,33 +260,38 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     });
   }
 
+  /// Reads the repository's state: this session's status, the worktrees beside
+  /// it, and a status per worktree for the diff counts.
+  ///
+  /// Every one of these goes through the cache, which is what makes the last
+  /// part affordable. It is one read per worktree, and the git screen and the
+  /// file browser ask the same questions about the same paths — so on a repo
+  /// with several worktrees this used to be the most requests any screen made.
+  /// Keyed by path, the second visit costs nothing.
   Future<void> _loadGitStatus() async {
-    final svc = _sse;
-    if (svc == null) return;
-    // First get git status — server resolves to git root from any subdirectory
-    final status = await svc.gitStatus(_effectiveCwd);
+    final hostId = widget.session.hostId;
+    if (_sse == null) return;
+
+    final status = await ref.read(gitStatusProvider((hostId, _effectiveCwd)).future);
     if (!mounted) return;
     setState(() => _gitStatus = status);
 
-    // Use resolved git root for worktree listing
+    // The server resolves a git root from any subdirectory, so the worktree
+    // listing uses the resolved root rather than the session's cwd.
     final gitRoot = status?.root ?? widget.session.cwd;
-    final worktrees = await svc.gitWorktrees(gitRoot);
+    final worktrees = await ref.read(gitWorktreesProvider((hostId, gitRoot)).future);
     if (!mounted) return;
     setState(() => _worktrees = worktrees);
 
-    // Fetch git status for each worktree in parallel (for diff counts)
-    if (worktrees.length > 1) {
-      final statuses = await Future.wait(
-        worktrees.map((wt) => svc.gitStatus(wt.path)),
-      );
-      if (!mounted) return;
-      final map = <String, GitStatus>{};
-      for (var i = 0; i < worktrees.length; i++) {
-        final s = statuses[i];
-        if (s != null) map[worktrees[i].path] = s;
-      }
-      setState(() => _worktreeStatuses = map);
-    }
+    if (worktrees.length <= 1) return;
+    final statuses = await Future.wait(
+      worktrees.map((wt) => ref.read(gitStatusProvider((hostId, wt.path)).future)),
+    );
+    if (!mounted) return;
+    setState(() => _worktreeStatuses = {
+          for (var i = 0; i < worktrees.length; i++)
+            if (statuses[i] != null) worktrees[i].path: statuses[i]!,
+        });
   }
 
   /// Picks attachments, from the gallery, the camera, or the file browser.

@@ -3,13 +3,16 @@ import 'package:flutter/services.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:highlight/highlight.dart' show highlight;
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'file_browser_screen.dart';
 
-class GitStatusScreen extends StatefulWidget {
+class GitStatusScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String cwd;
   final String? sessionId;
@@ -17,12 +20,12 @@ class GitStatusScreen extends StatefulWidget {
   const GitStatusScreen({super.key, required this.hostId, required this.cwd, this.sessionId});
 
   @override
-  State<GitStatusScreen> createState() => _GitStatusScreenState();
+  rp.ConsumerState<GitStatusScreen> createState() => _GitStatusScreenState();
 }
 
 enum _GitView { changes, commits, worktrees }
 
-class _GitStatusScreenState extends State<GitStatusScreen> {
+class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
   GitStatus? _status;
   bool _loading = true;
   _GitView _view = _GitView.changes;
@@ -34,9 +37,6 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
   /// Bumped by the refresh button so the commit and worktree tabs reload.
   int _reload = 0;
 
-  DaemonAPIService? get _svc =>
-      context.read<HostManager>().serviceFor(widget.hostId);
-
   @override
   void initState() {
     super.initState();
@@ -45,7 +45,7 @@ class _GitStatusScreenState extends State<GitStatusScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final status = await _svc?.gitStatus(_root);
+    final status = await ref.read(gitStatusProvider((widget.hostId, _root)).future);
     if (!mounted) return;
     setState(() {
       _status = status;
@@ -429,7 +429,7 @@ List<Widget> _statChips(int insertions, int deletions) {
 ///
 /// Tapping a commit shows what it changed; long-pressing one marks it, and the
 /// next tap shows everything between the two.
-class _CommitsTab extends StatefulWidget {
+class _CommitsTab extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String root;
   final String? sessionId;
@@ -437,19 +437,16 @@ class _CommitsTab extends StatefulWidget {
   const _CommitsTab({super.key, required this.hostId, required this.root, this.sessionId});
 
   @override
-  State<_CommitsTab> createState() => _CommitsTabState();
+  rp.ConsumerState<_CommitsTab> createState() => _CommitsTabState();
 }
 
-class _CommitsTabState extends State<_CommitsTab> {
+class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
   GitLog? _log;
   final List<Commit> _commits = [];
   bool _all = false;
   bool _loading = true;
   bool _loadingMore = false;
   String? _compareFrom;
-
-  DaemonAPIService? get _svc =>
-      context.read<HostManager>().serviceFor(widget.hostId);
 
   @override
   void initState() {
@@ -462,7 +459,8 @@ class _CommitsTabState extends State<_CommitsTab> {
       _loading = true;
       _compareFrom = null;
     });
-    final log = await _svc?.gitLog(widget.root, all: _all);
+    final log = await ref.read(
+        gitLogProvider(GitLogKey(widget.hostId, widget.root, all: _all)).future);
     if (!mounted) return;
     setState(() {
       _log = log;
@@ -476,7 +474,9 @@ class _CommitsTabState extends State<_CommitsTab> {
   Future<void> _loadMore() async {
     if (_loadingMore) return;
     setState(() => _loadingMore = true);
-    final next = await _svc?.gitLog(widget.root, all: _all, skip: _commits.length);
+    final next = await ref.read(gitLogProvider(
+            GitLogKey(widget.hostId, widget.root, all: _all, skip: _commits.length))
+        .future);
     if (!mounted) return;
     setState(() {
       if (next != null) {
@@ -745,7 +745,7 @@ class _CommitTile extends StatelessWidget {
 }
 
 /// What one commit changed, or everything between two.
-class CommitDetailScreen extends StatefulWidget {
+class CommitDetailScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String root;
   final String to;
@@ -764,15 +764,12 @@ class CommitDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<CommitDetailScreen> createState() => _CommitDetailScreenState();
+  rp.ConsumerState<CommitDetailScreen> createState() => _CommitDetailScreenState();
 }
 
-class _CommitDetailScreenState extends State<CommitDetailScreen> {
+class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
   GitChanges? _changes;
   bool _loading = true;
-
-  DaemonAPIService? get _svc =>
-      context.read<HostManager>().serviceFor(widget.hostId);
 
   @override
   void initState() {
@@ -782,7 +779,9 @@ class _CommitDetailScreenState extends State<CommitDetailScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final changes = await _svc?.gitChanges(widget.root, widget.to, from: widget.from);
+    final changes = await ref.read(gitChangesProvider(
+            GitChangesKey(widget.hostId, widget.root, widget.to, from: widget.from))
+        .future);
     if (!mounted) return;
     setState(() {
       _changes = changes;
@@ -1001,7 +1000,7 @@ class _CommitFileTile extends StatelessWidget {
 
 /// Every worktree of this repository. Read-only: Helios shows worktrees, it
 /// does not make them. Tapping one points the whole screen at it.
-class _WorktreesTab extends StatefulWidget {
+class _WorktreesTab extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String root;
   final String active;
@@ -1016,10 +1015,10 @@ class _WorktreesTab extends StatefulWidget {
   });
 
   @override
-  State<_WorktreesTab> createState() => _WorktreesTabState();
+  rp.ConsumerState<_WorktreesTab> createState() => _WorktreesTabState();
 }
 
-class _WorktreesTabState extends State<_WorktreesTab> {
+class _WorktreesTabState extends rp.ConsumerState<_WorktreesTab> {
   List<Worktree>? _worktrees;
   final _searchController = TextEditingController();
   String _query = '';
@@ -1037,8 +1036,8 @@ class _WorktreesTabState extends State<_WorktreesTab> {
   }
 
   Future<void> _load() async {
-    final svc = context.read<HostManager>().serviceFor(widget.hostId);
-    final worktrees = await svc?.gitWorktrees(widget.root) ?? [];
+    final worktrees =
+        await ref.read(gitWorktreesProvider((widget.hostId, widget.root)).future);
     if (!mounted) return;
     setState(() => _worktrees = sortWorktreesByLastTouched(worktrees));
   }
@@ -1227,7 +1226,7 @@ class _Pill extends StatelessWidget {
 
 enum DiffViewMode { diff, unified, full }
 
-class GitDiffScreen extends StatefulWidget {
+class GitDiffScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String cwd;
   final GitChange change;
@@ -1251,19 +1250,16 @@ class GitDiffScreen extends StatefulWidget {
   });
 
   @override
-  State<GitDiffScreen> createState() => _GitDiffScreenState();
+  rp.ConsumerState<GitDiffScreen> createState() => _GitDiffScreenState();
 }
 
-class _GitDiffScreenState extends State<GitDiffScreen> {
+class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
   GitDiff? _diff;
   FileReadResult? _fullFile;
   bool _loading = true;
   DiffViewMode _mode = DiffViewMode.unified;
   int? _selStart;
   int? _selEnd;
-
-  DaemonAPIService? get _svc =>
-      context.read<HostManager>().serviceFor(widget.hostId);
 
   bool get _hasSelection => _selStart != null;
   String get _selLabel {
@@ -1309,17 +1305,17 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
 
   Future<void> _loadDiff() async {
     setState(() => _loading = true);
-    final svc = _svc;
-    if (svc == null) {
-      setState(() => _loading = false);
-      return;
-    }
-    final diff = await svc.gitDiff(
-      widget.cwd,
-      widget.change.path,
-      staged: widget.staged,
-      from: widget.from,
-      to: widget.to,
+    final diff = await ref.read(
+      gitDiffProvider(
+        GitDiffKey(
+          widget.hostId,
+          widget.cwd,
+          widget.change.path,
+          staged: widget.staged,
+          from: widget.from,
+          to: widget.to,
+        ),
+      ).future,
     );
     if (!mounted) return;
     setState(() {
@@ -1330,7 +1326,7 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
     // is the current file, which is not what an old commit changed.
     if (_atRevision) return;
     final fullPath = '${widget.cwd}/${widget.change.path}';
-    final file = await svc.readFile(fullPath);
+    final file = await ref.read(readFileProvider((widget.hostId, fullPath)).future);
     if (mounted && file != null) {
       setState(() => _fullFile = file);
     }
