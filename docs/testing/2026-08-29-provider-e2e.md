@@ -5,8 +5,9 @@ Ran the provider work against real agents in real repositories, on `main` at
 
 **Headline: both providers work end to end.** Codex answered a prompt through
 Helios, its hooks reached the daemon, its session resumed cold with the
-conversation intact. Six defects were found on the way, five of them fixed
-here; the sixth is a judgement call left open below.
+conversation intact. Seven defects were found on the way. Four are fixed here.
+Three concern custom ports or a wording judgement and are deferred, marked
+below.
 
 The suite is fully green for the first time — the two `TestE2EClaude*` failures
 that had been red all along were a stale assertion, not a regression.
@@ -60,7 +61,7 @@ another, the hook carried both, and the wake used the right one.
 
 ## Defects
 
-### BUG-1 — hooks installed against the wrong port. Fixed.
+### BUG-1 — hooks installed against the wrong port. Not fixed, deferred.
 
 **Severity: high.** Silent. Every session sits at `starting` with no error.
 
@@ -82,9 +83,14 @@ print(sorted(set(re.findall(r'localhost:(\d+)', json.dumps(d['hooks'])))))"
 ```
 
 Observed: zero hooks in the daemon log across three sessions and several
-minutes. After the fix, the full lifecycle arrived within seconds.
+minutes. Reading the configured port instead of the compiled-in one made the
+full lifecycle arrive within seconds.
 
-Anyone running on default ports was never affected, which is why it survived.
+**Left out of the fix branch deliberately.** Anyone on the default port is
+unaffected — the two numbers are the same, so the wrong code path and the
+right one produce identical output. It only bites someone who has changed
+`internal_port`, which is the same case as FINDING-7, and that is being
+decided as one thing. If custom ports go away, this disappears with them.
 
 ### BUG-2 — approving workspace trust quit the agent. Fixed.
 
