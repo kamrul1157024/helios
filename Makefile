@@ -160,10 +160,15 @@ NPM = $(shell \
 # npm's shebang is `env node`, so its directory has to be on PATH too.
 NODE_ENV_PATH = PATH="$(patsubst %/npm,%,$(NPM)):$$PATH"
 
-## Install node deps if missing, then bundle main, preload and renderer
+## Install node deps if missing or stale, then bundle main, preload and renderer
 desktop:
 	@test -n "$(NPM)" || (echo "No Node $(NODE_MIN)+ found — run 'nvm use' in this repo (see .nvmrc), or install one" >&2 && exit 1)
-	@if [ ! -d desktop/node_modules ]; then cd desktop && $(NODE_ENV_PATH) npm install; fi
+	# Reinstall when node_modules is absent OR older than the lockfile: a stale
+	# tree left over from before a dependency was added would otherwise be used,
+	# and the build fails with confusing "cannot find module" typecheck errors.
+	@if [ ! -d desktop/node_modules ] || [ desktop/package-lock.json -nt desktop/node_modules ]; then \
+		cd desktop && $(NODE_ENV_PATH) npm ci; \
+	fi
 	cd desktop && $(NODE_ENV_PATH) npm run typecheck && $(NODE_ENV_PATH) npm run build
 	@echo "Desktop bundles: desktop/dist"
 
