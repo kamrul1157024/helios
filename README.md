@@ -1,13 +1,17 @@
-# helios
+<h1 align="center">helios</h1>
 
-**A head for headless coding harnesses.**
+<p align="center">
+  <strong>A head for headless coding harnesses.</strong><br>
+  Claude Code and OpenAI Codex run in a terminal with no UI of their own.<br>
+  Helios owns those terminals and puts a desktop app, a phone and a tunnel in front of them.
+</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Elastic%202.0-2f6f4e" alt="License: Elastic License 2.0" /></a>
   <a href="https://github.com/kamrul1157024/helios/releases/latest"><img src="https://img.shields.io/github/v/release/kamrul1157024/helios?color=1f6feb" alt="Latest release" /></a>
   <a href="https://github.com/kamrul1157024/helios/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/kamrul1157024/helios/test.yml?branch=main&label=tests" alt="Test workflow status" /></a>
   <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26+" />
-  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Android-6e7681" alt="Platforms: macOS, Linux, Android" />
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-6e7681" alt="Platforms: macOS, Linux, Android, iOS" />
   <img src="https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex-8957e5" alt="Harnesses: Claude Code, Codex" />
 </p>
 
@@ -16,10 +20,19 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/mobile/sessions.png" width="220" alt="Helios mobile app — sessions" />
-  <img src="docs/assets/mobile/session-detail.png" width="220" alt="Helios mobile app — live session detail" />
-  <img src="docs/assets/mobile/terminal.png" width="220" alt="Helios mobile app — live terminal" />
+  <img src="docs/assets/mobile/sessions.png" width="220" alt="Helios mobile app — sessions" valign="top" />
+  &nbsp;
+  <img src="docs/assets/mobile/session-detail.png" width="220" alt="Helios mobile app — live session detail" valign="top" />
+  &nbsp;
+  <img src="docs/assets/mobile/terminal.png" width="220" alt="Helios mobile app — live terminal" valign="top" />
 </p>
+
+<p align="center">
+  <sub>The desktop app, and the same sessions on the phone: the list, a live
+  transcript, and the real terminal.</sub>
+</p>
+
+---
 
 Claude Code and OpenAI Codex are headless harnesses: they run in a terminal, on
 your machine, with no UI of their own beyond the one terminal you started them
@@ -63,6 +76,19 @@ QR code, pair a device.
 | `make desktop-app` | Electron app | `desktop/release/*.dmg` (no install) |
 | `make apk-install` | Debug APK | the connected Android device |
 | `make apk-release` | Release APK | `~/.helios/helios.apk` |
+
+### iOS
+
+There is no prebuilt iOS build and there is no App Store listing. Apple only
+lets you side-load a build you signed yourself, so you build it locally from
+`mobile/` and push it straight to the handset.
+
+Connect the iPhone to the Mac **with a cable** and trust the machine when the
+phone asks. Then hand the job to your coding agent — Claude Code or Codex, in
+this repo — and ask it to build and install the iOS app on the attached device.
+It will pick the connected device, set a signing team, and run the build for
+you. Wireless install does not work here: the device has to be on the cable for
+the first install.
 
 Pick one tunnel provider so your phone can reach the daemon —
 `brew install tailscale` (recommended: private to your tailnet, stable hostname)
@@ -659,6 +685,7 @@ helios stop                     # stop the daemon
 - A headless coding harness — Claude Code or OpenAI Codex today
 - Node 20+ (only to build the desktop app from source)
 - Flutter 3.32+ (only to build the mobile app from source)
+- Xcode 15+ and a cabled iPhone (only to install the iOS app; it is never prebuilt)
 
 ## License
 
