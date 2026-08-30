@@ -5,12 +5,15 @@ import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:highlight/highlight.dart' show highlight;
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 
-class FileBrowserScreen extends StatefulWidget {
+class FileBrowserScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String rootPath;
   /// If set, the file viewer opens immediately for this path.
@@ -26,24 +29,28 @@ class FileBrowserScreen extends StatefulWidget {
   });
 
   @override
-  State<FileBrowserScreen> createState() => _FileBrowserScreenState();
+  rp.ConsumerState<FileBrowserScreen> createState() => _FileBrowserScreenState();
 }
 
-class _FileBrowserScreenState extends State<FileBrowserScreen> {
+class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
   late String _currentPath;
   late String _rootPath;
   final List<String> _history = [];
-  FileListing? _listing;
-  bool _loading = true;
-  String? _error;
 
   @override
   void initState() {
     super.initState();
     _currentPath = widget.rootPath;
     _rootPath = widget.rootPath;
-    _load(_currentPath);
   }
+
+  /// The listing for wherever the browser currently is.
+  ///
+  /// Keying on the path is what fixes the race that `mounted` never caught:
+  /// tapping folder A then B used to let A's slower answer land last and walk
+  /// the browser backwards. Now A's answer lands under A's key, and the build
+  /// is watching B's.
+  (String, String) get _listingKey => (widget.hostId, _currentPath);
 
   @override
   void didChangeDependencies() {
@@ -59,46 +66,22 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   DaemonAPIService? get _svc =>
       context.read<HostManager>().serviceFor(widget.hostId);
 
-  Future<void> _load(String path) async {
+  void _navigateTo(String path) {
     setState(() {
-      _loading = true;
-      _error = null;
+      _history.add(_currentPath);
+      _currentPath = path;
     });
-    final svc = _svc;
-    if (svc == null) {
-      setState(() {
-        _error = 'Host not connected';
-        _loading = false;
-      });
-      return;
-    }
-    final listing = await svc.listFiles(path);
-    if (!mounted) return;
-    if (listing == null) {
-      setState(() {
-        _error = 'Failed to load directory';
-        _loading = false;
-      });
-    } else {
-      setState(() {
-        _listing = listing;
-        _currentPath = listing.path;
-        _loading = false;
-      });
-    }
   }
 
-  void _navigateTo(String path) {
-    _history.add(_currentPath);
-    _load(path);
-  }
+  void _goTo(String path) => setState(() => _currentPath = path);
 
   /// Re-roots the browser on another worktree of the same repository. History is
   /// dropped: the paths in it belong to the worktree being left behind.
   Future<void> _pickRoot() async {
-    final svc = _svc;
-    if (svc == null) return;
-    final worktrees = sortWorktreesByLastTouched(await svc.gitWorktrees(_currentPath));
+    if (_svc == null) return;
+    final worktrees = sortWorktreesByLastTouched(
+      await ref.read(gitWorktreesProvider((widget.hostId, _currentPath)).future),
+    );
     if (!mounted) return;
     if (worktrees.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -158,14 +141,16 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     );
     if (picked == null || !mounted) return;
     _history.clear();
-    setState(() => _rootPath = picked);
-    _load(picked);
+    setState(() {
+      _rootPath = picked;
+      _currentPath = picked;
+    });
   }
 
   bool _onBack() {
     if (_history.isNotEmpty) {
       final prev = _history.removeLast();
-      _load(prev);
+      _goTo(prev);
       return false; // handled — don't pop screen
     }
     return true; // let Navigator pop
@@ -263,24 +248,32 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Widget _buildBody(ThemeData theme) {
-    if (_loading) {
-      return const _FileListSkeleton();
-    }
-    if (_error != null) {
+    final listing = ref.watch(listFilesProvider(_listingKey));
+
+    if (listing.isLoading) return const _FileListSkeleton();
+
+    final failed = listing.hasError || listing.valueOrNull == null;
+    if (failed) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
             const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+            Text(
+              _svc == null ? 'Host not connected' : 'Failed to load directory',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
             const SizedBox(height: 16),
-            FilledButton(onPressed: () => _load(_currentPath), child: const Text('Retry')),
+            FilledButton(
+              onPressed: () => ref.invalidate(listFilesProvider(_listingKey)),
+              child: const Text('Retry'),
+            ),
           ],
         ),
       );
     }
-    final entries = _listing?.entries ?? [];
+    final entries = listing.valueOrNull?.entries ?? [];
     if (entries.isEmpty) {
       return Center(
         child: Text(
@@ -382,7 +375,7 @@ class _EntryTile extends StatelessWidget {
 
 // ==================== File Viewer Screen ====================
 
-class FileViewerScreen extends StatefulWidget {
+class FileViewerScreen extends rp.ConsumerStatefulWidget {
   final String path;
   final String hostId;
   final String? sessionId;
@@ -390,19 +383,26 @@ class FileViewerScreen extends StatefulWidget {
   const FileViewerScreen({super.key, required this.path, required this.hostId, this.sessionId});
 
   @override
-  State<FileViewerScreen> createState() => _FileViewerScreenState();
+  rp.ConsumerState<FileViewerScreen> createState() => _FileViewerScreenState();
 }
 
-class _FileViewerScreenState extends State<FileViewerScreen> {
-  FileReadResult? _result;
-  bool _loading = true;
+class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
+  /// The last value `build` saw.
+  ///
+  /// Held in a field so the callbacks below — copy, ask-AI — read the same
+  /// answer the frame was drawn from. Watching from inside a callback would
+  /// subscribe outside a build, which Riverpod rejects.
+  rp.AsyncValue<FileReadResult?> _file = const rp.AsyncLoading();
+
+  FileReadResult? get _result => _file.valueOrNull;
+  bool get _loading => _file.isLoading;
+
+  (String, String) get _fileKey => (widget.hostId, widget.path);
+
   bool _userConfirmedLarge = false;
   static const _softLimit = 1024 * 1024; // 1 MB
   int? _selStart; // 1-based line number
   int? _selEnd;   // 1-based line number
-
-  DaemonAPIService? get _svc =>
-      context.read<HostManager>().serviceFor(widget.hostId);
 
   bool get _hasSelection => _selStart != null;
   String get _selLabel {
@@ -442,23 +442,16 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
     return lineNum >= _selStart! && lineNum <= _selEnd!;
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _loadFile();
-  }
-
-  Future<void> _loadFile() async {
-    setState(() => _loading = true);
-    final svc = _svc;
-    if (svc == null) {
-      setState(() => _loading = false);
-      return;
-    }
-    final result = await svc.readFile(widget.path);
-    if (!mounted) return;
-    if (result != null && result.isDirectory) {
-      // Replace this screen with a directory browser at that path.
+  /// A path that turns out to be a directory replaces this screen with a
+  /// browser rooted there.
+  ///
+  /// Driven from a listener rather than from the read itself: navigation is a
+  /// side effect, and a provider that navigated while producing its value
+  /// would do it again on every refresh.
+  void _redirectIfDirectory(rp.AsyncValue<FileReadResult?> file) {
+    if (file.valueOrNull?.isDirectory != true) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           settings: const RouteSettings(name: '/file-browser'),
@@ -468,11 +461,6 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
           ),
         ),
       );
-      return;
-    }
-    setState(() {
-      _result = result;
-      _loading = false;
     });
   }
 
@@ -480,6 +468,8 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _file = ref.watch(readFileProvider(_fileKey));
+    ref.listen(readFileProvider(_fileKey), (_, next) => _redirectIfDirectory(next));
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
