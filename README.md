@@ -3,6 +3,15 @@
 **A head for headless coding harnesses.**
 
 <p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Elastic%202.0-2f6f4e" alt="License: Elastic License 2.0" /></a>
+  <a href="https://github.com/kamrul1157024/helios/releases/latest"><img src="https://img.shields.io/github/v/release/kamrul1157024/helios?color=1f6feb" alt="Latest release" /></a>
+  <a href="https://github.com/kamrul1157024/helios/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/kamrul1157024/helios/test.yml?branch=main&label=tests" alt="Test workflow status" /></a>
+  <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26+" />
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Android-6e7681" alt="Platforms: macOS, Linux, Android" />
+  <img src="https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex-8957e5" alt="Harnesses: Claude Code, Codex" />
+</p>
+
+<p align="center">
   <img src="docs/assets/desktop/chat.png" width="700" alt="Helios desktop app — session transcript" />
 </p>
 
