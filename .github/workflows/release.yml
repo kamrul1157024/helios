@@ -55,7 +55,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Must match .nvmrc: `make desktop` refuses to build on anything
+          # older, because the renderer's test script strips types at runtime.
+          node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
@@ -88,7 +90,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Must match .nvmrc: `make desktop` refuses to build on anything
+          # older, because the renderer's test script strips types at runtime.
+          node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
