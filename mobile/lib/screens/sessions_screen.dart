@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/session.dart';
+import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
@@ -10,14 +13,14 @@ import 'session_detail_screen.dart';
 
 enum SessionFilter { all, pinned, terminated }
 
-class SessionsScreen extends StatefulWidget {
+class SessionsScreen extends rp.ConsumerStatefulWidget {
   const SessionsScreen({super.key});
 
   @override
-  State<SessionsScreen> createState() => _SessionsScreenState();
+  rp.ConsumerState<SessionsScreen> createState() => _SessionsScreenState();
 }
 
-class _SessionsScreenState extends State<SessionsScreen> {
+class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   SessionFilter _filter = SessionFilter.all;
   final Set<String> _selected = {};
   bool _multiSelect = false;
@@ -96,19 +99,32 @@ class _SessionsScreenState extends State<SessionsScreen> {
     return hm.serviceFor(hm.activeHostId!);
   }
 
+  /// Flips every host between sorting itself and holding still.
+  ///
+  /// Switching to manual freezes what is on screen as the starting
+  /// arrangement, so the list does not jump the moment it stops sorting.
   Future<void> _toggleManualOrder(HostManager hm, List<Session> visible) async {
     final byHost = <String, List<String>>{};
     for (final session in visible) {
       byHost.putIfAbsent(session.hostId, () => []).add(session.sessionId);
     }
-    await hm.setManualOrder(!hm.manualOrder, byHost);
+    final manual = !ref.read(manualOrderProvider);
+    await Future.wait(hm.hosts.map((host) async {
+      final order = byHost[host.id] ?? const <String>[];
+      if (manual && order.isNotEmpty) {
+        await ref.read(sessionsProvider(allSessionsKey(host.id)).notifier).reorder(order);
+      }
+      await ref.read(hostSettingsProvider(host.id).notifier).setManualOrder(manual);
+    }));
   }
 
   Future<void> _onReorder(DaemonAPIService service, List<Session> visible, int from, int to) async {
     final ids = visible.map((s) => s.sessionId).toList();
     if (to > from) to -= 1;
     ids.insert(to, ids.removeAt(from));
-    await service.setSessionOrder(ids);
+    await ref
+        .read(sessionsProvider(allSessionsKey(service.hostId)).notifier)
+        .reorder(ids);
   }
 
   String get _filterParam {
@@ -122,29 +138,24 @@ class _SessionsScreenState extends State<SessionsScreen> {
     }
   }
 
+    /// What the list is currently asking the daemon for. Also its cache key, so
+  /// changing the search re-reads under a different entry rather than
+  /// overwriting the unfiltered one.
+  SessionQuery get _query {
+    final q = _searchController.text.trim();
+    return SessionQuery(
+      q: q.isNotEmpty ? q : null,
+      filter: _filterParam,
+      cwd: _cwdFilter,
+    );
+  }
+
+  /// Debounced so a keystroke does not cost a request, and a setState because
+  /// the query is the key: rebuilding under the new one is the fetch.
   void _triggerSearch() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
-      if (!mounted) return;
-      final hm = context.read<HostManager>();
-      final q = _searchController.text.trim();
-      if (hm.activeHostId != null) {
-        hm.serviceFor(hm.activeHostId!)?.fetchSessions(
-          q: q.isNotEmpty ? q : null,
-          filter: _filterParam,
-          cwd: _cwdFilter,
-          updateFilters: true,
-        );
-      } else {
-        for (final host in hm.hosts) {
-          hm.serviceFor(host.id)?.fetchSessions(
-            q: q.isNotEmpty ? q : null,
-            filter: _filterParam,
-            cwd: _cwdFilter,
-            updateFilters: true,
-          );
-        }
-      }
+      if (mounted) setState(() {});
     });
   }
 
@@ -165,11 +176,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   void _openDirectoryPicker() async {
-    final hm = context.read<HostManager>();
-    final service = hm.activeHostId != null ? hm.serviceFor(hm.activeHostId!) : null;
-    if (service == null) return;
+    final hostId = context.read<HostManager>().activeHostId;
+    if (hostId == null) return;
 
-    final dirs = await service.fetchDirectories();
+    final dirs = await ref.read(directoriesProvider(hostId).future);
     if (!mounted || dirs.isEmpty) return;
 
     showModalBottomSheet(
@@ -251,11 +261,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   Future<void> _batchPin(bool pin) async {
-    final hm = context.read<HostManager>();
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        hm.serviceFor(parts[0])?.patchSession(parts[1], pinned: pin);
+        ref.read(sessionsProvider(allSessionsKey(parts[0])).notifier).patch(parts[1], pinned: pin);
       }
     }
     _exitMultiSelect();
@@ -284,7 +293,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   Future<void> _batchTerminate(HostManager hm) async {
-    final chosen = hm.filteredSessions
+    final chosen = (ref.read(visibleSessionsProvider).valueOrNull ?? const [])
         .where((s) => _selected.contains(_compositeKey(s)))
         .toList();
     if (!await _confirmTerminate(chosen)) return;
@@ -322,11 +331,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    final hm = context.read<HostManager>();
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        hm.serviceFor(parts[0])?.deleteSession(parts[1]);
+        ref.read(sessionsProvider(allSessionsKey(parts[0])).notifier).delete(parts[1]);
       }
     }
     _exitMultiSelect();
@@ -336,10 +344,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   Widget build(BuildContext context) {
     return Consumer<HostManager>(
       builder: (context, hm, _) {
-        final sessions = hm.filteredSessions;
-        final loaded = hm.sessionsLoaded;
+        final held = ref.watch(visibleSessionsForProvider(_query));
+        final sessions = held.valueOrNull ?? const <Session>[];
 
-        if (!loaded) {
+        if (held.valueOrNull == null) {
           return ListView(
             padding: const EdgeInsets.all(12),
             children: const [
@@ -358,7 +366,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           return _buildEmptyState();
         }
 
-        final manual = hm.manualOrder;
+        final manual = ref.watch(manualOrderProvider);
         final orderable = manual ? _orderableService(hm) : null;
         final matching = _filterSessions(sessions);
         final filtered = _sortSessions(
@@ -376,8 +384,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   ? _buildEmptyFilterState()
                   : RefreshIndicator(
                       onRefresh: () => hm.activeHostId != null
-                          ? hm.refreshHost(hm.activeHostId!)
-                          : hm.refreshAll(),
+                          ? ref.refreshHost(hm.activeHostId!)
+                          : ref.refreshAllHosts(),
                       child: manual && orderable != null
                           ? ReorderableListView.builder(
                               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -465,11 +473,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
         const Spacer(),
         IconButton(
           icon: Icon(
-            hm.manualOrder ? Icons.swap_vert : Icons.sort,
+            ref.watch(manualOrderProvider) ? Icons.swap_vert : Icons.sort,
             size: 20,
-            color: hm.manualOrder ? Theme.of(context).colorScheme.primary : null,
+            color: ref.watch(manualOrderProvider)
+                ? Theme.of(context).colorScheme.primary
+                : null,
           ),
-          tooltip: hm.manualOrder
+          tooltip: ref.watch(manualOrderProvider)
               ? 'Sort: Manual — long-press a session to move it. Tap to sort by activity instead.'
               : 'Sort: Activity — active first, then most recent. Tap to arrange them by hand instead.',
           visualDensity: VisualDensity.compact,
@@ -638,7 +648,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ),
           );
           if (confirmed == true) {
-            service?.deleteSession(session.sessionId);
+            ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).delete(session.sessionId);
           }
           return false;
         }
@@ -891,7 +901,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 title: Text(session.pinned ? 'Unpin' : 'Pin'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  service?.patchSession(sessionId, pinned: !session.pinned);
+                  ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).patch(sessionId, pinned: !session.pinned);
                 },
               ),
               ListTile(
@@ -931,7 +941,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     ),
                   );
                   if (confirmed == true) {
-                    service?.deleteSession(sessionId);
+                    ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).delete(sessionId);
                   }
                 },
               ),
@@ -975,8 +985,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   void _showRenameDialog(Session session, HostManager hm) {
     final sessionId = session.sessionId;
-    final service = hm.serviceFor(session.hostId);
-    if (service == null) return;
+    final hostId = session.hostId;
 
     showDialog<String>(
       context: context,
@@ -1007,7 +1016,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
       },
     ).then((title) {
       if (title != null && title.isNotEmpty) {
-        service.patchSession(sessionId, title: title);
+        ref.read(sessionsProvider(allSessionsKey(hostId)).notifier).patch(sessionId, title: title);
       }
     });
   }

@@ -51,6 +51,7 @@ dependencies:
   image_picker: ^1.2.3
   xterm: ^4.0.0
   web_socket_channel: ^3.0.3
+  flutter_riverpod: ^2.6.1
 
 dev_dependencies:
   flutter_test:

@@ -53,42 +53,12 @@ class DaemonAPIService extends ChangeNotifier {
   /// Bumped per connect attempt so a superseded one cannot clobber the live one.
   int _connectGeneration = 0;
 
-  List<HeliosNotification> _notifications = [];
-  List<HeliosNotification> get notifications => _notifications;
-  List<Session> _sessions = [];
-  List<Session> get sessions => _sessions;
   bool get connected => _connected;
   bool get isOffline => _consecutiveFailures >= _offlineThreshold;
 
   /// Connected in name only: the socket is open but the daemon has gone quiet
   /// past the heartbeat window.
   bool get stale => _connected && isStreamStale(_lastBytesAt, DateTime.now());
-
-  bool _notificationsLoaded = false;
-  bool get notificationsLoaded => _notificationsLoaded;
-  bool _sessionsLoaded = false;
-  bool get sessionsLoaded => _sessionsLoaded;
-
-  // Track last fetch params so polling/SSE refreshes use the same filters
-  String? _lastSessionQ;
-  String? _lastSessionFilter;
-  String? _lastSessionCwd;
-
-  List<ProviderInfo> _providers = [];
-
-  /// Every provider the daemon knows, ready or not. For a surface that
-  /// explains what is missing rather than hiding it.
-  List<ProviderInfo> get allProviders => _providers;
-
-  /// Providers a session can actually be started with.
-  ///
-  /// An unready agent — not installed, or hooks missing — produces a session
-  /// that runs and is never heard from, which reads as a hang. `helios start`
-  /// is where those are shown, with what to do about them.
-  List<ProviderInfo> get providers =>
-      _providers.where((p) => p.ready).toList(growable: false);
-  bool _providersLoaded = false;
-  bool get providersLoaded => _providersLoaded;
 
   // Per-provider model cache: provider ID → models
   final Map<String, List<ModelInfo>> _modelCache = {};
@@ -100,6 +70,14 @@ class DaemonAPIService extends ChangeNotifier {
 
   /// External callback for SSE events (used by HostManager for notification routing).
   SSEEventCallback? onSSEEvent;
+
+  /// Tells the cache that a write changed something it holds, by raising the
+  /// same event the daemon would have.
+  ///
+  /// Reusing the event path rather than adding a second one means locally
+  /// caused staleness goes through the mapping that is already under test.
+  void _markStale(String type) =>
+      onSSEEvent?.call(hostId, SSEEvent(type, const {}));
 
   DaemonAPIService({
     required this.hostId,
@@ -120,7 +98,6 @@ class DaemonAPIService extends ChangeNotifier {
     _running = true;
     _isActiveHost = true;
     _startWatchdog();
-    await _loadSessionCache();
     _connect(); // fire-and-forget — SSE runs in background
   }
 
@@ -147,7 +124,6 @@ class DaemonAPIService extends ChangeNotifier {
     }
 
     _isActiveHost = asActiveHost;
-    if (asActiveHost) await _loadSessionCache();
 
     // Timers do not fire while the process is suspended, so the watchdog and
     // any pending backoff came back late or not at all.
@@ -173,11 +149,8 @@ class DaemonAPIService extends ChangeNotifier {
   /// Promote from background to active (fetch data, start polling if SSE is down).
   void promote() async {
     _isActiveHost = true;
-    await _loadSessionCache();
-    fetchSessions();
-    fetchNotifications();
-    fetchProviders();
-    fetchSortMode();
+    _markStale('session_updated');
+    _markStale('notification_resolved');
     if (!_connected) _startPolling();
   }
 
@@ -192,7 +165,7 @@ class DaemonAPIService extends ChangeNotifier {
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      fetchSessions();
+      _markStale('session_updated');
     });
   }
 
@@ -222,25 +195,25 @@ class DaemonAPIService extends ChangeNotifier {
 
   String get _sessionCacheKey => 'session_cache_$hostId';
 
-  /// Load cached sessions from disk for instant display on launch.
-  Future<void> _loadSessionCache() async {
-    if (_sessionsLoaded) return;
+  /// The session list left on disk by the last unfiltered read.
+  ///
+  /// What the dashboard draws before the first fetch resolves, so the app
+  /// opens on data rather than on a spinner over data it already has. Mobile
+  /// only: the desktop deliberately does not persist its cache, but the phone
+  /// opens on a train.
+  Future<List<Session>?> cachedSessions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_sessionCacheKey);
-      if (raw == null) return;
+      if (raw == null) return null;
       final list = (jsonDecode(raw) as List?) ?? [];
-      _sessions = list
-          .map(
-            (s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId),
-          )
+      return list
+          .map((s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId))
           .toList();
-      _sessionsLoaded = true;
-      notifyListeners();
     } catch (_) {
-      // Schema changed or corrupt cache — drop it and fetch fresh
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_sessionCacheKey);
+      // Schema changed, corrupt cache, or no store at all. Either way the
+      // fetch behind this is the real answer, so the seed just stands down.
+      return null;
     }
   }
 
@@ -303,7 +276,7 @@ class DaemonAPIService extends ChangeNotifier {
       // A dead stream is exactly when notification_resolved events go missing,
       // so re-sync the tray against the daemon before trusting the stream
       // again. Resuming the app already does this; a network flap does not.
-      fetchNotifications();
+      _markStale('notification_resolved');
       notifyListeners();
 
       String buffer = '';
@@ -354,7 +327,7 @@ class DaemonAPIService extends ChangeNotifier {
     // collapse into a single HTTP call.
     _notificationDebounce?.cancel();
     _notificationDebounce = Timer(const Duration(milliseconds: 500), () {
-      fetchNotifications();
+      _markStale('notification_resolved');
     });
 
     // Debounce session fetches for active host
@@ -367,7 +340,7 @@ class DaemonAPIService extends ChangeNotifier {
             type == 'subagent_status')) {
       _sessionDebounce?.cancel();
       _sessionDebounce = Timer(const Duration(milliseconds: 500), () {
-        fetchSessions();
+        _markStale('session_updated');
       });
     }
   }
@@ -395,22 +368,24 @@ class DaemonAPIService extends ChangeNotifier {
 
   // ==================== Notifications API ====================
 
-  Future<void> fetchNotifications() async {
-    try {
-      final resp = await _api.get('/api/notifications');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        final list = (data['notifications'] as List?) ?? [];
-        _notifications = list
-            .map((n) => HeliosNotification.fromJson(n, hostId: hostId))
-            .toList();
-        _notificationsLoaded = true;
-        _reconcilePostedNotifications();
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch notifications: $e');
+  /// Reads the pending notifications and brings the OS tray in line with them.
+  ///
+  /// The reconciliation rides the read rather than sitting beside it: the tray
+  /// is a copy of this answer, and letting the two be refreshed separately is
+  /// how the tray ends up holding notifications the daemon has already
+  /// resolved.
+  Future<List<HeliosNotification>> listNotifications() async {
+    final resp = await _api.get('/api/notifications');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('notifications', resp.statusCode);
     }
+    final data = jsonDecode(resp.body);
+    final list = (data['notifications'] as List?) ?? [];
+    final parsed = list
+        .map((n) => HeliosNotification.fromJson(n, hostId: hostId))
+        .toList();
+    _reconcilePosted(parsed);
+    return parsed;
   }
 
   /// Bring the tray in line with the daemon, which owns notification status.
@@ -420,10 +395,10 @@ class DaemonAPIService extends ChangeNotifier {
   /// Driven by the pending set rather than by the resolved rows: the daemon
   /// prunes old notifications, so one resolved a while back is absent from the
   /// response entirely and no per-row sweep would ever reach it.
-  void _reconcilePostedNotifications() {
+  void _reconcilePosted(List<HeliosNotification> notifications) {
     NotificationService.instance.retainOnly(
       hostId,
-      _notifications.where((n) => n.isPending).map((n) => n.id).toSet(),
+      notifications.where((n) => n.isPending).map((n) => n.id).toSet(),
     );
   }
 
@@ -438,14 +413,14 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final resp = await _api.post('/api/notifications/$id/action', body: body);
       if (resp.statusCode == 200) {
-        await fetchNotifications();
+        _markStale('notification_resolved');
         return null;
       }
       // 410 means someone else got there first — the terminal, or our own
       // answer racing the hook that retracts the notification. Either way the
       // question is answered, which is not a failure worth reporting.
       if (resp.statusCode == 410) {
-        await fetchNotifications();
+        _markStale('notification_resolved');
         return null;
       }
       final message = _actionErrorMessage(resp.body);
@@ -474,7 +449,7 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final resp = await _api.post('/api/notifications/$id/dismiss');
       if (resp.statusCode == 200) {
-        await fetchNotifications();
+        _markStale('notification_resolved');
         return true;
       }
     } catch (e) {
@@ -493,7 +468,7 @@ class DaemonAPIService extends ChangeNotifier {
         body: {'notification_ids': ids, 'action': action},
       );
       if (resp.statusCode == 200) {
-        await fetchNotifications();
+        _markStale('notification_resolved');
         return true;
       }
     } catch (e) {
@@ -504,63 +479,37 @@ class DaemonAPIService extends ChangeNotifier {
 
   // ==================== Session API ====================
 
-  Future<void> fetchSessions({
-    String? q,
-    String? status,
-    String? filter,
-    String? cwd,
-    bool updateFilters = false,
-  }) async {
-    // When called with explicit params from search UI, remember them.
-    if (updateFilters) {
-      _lastSessionQ = q;
-      _lastSessionFilter = filter;
-      _lastSessionCwd = cwd;
+  /// Reads the session list under [query], and seeds the disk cache from it
+  /// when the query is the unfiltered one.
+  ///
+  /// The disk write is conditional because only the whole list is worth
+  /// showing on a cold launch: seeding from a search result would open the
+  /// dashboard on whatever the user last typed.
+  Future<List<Session>> listSessions(SessionQuery query) async {
+    final params = <String, String>{};
+    if (query.q != null && query.q!.isNotEmpty) params['q'] = query.q!;
+    if (query.status != null && query.status!.isNotEmpty) {
+      params['status'] = query.status!;
     }
-
-    // Use the remembered filters for background refreshes (polling/SSE).
-    final effectiveQ = q ?? _lastSessionQ;
-    final effectiveFilter = filter ?? _lastSessionFilter;
-    final effectiveCwd = cwd ?? _lastSessionCwd;
-
-    try {
-      final params = <String, String>{};
-      if (effectiveQ != null && effectiveQ.isNotEmpty) params['q'] = effectiveQ;
-      if (status != null && status.isNotEmpty) params['status'] = status;
-      if (effectiveFilter != null && effectiveFilter.isNotEmpty) {
-        params['filter'] = effectiveFilter;
-      }
-      if (effectiveCwd != null && effectiveCwd.isNotEmpty) {
-        params['cwd'] = effectiveCwd;
-      }
-
-      final queryString = params.entries
-          .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
-          .join('&');
-      final path = queryString.isNotEmpty
-          ? '/api/sessions?$queryString'
-          : '/api/sessions';
-
-      final resp = await _api.get(path);
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        final list = (data['sessions'] as List?) ?? [];
-        _sessions = list
-            .map((s) => Session.fromJson(s, hostId: hostId))
-            .toList();
-        _sessionsLoaded = true;
-        notifyListeners();
-        // Cache the full unfiltered list for instant display on next launch
-        final isUnfiltered =
-            (effectiveQ == null || effectiveQ.isEmpty) &&
-            (effectiveCwd == null || effectiveCwd.isEmpty);
-        if (isUnfiltered) {
-          _saveSessionCache(jsonEncode(list));
-        }
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch sessions: $e');
+    if (query.filter != null && query.filter!.isNotEmpty) {
+      params['filter'] = query.filter!;
     }
+    if (query.cwd != null && query.cwd!.isNotEmpty) params['cwd'] = query.cwd!;
+
+    final queryString = params.entries
+        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+        .join('&');
+    final path =
+        queryString.isNotEmpty ? '/api/sessions?$queryString' : '/api/sessions';
+
+    final resp = await _api.get(path);
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('sessions', resp.statusCode);
+    }
+    final data = jsonDecode(resp.body);
+    final list = (data['sessions'] as List?) ?? [];
+    if (query.isUnfiltered) _saveSessionCache(jsonEncode(list));
+    return list.map((s) => Session.fromJson(s, hostId: hostId)).toList();
   }
 
   Future<List<DirectoryInfo>> fetchDirectories() async {
@@ -664,7 +613,7 @@ class DaemonAPIService extends ChangeNotifier {
         '[$hostId] sendSessionPrompt: status=${resp.statusCode} body=${resp.body}',
       );
       if (resp.statusCode == 200) {
-        await fetchSessions();
+        _markStale('session_updated');
         return null;
       }
       return _sendErrorMessage(resp.body);
@@ -692,7 +641,7 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final resp = await _api.post('/api/sessions/$sessionId/stop');
       if (resp.statusCode == 200) {
-        await fetchSessions();
+        _markStale('session_updated');
         return true;
       }
     } catch (e) {
@@ -705,7 +654,7 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final resp = await _api.post('/api/sessions/$sessionId/terminate');
       if (resp.statusCode == 200) {
-        await fetchSessions();
+        _markStale('session_updated');
         return true;
       }
     } catch (e) {
@@ -728,7 +677,7 @@ class DaemonAPIService extends ChangeNotifier {
         body: {'mode': mode},
       );
       if (resp.statusCode == 200) {
-        await fetchSessions();
+        _markStale('session_updated');
         return null;
       }
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -749,7 +698,7 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       final resp = await _api.post('/api/sessions/$sessionId/resume');
       if (resp.statusCode == 200) {
-        await fetchSessions();
+        _markStale('session_updated');
         return true;
       }
     } catch (e) {
@@ -758,66 +707,31 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
+  /// Writes a session's pinned flag or title. The painting is the cache's job.
   Future<bool> patchSession(
     String sessionId, {
     bool? pinned,
     String? title,
   }) async {
-    // Optimistically update the local session list for instant UI feedback.
-    // Use Future.microtask to defer the notification so any dialog/sheet that
-    // triggered this call finishes its pop transition first — avoids the
-    // _dependents.isEmpty assertion in framework.dart.
-    final idx = _sessions.indexWhere((s) => s.sessionId == sessionId);
-    Session? original;
-    if (idx != -1) {
-      original = _sessions[idx];
-      _sessions[idx] = original.copyWith(
-        pinned: pinned ?? original.pinned,
-        title: title,
-      );
-      Future.microtask(() => notifyListeners());
-    }
-
     try {
       final body = <String, dynamic>{};
       if (pinned != null) body['pinned'] = pinned;
       if (title != null) body['title'] = title;
       final resp = await _api.patch('/api/sessions/$sessionId', body: body);
-      if (resp.statusCode == 200) {
-        await fetchSessions();
-        return true;
-      }
+      if (resp.statusCode == 200) return true;
     } catch (e) {
       debugPrint('[$hostId] Failed to patch session: $e');
-    }
-
-    // Revert on failure.
-    if (original != null && idx != -1 && idx < _sessions.length) {
-      _sessions[idx] = original;
-      notifyListeners();
     }
     return false;
   }
 
   Future<bool> deleteSession(String sessionId) async {
-    // Optimistically remove from local list for instant UI feedback.
-    final original = List<Session>.from(_sessions);
-    _sessions.removeWhere((s) => s.sessionId == sessionId);
-    Future.microtask(() => notifyListeners());
-
     try {
       final resp = await _api.delete('/api/sessions/$sessionId');
-      if (resp.statusCode == 200) {
-        await fetchSessions();
-        return true;
-      }
+      if (resp.statusCode == 200) return true;
     } catch (e) {
       debugPrint('[$hostId] Failed to delete session: $e');
     }
-
-    // Revert on failure.
-    _sessions = original;
-    notifyListeners();
     return false;
   }
 
@@ -911,158 +825,48 @@ class DaemonAPIService extends ChangeNotifier {
   static const budgetMax = 0.9;
   static const budgetDefault = 0.25;
 
-  bool _autoTitleEnabled = false;
-  bool _autoTitleEmoji = false;
-  bool _evictEnabled = false;
-  double _budgetFraction = budgetDefault;
-  bool _hostSettingsLoaded = false;
-
-  bool get autoTitleEnabled => _autoTitleEnabled;
-  bool get autoTitleEmoji => _autoTitleEmoji;
-  bool get evictEnabled => _evictEnabled;
-  double get budgetFraction => _budgetFraction;
-
-  /// False until this host has answered once. A host that has never been read
-  /// shows nothing, rather than a default that is probably not its value.
-  bool get hostSettingsLoaded => _hostSettingsLoaded;
-
   /// Reads every daemon-owned setting in one request. The sort mode arrives in
   /// the same response, so fetching it on its own would ask the host the same
   /// question twice.
-  Future<void> fetchHostSettings() async {
+  ///
+  /// The daemon answers with the map under a `settings` key. Reading the
+  /// envelope as though it were the map gives a default for every setting,
+  /// which is indistinguishable from a fresh install.
+  Future<HostSettings> loadHostSettings() async {
     final body = await getSettings();
-    if (body == null) return;
-    final settings = (body['settings'] as Map<String, dynamic>?) ?? const {};
-    _manualOrder = settings[_sortModeSetting] == 'manual';
-    _autoTitleEnabled = settings[settingAutoTitle] == 'true';
-    // Off unless turned on: Flutter ships no Nerd Font, so the glyphs render
-    // as empty boxes on the phone.
-    _autoTitleEmoji = settings[settingAutoTitleEmoji] == 'true';
-    _evictEnabled = settings[settingEvict] == 'true';
-    // Clamped rather than trusted: the setting predates the slider, so a
-    // stored value can sit outside its travel.
-    final budget = double.tryParse('${settings[settingBudgetFraction] ?? ''}');
-    _budgetFraction =
-        budget == null ? budgetDefault : budget.clamp(budgetMin, budgetMax);
-    _hostSettingsLoaded = true;
-    notifyListeners();
-  }
-
-  Future<bool> setAutoTitleEnabled(bool value) {
-    final previous = _autoTitleEnabled;
-    return _writeHostSetting(
-      settingAutoTitle,
-      value ? 'true' : 'false',
-      () => _autoTitleEnabled = value,
-      () => _autoTitleEnabled = previous,
+    if (body == null) throw const HeliosApiException('settings', 0);
+    return HostSettings.fromMap(
+      (body['settings'] as Map<String, dynamic>?) ?? const {},
     );
-  }
-
-  Future<bool> setAutoTitleEmoji(bool value) {
-    final previous = _autoTitleEmoji;
-    return _writeHostSetting(
-      settingAutoTitleEmoji,
-      value ? 'true' : 'false',
-      () => _autoTitleEmoji = value,
-      () => _autoTitleEmoji = previous,
-    );
-  }
-
-  Future<bool> setEvictEnabled(bool value) {
-    final previous = _evictEnabled;
-    return _writeHostSetting(
-      settingEvict,
-      value ? 'true' : 'false',
-      () => _evictEnabled = value,
-      () => _evictEnabled = previous,
-    );
-  }
-
-  Future<bool> setBudgetFraction(double value) {
-    final previous = _budgetFraction;
-    final clamped = value.clamp(budgetMin, budgetMax);
-    return _writeHostSetting(
-      settingBudgetFraction,
-      clamped.toStringAsFixed(2),
-      () => _budgetFraction = clamped,
-      () => _budgetFraction = previous,
-    );
-  }
-
-  /// Paints the new value first so the control answers the tap, and puts the
-  /// old one back if the host refuses or cannot be reached. Returning the
-  /// verdict is the point: a switch that flips and then quietly did nothing is
-  /// worse than one that says it failed.
-  Future<bool> _writeHostSetting(
-    String key,
-    String value,
-    void Function() apply,
-    void Function() revert,
-  ) async {
-    apply();
-    notifyListeners();
-    if (await updateSettings({key: value})) return true;
-    revert();
-    notifyListeners();
-    return false;
   }
 
   // ==================== Session order ====================
 
   /// The daemon owns the mode, so every client of this host agrees on it.
-  static const _sortModeSetting = 'sessions.sort';
-  bool _manualOrder = false;
-  bool get manualOrder => _manualOrder;
+  static const settingSortMode = 'sessions.sort';
 
-  /// The name the session list calls. The mode comes back with the rest of the
-  /// host's settings.
-  Future<void> fetchSortMode() => fetchHostSettings();
-
-  /// Switching to manual freezes [visibleOrder] as it stands, so the list does
-  /// not jump the moment it stops sorting itself.
-  Future<void> setManualOrder(bool manual, {List<String> visibleOrder = const []}) async {
-    if (manual && visibleOrder.isNotEmpty) await setSessionOrder(visibleOrder);
-    final ok = await updateSettings({_sortModeSetting: manual ? 'manual' : 'activity'});
-    if (!ok) return;
-    _manualOrder = manual;
-    notifyListeners();
-  }
-
-  /// Writes the arrangement, painting it locally first so the drag lands
-  /// without waiting for the round trip.
+  /// Writes the arrangement. The cache paints it before this answers.
   Future<bool> setSessionOrder(List<String> sessionIds) async {
-    final previous = _sessions;
-    final positions = {for (var i = 0; i < sessionIds.length; i++) sessionIds[i]: i};
-    _sessions = _sessions
-        .map((s) => positions.containsKey(s.sessionId) ? s.copyWith(sortOrder: positions[s.sessionId]) : s)
-        .toList();
-    notifyListeners();
     try {
       final resp = await _api.post('/api/sessions/order', body: {'order': sessionIds});
       if (resp.statusCode == 200) return true;
     } catch (e) {
       debugPrint('[$hostId] setSessionOrder error: $e');
     }
-    _sessions = previous;
-    notifyListeners();
     return false;
   }
 
   // ==================== Providers & Models API ====================
 
-  Future<void> fetchProviders() async {
-    try {
-      final resp = await _api.get('/api/providers');
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        final list = (data['providers'] as List?) ?? [];
-        _providers = list.map((p) => ProviderInfo.fromJson(p)).toList();
-        _providersLoaded = true;
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch providers: $e');
+  /// Every provider the daemon knows, ready or not.
+  Future<List<ProviderInfo>> listProviders() async {
+    final resp = await _api.get('/api/providers');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('providers', resp.statusCode);
     }
+    final data = jsonDecode(resp.body);
+    final list = (data['providers'] as List?) ?? [];
+    return list.map((p) => ProviderInfo.fromJson(p)).toList();
   }
 
   List<ModelInfo> getCachedModels(String providerId) {
@@ -1164,7 +968,7 @@ class DaemonAPIService extends ChangeNotifier {
 
       final resp = await _api.post('/api/sessions', body: body);
       if (resp.statusCode == 200) {
-        await fetchSessions();
+        _markStale('session_updated');
         return true;
       }
     } catch (e) {
@@ -1294,6 +1098,113 @@ class SSEEvent {
   final String type;
   final dynamic data;
   SSEEvent(this.type, this.data);
+}
+
+/// A daemon read that came back with something other than 200.
+///
+/// Thrown rather than swallowed so a cache entry can hold the failure and a
+/// screen can say what went wrong, instead of showing an empty list that looks
+/// like a host with no sessions.
+class HeliosApiException implements Exception {
+  final String resource;
+  final int statusCode;
+  const HeliosApiException(this.resource, this.statusCode);
+
+  @override
+  String toString() => 'HeliosApiException($resource, $statusCode)';
+}
+
+/// The host settings, parsed.
+///
+/// Typed fields rather than the daemon's string map: the budget has to be
+/// clamped at the boundary, and every reader wants a bool. Writes merge by
+/// field for the same reason the daemon merges by key — several screens own
+/// disjoint parts of this and must not blank each other's.
+class HostSettings {
+  final bool manualOrder;
+  final bool autoTitleEnabled;
+
+  /// Off unless turned on: Flutter ships no Nerd Font, so the glyphs render as
+  /// empty boxes on the phone.
+  final bool autoTitleEmoji;
+  final bool evictEnabled;
+  final double budgetFraction;
+
+  const HostSettings({
+    this.manualOrder = false,
+    this.autoTitleEnabled = false,
+    this.autoTitleEmoji = false,
+    this.evictEnabled = false,
+    this.budgetFraction = DaemonAPIService.budgetDefault,
+  });
+
+  factory HostSettings.fromMap(Map<String, dynamic> settings) {
+    // Clamped rather than trusted: the setting predates the slider, so a
+    // stored value can sit outside its travel.
+    final budget = double.tryParse(
+      '${settings[DaemonAPIService.settingBudgetFraction] ?? ''}',
+    );
+    return HostSettings(
+      manualOrder: settings[DaemonAPIService.settingSortMode] == 'manual',
+      autoTitleEnabled: settings[DaemonAPIService.settingAutoTitle] == 'true',
+      autoTitleEmoji: settings[DaemonAPIService.settingAutoTitleEmoji] == 'true',
+      evictEnabled: settings[DaemonAPIService.settingEvict] == 'true',
+      budgetFraction: budget == null
+          ? DaemonAPIService.budgetDefault
+          : budget.clamp(
+              DaemonAPIService.budgetMin,
+              DaemonAPIService.budgetMax,
+            ),
+    );
+  }
+
+  HostSettings copyWith({
+    bool? manualOrder,
+    bool? autoTitleEnabled,
+    bool? autoTitleEmoji,
+    bool? evictEnabled,
+    double? budgetFraction,
+  }) =>
+      HostSettings(
+        manualOrder: manualOrder ?? this.manualOrder,
+        autoTitleEnabled: autoTitleEnabled ?? this.autoTitleEnabled,
+        autoTitleEmoji: autoTitleEmoji ?? this.autoTitleEmoji,
+        evictEnabled: evictEnabled ?? this.evictEnabled,
+        budgetFraction: budgetFraction ?? this.budgetFraction,
+      );
+}
+
+/// The filters a session list is read under, and the key it is cached against.
+///
+/// Two different filters are two different questions with two different
+/// answers, so they must not share an entry.
+class SessionQuery {
+  final String? q;
+  final String? status;
+  final String? filter;
+  final String? cwd;
+
+  const SessionQuery({this.q, this.status, this.filter, this.cwd});
+
+  static const all = SessionQuery();
+
+  /// Whether this is the whole list, which is the only one worth persisting.
+  bool get isUnfiltered =>
+      (q == null || q!.isEmpty) && (cwd == null || cwd!.isEmpty);
+
+  @override
+  bool operator ==(Object other) =>
+      other is SessionQuery &&
+      other.q == q &&
+      other.status == status &&
+      other.filter == filter &&
+      other.cwd == cwd;
+
+  @override
+  int get hashCode => Object.hash(q, status, filter, cwd);
+
+  @override
+  String toString() => 'SessionQuery(q: $q, status: $status, filter: $filter, cwd: $cwd)';
 }
 
 class FileEntry {

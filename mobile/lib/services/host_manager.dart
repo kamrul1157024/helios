@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -6,8 +7,6 @@ import 'package:uuid/uuid.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/host_connection.dart';
-import '../models/notification.dart';
-import '../models/session.dart';
 import 'api_client.dart';
 import 'daemon_api_service.dart';
 
@@ -36,6 +35,16 @@ class HostManager extends ChangeNotifier {
   List<HostConnection> _hosts = [];
   String? _activeHostId;
   final Map<String, DaemonAPIService> _services = {};
+
+  final _sseEvents =
+      StreamController<({String hostId, SSEEvent event})>.broadcast();
+
+  /// Every host's SSE events on one stream, tagged with which host sent them.
+  ///
+  /// The cache invalidator listens here rather than to each service: hosts come
+  /// and go, and a subscription per service would have to be torn down and
+  /// rebuilt on every pairing.
+  Stream<({String hostId, SSEEvent event})> get sseEvents => _sseEvents.stream;
 
   bool _isLoading = true;
   bool _isPendingApproval = false;
@@ -84,55 +93,6 @@ class HostManager extends ChangeNotifier {
   /// The offline hosts worth a banner under the current filter.
   List<HostConnection> get visibleOfflineHosts =>
       offlineHostsForFilter(offlineHosts, _activeHostId);
-
-  /// All sessions from all hosts, merged.
-  List<Session> get allSessions =>
-      _services.values.expand((s) => s.sessions).toList();
-
-  /// All notifications from all hosts, merged.
-  List<HeliosNotification> get allNotifications =>
-      _services.values.expand((s) => s.notifications).toList();
-
-  /// Sessions for the current filter (active host or all).
-  List<Session> get filteredSessions {
-    if (_activeHostId == null) return allSessions;
-    return _services[_activeHostId]?.sessions ?? [];
-  }
-
-  /// Notifications for the current filter (active host or all).
-  List<HeliosNotification> get filteredNotifications {
-    if (_activeHostId == null) return allNotifications;
-    return _services[_activeHostId]?.notifications ?? [];
-  }
-
-  /// One switch for every host: the arrangement is stored per daemon, but a
-  /// list that sorts itself on one host and holds still on another is neither.
-  bool get manualOrder => _services.values.any((s) => s.manualOrder);
-
-  /// [visibleByHost] is what each host shows right now, frozen as the starting
-  /// arrangement so nothing jumps as the sorting stops.
-  Future<void> setManualOrder(bool manual, Map<String, List<String>> visibleByHost) async {
-    await Future.wait(_services.entries.map(
-      (e) => e.value.setManualOrder(manual, visibleOrder: visibleByHost[e.key] ?? const []),
-    ));
-    notifyListeners();
-  }
-
-  /// Whether sessions have been loaded (any host for "all", specific for filtered).
-  bool get sessionsLoaded {
-    if (_activeHostId == null) {
-      return _services.values.any((s) => s.sessionsLoaded);
-    }
-    return _services[_activeHostId]?.sessionsLoaded ?? false;
-  }
-
-  /// Whether notifications have been loaded.
-  bool get notificationsLoaded {
-    if (_activeHostId == null) {
-      return _services.values.any((s) => s.notificationsLoaded);
-    }
-    return _services[_activeHostId]?.notificationsLoaded ?? false;
-  }
 
   // ==================== Lifecycle ====================
 
@@ -191,10 +151,6 @@ class HostManager extends ChangeNotifier {
     _services[host.id] = service;
 
     if (host.id == _activeHostId) {
-      service.fetchNotifications();
-      service.fetchSessions();
-      service.fetchProviders();
-      service.fetchSortMode();
       await service.startActive();
     } else {
       await service.startBackground();
@@ -208,6 +164,7 @@ class HostManager extends ChangeNotifier {
   void _onServiceSSEEvent(String hostId, SSEEvent event) {
     // HostManager gets notified of all SSE events from all hosts.
     // HomeScreen will listen to this for OS notification dispatch.
+    _sseEvents.add((hostId: hostId, event: event));
     notifyListeners();
   }
 
@@ -446,24 +403,6 @@ class HostManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Fetch all data for a specific host (used on pull-to-refresh in "All" mode).
-  Future<void> refreshHost(String hostId) async {
-    final service = _services[hostId];
-    if (service == null) return;
-    await Future.wait([
-      service.fetchSessions(),
-      service.fetchNotifications(),
-    ]);
-  }
-
-  /// Refresh all hosts (used on pull-to-refresh in "All" mode).
-  Future<void> refreshAll() async {
-    await Future.wait(_services.values.map((s) => Future.wait([
-          s.fetchSessions(),
-          s.fetchNotifications(),
-        ])));
-  }
-
   /// Stop all services (app background).
   void stopAll() {
     for (final service in _services.values) {
@@ -479,9 +418,8 @@ class HostManager extends ChangeNotifier {
       // Every host, not just the active one: a background host's approvals are
       // the ones most likely to have been answered elsewhere while the app was
       // suspended, and the reconcile sweep only runs on fetch.
-      service.fetchNotifications();
+      _sseEvents.add((hostId: host.id, event: SSEEvent('notification_resolved', const {})));
       final isActive = host.id == _activeHostId;
-      if (isActive) service.fetchSessions();
       await service.resume(asActiveHost: isActive);
     }
   }
@@ -588,6 +526,7 @@ Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String de
       service.dispose();
     }
     _services.clear();
+    _sseEvents.close();
     super.dispose();
   }
 }

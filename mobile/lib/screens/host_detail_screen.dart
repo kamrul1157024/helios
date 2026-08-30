@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/host_connection.dart';
+import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 
-class HostDetailScreen extends StatefulWidget {
+class HostDetailScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
 
   const HostDetailScreen({super.key, required this.hostId});
 
   @override
-  State<HostDetailScreen> createState() => _HostDetailScreenState();
+  rp.ConsumerState<HostDetailScreen> createState() => _HostDetailScreenState();
 }
 
-class _HostDetailScreenState extends State<HostDetailScreen> {
+class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
   late TextEditingController _labelController;
   late TextEditingController _urlController;
 
@@ -29,9 +32,6 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
     final host = hm.hostById(widget.hostId);
     _labelController = TextEditingController(text: host?.label ?? '');
     _urlController = TextEditingController(text: host?.serverUrl ?? '');
-
-    final service = hm.serviceFor(widget.hostId);
-    if (service != null && service.connected) service.fetchHostSettings();
   }
 
   @override
@@ -194,12 +194,14 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
     bool isConnected,
     ThemeData theme,
   ) {
+    final settings = ref.watch(hostSettingsProvider(widget.hostId)).valueOrNull;
+    final writer = ref.read(hostSettingsProvider(widget.hostId).notifier);
     final header = Text('Host settings', style: theme.textTheme.labelLarge);
 
     // Nothing read yet. A spinner while the host is answering, and a plain
     // statement when it cannot: an offline host that spins forever reads as a
     // broken screen.
-    if (service == null || !service.hostSettingsLoaded) {
+    if (service == null || settings == null) {
       return [
         header,
         const SizedBox(height: 8),
@@ -221,7 +223,7 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
 
     // Loaded but unreachable. The last known values still say what the host is
     // set to, so they are shown and locked rather than hidden.
-    final fraction = _budgetDrag ?? service.budgetFraction;
+    final fraction = _budgetDrag ?? settings.budgetFraction;
 
     return [
       header,
@@ -239,24 +241,24 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
         secondary: const Icon(Icons.title),
         title: const Text('Auto title'),
         subtitle: const Text('Generate session titles automatically'),
-        value: service.autoTitleEnabled,
+        value: settings.autoTitleEnabled,
         onChanged: isConnected
             ? (value) => _saveHostSetting(
-                  () => service.setAutoTitleEnabled(value),
+                  () => writer.setAutoTitleEnabled(value),
                   'Auto title',
                 )
             : null,
       ),
-      if (service.autoTitleEnabled)
+      if (settings.autoTitleEnabled)
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           secondary: const Icon(Icons.emoji_emotions_outlined),
           title: const Text('Title icon'),
           subtitle: const Text('Needs a Nerd Font — boxes without one'),
-          value: service.autoTitleEmoji,
+          value: settings.autoTitleEmoji,
           onChanged: isConnected
               ? (value) => _saveHostSetting(
-                    () => service.setAutoTitleEmoji(value),
+                    () => writer.setAutoTitleEmoji(value),
                     'Title icon',
                   )
               : null,
@@ -269,15 +271,15 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
           'Stops the agents you have not opened lately. Opening one starts '
           'it again, with the conversation intact.',
         ),
-        value: service.evictEnabled,
+        value: settings.evictEnabled,
         onChanged: isConnected
             ? (value) => _saveHostSetting(
-                  () => service.setEvictEnabled(value),
+                  () => writer.setEvictEnabled(value),
                   'Save memory',
                 )
             : null,
       ),
-      if (service.evictEnabled)
+      if (settings.evictEnabled)
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Row(
@@ -300,7 +302,7 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
             onChangeEnd: isConnected
                 ? (value) async {
                     await _saveHostSetting(
-                      () => service.setBudgetFraction(value),
+                      () => writer.setBudgetFraction(value),
                       'Memory limit',
                     );
                     if (mounted) setState(() => _budgetDrag = null);
@@ -311,7 +313,7 @@ class _HostDetailScreenState extends State<HostDetailScreen> {
     ];
   }
 
-  /// Writes one setting and says so when it fails. The service puts the old
+  /// Writes one setting and says so when it fails. The cache puts the old
   /// value back on its own; without a message the control would flick back
   /// with no reason given.
   Future<void> _saveHostSetting(Future<bool> Function() write, String label) async {

@@ -2,12 +2,16 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
+import '../providers/daemon_providers.dart';
+import '../providers/transcript.dart';
 import '../providers/notification_ext.dart';
 import '../providers/verbs.dart';
 import '../services/api_client.dart';
@@ -21,16 +25,16 @@ import 'file_browser_screen.dart';
 import 'git_status_screen.dart';
 import 'terminal_screen.dart';
 
-class SessionDetailScreen extends StatefulWidget {
+class SessionDetailScreen extends rp.ConsumerStatefulWidget {
   final Session session;
 
   const SessionDetailScreen({super.key, required this.session});
 
   @override
-  State<SessionDetailScreen> createState() => _SessionDetailScreenState();
+  rp.ConsumerState<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionDetailScreenState extends State<SessionDetailScreen>
+class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     with SingleTickerProviderStateMixin {
   // Persisted across session switches (static = app-lifetime)
   static final _worktreeSelections =
@@ -44,20 +48,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   String? _pastedBlock;
   String _lastPrompt = '';
   final _scrollController = ScrollController();
-  List<Message> _messages = [];
-  bool _loading = true;
   bool _sending = false;
-  int _total = 0;
-  bool _hasMore = false;
-  bool _loadingOlder = false;
 
-  /// Which parse the held seq numbers count against, quoted back when asking
-  /// for a delta so the daemon can say when it no longer holds.
-  String _epoch = '';
+  /// The transcript as of the last build, so the callbacks below read what the
+  /// frame was drawn from rather than watching outside a build.
+  Transcript _transcript = const Transcript();
+  bool _loading = true;
 
-  /// Messages per request. A page is what fills a screen and a little more,
-  /// not the whole conversation: the rest arrives as the reader scrolls.
-  static const int _pageSize = 50;
+  List<Message> get _messages => _transcript.messages;
+  int get _total => _transcript.total;
+  bool get _hasMore => _transcript.hasMore;
+
+  (String, String) get _transcriptKey =>
+      (widget.session.hostId, widget.session.sessionId);
   StreamSubscription<SSEEvent>? _eventSub;
   String _currentVerb = randomVerb();
   Timer? _verbTimer;
@@ -87,7 +90,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       _breathController.repeat(reverse: true);
       _breathingActive = true;
     }
-    _loadTranscript();
     _loadGitStatus();
     _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) setState(() => _currentVerb = randomVerb());
@@ -167,123 +169,44 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   DaemonAPIService? get _sse =>
       context.read<HostManager>().serviceFor(widget.session.hostId);
 
-  Future<void> _loadTranscript() async {
-    final sid = widget.session.sessionId;
-    debugPrint(
-      '[Transcript][$sid] _loadTranscript start, _loading=$_loading messages=${_messages.length}',
-    );
-    final sse = _sse;
-    if (sse == null) {
-      debugPrint('[Transcript][$sid] no SSE service, aborting');
-      return;
-    }
-    final result = await sse.fetchTranscript(sid, limit: _pageSize);
-    debugPrint(
-      '[Transcript][$sid] fetchTranscript result=${result == null ? "null" : "total=${result.total} returned=${result.messages.length} hasMore=${result.hasMore}"}',
-    );
-    if (result != null && mounted) {
-      setState(() {
-        _messages = result.messages;
-        _total = result.total;
-        _hasMore = result.hasMore;
-        _epoch = result.epoch;
-        _loading = false;
-      });
-    } else if (mounted) {
-      debugPrint(
-        '[Transcript][$sid] result null — setting loading=false, messages unchanged (${_messages.length})',
-      );
-      setState(() => _loading = false);
-    }
-  }
+  Future<void> _loadNewMessages() =>
+      ref.read(transcriptProvider(_transcriptKey).notifier).pullNew();
 
-  /// Pulls what the agent has written since the last message held.
+  Future<void> _loadOlder() =>
+      ref.read(transcriptProvider(_transcriptKey).notifier).loadOlder();
+
+  /// Reads the repository's state: this session's status, the worktrees beside
+  /// it, and a status per worktree for the diff counts.
   ///
-  /// A status event fires several times a turn, and the answer to it is
-  /// usually one message. Asking for the page again would rebuild the list and
-  /// throw away where the reader was.
-  Future<void> _loadNewMessages() async {
-    final sse = _sse;
-    if (sse == null) return;
-    if (_messages.isEmpty || _epoch.isEmpty) {
-      await _loadTranscript();
-      return;
-    }
-
-    final result = await sse.fetchTranscript(
-      widget.session.sessionId,
-      limit: _pageSize,
-      afterSeq: _messages.last.seq,
-      epoch: _epoch,
-    );
-    if (result == null || !mounted) return;
-
-    setState(() {
-      if (result.epochChanged) {
-        // The transcript those seq numbers counted against is gone — forked,
-        // or replaced. Start from what is there now.
-        _messages = result.messages;
-        _epoch = result.epoch;
-        _hasMore = result.hasMore;
-      } else if (result.messages.isNotEmpty) {
-        _messages = [..._messages, ...result.messages];
-      }
-      _total = result.total;
-      _loading = false;
-    });
-  }
-
-  /// Reads the page before the oldest message held, for a reader scrolling
-  /// back through the conversation.
-  Future<void> _loadOlder() async {
-    final sse = _sse;
-    if (sse == null || _loadingOlder || !_hasMore) return;
-    setState(() => _loadingOlder = true);
-
-    final result = await sse.fetchTranscript(
-      widget.session.sessionId,
-      limit: _pageSize,
-      offset: _messages.length,
-    );
-    if (!mounted) return;
-
-    setState(() {
-      if (result != null) {
-        _messages = [...result.messages, ..._messages];
-        _hasMore = result.hasMore;
-        _total = result.total;
-      }
-      _loadingOlder = false;
-    });
-  }
-
+  /// Every one of these goes through the cache, which is what makes the last
+  /// part affordable. It is one read per worktree, and the git screen and the
+  /// file browser ask the same questions about the same paths — so on a repo
+  /// with several worktrees this used to be the most requests any screen made.
+  /// Keyed by path, the second visit costs nothing.
   Future<void> _loadGitStatus() async {
-    final svc = _sse;
-    if (svc == null) return;
-    // First get git status — server resolves to git root from any subdirectory
-    final status = await svc.gitStatus(_effectiveCwd);
+    final hostId = widget.session.hostId;
+    if (_sse == null) return;
+
+    final status = await ref.read(gitStatusProvider((hostId, _effectiveCwd)).future);
     if (!mounted) return;
     setState(() => _gitStatus = status);
 
-    // Use resolved git root for worktree listing
+    // The server resolves a git root from any subdirectory, so the worktree
+    // listing uses the resolved root rather than the session's cwd.
     final gitRoot = status?.root ?? widget.session.cwd;
-    final worktrees = await svc.gitWorktrees(gitRoot);
+    final worktrees = await ref.read(gitWorktreesProvider((hostId, gitRoot)).future);
     if (!mounted) return;
     setState(() => _worktrees = worktrees);
 
-    // Fetch git status for each worktree in parallel (for diff counts)
-    if (worktrees.length > 1) {
-      final statuses = await Future.wait(
-        worktrees.map((wt) => svc.gitStatus(wt.path)),
-      );
-      if (!mounted) return;
-      final map = <String, GitStatus>{};
-      for (var i = 0; i < worktrees.length; i++) {
-        final s = statuses[i];
-        if (s != null) map[worktrees[i].path] = s;
-      }
-      setState(() => _worktreeStatuses = map);
-    }
+    if (worktrees.length <= 1) return;
+    final statuses = await Future.wait(
+      worktrees.map((wt) => ref.read(gitStatusProvider((hostId, wt.path)).future)),
+    );
+    if (!mounted) return;
+    setState(() => _worktreeStatuses = {
+          for (var i = 0; i < worktrees.length; i++)
+            if (statuses[i] != null) worktrees[i].path: statuses[i]!,
+        });
   }
 
   /// Picks attachments, from the gallery, the camera, or the file browser.
@@ -438,7 +361,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         _pastedBlock = null;
       });
       await Future.delayed(const Duration(milliseconds: 500));
-      await _loadTranscript();
+      await _loadNewMessages();
       // The agent writes the prompt to its transcript a moment after accepting
       // it, so the read above can land before the line exists — and a turn
       // that does nothing hook-worthy afterwards never prompts another.
@@ -447,7 +370,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
       }
       _resendReads = [5, 10]
           .map((seconds) => Timer(Duration(seconds: seconds), () {
-                if (mounted) _loadTranscript();
+                if (mounted) _loadNewMessages();
               }))
           .toList();
     } else if (mounted) {
@@ -479,7 +402,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             onSubmitted: (_) {
               Navigator.pop(ctx);
               final title = controller.text.trim();
-              _sse?.patchSession(widget.session.sessionId, title: title);
+              ref
+                  .read(sessionsProvider(allSessionsKey(widget.session.hostId)).notifier)
+                  .patch(widget.session.sessionId, title: title);
             },
           ),
           actions: [
@@ -491,7 +416,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
               onPressed: () {
                 Navigator.pop(ctx);
                 final title = controller.text.trim();
-                _sse?.patchSession(widget.session.sessionId, title: title);
+                ref
+                  .read(sessionsProvider(allSessionsKey(widget.session.hostId)).notifier)
+                  .patch(widget.session.sessionId, title: title);
               },
               child: const Text('Save'),
             ),
@@ -514,11 +441,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   }
 
   /// Get pending notifications for this session.
-  List<HeliosNotification> _pendingNotifications(DaemonAPIService sse) {
-    return sse.notifications
-        .where(
-          (n) => n.sourceSession == widget.session.sessionId && n.isPending,
-        )
+  List<HeliosNotification> _pendingNotifications() {
+    final held =
+        ref.watch(notificationsProvider(widget.session.hostId)).valueOrNull;
+    if (held == null) return const [];
+    return held
+        .where((n) => n.sourceSession == widget.session.sessionId && n.isPending)
         .toList();
   }
 
@@ -527,16 +455,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
     return Consumer<HostManager>(
       builder: (context, hm, _) {
         final sse = hm.serviceFor(widget.session.hostId);
-        final session =
-            sse?.sessions.firstWhere(
+        final transcript = ref.watch(transcriptProvider(_transcriptKey));
+        _transcript = transcript.valueOrNull ?? const Transcript();
+        _loading = transcript.isLoading;
+        final held = ref
+            .watch(sessionsProvider(allSessionsKey(widget.session.hostId)))
+            .valueOrNull;
+        final session = held?.firstWhere(
               (s) => s.sessionId == widget.session.sessionId,
               orElse: () => widget.session,
             ) ??
             widget.session;
         _updateBreathAnimation(session);
-        final pendingNotifs = sse != null
-            ? _pendingNotifications(sse)
-            : <HeliosNotification>[];
+        final pendingNotifs = _pendingNotifications();
 
         return Scaffold(
           appBar: AppBar(
@@ -965,24 +896,27 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   /// then: a button that appears a moment later is better than one that opens
   /// an empty sheet.
   bool _providerHasModes(Session session) {
-    final sse = _sse;
-    if (sse == null) return false;
-    for (final p in sse.providers) {
+    final providers =
+        ref.watch(readyProvidersProvider(widget.session.hostId)).valueOrNull;
+    if (providers == null) return false;
+    for (final p in providers) {
       if (p.id == session.source) return p.permissionModes.isNotEmpty;
     }
     return false;
   }
 
   void _showPermissionModeSheet(Session session) {
-    final sse = _sse;
-    final provider = sse?.providers
-        .where((p) => p.id == session.source)
+    final hostId = widget.session.hostId;
+    final provider = ref
+        .read(readyProvidersProvider(hostId))
+        .valueOrNull
+        ?.where((p) => p.id == session.source)
         .firstOrNull;
     final ids = provider?.permissionModes ?? const <String>[];
     if (ids.isEmpty) {
       // Either the provider list has not loaded yet or the daemon predates
       // permission modes. Say so rather than making the tap do nothing.
-      sse?.fetchProviders();
+      ref.invalidate(providersProvider(hostId));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Permission modes unavailable — try again in a moment'),
