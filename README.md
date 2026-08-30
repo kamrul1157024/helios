@@ -7,9 +7,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/mobile/sessions.jpg" width="220" alt="Helios mobile app — sessions" />
-  <img src="docs/assets/mobile/session-detail.jpg" width="220" alt="Helios mobile app — live session detail" />
-  <img src="docs/assets/mobile/push-notification.jpg" width="220" alt="Helios mobile app — push notification" />
+  <img src="docs/assets/mobile/sessions.png" width="220" alt="Helios mobile app — sessions" />
+  <img src="docs/assets/mobile/session-detail.png" width="220" alt="Helios mobile app — live session detail" />
+  <img src="docs/assets/mobile/terminal.png" width="220" alt="Helios mobile app — live terminal" />
 </p>
 
 Claude Code, Codex and Aider are headless harnesses: they run in a terminal, on
@@ -416,19 +416,23 @@ $ helios new "fix the auth bug in login.go"
 └──────────────────────────────────────────────┘
 ```
 
-Claude asks for permission → your phone buzzes → you tap approve → Claude continues:
+Claude asks for permission → your phone buzzes → you tap approve → Claude
+continues. Open the app to see every session across every paired host, drill
+into a live transcript, and answer Claude's questions — all from your phone:
 
 <p align="center">
-  <img src="docs/assets/mobile/push-notification.jpg" width="250" alt="Push notification on phone" />
+  <img src="docs/assets/mobile/sessions.png" width="250" alt="Sessions tab" />
+  <img src="docs/assets/mobile/session-detail.png" width="250" alt="Live session detail" />
+  <img src="docs/assets/mobile/permission-mode.png" width="250" alt="Permission mode picker" />
 </p>
 
-Open the app to see all your sessions, drill into live session details, manage notifications, or answer Claude's questions — all from your phone:
+The phone is not a read-only mirror. It carries the same terminal the desktop
+app attaches to, the session's git worktrees, and its files:
 
 <p align="center">
-  <img src="docs/assets/mobile/sessions.jpg" width="250" alt="Sessions tab" />
-  <img src="docs/assets/mobile/session-detail.jpg" width="250" alt="Live session detail" />
-  <img src="docs/assets/mobile/notifications.jpg" width="250" alt="Notifications tab" />
-  <img src="docs/assets/mobile/question-notification.jpg" width="250" alt="Question notification" />
+  <img src="docs/assets/mobile/terminal.png" width="250" alt="Live terminal on the phone" />
+  <img src="docs/assets/mobile/git.png" width="250" alt="Git worktrees on the phone" />
+  <img src="docs/assets/mobile/files.png" width="250" alt="File viewer on the phone" />
 </p>
 
 ## Desktop app
