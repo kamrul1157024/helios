@@ -109,7 +109,14 @@ func (s *PublicServer) handleGitLog(w http.ResponseWriter, r *http.Request) {
 	// On a branch that is level with its base — main, fully pushed — the branch
 	// range is empty, and an empty list is the least useful answer to "what
 	// happened here". Fall back to the whole history and say so.
-	if len(commits) == 0 && scope == "branch" && skip == 0 {
+	//
+	// Every page, not just the first. The scope is recomputed per request and
+	// the client has no way to pin it, so a second page asked for after this
+	// fallback would otherwise be answered from the empty branch range and come
+	// back with nothing. A non-empty branch range never reaches here with a
+	// skip: has_more is false once it is exhausted, so no further page is asked
+	// for.
+	if len(commits) == 0 && scope == "branch" {
 		scope = "all"
 		commits, hasMore, err = readLog(root, base, scope, limit, skip)
 		if err != nil {

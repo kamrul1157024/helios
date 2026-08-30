@@ -112,6 +112,33 @@ func TestGitLogPages(t *testing.T) {
 	}
 }
 
+func TestGitLogPagesAfterFallingBackToFullHistory(t *testing.T) {
+	root := gitRepo(t)
+	server := gitServer(t)
+
+	// HEAD is its own base, so the branch range is empty and the first page
+	// falls back to the whole history.
+	first := gitJSON(t, server, "/api/git/log?path="+root+"&base=main&limit=2")
+	if first["scope"] != "all" {
+		t.Fatalf("scope = %v, want all after an empty branch range", first["scope"])
+	}
+	if has, _ := first["has_more"].(bool); !has {
+		t.Fatal("has_more = false on the first of two pages")
+	}
+
+	// The second page is asked for the same way the client asks: with a skip
+	// and without `all`, because the client never chose it. Answering from the
+	// empty branch range here is what left "Load more" returning nothing.
+	second := gitJSON(t, server, "/api/git/log?path="+root+"&base=main&limit=2&skip=2")
+	if second["scope"] != "all" {
+		t.Fatalf("scope = %v on page two, want all", second["scope"])
+	}
+	commits, _ := second["commits"].([]interface{})
+	if len(commits) != 1 {
+		t.Fatalf("page two has %d commits, want the 1 remaining", len(commits))
+	}
+}
+
 func TestGitChangesForOneCommit(t *testing.T) {
 	root := gitRepo(t)
 	head := gitSHAs(t, root)[0]
