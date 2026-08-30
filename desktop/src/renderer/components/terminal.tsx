@@ -105,6 +105,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const hostSized = useRef(false)
   const theme = useStore((s) => s.terminalTheme)
 
   // Assigned rather than passed on construction: rebuilding the terminal to
@@ -188,8 +189,19 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     const apply = (): void => {
       // A hidden element measures as zero; fit() would then propose 1×1.
       if (container.clientWidth === 0 || container.clientHeight === 0) return
-      fit.fit()
-      void bridge.term.resize(tab.id, term.cols, term.rows)
+      const dims = fit.proposeDimensions()
+      if (!dims?.cols || !dims.rows) return
+      // Proposed, not applied. fit() would resize the grid here, and the host
+      // is free to refuse — it takes the smallest interactive viewer, and it
+      // stays silent when the negotiated size does not change. A grid resized
+      // to a size the host never adopted therefore never hears otherwise, and
+      // renders every redraw against a width the agent is not using.
+      //
+      // Until the first status there is nothing to adopt, so the proposal is
+      // also what to render at: a host that never reports a size would
+      // otherwise strand the terminal at xterm's 80×24 default.
+      if (!hostSized.current) term.resize(dims.cols, dims.rows)
+      void bridge.term.resize(tab.id, dims.cols, dims.rows)
     }
 
     apply()
@@ -215,6 +227,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
   useEffect(() => {
     const term = termRef.current
     if (!term || !hostCols || !hostRows) return
+    hostSized.current = true
     if (term.cols === hostCols && term.rows === hostRows) return
     term.resize(hostCols, hostRows)
   }, [hostCols, hostRows])
