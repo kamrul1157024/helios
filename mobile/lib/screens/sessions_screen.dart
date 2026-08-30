@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+// Both packages export Provider, ChangeNotifierProvider and Consumer.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/session.dart';
+import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
@@ -10,14 +13,14 @@ import 'session_detail_screen.dart';
 
 enum SessionFilter { all, pinned, terminated }
 
-class SessionsScreen extends StatefulWidget {
+class SessionsScreen extends rp.ConsumerStatefulWidget {
   const SessionsScreen({super.key});
 
   @override
-  State<SessionsScreen> createState() => _SessionsScreenState();
+  rp.ConsumerState<SessionsScreen> createState() => _SessionsScreenState();
 }
 
-class _SessionsScreenState extends State<SessionsScreen> {
+class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   SessionFilter _filter = SessionFilter.all;
   final Set<String> _selected = {};
   bool _multiSelect = false;
@@ -165,11 +168,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   void _openDirectoryPicker() async {
-    final hm = context.read<HostManager>();
-    final service = hm.activeHostId != null ? hm.serviceFor(hm.activeHostId!) : null;
-    if (service == null) return;
+    final hostId = context.read<HostManager>().activeHostId;
+    if (hostId == null) return;
 
-    final dirs = await service.fetchDirectories();
+    final dirs = await ref.read(directoriesProvider(hostId).future);
     if (!mounted || dirs.isEmpty) return;
 
     showModalBottomSheet(
