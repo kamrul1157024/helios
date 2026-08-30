@@ -74,22 +74,6 @@ class DaemonAPIService extends ChangeNotifier {
   String? _lastSessionFilter;
   String? _lastSessionCwd;
 
-  List<ProviderInfo> _providers = [];
-
-  /// Every provider the daemon knows, ready or not. For a surface that
-  /// explains what is missing rather than hiding it.
-  List<ProviderInfo> get allProviders => _providers;
-
-  /// Providers a session can actually be started with.
-  ///
-  /// An unready agent — not installed, or hooks missing — produces a session
-  /// that runs and is never heard from, which reads as a hang. `helios start`
-  /// is where those are shown, with what to do about them.
-  List<ProviderInfo> get providers =>
-      _providers.where((p) => p.ready).toList(growable: false);
-  bool _providersLoaded = false;
-  bool get providersLoaded => _providersLoaded;
-
   // Per-provider model cache: provider ID → models
   final Map<String, List<ModelInfo>> _modelCache = {};
   final Map<String, DateTime> _modelCacheFetchedAt = {};
@@ -176,7 +160,6 @@ class DaemonAPIService extends ChangeNotifier {
     await _loadSessionCache();
     fetchSessions();
     fetchNotifications();
-    fetchProviders();
     fetchSortMode();
     if (!_connected) _startPolling();
   }
@@ -1086,16 +1069,6 @@ class DaemonAPIService extends ChangeNotifier {
     final data = jsonDecode(resp.body);
     final list = (data['providers'] as List?) ?? [];
     return list.map((p) => ProviderInfo.fromJson(p)).toList();
-  }
-
-  Future<void> fetchProviders() async {
-    try {
-      _providers = await listProviders();
-      _providersLoaded = true;
-      notifyListeners();
-    } catch (e) {
-      debugPrint('[$hostId] Failed to fetch providers: $e');
-    }
   }
 
   List<ModelInfo> getCachedModels(String providerId) {

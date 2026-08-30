@@ -204,7 +204,6 @@ class HostManager extends ChangeNotifier {
     if (host.id == _activeHostId) {
       service.fetchNotifications();
       service.fetchSessions();
-      service.fetchProviders();
       service.fetchSortMode();
       await service.startActive();
     } else {

@@ -973,24 +973,27 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
   /// then: a button that appears a moment later is better than one that opens
   /// an empty sheet.
   bool _providerHasModes(Session session) {
-    final sse = _sse;
-    if (sse == null) return false;
-    for (final p in sse.providers) {
+    final providers =
+        ref.watch(readyProvidersProvider(widget.session.hostId)).valueOrNull;
+    if (providers == null) return false;
+    for (final p in providers) {
       if (p.id == session.source) return p.permissionModes.isNotEmpty;
     }
     return false;
   }
 
   void _showPermissionModeSheet(Session session) {
-    final sse = _sse;
-    final provider = sse?.providers
-        .where((p) => p.id == session.source)
+    final hostId = widget.session.hostId;
+    final provider = ref
+        .read(readyProvidersProvider(hostId))
+        .valueOrNull
+        ?.where((p) => p.id == session.source)
         .firstOrNull;
     final ids = provider?.permissionModes ?? const <String>[];
     if (ids.isEmpty) {
       // Either the provider list has not loaded yet or the daemon predates
       // permission modes. Say so rather than making the tap do nothing.
-      sse?.fetchProviders();
+      ref.invalidate(providersProvider(hostId));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Permission modes unavailable — try again in a moment'),

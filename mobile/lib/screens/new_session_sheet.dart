@@ -7,14 +7,14 @@ import '../providers/daemon_providers.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 
-class NewSessionSheet extends StatefulWidget {
+class NewSessionSheet extends rp.ConsumerStatefulWidget {
   const NewSessionSheet({super.key});
 
   @override
-  State<NewSessionSheet> createState() => _NewSessionSheetState();
+  rp.ConsumerState<NewSessionSheet> createState() => _NewSessionSheetState();
 }
 
-class _NewSessionSheetState extends State<NewSessionSheet> {
+class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
   final _cwdController = TextEditingController();
 
   String? _selectedHostId;
@@ -41,20 +41,19 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     return context.read<HostManager>().serviceFor(_selectedHostId!);
   }
 
+  /// Selects the first ready provider once the list is known.
+  ///
+  /// Reading through the cache means the second and third caller pay nothing:
+  /// this sheet, the permission-mode sheet and HostManager all ask the same
+  /// question, and it used to be three requests.
   void _initProvider() {
-    final sse = _service;
-    if (sse == null) return;
-    if (sse.providers.isNotEmpty) {
-      _selectedProvider = sse.providers.first;
+    final hostId = _selectedHostId;
+    if (hostId == null) return;
+    ref.read(readyProvidersProvider(hostId).future).then((providers) {
+      if (!mounted || providers.isEmpty) return;
+      setState(() => _selectedProvider = providers.first);
       _loadModels();
-    } else {
-      sse.fetchProviders().then((_) {
-        if (mounted && sse.providers.isNotEmpty) {
-          setState(() => _selectedProvider = sse.providers.first);
-          _loadModels();
-        }
-      });
-    }
+    });
   }
 
   Future<void> _loadModels() async {
@@ -272,8 +271,11 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   }
 
   Widget _buildProviderDropdown(ThemeData theme) {
-    final sse = _service;
-    final providers = sse?.providers ?? [];
+    final hostId = _selectedHostId;
+    final providers = hostId == null
+        ? const <ProviderInfo>[]
+        : ref.watch(readyProvidersProvider(hostId)).valueOrNull ??
+            const <ProviderInfo>[];
 
     return DropdownButtonFormField<String>(
       initialValue: _selectedProvider?.id,
