@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
-import { byLastTouched, matchesWorktree, timeAgo, type Worktree } from '../../shared/models.ts'
+import { worktreesQuery } from '../queries.ts'
+import { byLastTouched, matchesWorktree, timeAgo } from '../../shared/models.ts'
 
 interface Props {
   hostId: string
@@ -17,34 +18,19 @@ interface Props {
  * apart. Read-only: Helios shows worktrees, it does not make them.
  */
 export function WorktreesView({ hostId, cwd, active, onPick }: Props): JSX.Element {
-  const [worktrees, setWorktrees] = useState<Worktree[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    setError(null)
-    api(hostId)
-      .gitWorktrees(cwd)
-      .then((result) => {
-        if (!cancelled) setWorktrees(byLastTouched(result))
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, cwd])
+  // The same read the files panel makes for its root picker, so opening both
+  // against one session costs one request rather than two.
+  const { data: worktrees, error, isLoading } = useQuery({ ...worktreesQuery(hostId, cwd), select: byLastTouched })
 
   const matches = useMemo(
     () => (worktrees ?? []).filter((worktree) => matchesWorktree(worktree, query)),
     [worktrees, query],
   )
 
-  if (error) return <p className="empty-note">{error}</p>
-  if (!worktrees) return <p className="empty-note">Loading…</p>
-  if (worktrees.length === 0) return <p className="empty-note">No worktrees.</p>
+  if (error) return <p className="empty-note">{error.message}</p>
+  if (isLoading) return <p className="empty-note">Loading…</p>
+  if (!worktrees || worktrees.length === 0) return <p className="empty-note">No worktrees.</p>
 
   return (
     <div className="worktrees">

@@ -146,13 +146,23 @@ DESKTOP_APP = desktop/release/$(if $(filter arm64,$(DESKTOP_ARCH)),mac-arm64,mac
 
 # make runs recipes under /bin/sh, which never sources a profile, so an nvm
 # install is invisible unless the parent shell already exported it.
-NPM = $(shell command -v npm 2>/dev/null || ls -d $$HOME/.nvm/versions/node/*/bin/npm 2>/dev/null | tail -1)
+#
+# The version matters rather than just the presence: the desktop test script
+# strips TypeScript types at runtime, which Node refuses to do before 22.6. So
+# take the first npm whose own node is new enough — whatever is on PATH if it
+# qualifies, otherwise the newest nvm install that does. See .nvmrc.
+NODE_MIN = 22
+NPM = $(shell \
+	for c in $$(command -v npm 2>/dev/null) $$(ls -d $$HOME/.nvm/versions/node/v*/bin/npm 2>/dev/null | sort -Vr); do \
+		v=$$("$$(dirname "$$c")/node" -p 'process.versions.node.split(".")[0]' 2>/dev/null); \
+		[ -n "$$v" ] && [ "$$v" -ge $(NODE_MIN) ] && { echo "$$c"; break; }; \
+	done)
 # npm's shebang is `env node`, so its directory has to be on PATH too.
 NODE_ENV_PATH = PATH="$(patsubst %/npm,%,$(NPM)):$$PATH"
 
 ## Install node deps if missing, then bundle main, preload and renderer
 desktop:
-	@test -n "$(NPM)" || (echo "npm not found — install Node 20+ (or run 'nvm use' first)" >&2 && exit 1)
+	@test -n "$(NPM)" || (echo "No Node $(NODE_MIN)+ found — run 'nvm use' in this repo (see .nvmrc), or install one" >&2 && exit 1)
 	@if [ ! -d desktop/node_modules ]; then cd desktop && $(NODE_ENV_PATH) npm install; fi
 	cd desktop && $(NODE_ENV_PATH) npm run typecheck && $(NODE_ENV_PATH) npm run build
 	@echo "Desktop bundles: desktop/dist"
@@ -163,6 +173,7 @@ desktop-dev: desktop
 
 ## Frame-codec tests (shares golden fixtures with the Go protocol tests)
 desktop-test:
+	@test -n "$(NPM)" || (echo "No Node $(NODE_MIN)+ found — run 'nvm use' in this repo (see .nvmrc), or install one" >&2 && exit 1)
 	cd desktop && $(NODE_ENV_PATH) npm test
 
 # Extra electron-builder flags. The release runner asks for both Mac slices and

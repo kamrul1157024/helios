@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, bridge } from '../bridge.ts'
+import { useHostGroups, useHostNotifications, useHostSessions, useHostSortModes } from '../host-data.ts'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -169,12 +170,11 @@ export function Sidebar({
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
-  const sessions = useStore((s) => s.sessions)
-  const stats = useStore((s) => s.stats)
-  const notifications = useStore((s) => s.notifications)
+  const { sessions, stats, pending: awaiting } = useHostSessions()
+  const notifications = useHostNotifications()
   const selection = useStore((s) => s.selection)
   const query = useStore((s) => s.query)
-  const sortMode = useStore((s) => s.sortMode)
+  const sortMode = useHostSortModes()
   const groupMode = useStore((s) => s.grouping)
   // Split apart once, here: almost everything below asks "is the list split at
   // all" or "is this a tree the user can edit", and neither reads well as a
@@ -183,8 +183,7 @@ export function Sidebar({
   const derived = groupMode === 'auto'
   const groupOrder = useStore((s) => s.groupOrder)
   const dirOrder = useStore((s) => s.dirOrder)
-  const groupsByHost = useStore((s) => s.groups)
-  const groupsUnsupported = useStore((s) => s.groupsUnsupported)
+  const { groups: groupsByHost, unsupported: groupsUnsupported } = useHostGroups()
   // The card being dragged, so the row under the pointer can show where it
   // would land. Held per host: a drag never crosses from one daemon to another.
   const [dragging, setDragging] = useState<Drag | null>(null)
@@ -276,7 +275,8 @@ export function Sidebar({
     const parent = targetGroup.parent ?? ''
     if ((draggedGroup.parent ?? '') !== parent) await store.moveGroup(hostId, dragged, parent)
 
-    const siblings = (store.getSnapshot().groups[hostId] ?? [])
+    const siblings = store
+      .groupsOf(hostId)
       .filter((g) => (g.parent ?? '') === parent)
       .map((g) => g.key)
       .filter((k) => k !== dragged)
@@ -330,15 +330,16 @@ export function Sidebar({
           : []
 
       const hidden = hideTerminated ? visible.filter(isTerminated).length : 0
-      // An unfetched host has no entry at all, an empty one has []. Without the
+      // Still waiting is not the same as having nothing. Without the
       // distinction a daemon that is slow to answer looks like a daemon with
-      // nothing on it.
-      const loading = sessions[host.id] === undefined
+      // nothing on it, and the sidebar draws the wrong empty state.
+      const loading = awaiting[host.id] ?? true
       const pending = new Map(sorted.map((row) => [row.session.session_id, row.pending]))
       return { host, rows: sorted, nodes, pending, count: ordered.length, hidden, loading }
     })
   }, [
     hosts,
+    awaiting,
     sessions,
     notifications,
     query,
@@ -830,7 +831,7 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       await fn()
-      await store.refreshSessions(hostId)
+      await store.invalidateSessionsFor(hostId)
     } catch (err) {
       store.fail(err)
     }
@@ -875,8 +876,7 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
     },
     {
       label: session.pinned ? 'Unpin' : 'Pin',
-      run: () =>
-        void run(() => api(hostId).patchSession(session.session_id, { pinned: !session.pinned })),
+      run: () => void store.patchSessionField(hostId, session.session_id, { pinned: !session.pinned }),
     },
   )
 

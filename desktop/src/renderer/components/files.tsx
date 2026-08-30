@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, statusOf } from '../bridge.ts'
+import { keys } from '../keys.ts'
 import { isMarkdownPath, languageForPath, renderMarkdownBlocks } from '../markdown.ts'
+import { fileContentQuery, worktreesQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
-import { byLastTouched, type Worktree } from '../../shared/models.ts'
+import { byLastTouched, type FileContent, type Worktree } from '../../shared/models.ts'
 import { CodeEditor, type Cursor, type ReadingPosition } from './editor.tsx'
 import { FileTree } from './file-tree.tsx'
 import { FindInFiles } from './find-in-files.tsx'
@@ -16,25 +19,47 @@ import { SelectionMenu, useTextSelection, type MenuAction } from './selection-me
 /** Past this the editor is read-only: CodeMirror is not a log viewer. */
 const MAX_EDIT_BYTES = 1_000_000
 
+const NO_WORKTREES: Worktree[] = []
+
 /**
  * How long scrolling has to stop before the position is written down. Every
  * wheel tick is a scroll event, and none of them is worth a write on its own.
  */
 const VIEW_SETTLE = 500
 
-interface OpenFile {
+/**
+ * An open tab: everything about a file that is this window's rather than the
+ * daemon's.
+ *
+ * The contents are not here. They live in the cache under
+ * `keys.fileContent`, which is what lets the same read serve quick open, the
+ * restore below, and the editor without three round trips for one file.
+ */
+interface OpenTab {
   path: string
-  /** The content as it stands on disk, for the dirty check and for revert. */
-  saved: string
-  modTime: string
   dirty: boolean
   /** Markdown opens rendered; everything else opens in the editor. */
   mode: 'edit' | 'preview'
-  readOnly: boolean
-  binary: boolean
-  /** Bumped to remount the editor when the buffer is replaced from disk. */
+  /** Bumped to remount the editor when the buffer is replaced from disk. Not
+   *  derived from the cache: a save writes the answer back too, and remounting
+   *  on that would throw away the cursor of whoever pressed ⌘S. */
   version: number
   cursor: Cursor | null
+}
+
+/** What the file is, as opposed to what the window is doing with it. */
+interface OpenFile extends OpenTab {
+  /** The content as it stands on disk, for the dirty check and for revert. */
+  saved: string
+  modTime: string
+  readOnly: boolean
+  binary: boolean
+}
+
+/** A NUL byte means the daemon handed back something that was never text. */
+function shapeOf(content: FileContent): { binary: boolean; readOnly: boolean } {
+  const binary = content.content.includes('\u0000')
+  return { binary, readOnly: binary || content.content.length > MAX_EDIT_BYTES }
 }
 
 /**
@@ -59,8 +84,14 @@ export function FilesPanel({
   const [rootOverride, setRootOverride] = useState<string | null>(null)
   const sessionRoot = useMemo(() => cwd.replace(/\/+$/, '') || '/', [cwd])
   const root = useMemo(() => (rootOverride ?? sessionRoot).replace(/\/+$/, '') || '/', [sessionRoot, rootOverride])
-  const [worktrees, setWorktrees] = useState<Worktree[]>([])
-  const [files, setFiles] = useState<OpenFile[]>([])
+  const client = useQueryClient()
+  // The same read the git panel's worktree list makes. Not a repository at all
+  // lands as an error, which leaves the session's own directory as the only root.
+  const { data: worktrees = NO_WORKTREES } = useQuery({
+    ...worktreesQuery(hostId, cwd),
+    select: byLastTouched,
+  })
+  const [tabs, setTabs] = useState<OpenTab[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   /**
    * The directories open in the tree, held here rather than in the tree itself.
@@ -101,26 +132,8 @@ export function FilesPanel({
     },
     [],
   )
-  const filesRef = useRef<OpenFile[]>(files)
-  filesRef.current = files
-
-  // Another session is another repository until proven otherwise, so the root
-  // it was re-pointed at means nothing here.
-  useEffect(() => {
-    let cancelled = false
-    api(hostId)
-      .gitWorktrees(cwd)
-      .then((result) => {
-        if (!cancelled) setWorktrees(byLastTouched(result))
-      })
-      .catch(() => {
-        // Not a repository: the session's own directory is the only root.
-        if (!cancelled) setWorktrees([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, cwd])
+  const tabsRef = useRef<OpenTab[]>(tabs)
+  tabsRef.current = tabs
 
   const openFile = useCallback(
     async (
@@ -136,13 +149,13 @@ export function FilesPanel({
       activate = true,
     ): Promise<boolean> => {
       if (activate) setReveal(path)
-      const existing = filesRef.current.find((file) => file.path === path)
+      const existing = tabsRef.current.find((tab) => tab.path === path)
       if (existing) {
         if (activate) setActivePath(path)
         if (at) {
-          setFiles((current) =>
-            current.map((file) =>
-              file.path === path ? { ...file, cursor: { ...at, seq: (file.cursor?.seq ?? 0) + 1 } } : file,
+          setTabs((current) =>
+            current.map((tab) =>
+              tab.path === path ? { ...tab, cursor: { ...at, seq: (tab.cursor?.seq ?? 0) + 1 } } : tab,
             ),
           )
         }
@@ -150,19 +163,16 @@ export function FilesPanel({
       }
 
       try {
-        const loaded = await api(hostId).readFile(path)
-        // A NUL byte means the daemon handed back something that was never text.
-        const binary = loaded.content.includes('\u0000')
-        setFiles((current) => [
+        // Read before the tab exists, because whether the file is there at all
+        // is what decides whether it gets one. It lands in the same cache entry
+        // the editor then reads, so opening costs one request rather than two.
+        await client.fetchQuery(fileContentQuery(hostId, path))
+        setTabs((current) => [
           ...current,
           {
             path,
-            saved: loaded.content,
-            modTime: loaded.mod_time,
             dirty: false,
             mode: isMarkdownPath(path) ? 'preview' : 'edit',
-            readOnly: binary || loaded.content.length > MAX_EDIT_BYTES,
-            binary,
             version: 0,
             cursor: at ? { ...at, seq: 1 } : null,
           },
@@ -180,7 +190,7 @@ export function FilesPanel({
         return false
       }
     },
-    [hostId],
+    [hostId, client],
   )
 
   // Which files were open, which was in front, and where the tree was pointed.
@@ -207,7 +217,7 @@ export function FilesPanel({
   useEffect(() => {
     setLoadedFor(null)
     claimed.current = false
-    setFiles([])
+    setTabs([])
     setActivePath(null)
     setReveal(null)
     drafts.current = {}
@@ -240,29 +250,32 @@ export function FilesPanel({
     if (loadedFor !== memory) return
     writeWorkspace(memory, {
       root: rootOverride,
-      open: files.map((file) => file.path),
+      open: tabs.map((tab) => tab.path),
       active: activePath,
       expanded: [...expanded],
       // Pruned to what is open: a closed tab's position is not worth carrying,
       // and the record would otherwise grow for the life of the session.
       view: Object.fromEntries(
-        files.map((file) => [file.path, views.current[file.path]]).filter(([, at]) => at !== undefined),
+        tabs.map((tab) => [tab.path, views.current[tab.path]]).filter(([, at]) => at !== undefined),
       ) as Record<string, ReadingPosition>,
     })
-  }, [memory, loadedFor, rootOverride, files, activePath, expanded, viewTick])
+  }, [memory, loadedFor, rootOverride, tabs, activePath, expanded, viewTick])
 
   const save = useCallback(
     async (path: string): Promise<void> => {
-      const file = filesRef.current.find((f) => f.path === path)
-      if (!file || file.readOnly || !file.dirty) return
-      const text = drafts.current[path] ?? file.saved
+      const tab = tabsRef.current.find((t) => t.path === path)
+      const onDisk = client.getQueryData(fileContentQuery(hostId, path).queryKey)
+      if (!tab || !tab.dirty || !onDisk || shapeOf(onDisk).readOnly) return
+      const text = drafts.current[path] ?? onDisk.content
       try {
-        const result = await api(hostId).writeFile(path, text, file.modTime)
-        setFiles((current) =>
-          current.map((f) =>
-            f.path === path ? { ...f, saved: text, modTime: result.mod_time, dirty: false } : f,
-          ),
+        const result = await api(hostId).writeFile(path, text, onDisk.mod_time)
+        // The server's answer is in hand, mod_time included, so this writes it
+        // into the cache rather than invalidating. A refetch here could only
+        // race the buffer it is meant to agree with.
+        client.setQueryData(fileContentQuery(hostId, path).queryKey, (current) =>
+          current ? { ...current, content: text, mod_time: result.mod_time } : current,
         )
+        setTabs((current) => current.map((t) => (t.path === path ? { ...t, dirty: false } : t)))
       } catch (err) {
         // The agent edits the same files, so this is a real outcome rather than
         // an edge case: reload, then decide what to keep.
@@ -270,32 +283,27 @@ export function FilesPanel({
         else store.fail(err)
       }
     },
-    [hostId],
+    [hostId, client],
   )
 
   const reload = useCallback(
     async (path: string): Promise<void> => {
       try {
-        const loaded = await api(hostId).readFile(path)
+        // staleTime overridden to force the read: the entry never goes stale on
+        // its own, precisely so nothing but this and the effect below can move
+        // it under an open buffer.
+        await client.fetchQuery({ ...fileContentQuery(hostId, path), staleTime: 0 })
         delete drafts.current[path]
-        setFiles((current) =>
-          current.map((file) =>
-            file.path === path
-              ? {
-                  ...file,
-                  saved: loaded.content,
-                  modTime: loaded.mod_time,
-                  dirty: false,
-                  version: file.version + 1,
-                }
-              : file,
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.path === path ? { ...tab, dirty: false, version: tab.version + 1 } : tab,
           ),
         )
       } catch (err) {
         store.fail(err)
       }
     },
-    [hostId],
+    [hostId, client],
   )
 
   // The agent edits the tree while the user is elsewhere, so the buffer that
@@ -307,17 +315,17 @@ export function FilesPanel({
     const returning = visible && !wasVisible.current
     wasVisible.current = visible
     if (!returning || !activePath) return
-    const file = filesRef.current.find((f) => f.path === activePath)
-    if (!file || file.dirty) return
+    const tab = tabsRef.current.find((t) => t.path === activePath)
+    if (!tab || tab.dirty) return
     void reload(activePath)
   }, [visible, activePath, reload])
 
   const close = (path: string): void => {
-    const file = filesRef.current.find((f) => f.path === path)
-    if (file?.dirty && !confirm(`Discard unsaved changes to ${basename(path)}?`)) return
+    const tab = tabsRef.current.find((t) => t.path === path)
+    if (tab?.dirty && !confirm(`Discard unsaved changes to ${basename(path)}?`)) return
     delete drafts.current[path]
-    setFiles((current) => {
-      const remaining = current.filter((f) => f.path !== path)
+    setTabs((current) => {
+      const remaining = current.filter((t) => t.path !== path)
       setActivePath((active) =>
         active === path ? (remaining[remaining.length - 1]?.path ?? null) : active,
       )
@@ -325,14 +333,14 @@ export function FilesPanel({
     })
   }
 
-  const edited = (path: string, text: string): void => {
-    drafts.current[path] = text
-    const file = filesRef.current.find((f) => f.path === path)
-    if (!file) return
-    const dirty = text !== file.saved
-    if (dirty === file.dirty) return
-    setFiles((current) => current.map((f) => (f.path === path ? { ...f, dirty } : f)))
-  }
+  /** Whether the buffer differs from disk, decided by the tab that can see both. */
+  const setDirty = useCallback((path: string, dirty: boolean): void => {
+    setTabs((current) => {
+      const tab = current.find((t) => t.path === path)
+      if (!tab || tab.dirty === dirty) return current
+      return current.map((t) => (t.path === path ? { ...t, dirty } : t))
+    })
+  }, [])
 
   // A chip in the transcript names a path in the session's own checkout, which
   // is not where the panel is pointed once another root has been picked. Open
@@ -384,7 +392,7 @@ export function FilesPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [activePath, save])
 
-  const active = files.find((file) => file.path === activePath) ?? null
+  const active = tabs.find((tab) => tab.path === activePath) ?? null
 
   // The root as a path of its own: every segment above it is a folder the user
   // can drop the tree onto, which is how you get out of a directory that turned
@@ -479,39 +487,43 @@ export function FilesPanel({
 
       <section className="ws-main">
         <div className="ws-tabs">
-          {files.map((file) => (
+          {tabs.map((tab) => (
             <div
-              key={file.path}
-              className={`ws-tab ${file.path === activePath ? 'active' : ''}`}
-              onClick={() => setActivePath(file.path)}
+              key={tab.path}
+              className={`ws-tab ${tab.path === activePath ? 'active' : ''}`}
+              onClick={() => setActivePath(tab.path)}
             >
-              <span className="ws-tab-name">{basename(file.path)}</span>
+              <span className="ws-tab-name">{basename(tab.path)}</span>
               <button
                 className="ws-tab-close"
-                title={file.dirty ? 'Unsaved changes' : 'Close'}
+                title={tab.dirty ? 'Unsaved changes' : 'Close'}
                 onClick={(event) => {
                   event.stopPropagation()
-                  close(file.path)
+                  close(tab.path)
                 }}
               >
-                {file.dirty ? '●' : '✕'}
+                {tab.dirty ? '●' : '✕'}
               </button>
             </div>
           ))}
         </div>
 
         {active ? (
-          <FileView
-            file={active}
+          <ActiveFile
+            key={active.path}
+            tab={active}
             root={root}
             hostId={hostId}
             sessionId={sessionId}
-            text={drafts.current[active.path] ?? active.saved}
-            onChange={(text) => edited(active.path, text)}
+            draft={drafts.current[active.path]}
+            onChange={(text, dirty) => {
+              drafts.current[active.path] = text
+              setDirty(active.path, dirty)
+            }}
             onSave={() => void save(active.path)}
             onReload={() => void reload(active.path)}
             onMode={(mode) =>
-              setFiles((current) => current.map((f) => (f.path === active.path ? { ...f, mode } : f)))
+              setTabs((current) => current.map((t) => (t.path === active.path ? { ...t, mode } : t)))
             }
             restore={views.current[active.path] ?? null}
             onPositionChange={(at) => noteView(active.path, at)}
@@ -548,6 +560,68 @@ export function FilesPanel({
         />
       )}
     </div>
+  )
+}
+
+/**
+ * The tab in front, and the one place a file's contents are read.
+ *
+ * Only the active tab mounts a query: a dynamic number of tabs cannot mount a
+ * dynamic number of hooks, and the panel already renders exactly one file. An
+ * inactive tab needs none — its draft is in the panel's ref and its unsaved
+ * marker is on its own record.
+ *
+ * Keyed by path in the parent, so switching tabs remounts this rather than
+ * leaving one file's folds and menu over another's.
+ */
+function ActiveFile({
+  tab,
+  root,
+  hostId,
+  sessionId,
+  draft,
+  onChange,
+  onSave,
+  onReload,
+  onMode,
+  restore,
+  onPositionChange,
+}: {
+  tab: OpenTab
+  root: string
+  hostId: string
+  sessionId: string
+  /** The unsaved buffer, when this file has one. */
+  draft: string | undefined
+  onChange: (text: string, dirty: boolean) => void
+  onSave: () => void
+  onReload: () => void
+  onMode: (mode: 'edit' | 'preview') => void
+  restore: ReadingPosition | null
+  onPositionChange: (at: ReadingPosition) => void
+}): JSX.Element {
+  const { data, error } = useQuery(fileContentQuery(hostId, tab.path))
+
+  if (error) return <p className="empty-note">{error.message}</p>
+  if (!data) return <p className="empty-note">Loading…</p>
+
+  const file: OpenFile = { ...tab, saved: data.content, modTime: data.mod_time, ...shapeOf(data) }
+  return (
+    <FileView
+      file={file}
+      root={root}
+      hostId={hostId}
+      sessionId={sessionId}
+      text={draft ?? data.content}
+      // Compared against what is on disk right here, because this is where both
+      // are in hand: editing back to the original clears the unsaved marker.
+      onChange={(text) => onChange(text, text !== data.content)}
+      onSave={onSave}
+      onReload={onReload}
+      onMode={onMode}
+      restore={restore}
+      onPositionChange={onPositionChange}
+    />
   )
 }
 

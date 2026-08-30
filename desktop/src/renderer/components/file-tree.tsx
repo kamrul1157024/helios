@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
+import { useQueries } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
+import { dirQuery } from '../queries.ts'
 import type { FileEntry } from '../../shared/models.ts'
 import { Chevron } from './icons.tsx'
 
@@ -37,52 +38,34 @@ export function FileTree({
   onExpandedChange,
   onOpen,
 }: Props): JSX.Element {
-  const [children, setChildren] = useState<Record<string, FileEntry[]>>({})
-  const [busy, setBusy] = useState<Set<string>>(new Set())
   // Read by the reveal effect, which adds to what is already open without
   // wanting to re-run every time that changes.
   const expandedRef = useRef(expanded)
   expandedRef.current = expanded
-  const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(
-    async (dir: string): Promise<FileEntry[]> => {
-      setBusy((current) => new Set(current).add(dir))
-      try {
-        const result = await api(hostId).listFiles(dir)
-        setChildren((current) => ({ ...current, [dir]: result.entries }))
-        setError(null)
-        return result.entries
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-        return []
-      } finally {
-        setBusy((current) => {
-          const next = new Set(current)
-          next.delete(dir)
-          return next
-        })
-      }
-    },
-    [hostId],
-  )
+  /**
+   * Every directory that has to be listed: the root, and whatever is open
+   * under it. Wherever the instruction came from — a restore for this session,
+   * a reveal, or a click — it lands here, and one query per directory is what
+   * keeps a slow one from being asked for twice.
+   */
+  const dirs = useMemo(() => {
+    const wanted = new Set<string>([root])
+    for (const dir of expanded) if (dir.startsWith(root)) wanted.add(dir)
+    return [...wanted]
+  }, [root, expanded])
 
-  // A new root is a different directory: nothing listed for the old one means
-  // anything here.
-  useEffect(() => {
-    setChildren({})
-    void load(root)
-  }, [hostId, root, load])
+  const listings = useQueries({ queries: dirs.map((dir) => dirQuery(hostId, dir)) })
 
-  // Whatever is open has to be listed, wherever the instruction came from — a
-  // restore for this session, a reveal, or a click. Listing converges because
-  // it fills `children`, and `busy` keeps a slow directory from being asked for
-  // twice.
-  useEffect(() => {
-    for (const dir of expanded) {
-      if (dir.startsWith(root) && !children[dir] && !busy.has(dir)) void load(dir)
-    }
-  }, [expanded, children, busy, root, load])
+  const children: Record<string, FileEntry[]> = {}
+  const busy = new Set<string>()
+  dirs.forEach((dir, index) => {
+    const listing = listings[index]
+    if (!listing) return
+    if (listing.data) children[dir] = listing.data.entries
+    if (listing.isFetching) busy.add(dir)
+  })
+  const error = listings.find((listing) => listing.error)?.error ?? null
 
   const toggle = (dir: string): void => {
     const next = new Set(expanded)
@@ -130,7 +113,7 @@ export function FileTree({
 
   return (
     <div className="tree">
-      {error && <p className="empty-note">{error}</p>}
+      {error && <p className="empty-note">{error.message}</p>}
       {rows}
       {rows.length === 0 && !error && !busy.has(root) && <p className="empty-note">Empty directory.</p>}
     </div>

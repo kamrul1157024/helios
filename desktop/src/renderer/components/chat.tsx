@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+
 import { api, statusOf } from '../bridge.ts'
+import { keys } from '../keys.ts'
+import { appendDelta, transcriptMessages, transcriptQuery } from '../queries.ts'
 import {
   isLargePaste,
   needingUpload,
@@ -28,9 +32,16 @@ import {
   needsRecovery,
   type Session,
   type TranscriptMessage,
+  type TranscriptPage,
 } from '../../shared/models.ts'
 
 const PAGE = 50
+
+/** What the cache holds under the transcript key. */
+interface TranscriptPages {
+  pages: TranscriptPage[]
+  pageParams: unknown[]
+}
 
 export function ChatPanel({
   hostId,
@@ -42,18 +53,17 @@ export function ChatPanel({
   /** False while another tab is showing: a hidden panel must not poll. */
   active?: boolean
 }): JSX.Element {
-  const [messages, setMessages] = useState<TranscriptMessage[]>([])
-  // Which session the messages belong to. Switching sessions would otherwise
-  // show the previous transcript until the new one arrives, and "No transcript
-  // yet." for a session whose transcript is merely still loading.
-  const [loadedFor, setLoadedFor] = useState('')
-  // Bumped to re-read a transcript that has not moved by any other measure.
-  const [reload, setReload] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
-  const [total, setTotal] = useState(0)
-  // Which parse the held seq numbers count against. A delta quotes it back so
-  // the daemon can say when it no longer holds.
-  const [epoch, setEpoch] = useState('')
+  const client = useQueryClient()
+  const transcript = useInfiniteQuery({ ...transcriptQuery(hostId, session.session_id), enabled: active })
+  const messages = useMemo(() => transcriptMessages(transcript.data), [transcript.data])
+  // The newest page answers for the whole conversation: its total is the count,
+  // and the epoch is which parse the held seq numbers count against.
+  const newestPage = transcript.data?.pages[0]
+  const total = newestPage?.total ?? 0
+  const epoch = newestPage?.epoch ?? ''
+  // Switching sessions must not show the previous transcript, nor "No
+  // transcript yet." for one that is merely still loading.
+  const loaded = transcript.isSuccess
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -80,41 +90,19 @@ export function ChatPanel({
   const terminated = canResume(session)
   const cold = needsRecovery(session)
 
-  // The newest page, on arrival at a session. An unwatched transcript is not
-  // read at all: reading it again on the way back costs one request.
+  /**
+   * Only what the agent has added since.
+   *
+   * last_event_at moves on every hook it fires, which for a busy session is
+   * several times a turn — refetching the pages each time would rebuild the
+   * transcript and lose the reader's place for the sake of one new message. So
+   * the delta is appended into the newest page rather than fetched as one.
+   *
+   * There is no transcript event on the wire: the session record moving is what
+   * says there is more to read.
+   */
   useEffect(() => {
-    if (!active) return
-    let cancelled = false
-    const load = async (): Promise<void> => {
-      try {
-        const page = await api(hostId).transcript(session.session_id, PAGE, 0)
-        if (cancelled) return
-        // Written here as well as in the effect below, because the delta effect
-        // runs first in the same commit: it is declared above the one that
-        // syncs the ref, and reading a stale empty ref asks for everything
-        // since seq -1, which is the page just loaded, appended to itself.
-        messagesRef.current = page.messages
-        setMessages(page.messages)
-        setTotal(page.total)
-        setHasMore(page.has_more)
-        setEpoch(page.epoch ?? '')
-        setLoadedFor(session.session_id)
-      } catch (err) {
-        if (!cancelled) store.fail(err)
-      }
-    }
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, session.session_id, active, reload])
-
-  // Then only what the agent has added since. last_event_at moves on every
-  // hook it fires, which for a busy session is several times a turn — pulling
-  // the whole page each time would re-render the transcript and lose the
-  // reader's place for the sake of one new message.
-  useEffect(() => {
-    if (!active || loadedFor !== session.session_id || !epoch) return
+    if (!active || !loaded || !epoch) return
     const newest = messagesRef.current[messagesRef.current.length - 1]?.seq ?? -1
     let cancelled = false
     const load = async (): Promise<void> => {
@@ -123,14 +111,14 @@ export function ChatPanel({
         if (cancelled || page.messages.length === 0) return
         if (page.epoch_changed) {
           // The transcript is no longer the one those seq numbers counted
-          // against — forked, or replaced. What is held has to go.
-          setMessages(page.messages)
-          setEpoch(page.epoch ?? '')
-          setHasMore(page.has_more)
-        } else {
-          setMessages((current) => [...current, ...page.messages])
+          // against — forked, or replaced. What is held has to go, and the
+          // query refetches from scratch under the same key.
+          await client.resetQueries({ queryKey: keys.transcript(hostId, session.session_id) })
+          return
         }
-        setTotal(page.total)
+        client.setQueryData(keys.transcript(hostId, session.session_id), (held: TranscriptPages | undefined) =>
+          appendDelta(held, page),
+        )
       } catch (err) {
         if (!cancelled) store.fail(err)
       }
@@ -139,7 +127,7 @@ export function ChatPanel({
     return () => {
       cancelled = true
     }
-  }, [hostId, session.session_id, session.last_event_at, status, active, loadedFor, epoch])
+  }, [hostId, session.session_id, session.last_event_at, status, active, loaded, epoch, client])
 
   // Lines picked in the Files panel arrive here rather than being sent: what to
   // ask about them is still to be typed.
@@ -170,14 +158,13 @@ export function ChatPanel({
   useEffect(() => () => retries.current.forEach(clearTimeout), [])
 
   const loadOlder = async (): Promise<void> => {
-    if (loadingOlder.current || !hasMore) return
+    if (loadingOlder.current || !transcript.hasNextPage) return
     loadingOlder.current = true
+    // Captured before the older page is prepended, so the effect below can put
+    // the reader back where they were.
     anchor.current = scroller.current?.scrollHeight ?? null
     try {
-      const page = await api(hostId).transcript(session.session_id, PAGE, messages.length)
-      setMessages((current) => [...page.messages, ...current])
-      setHasMore(page.has_more)
-      setTotal(page.total)
+      await transcript.fetchNextPage()
     } catch (err) {
       anchor.current = null
       store.fail(err)
@@ -249,15 +236,17 @@ export function ChatPanel({
       }
       setAttachments([])
       if (result.queued) store.notify('Queued — the agent is mid-turn')
-      void store.refreshSessions(hostId)
+      void store.invalidateSessionsFor(hostId)
       // The agent writes the prompt to its transcript a moment after accepting
       // it, and the reads triggered by the status change land before that. A
       // turn that then does nothing hook-worthy moves last_event_at no further,
       // so without these the message the user just sent stays invisible until
       // the panel is reopened.
       retries.current.forEach(clearTimeout)
+      // Asked of the query rather than of a counter: a refetch of the pages is
+      // what a re-read means now.
       retries.current = [5_000, 10_000].map((delay) =>
-        setTimeout(() => setReload((n) => n + 1), delay),
+        setTimeout(() => void transcript.refetch(), delay),
       )
     } catch (err) {
       // 409 is an answer, not a fault: the session is busy without a queue, or
@@ -271,7 +260,7 @@ export function ChatPanel({
             : 'Session is busy and cannot queue prompts',
           'error',
         )
-        void store.refreshSessions(hostId)
+        void store.invalidateSessionsFor(hostId)
       } else {
         store.fail(err)
       }
@@ -292,14 +281,14 @@ export function ChatPanel({
           if (el.scrollTop < 200) void loadOlder()
         }}
       >
-        {loadedFor !== session.session_id ? (
+        {!loaded ? (
           <div className="panel-loading">
             <span className="spinner" />
             <span>Loading transcript…</span>
           </div>
         ) : (
           <>
-            {hasMore && (
+            {transcript.hasNextPage && (
               <button className="link load-more" onClick={() => void loadOlder()}>
                 Load older ({total - messages.length} more)
               </button>

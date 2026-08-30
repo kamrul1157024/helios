@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
+import { gitChangesQuery, gitDiffQuery, gitLogPagesQuery } from '../queries.ts'
 import { useStore } from '../store.ts'
 import { DiffView } from './diff-view.tsx'
 import { Chevron } from './icons.tsx'
 import { PathLabel } from './path-label.tsx'
-import { timeAgo, type Commit, type GitChanges, type GitDiff, type GitLog, type GitStatus } from '../../shared/models.ts'
-
-const PAGE = 50
+import { timeAgo, type Commit, type GitStatus } from '../../shared/models.ts'
 
 /** A lone commit when `from` is null, otherwise everything from `from` to `to`. */
 export interface CommitScope {
@@ -155,35 +154,16 @@ function ScopeMenu({
   onPick: (scope: Scope, close: boolean) => void
   onClose: () => void
 }): JSX.Element {
-  const [log, setLog] = useState<GitLog | null>(null)
-  const [commits, setCommits] = useState<Commit[]>([])
   const [all, setAll] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, error, isFetching, hasNextPage, fetchNextPage } = useInfiniteQuery(
+    gitLogPagesQuery(hostId, root, all),
+  )
+  const commits = useMemo(() => data?.pages.flatMap((page) => page.commits) ?? [], [data])
+  // The newest page answers for the branch: base and scope do not move between
+  // pages, and has_more is the last page's to report.
+  const log = data?.pages[data.pages.length - 1] ?? null
   const commitsRef = useRef<Commit[]>(commits)
   commitsRef.current = commits
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    api(hostId)
-      .gitLog(root, { all: all || undefined, limit: PAGE })
-      .then((result) => {
-        if (cancelled) return
-        setLog(result)
-        setCommits(result.commits)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, root, all])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -192,20 +172,6 @@ function ScopeMenu({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-
-  const loadMore = async (): Promise<void> => {
-    if (!log) return
-    setLoading(true)
-    try {
-      const next = await api(hostId).gitLog(root, { all: all || undefined, limit: PAGE, skip: commits.length })
-      setCommits((current) => [...current, ...next.commits])
-      setLog(next)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-    }
-  }
 
   /**
    * Plain click picks one commit and closes. Shift or ⌘ extends from whatever
@@ -298,7 +264,7 @@ function ScopeMenu({
         </div>
 
         <div className="scope-list">
-          {error && <p className="empty-note">{error}</p>}
+          {error && <p className="empty-note">{error.message}</p>}
           {commits.map((commit, index) => (
             <button
               key={commit.sha}
@@ -316,10 +282,10 @@ function ScopeMenu({
             </button>
           ))}
 
-          {loading && <p className="empty-note">Loading…</p>}
-          {!loading && !error && commits.length === 0 && <p className="empty-note">No commits.</p>}
-          {log?.has_more && !loading && (
-            <button className="commit-more" onClick={() => void loadMore()}>
+          {isFetching && <p className="empty-note">Loading…</p>}
+          {!isFetching && !error && commits.length === 0 && <p className="empty-note">No commits.</p>}
+          {hasNextPage && !isFetching && (
+            <button className="commit-more" onClick={() => void fetchNextPage()}>
               Load more
             </button>
           )}
@@ -344,56 +310,34 @@ export function CommitChanges({
   root: string
   scope: CommitScope
 }): JSX.Element {
-  const [changes, setChanges] = useState<GitChanges | null>(null)
-  const [file, setFile] = useState<string | null>(null)
-  const [diff, setDiff] = useState<GitDiff | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const wanted = useStore((s) => s.diffTarget)
+  const changesQuery = useQuery(gitChangesQuery(hostId, root, scope.to, scope.from ?? undefined))
+  const changes = changesQuery.data
 
+  // Which file the reader clicked, if they have. Cleared when the commit or the
+  // agent's request changes, so the default below gets to answer again.
+  const [picked, setPicked] = useState<string | null>(null)
   useEffect(() => {
-    let cancelled = false
-    setChanges(null)
-    setDiff(null)
-    setError(null)
-    api(hostId)
-      .gitChanges(root, scope.to, scope.from ?? undefined)
-      .then((result) => {
-        if (cancelled) return
-        setChanges(result)
-        // An agent that named a file meant that file, not the first one in the
-        // commit. It says so absolutely; git lists paths from the repo root.
-        const asked = wanted?.path && relativeToRoot(root, wanted.path)
-        const match = asked && result.files.some((f) => f.path === asked) ? asked : null
-        setFile(match ?? result.files[0]?.path ?? null)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
+    setPicked(null)
   }, [hostId, root, scope.to, scope.from, wanted?.seq])
 
-  useEffect(() => {
-    if (!file) {
-      setDiff(null)
-      return
-    }
-    let cancelled = false
-    api(hostId)
-      .gitDiff(root, file, { from: scope.from ?? undefined, to: scope.to })
-      .then((result) => {
-        if (!cancelled) setDiff(result)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, root, file, scope.to, scope.from])
+  // An agent that named a file meant that file, not the first one in the
+  // commit. It says so absolutely; git lists paths from the repo root.
+  const fallback = useMemo(() => {
+    if (!changes) return null
+    const asked = wanted?.path && relativeToRoot(root, wanted.path)
+    if (asked && changes.files.some((f) => f.path === asked)) return asked
+    return changes.files[0]?.path ?? null
+  }, [changes, root, wanted?.path, wanted?.seq])
 
-  if (error) return <p className="empty-note">{error}</p>
+  const file = picked ?? fallback
+  const diffQuery = useQuery(
+    gitDiffQuery(hostId, root, file ?? '', { from: scope.from ?? undefined, to: scope.to }),
+  )
+  const diff = diffQuery.data
+  const error = changesQuery.error ?? diffQuery.error
+
+  if (error) return <p className="empty-note">{error.message}</p>
   if (!changes) return <p className="empty-note">Loading…</p>
 
   return (
@@ -424,7 +368,7 @@ export function CommitChanges({
             <button
               key={entry.path}
               className={`git-file ${file === entry.path ? 'selected' : ''}`}
-              onClick={() => setFile(entry.path)}
+              onClick={() => setPicked(entry.path)}
               title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}
             >
               <span className={`git-status s${entry.status}`}>{entry.status}</span>

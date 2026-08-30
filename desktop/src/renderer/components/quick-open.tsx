@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
+import { fileSearchQuery } from '../queries.ts'
 import { RootSuggestions } from './root-picker.tsx'
 import type { FileMatch, Worktree } from '../../shared/models.ts'
 
@@ -19,6 +20,8 @@ interface Props {
 /** Long enough that a fast typist makes one request, short enough to feel live. */
 const DEBOUNCE_MS = 90
 
+const NO_MATCHES: FileMatch[] = []
+
 /** ⌘P: type part of a file name, press Enter. */
 export function QuickOpen({
   hostId,
@@ -30,31 +33,29 @@ export function QuickOpen({
   onClose,
 }: Props): JSX.Element {
   const [query, setQuery] = useState(initialQuery)
-  const [matches, setMatches] = useState<FileMatch[]>([])
   const [active, setActive] = useState(0)
-  const [error, setError] = useState<string | null>(null)
   const list = useRef<HTMLDivElement | null>(null)
 
+  const [needle, setNeedle] = useState(query)
   useEffect(() => {
-    let cancelled = false
-    const timer = setTimeout(() => {
-      api(hostId)
-        .searchFiles(root, query, 50)
-        .then((result) => {
-          if (cancelled) return
-          setMatches(result.matches)
-          setActive(0)
-          setError(null)
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-        })
-    }, DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [hostId, root, query])
+    const timer = setTimeout(() => setNeedle(query), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  // keepPreviousData so the list does not blank between keystrokes: a result
+  // set that vanishes and comes back is what makes typing here feel laggy, even
+  // when the answer arrives just as fast.
+  const { data, error } = useQuery({
+    ...fileSearchQuery(hostId, root, needle),
+    placeholderData: keepPreviousData,
+  })
+  const matches = data?.matches ?? NO_MATCHES
+
+  // Back to the top whenever the question changes; arrowing applies to an
+  // answer, and this is a different one.
+  useEffect(() => {
+    setActive(0)
+  }, [needle])
 
   // Keep the highlighted row on screen while arrowing through a long list.
   useEffect(() => {
@@ -94,7 +95,7 @@ export function QuickOpen({
           onKeyDown={keys}
         />
         <div className="quick-list" ref={list}>
-          {error && <p className="empty-note">{error}</p>}
+          {error && <p className="empty-note">{error.message}</p>}
           {matches.map((match, index) => (
             <button
               key={match.path}

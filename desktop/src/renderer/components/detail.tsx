@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
-import { api, statusOf } from '../bridge.ts'
+import { api } from '../bridge.ts'
+import { useHostNotifications, useHostSessions } from '../host-data.ts'
+import { providersQuery } from '../queries.ts'
 import { currentPanel, currentTab, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
@@ -53,8 +56,8 @@ const NO_TTL: RightPanel[] = ['git', 'files']
 
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
-  const sessions = useStore((s) => s.sessions)
-  const notifications = useStore((s) => s.notifications)
+  const { sessions } = useHostSessions()
+  const notifications = useHostNotifications()
   const panel = useStore(currentPanel)
   const tabs = useStore((s) => s.tabs)
 
@@ -351,7 +354,7 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       await fn()
-      await store.refreshSessions(hostId)
+      await store.invalidateSessionsFor(hostId)
     } catch (err) {
       store.fail(err)
     }
@@ -368,7 +371,7 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
             onBlur={() => {
               setRenaming(false)
               if (title !== (session.title ?? '')) {
-                void run(() => api(hostId).patchSession(session.session_id, { title }))
+                void store.patchSessionField(hostId, session.session_id, { title })
               }
             }}
             onKeyDown={(event) => {
@@ -456,8 +459,17 @@ function SessionHeader({ hostId, session }: { hostId: string; session: Session }
  * match, but the server check is the one that counts.
  */
 function PermissionMode({ hostId, session }: { hostId: string; session: Session }): JSX.Element | null {
-  const [modes, setModes] = useState<string[] | null>(null)
   const [pending, setPending] = useState(false)
+  // The list is asked for when the select is focused rather than on mount: the
+  // same answer serves the new-session dialog, so this is usually a cache hit,
+  // but a session panel that has never been touched should not pay for it.
+  const [wanted, setWanted] = useState(false)
+  const { data: providers, error } = useQuery({ ...providersQuery(hostId), enabled: wanted })
+  const modes = providers
+    ? (providers.find((p) => p.id === session.source)?.permission_modes ?? [])
+    : error
+      ? []
+      : null
 
   // Nothing to show for a provider with no modes. The list arrives only after
   // the select is focused, so before that this renders for every provider —
@@ -465,15 +477,7 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
   // here rather than in a comment claiming it happens.
   if (modes !== null && modes.length === 0) return null
 
-  const load = async (): Promise<void> => {
-    if (modes) return
-    try {
-      const providers = await api(hostId).providers()
-      setModes(providers.find((p) => p.id === session.source)?.permission_modes ?? [])
-    } catch {
-      setModes([])
-    }
-  }
+  const load = (): void => setWanted(true)
 
   const switchable = session.status === 'idle'
 
@@ -481,12 +485,7 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
     if (!mode || mode === session.permission_mode) return
     setPending(true)
     try {
-      await api(hostId).setPermissionMode(session.session_id, mode)
-      store.notify(`Permission mode set to ${mode}`)
-      await store.refreshSessions(hostId)
-    } catch (err) {
-      if (statusOf(err) === 409) store.notify('Session is busy — try again when it is idle', 'error')
-      else store.fail(err)
+      await store.setPermissionMode(hostId, session.session_id, mode)
     } finally {
       setPending(false)
     }
@@ -498,7 +497,7 @@ function PermissionMode({ hostId, session }: { hostId: string; session: Session 
       value={session.permission_mode ?? ''}
       disabled={!switchable || pending}
       title={switchable ? 'Restarts the agent' : 'Only while the session is idle'}
-      onFocus={() => void load()}
+      onFocus={() => load()}
       onChange={(event) => void change(event.target.value)}
     >
       {/* The modes list loads on focus, so the current value needs an option of
