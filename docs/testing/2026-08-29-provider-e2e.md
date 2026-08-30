@@ -203,9 +203,9 @@ Vertex AI and returned `PERMISSION_DENIED` for `claude-opus-5` in project
 call was not. Codex's turns completed normally, so the pipeline is proven —
 just not through Claude in this rig.
 
-**L-2 — no client was driven by hand.** Desktop is 166 tests green, typechecks
-and builds; mobile is 110 green with one pre-existing deprecation. Nobody has
-tapped an approval on a phone.
+**L-2 — mobile was not driven by hand.** It is 110 tests green with one
+pre-existing deprecation, and read in full, but nobody has tapped a card on a
+phone. Desktop *was* driven — see below.
 
 **L-3 — one machine.** Linux, bash. The two most recent field bugs on this
 project were both macOS-and-zsh specific.
@@ -226,6 +226,59 @@ card 2  Approve helios hooks
 1 codex.session.start   1 codex.prompt.submit   1 codex.stop
 status=idle mode=workspace-write resume_id=01a04f6f-81e transcript=True
 ```
+
+## Driven through the desktop app
+
+The fixes above were first verified at the terminal and in unit tests. That
+leaves the join between "a notification exists" and "the button answers it"
+untested, which is the part a demo actually uses. So the whole first run was
+repeated through the real app: Electron under Xvfb, paired to the rig, driven
+over CDP.
+
+| Step | Result |
+|---|---|
+| HUD opens by itself when the session blocks | pass |
+| First card renders | `WORKSPACE TRUST / Directory trust required` |
+| **Click "Trust folder"** | **agent trusted, not killed** — this is BUG-2 |
+| Second card renders, with its own wording | `Approve helios hooks` — this is BUG-5 |
+| Click it | hooks approved, agent reaches its prompt |
+| Prompt sent | `• DESKTOP-E2E-OK` |
+| Hooks | `session.start`, `prompt.submit`, `stop` |
+| Session row | `idle`, `workspace-write`, resume id, transcript |
+| Session list | shows the session, Idle, `gpt-5.6-sol`, `workspace-write` |
+
+Clicking the button is the only evidence that matters for BUG-2. Before the
+fix that click sent a bare Return onto "No, exit".
+
+Pairing was done by hand rather than by changing the app: `cmd/device/create`,
+`/api/auth/pair`, `/api/device/activate`, then `hosts.json` written directly.
+An earlier attempt added `HELIOS_LOCAL_URL` and `HELIOS_INTERNAL_URL`
+overrides to `hosts.ts` and was reverted — a test hook does not belong in
+shipped code, and see FINDING-7 for why the underlying limitation should
+probably be closed the other way.
+
+## FINDING-7 — custom ports are half-supported. Not fixed.
+
+**Severity: medium.** Nothing is broken today unless someone changes a port,
+and then several things are, silently.
+
+The daemon fully supports custom ports: `internal_port` and `public_port` in
+`config.yaml`, and `--internal-port` / `--public-port` on `daemon start`. But
+
+- `desktop/src/main/hosts.ts` hardcodes `127.0.0.1:7654` and `:7655`, so
+  "pair local" targets the wrong daemon and the app cannot reach the right one
+- `HostRecord.url` is an absolute URL stored per paired device, so changing a
+  port strands every device already paired against the old one
+
+So the feature exists in the daemon and nowhere else. Two coherent answers:
+
+1. **Remove it.** Fix the port, delete the config keys and the flags. Devices
+   can never be stranded because the port can never move.
+2. **Finish it.** Have the desktop read the same `config.yaml` the daemon
+   reads, and re-derive local host URLs rather than storing them.
+
+The first is smaller and matches how the product is actually used. It is the
+recommendation, but it deletes a documented option, so it is the owner's call.
 
 ## Suites
 
