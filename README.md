@@ -2,6 +2,16 @@
 
 **A head for headless coding harnesses.**
 
+<p align="center">
+  <img src="docs/assets/desktop/chat.png" width="700" alt="Helios desktop app — session transcript" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/mobile/sessions.jpg" width="220" alt="Helios mobile app — sessions" />
+  <img src="docs/assets/mobile/session-detail.jpg" width="220" alt="Helios mobile app — live session detail" />
+  <img src="docs/assets/mobile/push-notification.jpg" width="220" alt="Helios mobile app — push notification" />
+</p>
+
 Claude Code, Codex and Aider are headless harnesses: they run in a terminal, on
 your machine, with no UI of their own beyond the one terminal you started them
 in. Helios is the head on top of them. It runs each harness in a terminal host
@@ -444,20 +454,20 @@ terminal.
   <img src="docs/assets/desktop/chat.png" width="700" alt="Desktop app — chat transcript for a session" />
 </p>
 
-**Terminal** — the real Claude TUI, attached over the daemon. It is the same
-terminal the CLI attaches to, so anything you can do in `helios attach` you can
-do here, including on a host across the tunnel.
+Every tool call collapses to one line and expands in place, so a long run of
+commands stays readable and you can still open the exact output you care about.
 
 <p align="center">
-  <img src="docs/assets/desktop/terminal.png" width="700" alt="Desktop app — live terminal attached to a session" />
+  <img src="docs/assets/desktop/chat-expanded.png" width="700" alt="Desktop app — expanded tool calls in the transcript" />
 </p>
 
-**Git** — uncommitted changes, branch and worktrees for the session's
-repository, with a diff for whichever file you pick. **Approvals** and
-**Files** cover the pending permission requests and the working tree.
+**Files** — the session's working tree with a file viewer, tabs and search.
+**Terminal** is the real Claude TUI attached over the daemon, **Git** covers
+uncommitted changes, branches and worktrees, and **Approvals** holds the
+pending permission requests.
 
 <p align="center">
-  <img src="docs/assets/desktop/git.png" width="700" alt="Desktop app — git panel showing uncommitted changes" />
+  <img src="docs/assets/desktop/files.png" width="700" alt="Desktop app — file tree and file viewer" />
 </p>
 
 ## What is this?
