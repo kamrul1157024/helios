@@ -638,35 +638,6 @@ func TestOneShotRunsAreNotTracked(t *testing.T) {
 	}
 }
 
-// Codex prepends the project's AGENTS.md as a user turn. Rendered, the history
-// panel shows the user "saying" the contents of a config file they never
-// typed. Captured from a real session in ~/workspace/opal-app/hypatia.
-func TestInjectedAgentsFileIsNotAUserTurn(t *testing.T) {
-	injected := "# AGENTS.md instructions for /home/u/workspace/opal-app/hypatia\n\n" +
-		"<INSTRUCTIONS>\n# Agent Instructions for Hypatia\n</INSTRUCTIONS>"
-	if !isInjectedContext(injected) {
-		t.Error("AGENTS.md injection would render as a user message")
-	}
-	if !isInjectedContext("<environment_context>\n <cwd>/w</cwd>\n</environment_context>") {
-		t.Error("the wrapper rule regressed")
-	}
-}
-
-// The filter must stay narrow: hiding something the user typed is worse than
-// showing something they did not.
-func TestRealUserTextSurvivesTheFilter(t *testing.T) {
-	for _, s := range []string{
-		"say exactly CODEX-E2E-OK",
-		"# Refactor the auth module",
-		"# AGENTS.md needs updating",
-		"read the <config> file",
-	} {
-		if isInjectedContext(s) {
-			t.Errorf("a real user message was filtered out: %q", s)
-		}
-	}
-}
-
 // A fresh install shows two blocking dialogs back to back. Surfacing only the
 // first left the session at "starting" with nothing on the phone to answer.
 // Both captured verbatim from codex-cli 0.150.1 under a helios ptyhost.

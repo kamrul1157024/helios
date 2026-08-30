@@ -5,7 +5,7 @@ Ran the provider work against real agents in real repositories, on `main` at
 
 **Headline: both providers work end to end.** Codex answered a prompt through
 Helios, its hooks reached the daemon, its session resumed cold with the
-conversation intact. Seven defects were found on the way. Four are fixed here.
+conversation intact. Six defects were found on the way. Three are fixed here.
 Three concern custom ports or a wording judgement and are deferred, marked
 below.
 
@@ -27,7 +27,7 @@ the Claude trust dialog showed its long form.
 | Trust dialog answerable | **was broken** — see BUG-2 | pass |
 | Hooks delivered to the daemon | pass | pass |
 | Status reaches `idle` | pass | pass |
-| Transcript recorded and parsed | pass | pass, after BUG-4 |
+| Transcript recorded and parsed | pass | pass |
 | `resume_id` captured | n/a | pass |
 | Cold session resumed with history | not reached | pass |
 | Agent completed a turn | **blocked** — see L-1 | pass |
@@ -141,26 +141,6 @@ The snapshot test no longer asserts any Claude wording: it takes a line the
 desktop has already scrolled past and requires the late viewer's snapshot to
 contain it.
 
-### BUG-4 — AGENTS.md rendered as something the user said. Fixed.
-
-**Severity: medium.** Cosmetic but bad in a demo — the history panel opens
-with the user apparently reciting a config file.
-
-Codex prepends the project's `AGENTS.md` as a user-role record. The existing
-filter caught anything wholly wrapped in an XML-ish element; this is a
-Markdown heading and went straight through.
-
-Reproduce: run any Codex session in a repo with an `AGENTS.md`, then read the
-transcript. Before, three messages, the first 4 KB of config. After, two:
-
-```
-[  8] user        "say exactly CODEX-E2E-OK"
-[ 11] assistant   "CODEX-E2E-OK"
-```
-
-Matched by literal prefix rather than generalised, deliberately: hiding
-something the user typed is much worse than showing something they did not.
-
 ### BUG-5 — Codex's second dialog was invisible. Fixed.
 
 **Severity: high for a first run**, which is exactly what a demo is.
@@ -200,6 +180,22 @@ It reads as noise. A detail of "primary-agent" tells nobody anything. Left
 alone because the right answer is a judgement call: either say "the turn
 failed and left no reason", or suppress the notification when there is nothing
 to report. Worth deciding before it is seen on stage.
+
+### Not a defect — AGENTS.md appears in the transcript
+
+Codex prepends the project's `AGENTS.md` to the conversation as a user-role
+record. It shows up in the history panel above the first real prompt.
+
+Raised here as a defect and **rejected by the owner**: that record is genuinely
+part of what the model was sent, and showing it is the transparent answer. A
+filter was written and reverted. Recorded so the same argument is not made
+twice.
+
+One thread left hanging: the parser still drops a user record that is wholly
+one XML-ish element, which is how `<environment_context>` and
+`<recommended_plugins>` are hidden. By the same reasoning those should probably
+show as well. Left as-is because it predates this run and nobody has objected
+to it.
 
 ## Limitations of this run
 
