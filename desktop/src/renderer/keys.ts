@@ -34,7 +34,6 @@ export const keys = {
   directories: (hostId: string) => ['host', hostId, 'directories'] as const,
   providers: (hostId: string) => ['host', hostId, 'providers'] as const,
   models: (hostId: string, provider: string) => ['host', hostId, 'models', provider] as const,
-  terminals: (hostId: string, sessionId: string) => ['host', hostId, 'terminals', sessionId] as const,
   /**
    * The epoch is deliberately not in this key.
    *
@@ -209,16 +208,13 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
       ]
 
-    case 'terminal_opened': {
-      const sessionId = text(event.data.session_id)
-      return sessionId ? [{ kind: 'invalidate', queryKey: keys.terminals(hostId, sessionId) }] : []
-    }
-
     case 'session_evicted':
       return [{ kind: 'invalidate', queryKey: keys.host(hostId) }]
 
-    // 'show' instructs the window and 'terminal_closed' tears down a
-    // connection. Neither is a fact about anything cached.
+    // 'show' instructs the window, and the terminal events move connections:
+    // 'terminal_opened' re-lists a session's shells and attaches the ones this
+    // client is missing, 'terminal_closed' tears a tab down. The store handles
+    // all three directly. None is a fact about anything cached.
     default:
       return []
   }

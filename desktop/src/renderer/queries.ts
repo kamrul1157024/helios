@@ -46,14 +46,6 @@ export function notificationsQuery(hostId: string) {
   })
 }
 
-export function terminalsQuery(hostId: string, sessionId: string) {
-  return queryOptions({
-    queryKey: keys.terminals(hostId, sessionId),
-    queryFn: () => api(hostId).terminals(sessionId),
-    enabled: sessionId !== '',
-  })
-}
-
 // ─── Settings ───────────────────────────────────────────────────────────────
 
 /**
