@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+// `Consumer` is exported by both packages, so Riverpod's is aliased.
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/provider.dart';
+import '../providers/daemon_providers.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
 
@@ -366,8 +369,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   }
 
   Widget _buildCwdSection(ThemeData theme) {
-    final sse = _service;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -379,10 +380,13 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           ),
         ),
         const SizedBox(height: 8),
-        FutureBuilder<List<DirectoryInfo>>(
-          future: sse?.fetchDirectories() ?? Future.value([]),
-          builder: (context, snapshot) {
-            final dirs = snapshot.data ?? [];
+        rp.Consumer(
+          builder: (context, ref, _) {
+            final hostId = _selectedHostId;
+            final dirs = hostId == null
+                ? const <DirectoryInfo>[]
+                : ref.watch(directoriesProvider(hostId)).valueOrNull ??
+                    const <DirectoryInfo>[];
             return Wrap(
               spacing: 6,
               runSpacing: 6,

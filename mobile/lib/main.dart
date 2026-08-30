@@ -1,7 +1,12 @@
 import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
+// Both packages export `Provider`, `ChangeNotifierProvider` and `Consumer`.
+// Every file that imports the two has to disambiguate; here only ProviderScope
+// is wanted from Riverpod.
+import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderScope;
 import 'package:provider/provider.dart';
+import 'providers/daemon_providers.dart';
 import 'providers/theme_provider.dart';
 import 'services/host_manager.dart';
 import 'services/notification_service.dart';
@@ -13,13 +18,20 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.instance.init();
 
+  // One instance, handed to both trees: `provider` for the widgets that already
+  // watch it, Riverpod for the keyed reads that need `serviceFor`.
+  final hostManager = HostManager();
+
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => HostManager()),
-        ChangeNotifierProvider(create: (_) => ThemeProvider()),
-      ],
-      child: const HeliosApp(),
+    ProviderScope(
+      overrides: [hostManagerProvider.overrideWithValue(hostManager)],
+      child: MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: hostManager),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ],
+        child: const HeliosApp(),
+      ),
     ),
   );
 }
