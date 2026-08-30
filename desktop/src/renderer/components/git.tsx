@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
+import { gitDiffQuery, gitLogQuery, gitStatusQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { CommitChanges, ScopePicker, type Scope } from './commits.tsx'
 import { DiffView } from './diff-view.tsx'
 import { PathLabel } from './path-label.tsx'
 import { ReviewView } from './review.tsx'
 import { WorktreesView } from './worktrees.tsx'
-import type { GitChange, GitDiff, GitStatus } from '../../shared/models.ts'
+import type { GitChange, GitStatus } from '../../shared/models.ts'
 
 /**
  * The git panel: what is uncommitted, what has been committed on this branch,
@@ -48,13 +49,7 @@ export function GitPanel({
   active?: boolean
 }): JSX.Element {
   const [worktree, setWorktree] = useState<string | null>(null)
-  // Null until resolved: the default depends on the branch, which takes a
-  // request, and rendering the working tree in the meantime would make the
-  // panel flip scopes under the reader.
-  const [scope, setScope] = useState<Scope | null>(null)
   const [worktrees, setWorktrees] = useState(false)
-  const [status, setStatus] = useState<GitStatus | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const root = worktree ?? cwd
   const scopeKey = `helios.git.scope.${hostId}.${sessionId ?? root}`
 
@@ -64,55 +59,44 @@ export function GitPanel({
   }, [hostId, cwd])
 
   /**
-   * What the panel opens on. The question the user has when they open git
-   * during a session is "what has the agent done to this branch", so that is
-   * the default — the uncommitted-only view answers a narrower question and
-   * was the wrong one to answer first.
+   * What the panel opens on, before anybody has said otherwise.
    *
-   * A choice made afterwards is remembered per session: two sessions on two
-   * branches are two separate reviews, and one's scope means nothing in the
-   * other.
+   * The question the user has when they open git during a session is "what has
+   * the agent done to this branch", so that is the default — the
+   * uncommitted-only view answers a narrower question and was the wrong one to
+   * answer first. A choice made afterwards is remembered per session: two
+   * sessions on two branches are two separate reviews, and one's scope means
+   * nothing in the other.
    */
+  const stored = useMemo(() => readScope(scopeKey), [scopeKey])
+  const probing = !stored && root !== ''
+  const probe = useQuery({ ...gitLogQuery(hostId, root, { limit: SCOPE_PROBE }), enabled: probing })
+
+  const fallback = useMemo<Scope | null>(() => {
+    if (stored) return stored
+    // Null while the probe is out: the default depends on the branch, and
+    // rendering the working tree meanwhile flips the scope under the reader.
+    if (probing && probe.isPending) return null
+    const log = probe.data
+    // No history, no base branch, not a repository — the working tree is the
+    // answer that needs nothing to be true.
+    if (!log || log.scope !== 'branch' || !log.base || log.commits.length === 0) {
+      return { kind: 'working' }
+    }
+    return { kind: 'review', base: log.base, span: log.commits.length, label: `Review vs ${log.base}` }
+  }, [stored, probing, probe.isPending, probe.data])
+
+  // What the user or an agent asked for since, which outranks the default.
+  const [picked, setPicked] = useState<Scope | null>(null)
   useEffect(() => {
+    setPicked(null)
     setWorktrees(false)
-    setStatus(null)
+  }, [scopeKey])
 
-    const stored = readScope(scopeKey)
-    if (stored) {
-      setScope(stored)
-      return
-    }
-
-    setScope(null)
-    let cancelled = false
-    api(hostId)
-      .gitLog(root, { limit: SCOPE_PROBE })
-      .then((log) => {
-        if (cancelled) return
-        const reviewable = log.scope === 'branch' && log.base && log.commits.length > 0
-        setScope(
-          reviewable
-            ? {
-                kind: 'review',
-                base: log.base,
-                span: log.commits.length,
-                label: `Review vs ${log.base}`,
-              }
-            : { kind: 'working' },
-        )
-      })
-      .catch(() => {
-        // No history, no base branch, not a repository — the working tree is
-        // the answer that needs nothing to be true.
-        if (!cancelled) setScope({ kind: 'working' })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, root, scopeKey])
+  const scope = picked ?? fallback
 
   const pickScope = (next: Scope): void => {
-    setScope(next)
+    setPicked(next)
     writeScope(scopeKey, next)
   }
 
@@ -123,9 +107,9 @@ export function GitPanel({
   useEffect(() => {
     if (!diffTarget || diffTarget.hostId !== hostId) return
     if (diffTarget.base) {
-      setScope({ kind: 'review', base: diffTarget.base, span: 0, label: `${diffTarget.base}...HEAD` })
+      setPicked({ kind: 'review', base: diffTarget.base, span: 0, label: `${diffTarget.base}...HEAD` })
     } else if (diffTarget.commit) {
-      setScope({
+      setPicked({
         kind: 'commit',
         to: diffTarget.commit,
         from: null,
@@ -133,32 +117,28 @@ export function GitPanel({
         label: diffTarget.commit.slice(0, 7),
       })
     } else {
-      setScope({ kind: 'working' })
+      setPicked({ kind: 'working' })
     }
   }, [diffTarget?.seq])
 
-  // Status is fetched here rather than in the changes view because the header
-  // shows the branch in every scope — reading a commit is no reason to lose it.
+  // Read here rather than in the changes view because the header shows the
+  // branch in every scope — reading a commit is no reason to lose it. Disabled
+  // behind another tab: revision moves with every hook the agent fires, and
+  // that would be a status call per tool call for a panel nobody is looking at.
+  const statusQuery = useQuery({ ...gitStatusQuery(hostId, root), enabled: active })
+  const status = statusQuery.data ?? null
+  const error = statusQuery.error
+
+  // A tool call is the usual way the working tree changes here, and revision is
+  // how the session says one happened. Explicit rather than part of the key: a
+  // key carrying it would mint a fresh cache entry per hook and never reuse one.
+  const { refetch: refetchStatus } = statusQuery
+  const seenRevision = useRef(revision)
   useEffect(() => {
-    // revision moves with every hook the agent fires; behind another tab that
-    // is a status call per tool call, for a panel nobody is looking at.
-    if (!active) return
-    let cancelled = false
-    setError(null)
-    api(hostId)
-      .gitStatus(root)
-      .then((result) => {
-        if (!cancelled) setStatus(result)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
-    // Re-reads whenever the agent does something: a tool call is the usual way
-    // the working tree changes here.
-  }, [hostId, root, revision, active])
+    if (seenRevision.current === revision) return
+    seenRevision.current = revision
+    if (active) void refetchStatus()
+  }, [revision, active, refetchStatus])
 
   if (!scope) {
     return (
@@ -207,7 +187,7 @@ export function GitPanel({
       </header>
 
       {error ? (
-        <p className="empty-note">{error}</p>
+        <p className="empty-note">{error.message}</p>
       ) : worktrees ? (
         <WorktreesView
           hostId={hostId}
@@ -240,7 +220,6 @@ function ChangesView({
   status: GitStatus | null
 }): JSX.Element {
   const [selected, setSelected] = useState<{ path: string; untracked: boolean } | null>(null)
-  const [diff, setDiff] = useState<GitDiff | null>(null)
   const target = useStore((s) => s.diffTarget)
 
   // A path from the previous repository would only produce a failed diff.
@@ -259,27 +238,13 @@ function ChangesView({
     store.clearDiffTarget()
   }, [target?.seq])
 
-  useEffect(() => {
-    if (!selected) {
-      setDiff(null)
-      return
-    }
-    let cancelled = false
-    api(hostId)
-      // An untracked file has nothing to diff against, so it is diffed against
-      // nothing — otherwise git says the file is not in the index and the pane
-      // comes back empty.
-      .gitDiff(root, selected.path, { untracked: selected.untracked })
-      .then((result) => {
-        if (!cancelled) setDiff(result)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) store.fail(err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, root, selected?.path, selected?.untracked])
+  // An untracked file has nothing to diff against, so it is diffed against
+  // nothing — otherwise git says the file is not in the index and the pane
+  // comes back empty.
+  const diffQuery = useQuery(
+    gitDiffQuery(hostId, root, selected?.path ?? '', { untracked: selected?.untracked ?? false }),
+  )
+  const diff = diffQuery.data
 
   if (!status) return <p className="empty-note">Loading…</p>
 
@@ -316,7 +281,11 @@ function ChangesView({
       </div>
 
       <div className="git-diff">
-        {diff ? (
+        {diffQuery.error ? (
+          // In the pane rather than as a toast: the reader asked for this file,
+          // and the answer belongs where the patch would have been.
+          <p className="empty-note">{diffQuery.error.message}</p>
+        ) : diff ? (
           <>
             <header>
               <span>{diff.file}</span>

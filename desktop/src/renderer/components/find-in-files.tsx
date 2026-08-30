@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
+import { grepQuery } from '../queries.ts'
 import { RootSuggestions } from './root-picker.tsx'
 import type { GrepMatch, Worktree } from '../../shared/models.ts'
 
@@ -15,6 +16,16 @@ interface Props {
   onPickRoot?: (path: string) => void
 }
 
+/** Past this the daemon stops walking and says it truncated. */
+const LIMIT = 300
+
+/** A search the user pressed Enter on. */
+interface Submitted {
+  q: string
+  regex: boolean
+  caseSensitive: boolean
+}
+
 /** ⌘⇧F: search file contents under the session's directory. */
 export function FindInFiles({
   hostId,
@@ -27,10 +38,6 @@ export function FindInFiles({
   const [query, setQuery] = useState('')
   const [caseSensitive, setCaseSensitive] = useState(false)
   const [regex, setRegex] = useState(false)
-  const [matches, setMatches] = useState<GrepMatch[] | null>(null)
-  const [truncated, setTruncated] = useState(false)
-  const [searching, setSearching] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const field = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -38,39 +45,28 @@ export function FindInFiles({
     field.current?.select()
   }, [focusSeq])
 
-  // Content search is run on demand rather than per keystroke: it walks the
-  // whole tree, and a half-typed word is rarely what was meant.
-  const run = useCallback(
-    async (where: string): Promise<void> => {
-      if (!query) {
-        setMatches(null)
-        return
-      }
-      setSearching(true)
-      setError(null)
-      try {
-        const result = await api(hostId).grepFiles(where, query, { regex, caseSensitive, limit: 300 })
-        setMatches(result.matches)
-        setTruncated(result.truncated)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-        setMatches([])
-      } finally {
-        setSearching(false)
-      }
-    },
-    [hostId, query, regex, caseSensitive],
-  )
+  /**
+   * The search as it was submitted, which is not the same as what is in the
+   * field. Content search walks the whole tree, so it runs on Enter rather than
+   * per keystroke — a half-typed word is rarely what was meant.
+   *
+   * The root is not part of this because it is part of the key: taking a
+   * suggestion moves the root under a search already typed, and the answer the
+   * user wanted is that same search run there, which now happens by itself.
+   */
+  const [submitted, setSubmitted] = useState<Submitted | null>(null)
 
-  // Taking a suggestion moves the root under a search that has already been
-  // typed, and the answer the user wanted is the same search run again there.
-  const searched = useRef(root)
-  useEffect(() => {
-    if (searched.current === root) return
-    searched.current = root
-    if (matches !== null) void run(root)
-  }, [root, matches, run])
+  const { data, error, isFetching } = useQuery({
+    ...grepQuery(hostId, root, submitted?.q ?? '', {
+      regex: submitted?.regex ?? false,
+      caseSensitive: submitted?.caseSensitive ?? false,
+      limit: LIMIT,
+    }),
+    placeholderData: keepPreviousData,
+  })
 
+  const matches = submitted ? (data?.matches ?? null) : null
+  const truncated = data?.truncated ?? false
   const groups = groupByFile(matches ?? [])
 
   return (
@@ -84,7 +80,8 @@ export function FindInFiles({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') void run(root)
+            if (event.key !== 'Enter') return
+            setSubmitted(query ? { q: query, regex, caseSensitive } : null)
           }}
         />
         <button
@@ -104,15 +101,15 @@ export function FindInFiles({
       </div>
 
       <div className="find-results">
-        {searching && <p className="empty-note">Searching…</p>}
-        {error && <p className="empty-note">{error}</p>}
-        {!searching && !error && matches !== null && matches.length === 0 && (
+        {isFetching && <p className="empty-note">Searching…</p>}
+        {error && <p className="empty-note">{error.message}</p>}
+        {!isFetching && !error && matches !== null && matches.length === 0 && (
           <>
             <p className="empty-note">No results under {root}.</p>
             {onPickRoot && <RootSuggestions root={root} worktrees={worktrees} onPick={onPickRoot} />}
           </>
         )}
-        {!searching &&
+        {!isFetching &&
           groups.map(([rel, hits]) => (
             <div key={rel} className="find-group">
               <span className="find-file" title={rel}>

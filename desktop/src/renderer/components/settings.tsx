@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 
 import { api, bridge } from '../bridge.ts'
+import { keys, mergeSettings, settingValues, type SettingsDocument } from '../keys.ts'
+import { useHostSessions } from '../host-data.ts'
+import { settingsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { Modal } from './newsession.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
@@ -369,9 +373,6 @@ function Loading({ title }: { title: string }): JSX.Element {
   )
 }
 
-/** Loaded, still loading, or asked and refused. */
-type Loaded<T> = { state: 'loading' } | { state: 'failed' } | { state: 'ready'; value: T }
-
 /** What the daemon knows about titling, which is not this window's to keep. */
 interface TitlePrefs {
   enabled: boolean
@@ -445,63 +446,78 @@ interface BudgetPrefs {
   fraction: number
 }
 
+/**
+ * One daemon's settings, shared by every pane that reads them.
+ *
+ * The memory budget, the auto-titler and the sidebar's sort mode all live in
+ * one document, so they are one query rather than one fetch each. It never goes
+ * stale on its own: two of those panes hold a draft while a control is under
+ * the pointer, and a refetch landing mid-drag would move the thumb.
+ */
+function useDaemonSettings(hostId: string) {
+  return useQuery(settingsQuery(hostId))
+}
+
+/**
+ * A write to some of those settings, applied here before the daemon answers.
+ *
+ * Merged rather than replaced, both ways: the daemon upserts only the keys it
+ * is sent, so the optimistic copy has to do the same or one pane's save blanks
+ * the other's fields until the next fetch.
+ */
+function useSettingsWrite(hostId: string) {
+  const client = useQueryClient()
+  const key = keys.settings(hostId)
+  return useMutation({
+    mutationFn: (written: Record<string, string>) => api(hostId).updateSettings(written),
+    onMutate: async (written) => {
+      await client.cancelQueries({ queryKey: key })
+      const before = client.getQueryData<SettingsDocument>(key)
+      client.setQueryData<SettingsDocument>(key, (doc) => mergeSettings(doc, written))
+      return { before }
+    },
+    onError: (err, _written, context) => {
+      client.setQueryData(key, context?.before)
+      store.fail(err)
+    },
+  })
+}
+
 function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
-  const total = useStore((s) => s.stats[hostId]?.memory_total ?? 0)
-  const [loaded, setLoaded] = useState<Loaded<BudgetPrefs>>({ state: 'loading' })
+  const { stats } = useHostSessions()
+  const total = stats[hostId]?.memory_total ?? 0
+  const settings = useDaemonSettings(hostId)
 
-  useEffect(() => {
-    setLoaded({ state: 'loading' })
-    api(hostId)
-      .settings()
-      .then((body) => {
-        // The daemon answers with the settings under a key, alongside personas
-        // and event types. Reading the envelope as though it were the map gives
-        // undefined for every setting, which is indistinguishable from a fresh
-        // install — the toggle saved and then read back off.
-        const values = (body as { settings?: Record<string, string> }).settings ?? {}
-        const raw = Number(values['memory.budget_fraction'])
-        setLoaded({
-          state: 'ready',
-          value: {
-            enabled: values['memory.evict'] === 'true',
-            // Clamped rather than trusted: the setting predates the slider, so
-            // a stored value can sit outside its travel and leave the thumb
-            // pinned at an end while the label says something else.
-            fraction: Number.isFinite(raw) ? Math.min(BUDGET_MAX, Math.max(BUDGET_MIN, raw)) : DEFAULT_BUDGET,
-          },
-        })
-      })
-      .catch(() => {
-        // Offline, or a daemon too old to know the setting.
-        setLoaded({ state: 'failed' })
-      })
-  }, [hostId])
-
-  const prefs = loaded.state === 'ready' ? loaded.value : null
+  /**
+   * What the daemon holds, as this pane reads it.
+   *
+   * Clamped rather than trusted: the setting predates the slider, so a stored
+   * value can sit outside its travel and leave the thumb pinned at an end while
+   * the label says something else.
+   */
+  const stored = useMemo<BudgetPrefs>(() => {
+    const values = settingValues(settings.data)
+    const raw = Number(values['memory.budget_fraction'])
+    return {
+      enabled: values['memory.evict'] === 'true',
+      fraction: Number.isFinite(raw) ? Math.min(BUDGET_MAX, Math.max(BUDGET_MIN, raw)) : DEFAULT_BUDGET,
+    }
+  }, [settings.data])
 
   // Dragging the slider moves the label without writing anything: a drag from a
   // quarter to a half passes through every step in between, and each one would
   // otherwise be a request the daemon has to answer.
-  const drag = (fraction: number): void => {
-    setLoaded((before) =>
-      before.state === 'ready' ? { state: 'ready', value: { ...before.value, fraction } } : before,
-    )
-  }
+  const [dragged, setDragged] = useState<number | null>(null)
+  const prefs: BudgetPrefs = { ...stored, fraction: dragged ?? stored.fraction }
 
-  const change = async (next: Partial<BudgetPrefs>): Promise<void> => {
-    const before = prefs
-    if (!before) return
-    const after = { ...before, ...next }
-    setLoaded({ state: 'ready', value: after })
-    try {
-      await api(hostId).updateSettings({
-        'memory.evict': String(after.enabled),
-        'memory.budget_fraction': String(after.fraction),
-      })
-    } catch (err) {
-      setLoaded({ state: 'ready', value: before })
-      store.fail(err)
-    }
+  const write = useSettingsWrite(hostId)
+  const change = (next: Partial<BudgetPrefs>): void => {
+    const after = { ...prefs, ...next }
+    setDragged(null)
+    write.mutate({
+      'memory.evict': String(after.enabled),
+      'memory.budget_fraction': String(after.fraction),
+    })
   }
 
   const range = budgetRange(total)
@@ -510,8 +526,8 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
   // thumb on a step rather than between two.
   const gib = prefs ? snapToStep((total * prefs.fraction) / GIB, range) : 0
 
-  if (loaded.state === 'loading') return <Loading title="Memory" />
-  if (!prefs) {
+  if (settings.isPending) return <Loading title="Memory" />
+  if (settings.error) {
     return (
       <section className="settings-group">
         <h3>Memory</h3>
@@ -535,7 +551,7 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
         <input
           type="checkbox"
           checked={prefs.enabled}
-          onChange={(event) => void change({ enabled: event.target.checked })}
+          onChange={(event) => change({ enabled: event.target.checked })}
         />
         <span>Save memory</span>
         <Info>
@@ -565,9 +581,9 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
             step={STEP_GIB}
             value={gib}
             disabled={!prefs.enabled}
-            onChange={(event) => drag((Number(event.target.value) * GIB) / total)}
-            onPointerUp={(event) => void change({ fraction: (Number(event.currentTarget.value) * GIB) / total })}
-            onKeyUp={(event) => void change({ fraction: (Number(event.currentTarget.value) * GIB) / total })}
+            onChange={(event) => setDragged((Number(event.target.value) * GIB) / total)}
+            onPointerUp={(event) => change({ fraction: (Number(event.currentTarget.value) * GIB) / total })}
+            onKeyUp={(event) => change({ fraction: (Number(event.currentTarget.value) * GIB) / total })}
           />
         ) : (
           <input
@@ -577,9 +593,9 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
             step={0.05}
             value={prefs.fraction}
             disabled={!prefs.enabled}
-            onChange={(event) => drag(Number(event.target.value))}
-            onPointerUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
-            onKeyUp={(event) => void change({ fraction: Number(event.currentTarget.value) })}
+            onChange={(event) => setDragged(Number(event.target.value))}
+            onPointerUp={(event) => change({ fraction: Number(event.currentTarget.value) })}
+            onKeyUp={(event) => change({ fraction: Number(event.currentTarget.value) })}
           />
         )}
         <div className="budget-scale">
@@ -593,54 +609,29 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
 }
 
 function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
-  const [loaded, setLoaded] = useState<Loaded<TitlePrefs>>({ state: 'loading' })
-
-  useEffect(() => {
-    setLoaded({ state: 'loading' })
-    void api(hostId)
-      .settings()
-      .then((body) => {
-        const values = (body as { settings?: Record<string, string> }).settings ?? {}
-        setLoaded({
-          state: 'ready',
-          value: {
-            enabled: values['autotitle.enabled'] === 'true',
-            // Only an explicit false turns the icon off, which is how the
-            // daemon reads it (claude/autotitle.go). Off unless turned on:
-            // without a Nerd Font every category renders as the same
-            // missing-character box.
-            emoji: values['autotitle.emoji'] === 'true',
-            prompt: values['autotitle.prompt'] ?? '',
-          },
-        })
-      })
-      .catch(() => {
-        // Offline. Nothing to show for it, and nowhere to save to.
-        setLoaded({ state: 'failed' })
-      })
-  }, [hostId])
-
-  const prefs = loaded.state === 'ready' ? loaded.value : null
-
-  const change = async (next: Partial<TitlePrefs>): Promise<void> => {
-    const before = prefs
-    if (!before) return
-    const after = { ...before, ...next }
-    setLoaded({ state: 'ready', value: after })
-    try {
-      await api(hostId).updateSettings({
-        'autotitle.enabled': String(after.enabled),
-        'autotitle.emoji': String(after.emoji),
-        'autotitle.prompt': after.prompt,
-      })
-    } catch (err) {
-      setLoaded({ state: 'ready', value: before })
-      store.fail(err)
-    }
+  const settings = useDaemonSettings(hostId)
+  const values = settingValues(settings.data)
+  const prefs: TitlePrefs = {
+    enabled: values['autotitle.enabled'] === 'true',
+    // Only an explicit false turns the icon off, which is how the daemon reads
+    // it (claude/autotitle.go). Off unless turned on: without a Nerd Font every
+    // category renders as the same missing-character box.
+    emoji: values['autotitle.emoji'] === 'true',
+    prompt: values['autotitle.prompt'] ?? '',
   }
 
-  if (loaded.state === 'loading') return <Loading title="Session titles" />
-  if (!prefs) {
+  const write = useSettingsWrite(hostId)
+  const change = (next: Partial<TitlePrefs>): void => {
+    const after = { ...prefs, ...next }
+    write.mutate({
+      'autotitle.enabled': String(after.enabled),
+      'autotitle.emoji': String(after.emoji),
+      'autotitle.prompt': after.prompt,
+    })
+  }
+
+  if (settings.isPending) return <Loading title="Session titles" />
+  if (settings.error) {
     return (
       <section className="settings-group">
         <h3>Session titles</h3>
@@ -663,7 +654,7 @@ function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
         <input
           type="checkbox"
           checked={prefs.enabled}
-          onChange={(event) => void change({ enabled: event.target.checked })}
+          onChange={(event) => change({ enabled: event.target.checked })}
         />
         <span>Generate titles automatically</span>
         <Info>Off by default. Costs a Haiku call per session, about a tenth of a cent.</Info>
@@ -674,7 +665,7 @@ function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
           type="checkbox"
           checked={prefs.emoji}
           disabled={!prefs.enabled}
-          onChange={(event) => void change({ emoji: event.target.checked })}
+          onChange={(event) => change({ emoji: event.target.checked })}
         />
         <span>Icon prefix</span>
         <Info>
@@ -690,7 +681,7 @@ function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
       <CustomPrompt
         value={prefs.prompt}
         disabled={!prefs.enabled}
-        onSave={(prompt) => void change({ prompt })}
+        onSave={(prompt) => change({ prompt })}
       />
     </section>
   )

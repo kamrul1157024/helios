@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
+import { directoriesQuery, modelsQuery, providersQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import type { DirectoryInfo, ModelInfo, ProviderInfo } from '../../shared/models.ts'
+
+const NO_PROVIDERS: ProviderInfo[] = []
+const NO_MODELS: ModelInfo[] = []
+const NO_DIRECTORIES: DirectoryInfo[] = []
+
+/** Module scope so the cache memoises the filtered list. */
+const onlyReady = (all: ProviderInfo[]): ProviderInfo[] => all.filter((p) => p.ready !== false)
 
 export function NewSessionDialog({
   seed,
@@ -15,9 +24,6 @@ export function NewSessionDialog({
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const [hostId, setHostId] = useState(seed?.hostId ?? hosts[0]?.id ?? '')
-  const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [directories, setDirectories] = useState<DirectoryInfo[]>([])
   const [provider, setProvider] = useState('claude')
   const [model, setModel] = useState('')
   const [cwd, setCwd] = useState('')
@@ -29,55 +35,45 @@ export function NewSessionDialog({
   // next, and the seed was a path on the machine it came from.
   const seeded = useRef(seed?.cwd ?? '')
 
-  useEffect(() => {
-    if (!hostId) return
-    let cancelled = false
-    const client = api(hostId)
-    void Promise.all([client.providers(), client.listDirectories()])
-      .then(([allProviders, dirs]) => {
-        if (cancelled) return
-        // Only agents that would actually start. An unready one — not
-        // installed, or hooks missing — produces a session that runs and is
-        // never heard from, which reads as a hang. `helios start` is where an
-        // unready agent is shown, with what to do about it.
-        //
-        // ready is optional so an older daemon, which does not send it, keeps
-        // offering everything it did before.
-        const providerList = allProviders.filter((p) => p.ready !== false)
-        setProviders(providerList)
-        setDirectories(dirs)
-        const first = providerList[0]
-        if (first && !providerList.some((p) => p.id === provider)) setProvider(first.id)
-        // Reset rather than preserve: a directory is meaningful only on the
-        // host it came from, and carrying one across a host switch starts the
-        // session in a path that does not exist there.
-        setCwd(seeded.current || dirs[0]?.cwd || '')
-        seeded.current = ''
-      })
-      .catch((err: unknown) => store.fail(err))
-    return () => {
-      cancelled = true
-    }
-    // Runs on host change only, so edits the user makes while staying on one
-    // host survive; provider and cwd are deliberately not dependencies.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostId])
+  // Only agents that would actually start. An unready one — not installed, or
+  // hooks missing — produces a session that runs and is never heard from, which
+  // reads as a hang. `helios start` is where an unready agent is shown, with
+  // what to do about it. `ready` is optional so an older daemon, which does not
+  // send it, keeps offering everything it did before.
+  const { data: providers = NO_PROVIDERS } = useQuery({
+    ...providersQuery(hostId ?? ''),
+    enabled: !!hostId,
+    select: onlyReady,
+  })
+  const { data: directories = NO_DIRECTORIES } = useQuery({
+    ...directoriesQuery(hostId ?? ''),
+    enabled: !!hostId,
+  })
 
+  /**
+   * Settles the provider and directory once the host has answered.
+   *
+   * On host change rather than on every answer: edits the user makes while
+   * staying on one host have to survive, and a directory is meaningful only on
+   * the machine it came from — carrying one across a switch starts the session
+   * in a path that does not exist there.
+   */
+  const settled = useRef<string | null>(null)
   useEffect(() => {
-    if (!hostId || !provider) return
-    let cancelled = false
-    api(hostId)
-      .models(provider)
-      .then((list) => {
-        if (!cancelled) setModels(list)
-      })
-      .catch(() => {
-        if (!cancelled) setModels([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, provider])
+    if (!hostId || providers.length === 0 || settled.current === hostId) return
+    settled.current = hostId
+    const first = providers[0]
+    if (first && !providers.some((p) => p.id === provider)) setProvider(first.id)
+    setCwd(seeded.current || directories[0]?.cwd || '')
+    seeded.current = ''
+    // provider and cwd are deliberately not dependencies: this settles them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostId, providers, directories])
+
+  const { data: models = NO_MODELS } = useQuery({
+    ...modelsQuery(hostId ?? '', provider),
+    enabled: !!hostId && provider !== '',
+  })
 
   const selected = providers.find((p) => p.id === provider)
   const modes = selected?.permission_modes ?? []
@@ -97,11 +93,9 @@ export function NewSessionDialog({
       // group the + was pressed on. The directory only seeded the dialog; the
       // group is what the button actually promised.
       if (seed?.group) await store.setSessionGroup(hostId, result.session_id, seed.group)
-      await store.refreshSessions(hostId)
+      await store.invalidateSessionsFor(hostId)
       store.select(hostId, result.session_id)
-      const session = store
-        .getSnapshot()
-        .sessions[hostId]?.find((s) => s.session_id === result.session_id)
+      const session = store.sessionById(hostId, result.session_id)
       // Freshly created sessions are always warm, so attaching never wakes.
       if (session) await store.openTerminal(hostId, session, false)
       onClose()

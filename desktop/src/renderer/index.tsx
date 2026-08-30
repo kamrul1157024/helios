@@ -1,7 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { QueryClientProvider } from '@tanstack/react-query'
 
 import { App } from './app.tsx'
+import { queryClient } from './query-client.ts'
 // The code theme first: the app's own sheet overrides pieces of it.
 import './hljs-vars.css'
 import './styles.css'
@@ -31,6 +33,8 @@ setInterval(() => {
 // catches an effect that leaks a terminal connection on remount.
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </StrictMode>,
 )

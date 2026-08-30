@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
+import { keys } from '../keys.ts'
+import { gitChangesQuery, gitDiffQuery, reviewedQuery } from '../queries.ts'
 import { store } from '../store.ts'
 import { diffClass } from './diff-view.tsx'
 import { PathLabel } from './path-label.tsx'
 import type { ReviewScope } from './commits.tsx'
-import type { CommitFile, GitChanges } from '../../shared/models.ts'
+import type { CommitFile } from '../../shared/models.ts'
 
 /**
  * Everything the branch changed, in one page: the review a pull request would
@@ -27,55 +30,37 @@ export function ReviewView({
   /** Absent when the panel outlives its session; disables commenting. */
   sessionId?: string
 }): JSX.Element {
-  const [changes, setChanges] = useState<GitChanges | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [viewed, setViewed] = useState<Set<string>>(new Set())
+  const client = useQueryClient()
+  const reviewedKey = keys.reviewed(hostId, root, scope.base)
 
-  useEffect(() => {
-    let cancelled = false
-    setChanges(null)
-    setError(null)
-    setViewed(new Set())
-    // Persisted in the daemon, not here: a review survives a restart, and an
-    // agent asks what has been read so it can skip it.
-    api(hostId)
-      .reviewedFiles(root, scope.base)
-      .then((files) => {
-        if (!cancelled) setViewed(new Set(files))
-      })
-      .catch(() => {
-        // An older daemon has no reviewed state; ticking still works locally.
-      })
-    api(hostId)
-      // Merge base, not the branch tip: commits landed on the base since this
-      // branch was cut are not this branch's work, and a two-dot diff reports
-      // them as changes it undid.
-      .gitChanges(root, 'HEAD', scope.base, true)
-      .then((result) => {
-        if (!cancelled) setChanges(result)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [hostId, root, scope.base])
+  // Merge base, not the branch tip: commits landed on the base since this
+  // branch was cut are not this branch's work, and a two-dot diff reports them
+  // as changes it undid.
+  const changesQuery = useQuery(gitChangesQuery(hostId, root, 'HEAD', scope.base, true))
+  const changes = changesQuery.data
 
-  const toggleViewed = (path: string): void => {
-    const next = new Set(viewed)
-    const reviewed = !next.has(path)
-    if (reviewed) next.add(path)
-    else next.delete(path)
-    setViewed(next)
-    void api(hostId)
-      .setReviewed(root, scope.base, path, reviewed)
-      .catch(() => {
-        // The tick is the user's, so it stands even if the daemon refused it.
-      })
-  }
+  // Persisted in the daemon, not here: a review survives a restart, and an
+  // agent asks what has been read so it can skip it. An older daemon has no
+  // reviewed state at all, which lands as an error and an empty set — ticking
+  // still works locally, which is the point.
+  const { data: viewed = EMPTY } = useQuery({ ...reviewedQuery(hostId, root, scope.base), select: asSet })
 
-  if (error) return <p className="empty-note">{error}</p>
+  const toggleViewed = useMutation({
+    mutationFn: ({ path, reviewed }: { path: string; reviewed: boolean }) =>
+      api(hostId).setReviewed(root, scope.base, path, reviewed),
+    // No rollback and no refetch behind it. The tick is the user's, so it
+    // stands even if the daemon refused it — which is what an older one does.
+    onMutate: ({ path, reviewed }) => {
+      client.setQueryData<string[]>(reviewedKey, (files) => {
+        const next = new Set(files ?? [])
+        if (reviewed) next.add(path)
+        else next.delete(path)
+        return [...next]
+      })
+    },
+  })
+
+  if (changesQuery.error) return <p className="empty-note">{changesQuery.error.message}</p>
   if (!changes) {
     return (
       <div className="panel-loading">
@@ -133,7 +118,9 @@ export function ReviewView({
               file={file}
               sessionId={sessionId}
               viewed={viewed.has(file.path)}
-              onToggleViewed={() => toggleViewed(file.path)}
+              onToggleViewed={() =>
+                toggleViewed.mutate({ path: file.path, reviewed: !viewed.has(file.path) })
+              }
             />
           ))}
         </div>
@@ -145,6 +132,11 @@ export function ReviewView({
 function anchorFor(path: string): string {
   return `review-${path.replace(/[^a-zA-Z0-9]/g, '-')}`
 }
+
+/** Module scope so the cache can memoise it: a fresh Set per render would make
+ *  every card re-render on every keystroke elsewhere in the panel. */
+const asSet = (files: string[]): Set<string> => new Set(files)
+const EMPTY: Set<string> = new Set()
 
 /**
  * One file's patch. The diff is fetched when the card first comes into view:
@@ -168,8 +160,6 @@ function FileReview({
   viewed: boolean
   onToggleViewed: () => void
 }): JSX.Element {
-  const [diff, setDiff] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [wanted, setWanted] = useState(false)
   const card = useRef<HTMLElement | null>(null)
 
@@ -186,21 +176,11 @@ function FileReview({
     return () => observer.disconnect()
   }, [wanted])
 
-  useEffect(() => {
-    if (!wanted || viewed) return
-    let cancelled = false
-    api(hostId)
-      .gitDiff(root, file.path, { from: base, to: 'HEAD', mergeBase: true })
-      .then((result) => {
-        if (!cancelled) setDiff(result.diff)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [wanted, viewed, hostId, root, base, file.path])
+  const { data, error } = useQuery({
+    ...gitDiffQuery(hostId, root, file.path, { from: base, to: 'HEAD', mergeBase: true }),
+    enabled: wanted && !viewed,
+  })
+  const diff = data?.diff ?? null
 
   return (
     <section className="review-card" id={anchorFor(file.path)} ref={card}>
@@ -219,7 +199,7 @@ function FileReview({
 
       {!viewed &&
         (error ? (
-          <p className="empty-note">{error}</p>
+          <p className="empty-note">{error.message}</p>
         ) : diff === null ? (
           <p className="empty-note">Loading…</p>
         ) : (

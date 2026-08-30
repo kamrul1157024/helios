@@ -1,6 +1,16 @@
 import { useSyncExternalStore } from 'react'
 
 import { api, bridge, statusOf } from './bridge.ts'
+import { queryClient } from './query-client.ts'
+import {
+  effectsFor,
+  keys,
+  mergeSettings,
+  patchSessionInPage,
+  type SessionListPage,
+  type SettingsDocument,
+  type SortMode,
+} from './keys.ts'
 import type { GroupOrder, PathOrder } from './components/grouping.ts'
 import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
@@ -58,8 +68,7 @@ export function sessionKey(hostId: string, sessionId: string): string {
 
 export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
 
-/** Sorted by what the sessions are doing, or by hand. */
-export type SortMode = 'activity' | 'manual'
+export type { SortMode }
 
 /**
  * What splits the list into groups, if anything.
@@ -132,10 +141,12 @@ export interface PromptDraft {
 export interface State {
   hosts: HostRecord[]
   hostStatus: Record<string, HostStatus>
-  sessions: Record<string, Session[]>
-  /** Each host's warm pool and machine load, from the session list envelope. */
-  stats: Record<string, HostStats>
-  notifications: Record<string, Notification[]>
+  /**
+   * Server data lives in the query cache, not here — the session lists, the
+   * groups, the notifications and the daemon's own settings. What is left is
+   * this window's: what is selected, which panels are open, and what it has
+   * connected to.
+   */
   /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
   selection: Selection | null
@@ -159,14 +170,6 @@ export interface State {
   promptDraft: PromptDraft | null
   /** Sidebar filter, matched against title, project and cwd. */
   query: string
-  /**
-   * How each host's session list is ordered, by host id.
-   *
-   * 'activity' recomputes the order from what the sessions are doing —
-   * approvals first, then live, then most recent. 'manual' leaves them where
-   * they were put. The daemon holds it, so every client agrees.
-   */
-  sortMode: Record<string, SortMode>
   loading: boolean
   toast: { text: string; kind: 'info' | 'error' } | null
   pairingLink: string | null
@@ -178,14 +181,6 @@ export interface State {
    * which way it is set.
    */
   density: Density
-  /**
-   * Every group the daemon knows, by host id, in display order.
-   *
-   * Held apart from the sessions because a group outlives the sessions in it:
-   * an empty one still has a place in the arrangement, and the picker has to
-   * offer it.
-   */
-  groups: Record<string, SessionGroup[]>
   /**
    * How the sidebar splits the list: not at all, by the user's group tree, or
    * by each session's directory.
@@ -206,14 +201,6 @@ export interface State {
   /** Where each directory has been dragged to, by path. Only read when
    *  groupOrder is 'manual'. */
   dirOrder: PathOrder
-  /**
-   * Hosts whose daemon has no grouping routes, by host id.
-   *
-   * A daemon older than the feature answers 404, and offering to make a group
-   * on a machine that cannot hold one is worse than not offering: the button
-   * looks broken rather than absent.
-   */
-  groupsUnsupported: Record<string, boolean>
 }
 
 const GROUPING_KEY = 'helios.grouping'
@@ -290,9 +277,6 @@ function writeGroupOrder(order: GroupOrder): void {
 const initial: State = {
   hosts: [],
   hostStatus: {},
-  sessions: {},
-  stats: {},
-  notifications: {},
   tabs: [],
   selection: null,
   panels: {},
@@ -303,14 +287,11 @@ const initial: State = {
   showNote: null,
   promptDraft: null,
   query: '',
-  sortMode: {},
   loading: true,
   terminalTheme: bridge.theme.boot().terminal,
   density: bridge.theme.boot().density,
   toast: null,
   pairingLink: null,
-  groups: {},
-  groupsUnsupported: {},
   grouping: readGroupMode(),
   groupOrder: readGroupOrder(),
   dirOrder: readDirOrder(),
@@ -365,10 +346,13 @@ function megabytes(bytes: number): string {
  * source would be more ceremony than the whole thing is worth.
  */
 class Store {
+  /** What each session's status was when last seen, so a transition into
+   *  'terminated' can be told from a session that was already over. */
+  private lastStatus = new Map<string, Map<string, string>>()
+
   private state: State = initial
   private listeners = new Set<Listener>()
   private toastTimer: ReturnType<typeof setTimeout> | null = null
-  private refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   getSnapshot = (): State => this.state
 
@@ -386,6 +370,8 @@ class Store {
   // ─── Lifecycle ─────────────────────────────────────────────────────────
 
   async init(): Promise<void> {
+    this.watchTerminations()
+
     // The preload painted the boot theme already; this keeps up with changes
     // made afterwards, whether from the settings dialog or the OS switching
     // between light and dark underneath us.
@@ -398,12 +384,12 @@ class Store {
 
     bridge.hosts.onChanged((hosts) => {
       this.set({ hosts })
-      for (const host of hosts) void this.refreshHost(host.id)
+      for (const host of hosts) void this.invalidateHost(host.id)
     })
     bridge.hosts.onStatus((status) => {
       this.set((s) => ({ hostStatus: { ...s.hostStatus, [status.id]: status } }))
       // Coming back online means whatever happened while offline was missed.
-      if (status.state === 'online') void this.refreshHost(status.id)
+      if (status.state === 'online') void this.invalidateHost(status.id)
     })
     bridge.hosts.onEvent(({ hostId, event }) => this.onServerEvent(hostId, event))
     this.startTouchHeartbeat()
@@ -437,7 +423,7 @@ class Store {
       // making the user copy a token from a terminal they already trust.
       await this.tryPairLocal()
     }
-    await Promise.all(this.state.hosts.map((h) => this.refreshHost(h.id)))
+    await Promise.all(this.state.hosts.map((h) => this.invalidateHost(h.id)))
   }
 
   private async tryPairLocal(): Promise<void> {
@@ -450,27 +436,6 @@ class Store {
 
   // ─── Data ──────────────────────────────────────────────────────────────
 
-  async refreshHost(hostId: string): Promise<void> {
-    await Promise.all([
-      this.refreshSessions(hostId),
-      this.refreshNotifications(hostId),
-      this.refreshSortMode(hostId),
-      this.refreshGroups(hostId),
-    ])
-  }
-
-  /** The daemon owns the sort mode, so a second window opens on the same one. */
-  async refreshSortMode(hostId: string): Promise<void> {
-    try {
-      const body = (await api(hostId).settings()) as { settings?: Record<string, string> }
-      const mode: SortMode = body.settings?.['sessions.sort'] === 'manual' ? 'manual' : 'activity'
-      this.set((s) => ({ sortMode: { ...s.sortMode, [hostId]: mode } }))
-    } catch {
-      // Offline. The list falls back to sorting by activity, which needs
-      // nothing from the daemon.
-    }
-  }
-
   /**
    * One switch for every host: the arrangement is stored per daemon, but a
    * sidebar that sorts one group by activity and holds another still is a
@@ -481,15 +446,20 @@ class Store {
   }
 
   async setSortMode(hostId: string, mode: SortMode): Promise<void> {
-    const before = this.state.sortMode[hostId] ?? 'activity'
-    this.set((s) => ({ sortMode: { ...s.sortMode, [hostId]: mode } }))
+    const key = keys.settings(hostId)
+    const before = queryClient.getQueryData<SettingsDocument>(key)
+    // Applied here first: a list that keeps sorting itself while the daemon
+    // answers reads as a switch that did nothing.
+    queryClient.setQueryData<SettingsDocument>(key, (doc) =>
+      mergeSettings(doc, { 'sessions.sort': mode }),
+    )
     try {
       await api(hostId).updateSettings({ 'sessions.sort': mode })
       // Switching to manual freezes what is on screen, so the order the user
       // was looking at is the order they keep.
       if (mode === 'manual') await this.freezeOrder(hostId)
     } catch (err) {
-      this.set((s) => ({ sortMode: { ...s.sortMode, [hostId]: before } }))
+      queryClient.setQueryData(key, before)
       this.fail(err)
     }
   }
@@ -502,36 +472,88 @@ class Store {
    * and the list would jump the moment it was supposed to stop moving.
    */
   private async freezeOrder(hostId: string): Promise<void> {
-    const sessions = this.state.sessions[hostId] ?? []
+    const sessions = this.sessionsOf(hostId)
     if (sessions.length === 0) return
     const pending = new Map<string, number>()
-    for (const notification of this.state.notifications[hostId] ?? []) {
+    for (const notification of this.notificationsOf(hostId)) {
       pending.set(notification.source_session, (pending.get(notification.source_session) ?? 0) + 1)
     }
     const ordered = [...sessions]
       .sort((a, b) => byActivity(a, b, pending))
       .map((session) => session.session_id)
     await api(hostId).setSessionOrder(ordered)
-    await this.refreshSessions(hostId)
+    await this.invalidateSessions(hostId)
+  }
+
+  /**
+   * A field of one session, applied here before the daemon answers.
+   *
+   * Pinning and renaming are direct manipulation: a star that lights and then
+   * goes out again, or a title that reverts as you stop typing, reads as the
+   * click having failed rather than as the round trip it is.
+   */
+  async patchSessionField(
+    hostId: string,
+    sessionId: string,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const before = queryClient.getQueriesData<SessionListPage>({
+      queryKey: keys.allSessions(hostId),
+    })
+    queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) =>
+      patchSessionInPage(page, sessionId, patch as Partial<Session>),
+    )
+    try {
+      await api(hostId).patchSession(sessionId, patch)
+    } catch (err) {
+      for (const [key, page] of before) queryClient.setQueryData(key, page)
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Switching mode restarts the agent, so the daemon refuses while a session is
+   * mid-turn. Applied here first all the same: the control is disabled unless
+   * the session is idle, so a refusal is the exception, and the rollback puts
+   * the old mode back when it happens.
+   */
+  async setPermissionMode(hostId: string, sessionId: string, mode: string): Promise<void> {
+    const before = queryClient.getQueriesData<SessionListPage>({
+      queryKey: keys.allSessions(hostId),
+    })
+    queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) =>
+      patchSessionInPage(page, sessionId, { permission_mode: mode }),
+    )
+    try {
+      await api(hostId).setPermissionMode(sessionId, mode)
+      this.notify(`Permission mode set to ${mode}`)
+    } catch (err) {
+      for (const [key, page] of before) queryClient.setQueryData(key, page)
+      if (statusOf(err) === 409) this.notify('Session is busy — try again when it is idle', 'error')
+      else this.fail(err)
+    }
   }
 
   /** Applies a drag: the whole arrangement, in the order the user left it. */
   async reorderSessions(hostId: string, orderedIds: string[]): Promise<void> {
-    const before = this.state.sessions[hostId] ?? []
+    const before = queryClient.getQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) })
     // Locally first: a card that snaps back while the daemon answers reads as
     // a drag that failed.
-    const byId = new Map(before.map((session) => [session.session_id, session]))
-    const next: Session[] = []
-    orderedIds.forEach((id, index) => {
-      const session = byId.get(id)
-      if (session) next.push({ ...session, sort_order: index })
+    queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) => {
+      if (!page) return page
+      const byId = new Map(page.sessions.map((session) => [session.session_id, session]))
+      const next: Session[] = []
+      orderedIds.forEach((id, index) => {
+        const session = byId.get(id)
+        if (session) next.push({ ...session, sort_order: index })
+      })
+      return { ...page, sessions: next }
     })
-    this.set((s) => ({ sessions: { ...s.sessions, [hostId]: next } }))
 
     try {
       await api(hostId).setSessionOrder(orderedIds)
     } catch (err) {
-      this.set((s) => ({ sessions: { ...s.sessions, [hostId]: before } }))
+      for (const [key, page] of before) queryClient.setQueryData(key, page)
       this.fail(err)
     }
   }
@@ -550,7 +572,7 @@ class Store {
     this.set({ grouping: mode })
     writeGroupMode(mode)
     if ((before === 'manual') === (mode === 'manual')) return
-    await Promise.all(this.state.hosts.map((host) => this.refreshHost(host.id)))
+    await Promise.all(this.state.hosts.map((host) => this.invalidateHost(host.id)))
   }
 
   /**
@@ -580,33 +602,11 @@ class Store {
     writeGroupOrder(order)
   }
 
-  async refreshGroups(hostId: string): Promise<void> {
-    try {
-      const groups = await api(hostId).listGroups()
-      this.set((s) => ({
-        groups: { ...s.groups, [hostId]: groups },
-        groupsUnsupported: { ...s.groupsUnsupported, [hostId]: false },
-      }))
-    } catch (err) {
-      // A 404 is an answer, not a failure: this daemon predates grouping. Mark
-      // it and stop offering, rather than reporting an error the user cannot
-      // act on from here.
-      if (statusOf(err) === 404) {
-        this.set((s) => ({
-          groups: { ...s.groups, [hostId]: [] },
-          groupsUnsupported: { ...s.groupsUnsupported, [hostId]: true },
-        }))
-        return
-      }
-      this.failHost(hostId, err)
-    }
-  }
-
   /** An empty parent makes it a root. */
   async createGroup(hostId: string, name: string, parent = ''): Promise<SessionGroup | null> {
     try {
       const group = await api(hostId).createGroup(name, parent)
-      await this.refreshGroups(hostId)
+      await this.refetchGroups(hostId)
       return group
     } catch (err) {
       this.fail(err)
@@ -617,7 +617,7 @@ class Store {
   async renameGroup(hostId: string, key: string, name: string): Promise<void> {
     try {
       await api(hostId).renameGroup(key, name)
-      await this.refreshGroups(hostId)
+      await this.refetchGroups(hostId)
     } catch (err) {
       this.fail(err)
     }
@@ -627,7 +627,7 @@ class Store {
   async moveGroup(hostId: string, key: string, parent: string): Promise<void> {
     try {
       await api(hostId).moveGroup(key, parent)
-      await Promise.all([this.refreshGroups(hostId), this.refreshSessions(hostId)])
+      await Promise.all([this.refetchGroups(hostId), this.invalidateSessions(hostId)])
     } catch (err) {
       this.fail(err)
     }
@@ -638,7 +638,7 @@ class Store {
   async deleteGroup(hostId: string, key: string): Promise<void> {
     try {
       await api(hostId).deleteGroup(key)
-      await Promise.all([this.refreshGroups(hostId), this.refreshSessions(hostId)])
+      await Promise.all([this.refetchGroups(hostId), this.invalidateSessions(hostId)])
     } catch (err) {
       this.fail(err)
     }
@@ -651,20 +651,25 @@ class Store {
    * snaps back while the daemon answers reads as a drag that failed.
    */
   async reorderGroups(hostId: string, parent: string, orderedKeys: string[]): Promise<void> {
-    const before = this.state.groups[hostId] ?? []
-    const byKey = new Map(before.map((group) => [group.key, group]))
-    const next: SessionGroup[] = []
-    orderedKeys.forEach((key, index) => {
-      const group = byKey.get(key)
-      if (group) next.push({ ...group, position: index })
+    const key = keys.groups(hostId)
+    const before = queryClient.getQueryData<SessionGroup[]>(key)
+    queryClient.setQueryData<SessionGroup[]>(key, (groups) => {
+      if (!groups) return groups
+      const byKey = new Map(groups.map((group) => [group.key, group]))
+      const next: SessionGroup[] = []
+      orderedKeys.forEach((k, index) => {
+        const group = byKey.get(k)
+        if (group) next.push({ ...group, position: index })
+      })
+      return next
     })
-    this.set((s) => ({ groups: { ...s.groups, [hostId]: next } }))
 
     try {
       await api(hostId).setGroupOrder(parent, orderedKeys)
-      await this.refreshSessions(hostId)
+      // The sessions carry the position they were dragged to.
+      await this.invalidateSessions(hostId)
     } catch (err) {
-      this.set((s) => ({ groups: { ...s.groups, [hostId]: before } }))
+      queryClient.setQueryData(key, before)
       this.fail(err)
     }
   }
@@ -673,38 +678,115 @@ class Store {
   async setSessionGroup(hostId: string, sessionId: string, key: string): Promise<void> {
     try {
       await api(hostId).setSessionGroup(sessionId, key)
-      await this.refreshSessions(hostId)
+      await this.invalidateSessions(hostId)
     } catch (err) {
       this.fail(err)
     }
   }
 
-  async refreshSessions(hostId: string): Promise<void> {
-    try {
-      const { sessions, host } = await api(hostId).listSessions(
-        this.state.grouping === 'manual' ? { grouped: '1' } : {},
-      )
-      const before = this.state.sessions[hostId]
-      this.set((s) => ({
-        sessions: { ...s.sessions, [hostId]: sessions },
-        stats: host ? { ...s.stats, [hostId]: host } : s.stats,
-      }))
-      for (const session of sessions) {
-        if (session.status !== 'terminated') continue
-        const was = before?.find((s) => s.session_id === session.session_id)
-        if (was && was.status !== 'terminated') this.onTerminated(hostId, session.session_id)
-      }
-    } catch (err) {
-      this.failHost(hostId, err)
+  /**
+   * The session list as the cache holds it.
+   *
+   * Variant-agnostic on purpose: the list is cached twice, once per `grouped`
+   * flag, and the store does not care which one the sidebar last asked for.
+   */
+  sessionsOf(hostId: string): Session[] {
+    for (const [, page] of queryClient.getQueriesData<SessionListPage>({
+      queryKey: keys.allSessions(hostId),
+    })) {
+      if (page) return page.sessions
     }
+    return []
   }
 
-  async refreshNotifications(hostId: string): Promise<void> {
-    try {
-      const notifications = await api(hostId).notifications({ status: 'pending' })
-      this.set((s) => ({ notifications: { ...s.notifications, [hostId]: notifications } }))
-    } catch (err) {
-      this.failHost(hostId, err)
+  sessionById(hostId: string, sessionId: string): Session | undefined {
+    return this.sessionsOf(hostId).find((session) => session.session_id === sessionId)
+  }
+
+  /** The groups as the cache holds them, for a caller that has just awaited a
+   *  write and needs the arrangement the daemon now has. */
+  groupsOf(hostId: string): SessionGroup[] {
+    return queryClient.getQueryData<SessionGroup[]>(keys.groups(hostId)) ?? []
+  }
+
+  private notificationsOf(hostId: string): Notification[] {
+    return queryClient.getQueryData<Notification[]>(keys.notifications(hostId)) ?? []
+  }
+
+  /** Asked again after a write the caller made outside the store. */
+  invalidateSessionsFor(hostId: string): Promise<void> {
+    return this.invalidateSessions(hostId)
+  }
+
+  invalidateNotificationsFor(hostId: string): Promise<void> {
+    return queryClient.invalidateQueries({ queryKey: keys.notifications(hostId) })
+  }
+
+  /** Every read for one host, asked again. */
+  private invalidateHost(hostId: string): Promise<void> {
+    return queryClient.invalidateQueries({ queryKey: keys.host(hostId) })
+  }
+
+  private invalidateSessions(hostId: string): Promise<void> {
+    return queryClient.invalidateQueries({ queryKey: keys.allSessions(hostId) })
+  }
+
+  /**
+   * Awaited rather than fired off, for the callers that read the answer back.
+   *
+   * Dropping a group header beside another is two writes, and the second reads
+   * the sibling list the first produced — a group arriving from another parent
+   * is not among the target's siblings until the move lands.
+   */
+  private refetchGroups(hostId: string): Promise<void> {
+    return queryClient.refetchQueries({ queryKey: keys.groups(hostId) })
+  }
+
+  /**
+   * Closes out sessions that ended while nothing was watching.
+   *
+   * A status event is the usual way this is heard, but a session that ends
+   * while this client is disconnected only shows up in the next list. Watching
+   * the cache catches both, and costs the store no copy of the list.
+   */
+  private watchTerminations(): void {
+    queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== 'updated') return
+      const key = event.query.queryKey
+      if (key[0] !== 'host' || key[2] !== 'sessions') return
+      const hostId = String(key[1])
+      const seen = this.lastStatus.get(hostId) ?? new Map<string, string>()
+      for (const session of this.sessionsOf(hostId)) {
+        const before = seen.get(session.session_id)
+        seen.set(session.session_id, session.status)
+        if (session.status === 'terminated' && before && before !== 'terminated') {
+          this.onTerminated(hostId, session.session_id)
+        }
+      }
+      this.lastStatus.set(hostId, seen)
+    })
+  }
+
+  /**
+   * Tells the cache what the event changed.
+   *
+   * Runs alongside the hand-patching below rather than instead of it, so the
+   * two paths can be swapped over one screen at a time. Invalidation is already
+   * coalesced, which is what `scheduleRefresh` debounces for by hand.
+   */
+  private applyToCache(hostId: string, event: SSEEvent): void {
+    for (const effect of effectsFor(hostId, event)) {
+      if (effect.kind === 'invalidate') {
+        void queryClient.invalidateQueries({ queryKey: effect.queryKey })
+        continue
+      }
+      const was = this.sessionById(hostId, effect.sessionId)
+      queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) =>
+        patchSessionInPage(page, effect.sessionId, effect.patch),
+      )
+      if (effect.patch.status === 'terminated' && was && was.status !== 'terminated') {
+        this.onTerminated(hostId, effect.sessionId)
+      }
     }
   }
 
@@ -715,11 +797,11 @@ class Store {
    * round trip rather than one per event.
    */
   private onServerEvent(hostId: string, event: SSEEvent): void {
+    this.applyToCache(hostId, event)
     switch (event.type) {
-      case 'show': {
+      case 'show':
         this.applyShow(hostId, event.data)
         return
-      }
 
       case 'session_evicted': {
         // Say it out loud. A session that goes cold in silence and then takes
@@ -733,29 +815,9 @@ class Store {
             `${unread ? `, not opened for ${unread}` : ''}. Open it to bring it back.`,
           'info',
         )
-        void this.refreshHost(hostId)
         return
       }
-      case 'session_status': {
-        const id = str(event.data.session_id)
-        const status = str(event.data.status)
-        if (!id || !status) return
-        // A resume carries the new host handle. Taking it matters: the session
-        // is cold in this client's copy until something says otherwise, and
-        // most session_status events say nothing about the terminal at all —
-        // so an absent handle is no evidence the host went away.
-        const terminal = str(event.data.terminal)
-        this.patchSession(hostId, id, (terminal ? { status, terminal } : { status }) as Partial<Session>)
-        // The payload carries a status and little else, but the record behind
-        // it moved with it — last_event_at above all, which is the only thing
-        // telling the transcript there is more of it to read.
-        this.scheduleRefresh(hostId)
-        return
-      }
-      case 'session_updated':
-      case 'session_deleted':
-        void this.refreshSessions(hostId)
-        return
+
       // A shell belongs to the session, not to the client that opened it: one
       // started on the phone should be a tab here too, and one closed there
       // should not linger as a tab attached to nothing.
@@ -769,51 +831,11 @@ class Store {
         if (termId) this.closeTab(terminalId(hostId, termId))
         return
       }
-      case 'notification':
-      case 'notification_resolved':
-        void this.refreshNotifications(hostId)
-        // A permission request writes waiting_permission to the session and
-        // then announces only the notification (claude/hooks.go:104,142), so
-        // refetching the list is the one way the sidebar hears about it.
-        this.scheduleRefresh(hostId)
-        return
+
+      // Everything else is a fact about data, and applyToCache has already
+      // said which keys it takes out.
       default:
         return
-    }
-  }
-
-  /**
-   * Refetches a host's sessions once the events stop arriving. An agent mid-turn
-   * fires several in a row, and one list per event is what makes it feel laggy.
-   */
-  private scheduleRefresh(hostId: string): void {
-    const pending = this.refreshTimers.get(hostId)
-    if (pending) clearTimeout(pending)
-    this.refreshTimers.set(
-      hostId,
-      setTimeout(() => {
-        this.refreshTimers.delete(hostId)
-        void this.refreshSessions(hostId)
-      }, REFRESH_DEBOUNCE),
-    )
-  }
-
-  private patchSession(hostId: string, sessionId: string, patch: Partial<Session>): void {
-    const was = this.state.sessions[hostId]?.find((s) => s.session_id === sessionId)
-    this.set((s) => {
-      const list = s.sessions[hostId]
-      if (!list) return {}
-      return {
-        sessions: {
-          ...s.sessions,
-          [hostId]: list.map((session) =>
-            session.session_id === sessionId ? { ...session, ...patch } : session,
-          ),
-        },
-      }
-    })
-    if (patch.status === 'terminated' && was && was.status !== 'terminated') {
-      this.onTerminated(hostId, sessionId)
     }
   }
 
@@ -921,7 +943,7 @@ class Store {
       view === 'file' ? 'files' : view === 'diff' ? 'git' : view === 'agent' ? 'chat' : null
 
     if (view === 'terminal') {
-      const session = this.state.sessions[hostId]?.find((s) => s.session_id === sessionId)
+      const session = this.sessionById(hostId, sessionId)
       if (session) void this.showTerminal(hostId, session)
     } else if (panel) {
       this.set((s) => ({ panels: showPanel(s, target, panel) }))
@@ -1146,7 +1168,7 @@ class Store {
       this.selectTab(tab.id)
       return
     }
-    const session = this.state.sessions[tab.hostId]?.find((s) => s.session_id === tab.sessionId)
+    const session = this.sessionById(tab.hostId, tab.sessionId)
     if (session) await this.openTerminal(tab.hostId, session, false)
   }
 
@@ -1189,7 +1211,7 @@ class Store {
       if (statusOf(err) === 409) this.notify('Session is already running', 'error')
       else this.fail(err)
     }
-    await this.refreshSessions(hostId)
+    await this.invalidateSessions(hostId)
   }
 
   /**

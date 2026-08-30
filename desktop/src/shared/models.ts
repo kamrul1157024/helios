@@ -359,6 +359,28 @@ export interface GitLog {
   has_more: boolean
 }
 
+/** Which revision of a file a diff is asked for. */
+export interface DiffAt {
+  from?: string
+  to?: string
+  staged?: boolean
+  untracked?: boolean
+  mergeBase?: boolean
+}
+
+export interface LogOpts {
+  base?: string
+  all?: boolean
+  limit?: number
+  skip?: number
+}
+
+export interface GrepOpts {
+  regex?: boolean
+  caseSensitive?: boolean
+  limit?: number
+}
+
 export interface CommitFile {
   path: string
   /** Set on a rename or a copy. */

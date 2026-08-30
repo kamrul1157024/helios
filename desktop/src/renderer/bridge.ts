@@ -19,6 +19,7 @@ import type {
   CommandInfo,
   Density,
   DeviceInfo,
+  DiffAt,
   DirectoryInfo,
   FileContent,
   FileEntry,
@@ -27,7 +28,9 @@ import type {
   GitDiff,
   GitLog,
   GitStatus,
+  GrepOpts,
   GrepResult,
+  LogOpts,
   HostRecord,
   HostStats,
   HostStatus,
@@ -160,15 +163,7 @@ declare global {
 
 export const bridge: RawBridge = window.helios
 
-/** Errors from the main process carry the daemon's HTTP status when it had one. */
-export interface BridgeError extends Error {
-  status?: number
-  code?: string
-}
-
-export function statusOf(err: unknown): number | undefined {
-  return (err as BridgeError | undefined)?.status
-}
+export { statusOf, type BridgeError } from './errors.ts'
 
 /** One daemon's REST surface, bound to a host id. */
 export class HostApi {
@@ -295,14 +290,10 @@ export class HostApi {
   gitStatus(path: string): Promise<GitStatus> {
     return this.call('gitStatus', path)
   }
-  gitDiff(
-    path: string,
-    file: string,
-    at?: { from?: string; to?: string; staged?: boolean; untracked?: boolean; mergeBase?: boolean },
-  ): Promise<GitDiff> {
+  gitDiff(path: string, file: string, at?: DiffAt): Promise<GitDiff> {
     return this.call('gitDiff', path, file, at)
   }
-  gitLog(path: string, opts?: { base?: string; all?: boolean; limit?: number; skip?: number }): Promise<GitLog> {
+  gitLog(path: string, opts?: LogOpts): Promise<GitLog> {
     return this.call('gitLog', path, opts)
   }
   gitChanges(path: string, to: string, from?: string, mergeBase?: boolean): Promise<GitChanges> {
@@ -326,11 +317,7 @@ export class HostApi {
   searchFiles(path: string, q: string, limit?: number): Promise<FileSearchResult> {
     return this.call('searchFiles', path, q, limit)
   }
-  grepFiles(
-    path: string,
-    q: string,
-    opts: { regex?: boolean; caseSensitive?: boolean; limit?: number } = {},
-  ): Promise<GrepResult> {
+  grepFiles(path: string, q: string, opts: GrepOpts = {}): Promise<GrepResult> {
     return this.call('grepFiles', path, q, opts)
   }
   writeFile(path: string, content: string, baseModTime?: string): Promise<WriteResult> {

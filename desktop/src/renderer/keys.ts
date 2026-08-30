@@ -1,0 +1,229 @@
+import type {
+  DiffAt,
+  GrepOpts,
+  HostStats,
+  LogOpts,
+  SSEEvent,
+  Session,
+  TranscriptMessage,
+  TranscriptPage,
+} from '../shared/models.ts'
+
+/**
+ * Every cache key the renderer uses, and what a server event does to them.
+ *
+ * Deliberately free of any import that reaches the preload bridge: this is the
+ * part worth asserting directly, and `bridge.ts` binds `window.helios` at
+ * module scope. The reads themselves live in `queries.ts`, which pairs these
+ * keys with the calls that answer them.
+ *
+ * Keys are namespaced by host first, because two daemons can hold the same path
+ * and must not answer for each other. They are hierarchical below that, so
+ * `invalidateQueries({ queryKey: keys.git(hostId) })` takes out every git read
+ * for a host in one call — which is what a commit or a branch change means.
+ */
+export const keys = {
+  host: (hostId: string) => ['host', hostId] as const,
+  sessions: (hostId: string, grouped: boolean) => ['host', hostId, 'sessions', { grouped }] as const,
+  /** Both `grouped` variants at once. Matching is by prefix, so an invalidation
+   *  must not name a flag the sidebar may since have changed. */
+  allSessions: (hostId: string) => ['host', hostId, 'sessions'] as const,
+  groups: (hostId: string) => ['host', hostId, 'groups'] as const,
+  notifications: (hostId: string) => ['host', hostId, 'notifications'] as const,
+  settings: (hostId: string) => ['host', hostId, 'settings'] as const,
+  directories: (hostId: string) => ['host', hostId, 'directories'] as const,
+  providers: (hostId: string) => ['host', hostId, 'providers'] as const,
+  models: (hostId: string, provider: string) => ['host', hostId, 'models', provider] as const,
+  terminals: (hostId: string, sessionId: string) => ['host', hostId, 'terminals', sessionId] as const,
+  /**
+   * The epoch is deliberately not in this key.
+   *
+   * It is only known once the first page has arrived, so keying on it would
+   * mean fetching under one key and then immediately refetching under another.
+   * A fork is handled by dropping the entry instead — see `epoch_changed`.
+   */
+  transcript: (hostId: string, sessionId: string) =>
+    ['host', hostId, 'transcript', sessionId] as const,
+
+  git: (hostId: string) => ['host', hostId, 'git'] as const,
+  gitStatus: (hostId: string, cwd: string) => ['host', hostId, 'git', 'status', cwd] as const,
+  gitDiff: (hostId: string, cwd: string, file: string, at: DiffAt | undefined) =>
+    ['host', hostId, 'git', 'diff', cwd, file, at ?? {}] as const,
+  gitLog: (hostId: string, cwd: string, opts: LogOpts | undefined) =>
+    ['host', hostId, 'git', 'log', cwd, opts ?? {}] as const,
+  /** The scope menu's paged log. Apart from `gitLog` because the cache holds
+   *  pages here and one answer there, and the two shapes cannot share an entry. */
+  gitLogPages: (hostId: string, cwd: string, all: boolean) =>
+    ['host', hostId, 'git', 'log', 'pages', cwd, { all }] as const,
+  gitChanges: (hostId: string, cwd: string, to: string, from: string | undefined, mergeBase: boolean) =>
+    ['host', hostId, 'git', 'changes', cwd, to, from ?? '', mergeBase] as const,
+  gitWorktrees: (hostId: string, cwd: string) => ['host', hostId, 'git', 'worktrees', cwd] as const,
+  reviewed: (hostId: string, cwd: string, base: string) =>
+    ['host', hostId, 'git', 'reviewed', cwd, base] as const,
+
+  files: (hostId: string) => ['host', hostId, 'files'] as const,
+  fileDir: (hostId: string, path: string) => ['host', hostId, 'files', 'dir', path] as const,
+  fileContent: (hostId: string, path: string) => ['host', hostId, 'files', 'content', path] as const,
+  fileSearch: (hostId: string, root: string, q: string) =>
+    ['host', hostId, 'files', 'search', root, q] as const,
+  fileGrep: (hostId: string, root: string, q: string, opts: GrepOpts) =>
+    ['host', hostId, 'files', 'grep', root, q, opts] as const,
+}
+
+// ─── The session list ───────────────────────────────────────────────────────
+
+/** The session list and the host's own figures, which ride the same envelope. */
+export interface SessionListPage {
+  sessions: Session[]
+  host?: HostStats
+}
+
+/** Patches one row wherever the list is cached, across both `grouped` variants. */
+export function patchSessionInPage(
+  page: SessionListPage | undefined,
+  sessionId: string,
+  patch: Partial<Session>,
+): SessionListPage | undefined {
+  if (!page) return page
+  return {
+    ...page,
+    sessions: page.sessions.map((session) =>
+      session.session_id === sessionId ? { ...session, ...patch } : session,
+    ),
+  }
+}
+
+// ─── The transcript ─────────────────────────────────────────────────────────
+
+/**
+ * Flattens the transcript's pages into reading order.
+ *
+ * Page 0 is the tail of the conversation and each further page is older, so the
+ * page order reverses; within a page the messages are already chronological.
+ */
+export function transcriptMessages(
+  data: { pages: TranscriptPage[] } | undefined,
+): TranscriptMessage[] {
+  if (!data) return []
+  return [...data.pages].reverse().flatMap((page) => page.messages)
+}
+
+/** Appends a delta to the newest page, which is where the live edge lands. */
+export function appendDelta<T extends { pages: TranscriptPage[] }>(
+  held: T | undefined,
+  delta: TranscriptPage,
+): T | undefined {
+  if (!held) return held
+  const [head, ...rest] = held.pages
+  if (!head) return held
+  return {
+    ...held,
+    pages: [{ ...head, messages: [...head.messages, ...delta.messages], total: delta.total }, ...rest],
+  }
+}
+
+// ─── The settings document ──────────────────────────────────────────────────
+
+/**
+ * The daemon answers with the settings under a key, alongside personas and
+ * event types. Reading the envelope as though it were the map gives undefined
+ * for every setting, which is indistinguishable from a fresh install.
+ */
+export interface SettingsDocument {
+  settings?: Record<string, string>
+}
+
+export function settingValues(doc: SettingsDocument | undefined): Record<string, string> {
+  return doc?.settings ?? {}
+}
+
+/** Sorted by what the sessions are doing, or by hand. */
+export type SortMode = 'activity' | 'manual'
+
+/** Anything but an explicit 'manual' is activity, which needs no daemon. */
+export function sortModeOf(doc: SettingsDocument | undefined): SortMode {
+  return settingValues(doc)['sessions.sort'] === 'manual' ? 'manual' : 'activity'
+}
+
+/**
+ * Folds a write into the cached document.
+ *
+ * Three panes write disjoint parts of one settings map — the memory budget, the
+ * auto-titler and the sidebar's sort mode — and the daemon merges by key. So an
+ * optimistic update has to merge too: replacing the map would blank the other
+ * panes' fields until the next fetch.
+ */
+export function mergeSettings(
+  doc: SettingsDocument | undefined,
+  written: Record<string, string>,
+): SettingsDocument {
+  return { ...doc, settings: { ...doc?.settings, ...written } }
+}
+
+// ─── What a server event does to the cache ──────────────────────────────────
+
+/**
+ * What one SSE event means for the cache, as data rather than as calls.
+ *
+ * Returned rather than applied so the mapping can be asserted directly: the
+ * interesting part is which keys an event takes out, and a function that calls
+ * a QueryClient can only be tested through a stand-in for one.
+ */
+export type CacheEffect =
+  | { kind: 'invalidate'; queryKey: readonly unknown[] }
+  | { kind: 'patchSession'; sessionId: string; patch: Partial<Session> }
+
+export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
+  switch (event.type) {
+    case 'session_status': {
+      const sessionId = text(event.data.session_id)
+      const status = text(event.data.status)
+      if (!sessionId || !status) return []
+      // A resume carries the new host handle, and taking it matters: the
+      // session is cold in this client's copy until something says otherwise.
+      // Most session_status events say nothing about the terminal at all, so an
+      // absent handle is no evidence the host went away.
+      const terminal = text(event.data.terminal)
+      const patch = (terminal ? { status, terminal } : { status }) as Partial<Session>
+      // The payload carries a status and little else, but the record behind it
+      // moved with it — last_event_at above all, which is the only thing telling
+      // the transcript there is more of it to read.
+      return [
+        { kind: 'patchSession', sessionId, patch },
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+      ]
+    }
+
+    case 'session_updated':
+    case 'session_deleted':
+      return [{ kind: 'invalidate', queryKey: keys.allSessions(hostId) }]
+
+    case 'notification':
+    case 'notification_resolved':
+      // Sessions too: a permission request writes waiting_permission to the
+      // session and then announces only the notification
+      // (internal/provider/claude/hooks.go:110,148), so refetching the list is
+      // the one way the sidebar hears about it.
+      return [
+        { kind: 'invalidate', queryKey: keys.notifications(hostId) },
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+      ]
+
+    case 'terminal_opened': {
+      const sessionId = text(event.data.session_id)
+      return sessionId ? [{ kind: 'invalidate', queryKey: keys.terminals(hostId, sessionId) }] : []
+    }
+
+    case 'session_evicted':
+      return [{ kind: 'invalidate', queryKey: keys.host(hostId) }]
+
+    // 'show' instructs the window and 'terminal_closed' tears down a
+    // connection. Neither is a fact about anything cached.
+    default:
+      return []
+  }
+}
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}

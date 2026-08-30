@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
-import { api } from '../bridge.ts'
+import { dirQuery } from '../queries.ts'
 import { matchesWorktree, timeAgo, type FileEntry, type Worktree } from '../../shared/models.ts'
 
 interface Props {
@@ -21,6 +22,12 @@ interface Row {
 /** Long enough that a fast typist makes one request, short enough to feel live. */
 const DEBOUNCE_MS = 90
 
+/** Module scope so the cache memoises the filtered list rather than handing
+ *  back a fresh array on every keystroke. */
+const onlyDirs = (listing: { entries: FileEntry[] }): FileEntry[] =>
+  listing.entries.filter((entry) => entry.is_dir)
+const NO_DIRS: FileEntry[] = []
+
 /**
  * Chooses what the Files panel is rooted at: one of the repository's worktrees,
  * or any directory on the host. Typing a path browses it — an agent's work is
@@ -28,7 +35,6 @@ const DEBOUNCE_MS = 90
  */
 export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props): JSX.Element {
   const [query, setQuery] = useState('')
-  const [dirs, setDirs] = useState<FileEntry[]>([])
   const [active, setActive] = useState(0)
   const list = useRef<HTMLDivElement | null>(null)
 
@@ -38,23 +44,18 @@ export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props):
   const browseDir = typedPath ? parentOf(query) : root
   const needle = (typedPath ? basename(query) : query).toLowerCase()
 
+  // The parent only changes when a separator is typed, so this holds back the
+  // burst from someone pasting or typing a deep path quickly rather than the
+  // keystrokes within one segment.
+  const [settled, setSettled] = useState(browseDir)
   useEffect(() => {
-    let cancelled = false
-    const timer = setTimeout(() => {
-      api(hostId)
-        .listFiles(browseDir)
-        .then((result) => {
-          if (!cancelled) setDirs(result.entries.filter((entry) => entry.is_dir))
-        })
-        .catch(() => {
-          if (!cancelled) setDirs([])
-        })
-    }, DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [hostId, browseDir])
+    const timer = setTimeout(() => setSettled(browseDir), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [browseDir])
+
+  // A directory that cannot be listed is an empty one here: the field is being
+  // typed into, and half a path naming nothing is the normal case.
+  const { data: dirs = NO_DIRS } = useQuery({ ...dirQuery(hostId, settled), select: onlyDirs })
 
   const rows = useMemo<Row[]>(() => {
     const collected: Row[] = []

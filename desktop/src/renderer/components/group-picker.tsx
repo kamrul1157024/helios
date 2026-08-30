@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { useHostGroups } from '../host-data.ts'
 import { store, useStore } from '../store.ts'
 import type { GroupMode, GroupOrder, SortMode } from '../store.ts'
 
@@ -57,7 +58,8 @@ export function GroupPicker({
 }): JSX.Element {
   const grouping = useStore((s) => s.grouping)
   const groupOrder = useStore((s) => s.groupOrder)
-  const unsupported = useStore((s) => (hostId ? Boolean(s.groupsUnsupported[hostId]) : false))
+  const { unsupported: byHost } = useHostGroups()
+  const unsupported = hostId ? Boolean(byHost[hostId]) : false
   const panel = useRef<HTMLDivElement | null>(null)
   const [busy, setBusy] = useState(false)
 
