@@ -12,7 +12,7 @@
   <img src="docs/assets/mobile/terminal.png" width="220" alt="Helios mobile app — live terminal" />
 </p>
 
-Claude Code, Codex and Aider are headless harnesses: they run in a terminal, on
+Claude Code and OpenAI Codex are headless harnesses: they run in a terminal, on
 your machine, with no UI of their own beyond the one terminal you started them
 in. Helios is the head on top of them. It runs each harness in a terminal host
 it owns, keeps the output in memory, and serves it to three surfaces:
@@ -26,10 +26,10 @@ it owns, keeps the output in memory, and serves it to three surfaces:
 
 The harness stays headless and stays local. Helios is the part you look at.
 
-Claude Code is the harness wired up today, through its native hooks. Attaching
-any other harness is a plugin: the provider registry in `internal/provider` is
-the seam, and going forward every harness — Codex, Aider, Gemini CLI, your own
-— plugs in there rather than being special-cased in the daemon.
+Claude Code and OpenAI Codex are the harnesses wired up today, each through its
+native hooks. Attaching another harness is a plugin: the provider registry in
+`internal/provider` is the seam, so every harness we add next plugs in there
+rather than being special-cased in the daemon.
 
 ## Install
 
@@ -97,7 +97,7 @@ graph TB
         DA["helios daemon"]
         DA --- C1["claude #1"]
         DA --- C2["claude #2"]
-        DA --- A3["aider #3"]
+        DA --- X3["codex #3"]
     end
 
     subgraph MachineB["Machine B — Home Desktop"]
@@ -489,7 +489,7 @@ of them. Everything except the AI itself is free.
 
 - **Daemon** — a background process that manages terminal-hosted sessions, handles AI hooks, serves an HTTP API with SSE for real-time events, and routes notifications
 - **Clients** — desktop app, mobile app, TUI and CLI, all stateless, all interchangeable, all talking to the same daemon over HTTP. Use one, use all, use none
-- **Harness plugins** — Claude Code is the implemented provider, with native hook integration. Any other terminal-run harness attaches through the same registry (`internal/provider`): hooks, actions, commands, models and capabilities are all registered, not hard-coded
+- **Harness plugins** — Claude Code and OpenAI Codex are the implemented providers, both with native hook integration, and more are coming. Any other terminal-run harness attaches through the same registry (`internal/provider`): hooks, actions, commands, models and capabilities are all registered, not hard-coded
 - **Tunnel** — nine providers behind one picker: Tailscale Serve and Funnel, Cloudflare, zrok, ngrok, localtunnel, localhost.run, localxpose, plus plain LAN and a custom URL
 - **Notifications** — the desktop app raises native alerts and answers them in place: an approval opens a HUD with the tool call and the same controls the phone has. On-device notifications on the phone are driven off the same SSE stream — no push service, no third-party relay
 - **Voice reporting** — Helios narrates what your agents are doing in real time: tool calls, permission requests, completions, and errors — spoken aloud so you can stay informed without watching the screen. Narration is AI-generated on the backend and streamed to your phone via SSE. You control what you hear and how you hear it: choose any system TTS voice, set speech rate and pitch, and pick a persona that styles the narration (Default, Butler, Casual, GenZ, or Sarcastic). This is session activity reporting — not AI responses read back to you
@@ -525,7 +525,7 @@ graph TB
         subgraph hosts["terminal hosts (helios ptyhost)"]
             S1["claude #1"]
             S2["claude #2"]
-            S3["aider #3"]
+            S3["codex #3"]
         end
     end
 
@@ -639,7 +639,7 @@ helios stop                     # stop the daemon
 - **Session backend**: Helios terminal hosts (`helios ptyhost`)
 - **Real-time**: SSE
 - **Auth**: Asymmetric JWT (Ed25519), QR code device pairing
-- **Harness integration**: Claude Code hooks (native); other harnesses via the provider plugin registry
+- **Harness integration**: Claude Code and OpenAI Codex hooks (native); other harnesses via the provider plugin registry
 - **Desktop notifications**: the desktop app (Electron), no external binaries
 - **Voice reporting**: AI-generated narration streamed from backend (SSE), Flutter TTS with configurable voice, rate, pitch, and persona
 - **Everything runs locally. No cloud. No subscriptions. No accounts.**
@@ -647,7 +647,7 @@ helios stop                     # stop the daemon
 ## Requirements
 
 - Go 1.26+ (the version in go.mod)
-- A headless coding harness — Claude Code today
+- A headless coding harness — Claude Code or OpenAI Codex today
 - Node 20+ (only to build the desktop app from source)
 - Flutter 3.32+ (only to build the mobile app from source)
 
