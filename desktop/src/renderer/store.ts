@@ -12,6 +12,25 @@ import {
   type SortMode,
 } from './keys.ts'
 import type { GroupOrder, PathOrder } from './components/grouping.ts'
+import {
+  defaultLayout,
+  evenSizes,
+  isVisible,
+  moveItem,
+  panelItem,
+  panelOf,
+  parseLayout,
+  reconcile,
+  removeItem,
+  resize,
+  reveal,
+  splitInto,
+  tabOf,
+  termItem,
+  type Edge,
+  type ItemId,
+  type Layout,
+} from './components/layout.ts'
 import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type {
@@ -150,14 +169,13 @@ export interface State {
   /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
   selection: Selection | null
-  /** The panel each session was last reading, by `sessionKey`. */
-  panels: Record<string, RightPanel>
   /**
-   * Which terminal a session's panel shows, as a tab id, by `sessionKey`. A
-   * session has several once the user opens shells beside its agent, and the
-   * strip needs to know which one is in front.
+   * How each session's panels are arranged, by `sessionKey`: which groups sit
+   * beside each other, what is in each strip, and which item of each is in
+   * front. Materialised from localStorage the first time a session is touched
+   * and written back on every change.
    */
-  activeTabs: Record<string, string>
+  layouts: Record<string, Layout>
   /**
    * Terminals the user disconnected on purpose, by tab id. Without this the
    * panel would attach again the moment it is shown, and a disconnect would
@@ -274,13 +292,34 @@ function writeGroupOrder(order: GroupOrder): void {
   }
 }
 
+/** Beside the files panel's own per-session record, and keyed the same way. */
+function layoutKey(hostId: string, sessionId: string): string {
+  return `helios.layout.${hostId}.${sessionId}`
+}
+
+function readLayout(hostId: string, sessionId: string): Layout {
+  try {
+    const raw = localStorage.getItem(layoutKey(hostId, sessionId))
+    return parseLayout(raw ? JSON.parse(raw) : null)
+  } catch {
+    return defaultLayout()
+  }
+}
+
+function writeLayout(hostId: string, sessionId: string, layout: Layout): void {
+  try {
+    localStorage.setItem(layoutKey(hostId, sessionId), JSON.stringify(layout))
+  } catch {
+    // A full or unavailable store costs the arrangement, not the panel.
+  }
+}
+
 const initial: State = {
   hosts: [],
   hostStatus: {},
   tabs: [],
   selection: null,
-  panels: {},
-  activeTabs: {},
+  layouts: {},
   detached: [],
   fileTarget: null,
   diffTarget: null,
@@ -859,7 +898,10 @@ class Store {
   // ─── Selection and panels ──────────────────────────────────────────────
 
   select(hostId: string, sessionId: string): void {
-    this.set({ selection: { hostId, sessionId } })
+    this.set((s) => ({
+      selection: { hostId, sessionId },
+      layouts: withLayout(s.layouts, hostId, sessionId),
+    }))
     this.touch(hostId, sessionId)
   }
 
@@ -894,14 +936,82 @@ class Store {
     }, TOUCH_INTERVAL)
   }
 
+  // ─── Layout ────────────────────────────────────────────────────────────
+
+  /**
+   * Rewrites one session's arrangement.
+   *
+   * Reads through localStorage rather than the state alone: an agent's
+   * `helios_show` can name a session this window has never opened, and starting
+   * that one from the default would throw away an arrangement the user built
+   * the last time they were in it.
+   */
+  private editLayout(target: Selection | null, edit: (layout: Layout) => Layout): void {
+    if (!target) return
+    const { hostId, sessionId } = target
+    const key = sessionKey(hostId, sessionId)
+    const layouts = withLayout(this.state.layouts, hostId, sessionId)
+    const current = layouts[key]
+    if (!current) return
+    const next = edit(current)
+    if (next === current && layouts === this.state.layouts) return
+
+    this.set({ layouts: { ...layouts, [key]: next } })
+    writeLayout(hostId, sessionId, next)
+  }
+
+  /** Brings an item to the front of whichever group holds it. */
+  revealItem(target: Selection | null, item: ItemId): void {
+    this.editLayout(target, (layout) => reveal(layout, item))
+  }
+
   setPanel(panel: RightPanel): void {
-    this.set((s) => ({ panels: showPanel(s, s.selection, panel) }))
+    this.revealItem(this.state.selection, panelItem(panel))
+  }
+
+  /** Drops a tab into a group's strip, or reorders it within one. */
+  moveItem(target: Selection, item: ItemId, toGroup: string, index: number): void {
+    this.editLayout(target, (layout) => moveItem(layout, item, toGroup, index))
+  }
+
+  /** Splits a tab out into a group of its own, beside the one it was dropped on. */
+  splitItem(target: Selection, item: ItemId, atGroup: string, edge: Edge): void {
+    this.editLayout(target, (layout) => splitInto(layout, item, atGroup, edge))
+  }
+
+  /** Takes an item out of the arrangement, when its tab closes. */
+  dropItem(target: Selection, item: ItemId): void {
+    this.editLayout(target, (layout) => removeItem(layout, item))
+  }
+
+  focusGroup(target: Selection, groupId: string): void {
+    this.editLayout(target, (layout) =>
+      layout.focused === groupId ? layout : { ...layout, focused: groupId },
+    )
+  }
+
+  /** `delta` is the fraction of the row the pointer travelled. */
+  resizeGroups(target: Selection, sash: number, delta: number): void {
+    this.editLayout(target, (layout) => resize(layout, sash, delta))
+  }
+
+  evenGroups(target: Selection): void {
+    this.editLayout(target, evenSizes)
+  }
+
+  setLayoutAxis(target: Selection, axis: 'row' | 'column'): void {
+    this.editLayout(target, (layout) => (layout.axis === axis ? layout : { ...layout, axis }))
+  }
+
+  /** Puts terminals the arrangement has not seen into the focused group. */
+  placeTerminals(target: Selection, tabIds: string[]): void {
+    this.editLayout(target, (layout) => reconcile(layout, tabIds))
   }
 
   /** Shows a file in the Files panel, switching to it. */
   openFile(hostId: string, path: string): void {
+    this.revealItem(this.state.selection, panelItem('files'))
     this.set((s) => ({
-      panels: showPanel(s, s.selection, 'files'),
       fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open' },
     }))
   }
@@ -912,8 +1022,8 @@ class Store {
    * searching by name finds it wherever the panel is currently rooted.
    */
   findFile(hostId: string, path: string): void {
+    this.revealItem(this.state.selection, panelItem('files'))
     this.set((s) => ({
-      panels: showPanel(s, s.selection, 'files'),
       fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'find' },
     }))
   }
@@ -946,7 +1056,7 @@ class Store {
       const session = this.sessionById(hostId, sessionId)
       if (session) void this.showTerminal(hostId, session)
     } else if (panel) {
-      this.set((s) => ({ panels: showPanel(s, target, panel) }))
+      this.revealItem(target, panelItem(panel))
     }
 
     if (view === 'file') {
@@ -990,8 +1100,8 @@ class Store {
 
   /** Puts text in the session's composer and shows it, without sending. */
   appendPrompt(hostId: string, sessionId: string, text: string): void {
+    this.revealItem({ hostId, sessionId }, panelItem('chat'))
     this.set((s) => ({
-      panels: showPanel(s, { hostId, sessionId }, 'chat'),
       promptDraft: { hostId, sessionId, text, seq: (s.promptDraft?.seq ?? 0) + 1 },
     }))
   }
@@ -1023,12 +1133,13 @@ class Store {
     const target = { hostId, sessionId: session.session_id }
     this.set((s) => ({
       selection: target,
-      panels: showPanel(s, target, 'terminal'),
-      activeTabs: showTab(s, target, id),
       detached: s.detached.filter((tabId) => tabId !== id),
     }))
 
-    if (this.state.tabs.some((t) => t.id === id)) return
+    if (this.state.tabs.some((t) => t.id === id)) {
+      this.revealItem(target, panelItem('terminal'))
+      return
+    }
 
     const tab: Tab = {
       id,
@@ -1042,7 +1153,12 @@ class Store {
       // long reads as a hang.
       status: wake ? { state: 'connecting', detail: 'starting the agent' } : { state: 'connecting' },
     }
+    // The tab and the strip move together. The agent's terminal has an item of
+    // its own either way — `panel:terminal` is the pane once one is attached
+    // and the attach button before that — so the arrangement does not shift
+    // under the user at the moment the terminal lands.
     this.set((s) => ({ tabs: [...s.tabs, tab] }))
+    this.revealItem(target, panelItem('terminal'))
 
     try {
       // Zero is an abstention, not a guess. The size is unknown until xterm has
@@ -1071,11 +1187,11 @@ class Store {
    */
   async openShell(hostId: string, sessionId: string): Promise<void> {
     const target = { hostId, sessionId }
-    this.set((s) => ({ selection: target, panels: showPanel(s, target, 'terminal') }))
+    this.set({ selection: target })
     try {
       const info = await api(hostId).openShell(sessionId)
       await this.attachTerminal(hostId, sessionId, info.id, shellLabel(info.id))
-      this.set((s) => ({ activeTabs: showTab(s, target, terminalId(hostId, info.id)) }))
+      this.revealItem(target, termItem(terminalId(hostId, info.id)))
     } catch (err) {
       this.fail(err)
     }
@@ -1116,6 +1232,9 @@ class Store {
       tabs: [...s.tabs, tab],
       detached: s.detached.filter((tabId) => tabId !== id),
     }))
+    // Placed, not revealed. A shell re-listed on startup belongs in a strip;
+    // bringing it to the front would push aside whatever the user was reading.
+    this.placeTerminals({ hostId, sessionId }, [id])
     try {
       // Abstain until the pane has measured itself; see openTerminal above.
       await bridge.term.open({ tabId: id, hostId, sessionId, cols: 0, rows: 0, terminalId: termId })
@@ -1222,7 +1341,7 @@ class Store {
   showTerminal(hostId: string, session: Session): void {
     const id = terminalId(hostId, session.session_id)
     const target = { hostId, sessionId: session.session_id }
-    this.set((s) => ({ panels: showPanel(s, target, 'terminal'), activeTabs: showTab(s, target, id) }))
+    this.revealItem(target, panelItem('terminal'))
     if (this.state.tabs.some((t) => t.id === id)) return
     // Looking at a terminal that was disconnected on purpose is not a request
     // to attach again: the panel offers the button for that.
@@ -1231,44 +1350,24 @@ class Store {
   }
 
   /**
-   * Drops a tab, handing the front to the one beside it.
+   * Drops a tab. The arrangement decides what takes its place — the item before
+   * it in the same strip, which is where `removeItem` puts the front.
    *
-   * Naming nothing would do instead — the strip falls back to the agent's
-   * terminal when it finds no name — but closing the middle of three shells is
-   * not a request to leave the shells. The neighbour is the one before it,
-   * since a tab is usually opened after the one it belongs with; the last one
-   * closed leaves the entry empty, and the fallback is right again.
+   * The agent's terminal keeps its place as the placeholder rather than leaving
+   * the strip: closing it is a disconnect, and the panel has something to say
+   * about that which vanishing would swallow.
    */
   closeTab(tabId: string): void {
     void bridge.term.close(tabId)
-    this.set((s) => {
-      const closing = s.tabs.find((t) => t.id === tabId)
-      const tabs = s.tabs.filter((t) => t.id !== tabId)
-      const activeTabs = { ...s.activeTabs }
-      const key = closing ? sessionKey(closing.hostId, closing.sessionId) : null
+    const closing = this.state.tabs.find((t) => t.id === tabId)
+    this.set((s) => ({ tabs: s.tabs.filter((t) => t.id !== tabId) }))
+    if (!closing) return
 
-      // Naming nothing would do — the strip falls back to the agent's terminal
-      // when it finds no name — but closing the middle of three shells is not
-      // a request to leave the shells. The one before it, since a shell is
-      // usually opened after the one it belongs with; the last shell closed
-      // names nothing, and the fallback is right again.
-      //
-      // Shells only. Closing the agent's terminal is a disconnect, and the
-      // panel has something to say about that which a shell would cover up.
-      if (key && closing?.kind === 'shell' && activeTabs[key] === tabId) {
-        const shells = s.tabs.filter(
-          (t) => t.kind === 'shell' && t.hostId === closing.hostId && t.sessionId === closing.sessionId,
-        )
-        const at = shells.findIndex((t) => t.id === tabId)
-        const next = shells[at - 1] ?? shells[at + 1]
-        if (next) activeTabs[key] = next.id
-        else delete activeTabs[key]
-      } else {
-        for (const [k, id] of Object.entries(activeTabs)) if (id === tabId) delete activeTabs[k]
-      }
-
-      return { tabs, activeTabs }
-    })
+    // A shell that closes leaves the strip. The agent's terminal does not: its
+    // item is the panel, which goes back to offering the attach button.
+    if (closing.kind === 'shell') {
+      this.dropItem({ hostId: closing.hostId, sessionId: closing.sessionId }, termItem(tabId))
+    }
   }
 
   /** Brings one of a session's terminals to the front. */
@@ -1276,7 +1375,7 @@ class Store {
     const tab = this.state.tabs.find((t) => t.id === tabId)
     if (!tab) return
     const target = { hostId: tab.hostId, sessionId: tab.sessionId }
-    this.set((s) => ({ panels: showPanel(s, target, 'terminal'), activeTabs: showTab(s, target, tabId) }))
+    this.revealItem(target, tab.kind === 'agent' ? panelItem('terminal') : termItem(tabId))
   }
 
   // ─── Feedback ──────────────────────────────────────────────────────────
@@ -1317,25 +1416,50 @@ export function useStore<T>(select: (state: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(store.getSnapshot()))
 }
 
-/** The panel the selected session is reading. */
+/** How the selected session's panels are arranged. */
+export function currentLayout(state: State): Layout {
+  if (!state.selection) return EMPTY_LAYOUT
+  return state.layouts[sessionKey(state.selection.hostId, state.selection.sessionId)] ?? EMPTY_LAYOUT
+}
+
+/** Stable so a selector comparing by identity does not loop. */
+const EMPTY_LAYOUT = defaultLayout()
+
+/**
+ * Reads a session's arrangement in, if this window has not seen it yet.
+ *
+ * Once in state it is never re-read: an agent's show can rearrange a session
+ * that is not on screen, and re-reading on select would undo it.
+ */
+function withLayout(
+  layouts: Record<string, Layout>,
+  hostId: string,
+  sessionId: string,
+): Record<string, Layout> {
+  const key = sessionKey(hostId, sessionId)
+  if (layouts[key]) return layouts
+  return { ...layouts, [key]: readLayout(hostId, sessionId) }
+}
+
+/** The panel the selected session has in front, for the callers that ask in
+ *  those terms. A terminal item reads as the terminal panel. */
 export function currentPanel(state: State): RightPanel {
-  if (!state.selection) return 'chat'
-  return state.panels[sessionKey(state.selection.hostId, state.selection.sessionId)] ?? 'chat'
+  const layout = currentLayout(state)
+  const active = layout.groups.find((group) => group.id === layout.focused)?.active
+  if (!active) return 'chat'
+  return (panelOf(active) as RightPanel | null) ?? 'terminal'
 }
 
-/** The terminal the selected session has in front, if it has named one. */
+/** The terminal the selected session has in front, if one is. */
 export function currentTab(state: State): string | null {
-  if (!state.selection) return null
-  return state.activeTabs[sessionKey(state.selection.hostId, state.selection.sessionId)] ?? null
+  const layout = currentLayout(state)
+  const active = layout.groups.find((group) => group.id === layout.focused)?.active
+  return active ? tabOf(active) : null
 }
 
-function showPanel(state: State, target: Selection | null, panel: RightPanel): Record<string, RightPanel> {
-  if (!target) return state.panels
-  return { ...state.panels, [sessionKey(target.hostId, target.sessionId)]: panel }
-}
-
-function showTab(state: State, target: Selection, tabId: string): Record<string, string> {
-  return { ...state.activeTabs, [sessionKey(target.hostId, target.sessionId)]: tabId }
+/** Whether an item is on screen in any group — what decides a pane's size vote. */
+export function itemVisible(state: State, item: ItemId): boolean {
+  return isVisible(currentLayout(state), item)
 }
 
 function str(value: unknown): string {
