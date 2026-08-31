@@ -2,6 +2,7 @@ package tailscale
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -113,6 +114,29 @@ func TestStateProblemDistinguishesFailures(t *testing.T) {
 			t.Errorf("%s and %s produce the identical message %q", tt.name, prev, got)
 		}
 		seen[got] = tt.name
+	}
+}
+
+// TestPermissionHintRewritesAccessDenied pins the remedy surfaced when
+// tailscaled refuses a serve/funnel mutation for lacking permission — the raw
+// CLI message is correct but two lines of prose that a cramped error panel
+// truncates.
+func TestPermissionHintRewritesAccessDenied(t *testing.T) {
+	raw := fmt.Errorf("tailscale serve --bg --yes --http=7655 http://127.0.0.1:7655: " +
+		"sending serve config: Access denied: serve config denied")
+
+	got := permissionHint(raw)
+	if !strings.Contains(got.Error(), "sudo tailscale set --operator=") {
+		t.Errorf("permissionHint(%v) = %q, want it to name the operator remedy", raw, got)
+	}
+
+	other := fmt.Errorf("tailscale status: connection refused")
+	if got := permissionHint(other); got != other {
+		t.Errorf("permissionHint on an unrelated error = %q, want it unchanged", got)
+	}
+
+	if got := permissionHint(nil); got != nil {
+		t.Errorf("permissionHint(nil) = %v, want nil", got)
 	}
 }
 
