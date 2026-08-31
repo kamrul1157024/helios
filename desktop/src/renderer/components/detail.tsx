@@ -215,8 +215,13 @@ export function Detail(): JSX.Element {
 
         {hostId &&
           session &&
+          // Keyed by session as well as panel. A panel holds where the user was
+          // in one session — the file open, the worktree picked, the search
+          // typed — and none of that means anything in the next one. Without
+          // the session in the key the instance survives the switch, and every
+          // panel has to remember to clear itself.
           KEEP_MOUNTED.filter((name) => name === panel || kept[name]).map((name) => (
-            <div key={name} className="panel-keep" hidden={name !== panel}>
+            <div key={`${sessionKey}:${name}`} className="panel-keep" hidden={name !== panel}>
               <PanelBoundary resetKey={`${hostId}:${session.session_id}:${name}`}>
                 {/* Approvals ride alongside the transcript instead of behind
                     their own tab: an agent that stops for permission stops the
