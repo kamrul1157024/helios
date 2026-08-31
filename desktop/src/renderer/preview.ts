@@ -11,15 +11,18 @@
 
 /** Where a reference was found and what it asked for. */
 export interface AssetRef {
-  /** 'img' becomes a data URL; 'style' is inlined as a <style> element. */
-  kind: 'img' | 'style'
+  /**
+   * 'img' becomes a data URL, 'style' an inline <style>, and 'script' an
+   * inline <script> — the last only when the reader has turned scripts on.
+   */
+  kind: 'img' | 'style' | 'script'
   /** The href or src exactly as written in the document. */
   href: string
 }
 
 /** A reference that resolved to a file worth reading. */
 export interface PlannedAsset {
-  kind: 'img' | 'style'
+  kind: 'img' | 'style' | 'script'
   href: string
   /** Absolute, inside the root, and safe to ask the daemon for. */
   path: string

@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Script probe</title>
+<style>
+ body{font:15px sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;margin:0}
+ #verdict{padding:14px;border-radius:10px;background:#7f1d1d;font-weight:700}
+ #verdict.ran{background:#14532d}
+ #net{margin-top:12px;padding:14px;border-radius:10px;background:#334155;font-family:monospace}
+</style></head>
+<body>
+  <h1>Script probe</h1>
+  <div id="verdict">SCRIPTS OFF — this text is the page's own</div>
+  <div id="net">network: not attempted</div>
+  <script>
+    document.getElementById('verdict').textContent = 'SCRIPTS ON — this text was written by JavaScript'
+    document.getElementById('verdict').className = 'ran'
+    fetch('https://example.com/beacon')
+      .then(() => { document.getElementById('net').textContent = 'network: REACHED example.com — BAD' })
+      .catch((e) => { document.getElementById('net').textContent = 'network: refused (' + e.message + ')' })
+  </script>
+</body></html>

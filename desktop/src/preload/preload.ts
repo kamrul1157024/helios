@@ -106,6 +106,10 @@ const helios = {
     onExited: (fn: (payload: unknown) => void) => on('term:exited', fn),
     onClosed: (fn: (payload: unknown) => void) => on('term:closed', fn),
   },
+  preview: {
+    /** Stages an HTML page and returns the URL to point a frame at. */
+    stage: (html: string) => call<string>('preview:stage', html),
+  },
   prefs: {
     get: () => call('prefs:get'),
     setSound: (enabled: boolean) => call('prefs:setSound', enabled),

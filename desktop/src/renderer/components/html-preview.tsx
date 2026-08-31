@@ -8,6 +8,7 @@
 import { useEffect, useState, type RefObject } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
+import { bridge } from '../bridge.ts'
 import { dataUrl, mimeForPath } from '../filetype.ts'
 import { fileAssetQuery } from '../queries.ts'
 import { MAX_TOTAL_BYTES, planAssets, type AssetRef } from '../preview.ts'
@@ -33,14 +34,17 @@ export function HtmlPreview({
   html,
   path,
   root,
+  scripts,
 }: {
   hostId: string
   html: string
   path: string
   root: string
+  /** Whether the reader has asked for the page's scripts to run. */
+  scripts: boolean
 }): JSX.Element {
   const client = useQueryClient()
-  const [srcDoc, setSrcDoc] = useState<string | null>(null)
+  const [frame, setFrame] = useState<{ srcDoc?: string; src?: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -50,9 +54,13 @@ export function HtmlPreview({
 
       const images = [...doc.querySelectorAll('img[src]')]
       const sheets = [...doc.querySelectorAll('link[rel~="stylesheet"][href]')]
+      // A local script is only worth fetching if it is going to be allowed to
+      // run; otherwise it is dead weight in the document.
+      const code = scripts ? [...doc.querySelectorAll('script[src]')] : []
       const refs: AssetRef[] = [
         ...images.map((el) => ({ kind: 'img' as const, href: el.getAttribute('src') ?? '' })),
         ...sheets.map((el) => ({ kind: 'style' as const, href: el.getAttribute('href') ?? '' })),
+        ...code.map((el) => ({ kind: 'script' as const, href: el.getAttribute('src') ?? '' })),
       ]
 
       const planned = planAssets(refs, path, root)
@@ -116,20 +124,48 @@ export function HtmlPreview({
         el.replaceWith(style)
       }
 
+      // A local script becomes an inline one. The policy the page is served
+      // under allows 'unsafe-inline' and nothing else, so a src= would not
+      // load even from the preview scheme.
+      for (const el of code) {
+        const asset = loaded.get(el.getAttribute('src') ?? '')
+        if (!asset || asset.base64) continue
+        const inline = doc.createElement('script')
+        inline.textContent = asset.content
+        el.replaceWith(inline)
+      }
+
+      // Anything still pointing off the machine is dropped. With scripts off
+      // the frame could not fetch it anyway; with them on this is what keeps
+      // that true, alongside the policy the page is served under.
+      for (const el of doc.querySelectorAll('[src], [href]')) {
+        for (const name of ['src', 'href']) {
+          const value = el.getAttribute(name)
+          if (value && /^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('data:')) {
+            el.removeAttribute(name)
+          }
+        }
+      }
+
       // <base> would rewrite every relative URL the resolver above did not
       // inline, which is a correctness problem rather than a safety one: the
       // frame cannot reach the network either way.
       for (const base of doc.querySelectorAll('base')) base.remove()
 
-      if (!cancelled) setSrcDoc(doc.documentElement.outerHTML)
+      const page = doc.documentElement.outerHTML
+      if (cancelled) return
+      // Scripts off is the ordinary path and stays a srcdoc: it inherits the
+      // window's policy, which forbids everything, and costs nothing. Scripts
+      // on needs a document of its own — see stagePreview in the main process.
+      setFrame(scripts ? { src: await bridge.preview.stage(page) } : { srcDoc: page })
     })()
 
     return () => {
       cancelled = true
     }
-  }, [client, hostId, html, path, root])
+  }, [client, hostId, html, path, root, scripts])
 
-  if (srcDoc === null) {
+  if (frame === null) {
     return (
       <div className="ws-html loading">
         <span className="spinner" />
@@ -139,11 +175,18 @@ export function HtmlPreview({
 
   return (
     <div className="ws-html">
-      {/* sandbox="" withholds everything there is to withhold. Never add
-          allow-scripts, and never allow-same-origin: the parent document is
-          file://, so granting the frame the parent's origin would hand markup
-          an agent wrote the same origin as the app. */}
-      <iframe title="Preview" srcDoc={srcDoc} sandbox="" referrerPolicy="no-referrer" />
+      {/* `allow-same-origin` is never set, with or without scripts. The parent
+          is a file:// document, and granting the frame the parent's origin
+          would hand markup an agent wrote the same origin as the app itself.
+          With scripts off the sandbox is empty and the frame gets no execution
+          context at all. */}
+      <iframe
+        title="Preview"
+        key={frame.src ?? 'srcdoc'}
+        {...(frame.src ? { src: frame.src } : { srcDoc: frame.srcDoc })}
+        sandbox={scripts ? 'allow-scripts' : ''}
+        referrerPolicy="no-referrer"
+      />
     </div>
   )
 }
