@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { ApiError, type ApiClient } from './api.ts'
+import { stagePreview } from './main.ts'
 import type { HostRegistry } from './hosts.ts'
 import type { Notifier } from './notify.ts'
 import type { PrefsStore } from './prefs.ts'
@@ -151,6 +152,12 @@ export function registerIpc(deps: IpcDeps): void {
     const fn = api[method as keyof ApiClient] as (...a: unknown[]) => Promise<unknown>
     return fn.apply(api, args ?? [])
   })
+
+  // ─── HTML previews ─────────────────────────────────────────────────────
+
+  // Staged here rather than handed to the frame as a srcdoc, so the page is a
+  // document of its own and gets the policy written for it. See stagePreview.
+  handle('preview:stage', async (_e, html: string) => stagePreview(html))
 
   // ─── Notification preferences ──────────────────────────────────────────
 

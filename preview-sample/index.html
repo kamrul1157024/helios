@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Ingest worker — weekly report</title>
+    <!-- An external stylesheet. The renderer has no network, so the preview
+         reads this file and inlines it as a <style> element — a data: URL
+         would not load under the app's style-src. If this page is styled,
+         that worked. -->
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <div class="sheet">
+      <h1>Ingest worker</h1>
+      <p class="sub">Weekly report · generated 31 August 2026</p>
+
+      <h2>Throughput</h2>
+      <figure>
+        <!-- A relative SVG, resolved against this file's directory. -->
+        <img src="./chart.svg" width="560" height="180" alt="Requests per second, Monday to Sunday">
+        <figcaption>Requests per second, seven days.</figcaption>
+      </figure>
+
+      <h2>Coverage</h2>
+      <table>
+        <thead>
+          <tr><th>Package</th><th>Lines</th><th class="num">Covered</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>internal/server</code></td>
+            <td><div class="bar"><span style="width:92%"></span></div></td>
+            <td class="num">92%</td>
+          </tr>
+          <tr>
+            <td><code>internal/terminal</code></td>
+            <td><div class="bar"><span style="width:78%"></span></div></td>
+            <td class="num">78%</td>
+          </tr>
+          <tr>
+            <td><code>internal/store</code></td>
+            <td><div class="bar low"><span style="width:61%"></span></div></td>
+            <td class="num">61%</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>A raster asset</h2>
+      <!-- A real PNG: bytes that are not valid UTF-8, which is the case the
+           daemon's ?encoding=auto exists for. Before that change this could
+           not cross the API at all. -->
+      <img src="./gradient.png" width="160" height="60" alt="A grey gradient">
+
+      <div class="note">
+        <strong>The script below does not run.</strong> If it had, this page
+        would say so in red and nothing else. The tag is still here — view the
+        source and you will find it. It does nothing because the preview renders
+        inside an iframe with <code>sandbox=""</code>, and Chromium builds no
+        JavaScript execution context for such a frame at all. There is nothing
+        for a script to run in.
+      </div>
+    </div>
+
+    <script>
+      document.body.innerHTML =
+        '<h1 style="color:red">SCRIPT RAN — this would be a bug</h1>'
+    </script>
+  </body>
+</html>

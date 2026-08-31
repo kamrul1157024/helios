@@ -110,6 +110,10 @@ interface RawBridge {
     onExited(fn: (payload: { tabId: string; code: number }) => void): Unsubscribe
     onClosed(fn: (payload: { tabId: string; reason: string }) => void): Unsubscribe
   }
+  preview: {
+    /** Stages an HTML page and returns the URL to point a frame at. */
+    stage(html: string): Promise<string>
+  }
   prefs: {
     get(): Promise<NotificationPrefs>
     setSound(enabled: boolean): Promise<NotificationPrefs>

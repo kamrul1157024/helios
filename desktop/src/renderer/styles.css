@@ -3192,6 +3192,37 @@ small {
   min-width: 0;
 }
 
+/* A checkbox in the file head, sized for a toolbar rather than a settings
+   pane. Labelled, because whether an agent's page is executing is not
+   something to leave to the reader to infer from an icon. */
+.head-check {
+  flex: none;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  user-select: none;
+}
+
+.head-check:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.head-check input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+/* On is worth seeing from across the room. */
+.head-check:has(input:checked) {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-weight: 600;
+}
+
 /* The page, in a frame that can do nothing. White behind it because that is
    what a document assumes, and a dark app around a page written for paper
    would misrepresent it. */

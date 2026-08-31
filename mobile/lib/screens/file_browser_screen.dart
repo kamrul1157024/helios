@@ -375,6 +375,50 @@ class _EntryTile extends StatelessWidget {
   }
 }
 
+/// The switch that lets an agent's page run its own scripts.
+///
+/// A labelled switch rather than an icon, because "is this page executing"
+/// should be readable at a glance rather than decoded from a glyph. It stays
+/// compact enough to sit in an app bar beside the other actions.
+class _ScriptsSwitch extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _ScriptsSwitch({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: "Run this page's scripts. It still cannot reach the network.",
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => onChanged(!value),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'JS',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: value ? FontWeight.w700 : FontWeight.w500,
+                  color: value ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              Transform.scale(
+                scale: 0.7,
+                child: Switch(value: value, onChanged: onChanged),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ==================== File Viewer Screen ====================
 
 class FileViewerScreen extends rp.ConsumerStatefulWidget {
@@ -408,6 +452,13 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
 
   /// An HTML file opens rendered, and can be turned back into source.
   bool _htmlPreview = true;
+
+  /// Whether this page's scripts may run.
+  ///
+  /// Off every time a file is opened, and never remembered. Turning it on is a
+  /// decision about one page an agent wrote, not a setting to carry into the
+  /// next one without being asked again.
+  bool _runScripts = false;
 
   FileReadResult? get _result => _file.valueOrNull;
   bool get _loading => _file.isLoading;
@@ -543,6 +594,13 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
             tooltip: 'Show in folder',
             onPressed: _showInFolder,
           ),
+          // Labelled and switched, not an icon: whether an agent's page is
+          // executing is not something to leave the reader to infer.
+          if (isHtmlPath(widget.path) && _htmlPreview)
+            _ScriptsSwitch(
+              value: _runScripts,
+              onChanged: (on) => setState(() => _runScripts = on),
+            ),
           if (isHtmlPath(widget.path))
             IconButton(
               icon: Icon(_htmlPreview ? Icons.code : Icons.article_outlined),
@@ -757,6 +815,7 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
         html: _result!.content ?? '',
         path: widget.path,
         root: _root,
+        scripts: _runScripts,
       );
     }
 

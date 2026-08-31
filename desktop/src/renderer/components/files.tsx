@@ -719,6 +719,15 @@ function FileView({
   /** An image's pixel size, once it has loaded, and whether to show it at that. */
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
   const [natural, setNatural] = useState(false)
+  /**
+   * Whether this page's scripts may run.
+   *
+   * Off every time a file is opened, and never remembered. Turning it on is a
+   * decision about one page an agent wrote, not a setting to be carried into
+   * the next one without being asked again.
+   */
+  const [runScripts, setRunScripts] = useState(false)
+  useEffect(() => setRunScripts(false), [file.path])
 
   /**
    * What to draw a picture from, or null if there is nothing to draw.
@@ -823,6 +832,19 @@ function FileView({
           file.readOnly && <span className="pill">{file.binary ? 'binary' : 'read only'}</span>
         )}
         <span className="grow" />
+        {html && file.mode === 'preview' && (
+          <label
+            className="check head-check"
+            title="Run this page's scripts. It still cannot reach the network."
+          >
+            <input
+              type="checkbox"
+              checked={runScripts}
+              onChange={(event) => setRunScripts(event.target.checked)}
+            />
+            JavaScript
+          </label>
+        )}
         {(markdown || html) && (
           <button
             className="icon-btn tiny"
@@ -875,7 +897,7 @@ function FileView({
           />
         </div>
       ) : renderedHtml ? (
-        <HtmlPreview hostId={hostId} html={text} path={file.path} root={root} />
+        <HtmlPreview hostId={hostId} html={text} path={file.path} root={root} scripts={runScripts} />
       ) : file.binary ? (
         <p className="empty-note">Binary file — not shown.</p>
       ) : blocks !== null ? (

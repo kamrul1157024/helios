@@ -40,12 +40,16 @@ class HtmlPreview extends rp.ConsumerStatefulWidget {
   /// The checkout. Nothing outside it is ever read.
   final String root;
 
+  /// Whether the reader has asked for the page's scripts to run.
+  final bool scripts;
+
   const HtmlPreview({
     super.key,
     required this.hostId,
     required this.html,
     required this.path,
     required this.root,
+    this.scripts = false,
   });
 
   @override
@@ -65,7 +69,9 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
   @override
   void didUpdateWidget(HtmlPreview old) {
     super.didUpdateWidget(old);
-    if (old.html != widget.html || old.path != widget.path) unawaited(_prepare());
+    if (old.html != widget.html || old.path != widget.path || old.scripts != widget.scripts) {
+      unawaited(_prepare());
+    }
   }
 
   Future<void> _prepare() async {
@@ -73,10 +79,14 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
       final document = html_parser.parse(widget.html);
       await _inlineAssets(document);
       _stripUnreachable(document);
+      _installPolicy(document);
 
       final controller = WebViewController()
-        // The page is an agent's output. It gets no scripting at all.
-        ..setJavaScriptMode(JavaScriptMode.disabled)
+        // Off unless asked for. On, the page can compute and draw and has
+        // nowhere to send anything — see the policy injected above.
+        ..setJavaScriptMode(
+          widget.scripts ? JavaScriptMode.unrestricted : JavaScriptMode.disabled,
+        )
         ..setBackgroundColor(Colors.white)
         ..setNavigationDelegate(
           NavigationDelegate(
@@ -103,9 +113,13 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
         .where((el) => (el.attributes['rel'] ?? '').split(RegExp(r'\s+')).contains('stylesheet'))
         .toList();
 
+    // A local script is only worth fetching if it will be allowed to run.
+    final code = widget.scripts ? document.querySelectorAll('script[src]') : <dom.Element>[];
+
     final refs = <AssetRef>[
       for (final el in images) AssetRef('img', el.attributes['src'] ?? ''),
       for (final el in sheets) AssetRef('style', el.attributes['href'] ?? ''),
+      for (final el in code) AssetRef('script', el.attributes['src'] ?? ''),
     ];
 
     final planned = planAssets(refs, widget.path, widget.root);
@@ -149,6 +163,15 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
       final style = dom.Element.tag('style')..text = file.content!;
       el.replaceWith(style);
     }
+
+    // And a local script becomes an inline one, for the same reason: the
+    // policy below allows 'unsafe-inline' and no source at all.
+    for (final el in code) {
+      final file = loaded['script:${el.attributes['src'] ?? ''}'];
+      if (file?.content == null || file!.encoding == 'base64') continue;
+      final inline = dom.Element.tag('script')..text = file.content!;
+      el.replaceWith(inline);
+    }
   }
 
   /// Removes everything the page could still use to reach the network, run
@@ -158,7 +181,10 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
   /// CSP contain it. A webview contains far less, so the containment is done
   /// here instead — by deletion, which does not depend on a policy being right.
   void _stripUnreachable(dom.Document document) {
-    for (final el in document.querySelectorAll('script, iframe, object, embed, form, base, meta[http-equiv]')) {
+    // The page's own <meta http-equiv> goes whatever happens: it could carry a
+    // policy of its own, and the one this installs below has to be the only one.
+    const always = 'iframe, object, embed, form, base, meta[http-equiv]';
+    for (final el in document.querySelectorAll(widget.scripts ? always : 'script, $always')) {
       el.remove();
     }
 
@@ -172,6 +198,30 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
         if (_isRemote(value)) el.attributes.remove(name);
       }
     }
+  }
+
+  /// The policy the page runs under, as a meta the document carries with it.
+  ///
+  /// A webview has no equivalent of the desktop's per-response header, so the
+  /// policy is written into the document instead. `default-src 'none'` with no
+  /// `connect-src` of its own is the load-bearing part: with scripts on, fetch,
+  /// XHR, websockets and beacons are all refused, so a script can compute and
+  /// draw and has nowhere to send anything.
+  void _installPolicy(dom.Document document) {
+    final head = document.head;
+    if (head == null) return;
+    final meta = dom.Element.tag('meta')
+      ..attributes['http-equiv'] = 'Content-Security-Policy'
+      ..attributes['content'] = [
+        "default-src 'none'",
+        if (widget.scripts) "script-src 'unsafe-inline'",
+        "style-src 'unsafe-inline'",
+        'img-src data:',
+        'font-src data:',
+        "form-action 'none'",
+        "base-uri 'none'",
+      ].join('; ');
+    head.nodes.insert(0, meta);
   }
 
   static bool _isRemote(String value) {

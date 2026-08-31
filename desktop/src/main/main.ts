@@ -1,4 +1,5 @@
 import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, net, protocol, session, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -42,8 +43,25 @@ const ANSWER_SHORTCUT = 'CommandOrControl+Shift+A'
  */
 const MEDIA_SCHEME = 'helios-backdrop'
 
+/**
+ * Where an HTML preview is served from when the reader has turned scripts on.
+ *
+ * It needs an origin of its own. A `srcdoc` frame inherits the window's CSP —
+ * `script-src 'self'` — so an inline script in one is refused however the
+ * sandbox is set, which was measured before this existed. Loosening the
+ * window's policy to fix that would make every injected script in the app's own
+ * DOM runnable, which is far too much to pay.
+ *
+ * A document fetched from a scheme is not a local one and does not inherit:
+ * it gets the policy in its own response headers. So the preview is served with
+ * a policy written for it — scripts yes, network no — and the window keeps the
+ * strict one it has.
+ */
+const PREVIEW_SCHEME = 'helios-preview'
+
 protocol.registerSchemesAsPrivileged([
   { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true } },
 ])
 
 /**
@@ -75,6 +93,7 @@ async function start(): Promise<void> {
   await app.whenReady()
   hardenSession()
   serveBackdrops()
+  servePreviews()
 
   hosts = new HostRegistry()
   terminals = new TerminalManager(hosts)
@@ -261,12 +280,24 @@ function hardenSession(): void {
   // so it needs no network of its own — and saying so means an injected script
   // has nowhere to send anything.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // A preview is served with a policy written for it, and this hook runs over
+    // every response — so without this it would be overwritten by the window's,
+    // and the whole point of giving the page an origin would be lost. Measured
+    // the hard way: the frame reported "violates script-src 'self'".
+    if (details.url.startsWith(`${PREVIEW_SCHEME}://`)) {
+      callback({ responseHeaders: details.responseHeaders })
+      return
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
             `img-src 'self' data: ${MEDIA_SCHEME}:; font-src 'self' data:; connect-src 'none'; ` +
+            // Framing that one scheme, and nothing else. This is what lets a
+            // preview be a document of its own rather than a srcdoc that has
+            // to live under the policy above. `script-src` stays 'self'.
+            `frame-src ${PREVIEW_SCHEME}:; ` +
             "object-src 'none'; base-uri 'none'; form-action 'none'",
         ],
       },
@@ -287,6 +318,50 @@ function hardenSession(): void {
  * request dressed up with `..` lands outside and is refused rather than
  * followed.
  */
+/**
+ * Pages staged for the preview scheme, newest last, by token.
+ *
+ * Bounded: a preview is read once, immediately, and holding every page a
+ * session ever rendered would be a slow leak of whatever those pages weighed.
+ */
+const previews = new Map<string, string>()
+const PREVIEW_LIMIT = 4
+
+export function stagePreview(html: string): string {
+  const token = randomUUID()
+  previews.set(token, html)
+  while (previews.size > PREVIEW_LIMIT) {
+    const oldest = previews.keys().next().value
+    if (oldest === undefined) break
+    previews.delete(oldest)
+  }
+  return `${PREVIEW_SCHEME}://page/${token}`
+}
+
+/**
+ * Serves a staged page under a policy of its own.
+ *
+ * Scripts may run — that is the point of the opt-in — and nothing else is
+ * permitted. `default-src 'none'` with no `connect-src` of its own means fetch,
+ * XHR, websockets and beacons are all refused, so a script can compute and draw
+ * and has nowhere to send anything.
+ */
+function servePreviews(): void {
+  protocol.handle(PREVIEW_SCHEME, (request) => {
+    const token = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '')
+    const html = previews.get(token)
+    if (html === undefined) return new Response('not found', { status: 404 })
+    return new Response(html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy':
+          "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+          "img-src data:; font-src data:; form-action 'none'; base-uri 'none'",
+      },
+    })
+  })
+}
+
 function serveBackdrops(): void {
   const root = ThemeRegistry.mediaDir()
   protocol.handle(MEDIA_SCHEME, async (request) => {
