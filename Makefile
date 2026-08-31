@@ -10,12 +10,14 @@ DMG_PATH = helios.dmg
 
 build:
 	go build -o helios ./cmd/helios/
-	codesign -s - -f ./helios
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -s - -f ./helios; fi
 
 install: build
 	sudo cp helios /usr/local/bin/helios
-	sudo codesign -s - -f /usr/local/bin/helios
-	sudo xattr -dr com.apple.quarantine /usr/local/bin/helios
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		sudo codesign -s - -f /usr/local/bin/helios; \
+		sudo xattr -dr com.apple.quarantine /usr/local/bin/helios; \
+	fi
 	@echo "helios installed to /usr/local/bin/helios"
 
 uninstall:
