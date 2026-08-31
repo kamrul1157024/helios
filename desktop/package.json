@@ -15,6 +15,7 @@
     "dev": "node build.mjs && electron .",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types test/*.test.ts",
+    "e2e": "node build.mjs && playwright test",
     "dist": "node build.mjs && electron-builder --config electron-builder.yml"
   },
   "dependencies": {
@@ -35,6 +36,7 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
+    "@playwright/test": "^1.62.1",
     "@tanstack/react-query": "^5.102.8",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",

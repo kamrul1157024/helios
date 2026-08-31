@@ -65,6 +65,39 @@ jobs:
       - run: npm run build
         working-directory: desktop
 
+  desktop-e2e:
+    name: Desktop e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: npm ci
+        working-directory: desktop
+
+      # Electron is a browser, and a runner has no display or the libraries one
+      # would draw with. Playwright's own installer knows which they are.
+      - run: npx playwright install-deps chromium
+        working-directory: desktop
+
+      # xvfb-run, not a headless flag: Electron has no headless mode, and the
+      # app under test is the real window the user would see.
+      - run: xvfb-run -a npm run e2e
+        working-directory: desktop
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-traces
+          path: desktop/test-results/
+          retention-days: 7
+
   mobile:
     name: Mobile
     runs-on: ubuntu-latest
