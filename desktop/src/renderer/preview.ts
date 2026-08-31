@@ -49,7 +49,7 @@ function normalise(path: string): string {
 }
 
 /** Whether `path` is `root` or sits underneath it. */
-export function within(root: string, path: string): boolean {
+export function withinRoot(root: string, path: string): boolean {
   const base = normalise(root)
   if (path === base) return true
   return path.startsWith(base === '/' ? '/' : `${base}/`)
@@ -92,7 +92,7 @@ export function resolveAsset(basePath: string, href: string, root: string): stri
   const joined = decoded.startsWith('/') ? `${root}/${decoded}` : `${base}/${decoded}`
   const path = normalise(joined)
 
-  if (!within(root, path)) return null
+  if (!withinRoot(root, path)) return null
   if (path === normalise(basePath)) return null
   return path
 }

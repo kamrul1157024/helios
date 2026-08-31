@@ -136,13 +136,16 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
         resolvedPath = '${widget.sessionCwd}/$path';
       }
     }
+    // Straight to the viewer, with no listing pushed underneath it: back from
+    // a file tapped in the transcript belongs to the transcript. The folder is
+    // a button in the viewer for whoever wants it.
     Navigator.of(context).push(
       MaterialPageRoute(
-        settings: const RouteSettings(name: '/file-browser'),
-        builder: (_) => FileBrowserScreen(
+        settings: const RouteSettings(name: '/file-viewer'),
+        builder: (_) => FileViewerScreen(
           hostId: widget.hostId,
+          path: resolvedPath,
           rootPath: widget.sessionCwd,
-          openFilePath: resolvedPath,
         ),
       ),
     );
