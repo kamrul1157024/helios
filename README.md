@@ -34,6 +34,15 @@
 
 ---
 
+## Keeping the machine awake
+
+Sessions only run while the machine is awake. Close the lid on a laptop and every
+session you were watching from your phone stops with it.
+[v-claw](https://github.com/kamrul1157024/v-claw) is a companion menu bar app that
+blocks lid-close sleep, display sleep and the screen lock while the machine is on the
+power adapter, and releases it all when you unplug. Same author, and it is what makes a
+laptop usable as a helios host.
+
 ## What it is
 
 You have five agent sessions open across three projects. One is blocked on a permission
@@ -169,16 +178,6 @@ the same SSE stream. Claude Code and Codex attach through the provider registry 
 `internal/provider`, which is also where the next harness will plug in.
 
 Diagrams, endpoints and the on-disk layout: [docs/architecture.md](docs/architecture.md).
-
-## Keeping the machine awake
-
-Sessions only run while the machine is awake. Close the lid on a laptop and every
-session you were watching from your phone stops with it.
-
-[v-claw](https://github.com/kamrul1157024/v-claw) is a companion menu bar app that
-blocks lid-close sleep, display sleep and the screen lock while the machine is on the
-power adapter, and releases it all when you unplug. Same author, and it is the thing
-that makes a laptop usable as a helios host.
 
 ## Requirements
 
