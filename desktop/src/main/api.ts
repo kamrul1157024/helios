@@ -460,8 +460,12 @@ export class ApiClient {
     return this.request('POST', '/api/git/reviewed', { path, base, file, reviewed })
   }
 
+  /**
+   * Asks for base64 when the file is not text. Opt-in on the daemon's side, so
+   * saying nothing here would quietly get a picture back as U+FFFD.
+   */
   readFile(path: string): Promise<FileContent> {
-    return this.request('GET', `/api/file${queryString({ path })}`)
+    return this.request('GET', `/api/file${queryString({ path, encoding: 'auto' })}`)
   }
 
   searchFiles(path: string, q: string, limit?: number): Promise<FileSearchResult> {

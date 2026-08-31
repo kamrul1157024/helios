@@ -418,7 +418,15 @@ export interface FileContent {
   path: string
   size: number
   mod_time: string
+  /** Base64 when `encoding` says so; the file's own text otherwise. */
   content: string
+  /**
+   * How to read `content`. Present only when the caller asked with
+   * `?encoding=auto`, and absent from a daemon older than that parameter — in
+   * which case a file that is not UTF-8 has already lost its bytes to the JSON
+   * encoder, and the NUL check is all a client has.
+   */
+  encoding?: 'utf8' | 'base64'
 }
 
 /** internal/server/filesearch.go — one quick-open candidate. */

@@ -207,6 +207,9 @@ func (s *PublicServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Text only, and deliberately no counterpart to the read's ?encoding=auto:
+	// a file that comes back base64 is one no client offers to edit, so a write
+	// encoding would be an untested path from a decoder straight onto the disk.
 	if err := os.WriteFile(clean, []byte(req.Content), mode); err != nil {
 		jsonError(w, "failed to write file", http.StatusInternalServerError)
 		return

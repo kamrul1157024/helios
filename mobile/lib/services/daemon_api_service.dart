@@ -8,6 +8,7 @@ import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/session.dart';
 import '../models/message.dart';
+import '../utils/file_types.dart';
 import 'api_client.dart';
 import 'notification_service.dart';
 
@@ -927,8 +928,11 @@ class DaemonAPIService extends ChangeNotifier {
 
   Future<FileReadResult?> readFile(String path) async {
     try {
+      // encoding=auto asks the daemon to base64 a file that is not text.
+      // Without it a PNG comes back as U+FFFD, because the bytes were put
+      // through a JSON string on the way out.
       final resp = await _api.get(
-        '/api/file?path=${Uri.encodeComponent(path)}',
+        '/api/file?path=${Uri.encodeComponent(path)}&encoding=auto',
       );
       if (resp.statusCode == 413) {
         final data = jsonDecode(resp.body);
@@ -1263,6 +1267,12 @@ class FileReadResult {
   final String path;
   final int size;
   final String? content;
+
+  /// 'base64' when [content] holds the file's bytes rather than its text.
+  /// Absent from a daemon older than the encoding parameter, where a file that
+  /// is not UTF-8 has already lost its bytes and the heuristic below is all
+  /// there is to go on.
+  final String? encoding;
   final bool isTooLarge;
   final bool isDirectory;
 
@@ -1270,6 +1280,7 @@ class FileReadResult {
     required this.path,
     required this.size,
     this.content,
+    this.encoding,
     this.isTooLarge = false,
     this.isDirectory = false,
   });
@@ -1279,6 +1290,7 @@ class FileReadResult {
       path: json['path'] as String,
       size: (json['size'] as num?)?.toInt() ?? 0,
       content: json['content'] as String?,
+      encoding: json['encoding'] as String?,
     );
   }
 
@@ -1290,7 +1302,25 @@ class FileReadResult {
     return FileReadResult(path: path, size: 0, isDirectory: true);
   }
 
+  /// The file's bytes, when the daemon sent them, and null otherwise.
+  Uint8List? get bytes {
+    if (encoding != 'base64') return null;
+    final c = content;
+    if (c == null) return null;
+    try {
+      return base64Decode(c);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether this is a picture, and one this build can actually draw. An image
+  /// read from an older daemon is binary but not showable, and falls through to
+  /// the notice that says so.
+  bool get isImage => encoding == 'base64' && isImagePath(path);
+
   bool get isBinary {
+    if (encoding == 'base64') return true;
     final c = content;
     if (c == null || c.isEmpty) return false;
     // Sample first 8KB for binary detection
