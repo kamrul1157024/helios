@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26+" />
   <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-6e7681" alt="Platforms: macOS, Linux, Android, iOS" />
   <img src="https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex-8957e5" alt="Harnesses: Claude Code, Codex" />
+  <a href="https://github.com/kamrul1157024/v-claw"><img src="https://img.shields.io/badge/companion-v--claw-c9a227" alt="Companion app: v-claw" /></a>
 </p>
 
 <p align="center">
