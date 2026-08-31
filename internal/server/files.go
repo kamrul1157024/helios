@@ -1,12 +1,14 @@
 package server
 
 import (
+	"encoding/base64"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -121,12 +123,42 @@ func (s *PublicServer) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"path":     clean,
 		"size":     info.Size(),
 		"mod_time": info.ModTime().UTC().Format(time.RFC3339),
-		"content":  string(content),
-	})
+	}
+	text, encoding := encodeFileContent(content, r.URL.Query().Get("encoding"))
+	body["content"] = text
+	if encoding != "" {
+		body["encoding"] = encoding
+	}
+	jsonResponse(w, http.StatusOK, body)
+}
+
+/*
+encodeFileContent renders a file for JSON, base64 when asked and needed.
+
+A PNG put through string() is not valid UTF-8, and the JSON encoder replaces
+every bad byte with U+FFFD — so the plain form loses the file rather than
+mangling it, and no client can recover an image from it.
+
+Opt-in, on ?encoding=auto, because base64 is plain ASCII with no NUL: a client
+written before this asks for nothing, and would print the encoding instead of
+saying "binary file", which is the correct answer it gives today. Callers that
+pass the parameter are declaring they read the encoding field.
+
+Text is never base64'd. It would cost a third more bytes on the path the editor
+uses, for nothing.
+*/
+func encodeFileContent(content []byte, want string) (text, encoding string) {
+	if want != "auto" {
+		return string(content), ""
+	}
+	if utf8.Valid(content) {
+		return string(content), "utf8"
+	}
+	return base64.StdEncoding.EncodeToString(content), "base64"
 }
 
 // resolveSafePath cleans and resolves the path, rejecting traversal attempts.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, statusOf } from '../bridge.ts'
+import { dataUrl, extensionOf, kindOf, type FileKind } from '../filetype.ts'
 import { keys } from '../keys.ts'
 import { isMarkdownPath, languageForPath, renderMarkdownBlocks } from '../markdown.ts'
 import { fileContentQuery, worktreesQuery } from '../queries.ts'
@@ -10,6 +11,7 @@ import { byLastTouched, type FileContent, type Worktree } from '../../shared/mod
 import { CodeEditor, type Cursor, type ReadingPosition } from './editor.tsx'
 import { FileTree } from './file-tree.tsx'
 import { FindInFiles } from './find-in-files.tsx'
+import { HtmlPreview, useInlineImages } from './html-preview.tsx'
 import { Chevron } from './icons.tsx'
 import { PathLabel } from './path-label.tsx'
 import { QuickOpen } from './quick-open.tsx'
@@ -54,11 +56,22 @@ interface OpenFile extends OpenTab {
   modTime: string
   readOnly: boolean
   binary: boolean
+  /** How it is shown: as a picture, as a page, or as text. */
+  kind: FileKind
+  /** Whether `saved` holds base64 rather than the file's own text. */
+  base64: boolean
 }
 
-/** A NUL byte means the daemon handed back something that was never text. */
+/**
+ * Whether the daemon handed back something that was never text.
+ *
+ * The encoding field is the answer when there is one. The NUL check stays
+ * behind it for a daemon older than that field, where a file that is not UTF-8
+ * has already lost its bytes to the JSON encoder and this is all there is to go
+ * on.
+ */
 function shapeOf(content: FileContent): { binary: boolean; readOnly: boolean } {
-  const binary = content.content.includes('\u0000')
+  const binary = content.encoding === 'base64' || content.content.includes('\u0000')
   return { binary, readOnly: binary || content.content.length > MAX_EDIT_BYTES }
 }
 
@@ -174,7 +187,9 @@ export function FilesPanel({
           {
             path,
             dirty: false,
-            mode: isMarkdownPath(path) ? 'preview' : 'edit',
+            // A picture and a page are things to look at. Text opens in the
+            // editor, markdown included only when it is prose.
+            mode: kindOf(path) !== 'text' || isMarkdownPath(path) ? 'preview' : 'edit',
             version: 0,
             cursor: at ? { ...at, seq: 1 } : null,
           },
@@ -635,7 +650,14 @@ function ActiveFile({
   if (error) return <p className="empty-note">{error.message}</p>
   if (!data) return <p className="empty-note">Loading…</p>
 
-  const file: OpenFile = { ...tab, saved: data.content, modTime: data.mod_time, ...shapeOf(data) }
+  const file: OpenFile = {
+    ...tab,
+    saved: data.content,
+    modTime: data.mod_time,
+    kind: kindOf(tab.path),
+    base64: data.encoding === 'base64',
+    ...shapeOf(data),
+  }
   return (
     <FileView
       file={file}
@@ -682,14 +704,36 @@ function FileView({
   onPositionChange: (at: ReadingPosition) => void
 }): JSX.Element {
   const markdown = isMarkdownPath(file.path)
+  const html = file.kind === 'html'
   const rendered = markdown && file.mode === 'preview'
+  const renderedHtml = html && file.mode === 'preview'
   const blocks = useMemo(() => (rendered ? renderMarkdownBlocks(text) : null), [rendered, text])
   const [menu, setMenu] = useState<{ x: number; y: number; range: LineRange } | null>(null)
   /** Headings whose section is folded away, by the heading's start line. */
   const [folds, setFolds] = useState<Set<number>>(new Set())
   const preview = useRef<HTMLDivElement | null>(null)
   const [selection, clearSelection] = useTextSelection(preview)
+  // Markdown renders its images without a src; this puts the bytes in.
+  useInlineImages(preview, { hostId, basePath: file.path, root, revision: blocks })
   const [width, setWidth] = useState(readReadingWidth)
+  /** An image's pixel size, once it has loaded, and whether to show it at that. */
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
+  const [natural, setNatural] = useState(false)
+
+  /**
+   * What to draw a picture from, or null if there is nothing to draw.
+   *
+   * Base64 is the ordinary case. An SVG arrives as text, because it is text,
+   * and is encoded here. A binary image with neither — a daemon older than the
+   * encoding parameter — has already lost its bytes to the JSON encoder, so
+   * there is nothing to show and it falls through to the note that says so.
+   */
+  const source = useMemo(() => {
+    if (file.kind !== 'image') return null
+    if (file.base64) return dataUrl(file.path, file.saved)
+    if (extensionOf(file.path) !== 'svg') return null
+    return `data:image/svg+xml;base64,${bytesToBase64(text)}`
+  }, [file.kind, file.base64, file.path, file.saved, text])
 
   // The rendered prose still has lines underneath it, and what the reader
   // highlighted names them: the blocks its two ends fall in.
@@ -770,27 +814,42 @@ function FileView({
       <header className="ws-file-head">
         <PathLabel path={relativeTo(root, file.path)} className="preview-path" />
         {file.dirty && <span className="pill">unsaved</span>}
-        {file.readOnly && <span className="pill">{file.binary ? 'binary' : 'read only'}</span>}
+        {/* An image says how big it is, which is the one fact about it a file
+            browser is in a position to tell you. "binary" is what is left when
+            there is nothing better to say. */}
+        {source ? (
+          size && <span className="pill">{`${size.width} × ${size.height}`}</span>
+        ) : (
+          file.readOnly && <span className="pill">{file.binary ? 'binary' : 'read only'}</span>
+        )}
         <span className="grow" />
-        {markdown && (
+        {(markdown || html) && (
           <button
             className="icon-btn tiny"
-            title={rendered ? 'Edit source' : 'Show rendered markdown'}
-            onClick={() => onMode(rendered ? 'edit' : 'preview')}
+            title={
+              file.mode === 'preview'
+                ? 'Edit source'
+                : html
+                  ? 'Render the page'
+                  : 'Show rendered markdown'
+            }
+            onClick={() => onMode(file.mode === 'preview' ? 'edit' : 'preview')}
           >
-            {rendered ? '{}' : '¶'}
+            {file.mode === 'preview' ? '{}' : '¶'}
           </button>
         )}
         <button className="icon-btn tiny" title="Reload from disk" onClick={onReload}>
           ⟳
         </button>
-        <button
-          className="icon-btn tiny"
-          title="Copy contents"
-          onClick={() => void navigator.clipboard.writeText(text)}
-        >
-          ⧉
-        </button>
+        {!source && (
+          <button
+            className="icon-btn tiny"
+            title="Copy contents"
+            onClick={() => void navigator.clipboard.writeText(text)}
+          >
+            ⧉
+          </button>
+        )}
         {!file.readOnly && (
           <button className="filled tiny" disabled={!file.dirty} onClick={onSave}>
             Save
@@ -798,7 +857,26 @@ function FileView({
         )}
       </header>
 
-      {file.binary ? (
+      {source ? (
+        <div className={`ws-image ${natural ? 'natural' : ''}`}>
+          <img
+            src={source}
+            alt={basename(file.path)}
+            onLoad={(event) =>
+              setSize({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              })
+            }
+            // Two states, which are the two anyone wants: see all of it, or see
+            // it properly. A zoom control would be a photo viewer.
+            onClick={() => setNatural((on) => !on)}
+            title={natural ? 'Fit to the panel' : 'Show at its own size'}
+          />
+        </div>
+      ) : renderedHtml ? (
+        <HtmlPreview hostId={hostId} html={text} path={file.path} root={root} />
+      ) : file.binary ? (
         <p className="empty-note">Binary file — not shown.</p>
       ) : blocks !== null ? (
         <div className="md preview-md" ref={preview}>
@@ -961,6 +1039,14 @@ function writeReadingWidth(width: number | null): void {
   } catch {
     // A full or unavailable store costs the preference, not the panel.
   }
+}
+
+/** btoa refuses anything above U+00FF, and an SVG is often full of them. */
+function bytesToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
 }
 
 function basename(path: string): string {

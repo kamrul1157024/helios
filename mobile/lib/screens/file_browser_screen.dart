@@ -683,6 +683,12 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
       return _buildLargeFileWarning(theme, _result!.formattedSize);
     }
 
+    // A picture is worth showing, and is binary, so it goes first.
+    if (_result!.isImage) {
+      final bytes = _result!.bytes;
+      if (bytes != null) return _buildImageView(theme, bytes);
+    }
+
     // Binary detection
     if (_result!.isBinary) {
       return _buildBinaryView(theme);
@@ -924,6 +930,25 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
               textAlign: TextAlign.center,
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// A picture, pinch-zoomable, on a surface that makes transparency legible.
+  Widget _buildImageView(ThemeData theme, Uint8List bytes) {
+    return Container(
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: InteractiveViewer(
+        maxScale: 8,
+        child: Center(
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.contain,
+            // An SVG is not a raster format and Image.memory cannot decode it,
+            // so say so rather than showing a broken box.
+            errorBuilder: (context, error, stack) => _buildBinaryView(theme),
+          ),
         ),
       ),
     );

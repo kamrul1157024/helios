@@ -217,6 +217,23 @@ export function fileContentQuery(hostId: string, path: string) {
   })
 }
 
+/**
+ * A file a preview inlines: an image it points at, a stylesheet it links.
+ *
+ * Its own key, because these are blobs. `fileContent` is `NEVER_STALE` so that
+ * a refetch cannot move the disk copy under an edited buffer, and that would
+ * pin every asset a preview ever touched for the life of the session. Nothing
+ * edits an asset, so it can be let go of.
+ */
+export function fileAssetQuery(hostId: string, path: string) {
+  return queryOptions({
+    queryKey: keys.fileAsset(hostId, path),
+    queryFn: () => api(hostId).readFile(path),
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  })
+}
+
 /** An empty query is not an idle one: ⌘P opens on the whole list. */
 export function fileSearchQuery(hostId: string, root: string, q: string, limit = 50) {
   return queryOptions({

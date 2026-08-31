@@ -1717,6 +1717,12 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
     if (_fullFile == null || _fullFile!.content == null) {
       return const _DiffSkeleton();
     }
+    // A binary change has no lines to lay a diff over. Since the read asks for
+    // encoding=auto the content is now base64 rather than mojibake, which would
+    // otherwise be printed as if it were the file.
+    if (_fullFile!.isBinary) {
+      return _buildChangesOnly(theme);
+    }
 
     final isDark = theme.brightness == Brightness.dark;
     final content = _fullFile!.content!;

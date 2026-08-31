@@ -188,6 +188,17 @@ function parser(breaks: boolean): Marked {
         const title = token.title ? ` title="${escapeHtml(token.title)}"` : ''
         return `<a href="${href}"${title} target="_blank" rel="noreferrer noopener">${this.parser.parseInline(token.tokens)}</a>`
       },
+      image(token): string {
+        // Deliberately no `src`. The renderer cannot fetch anything, so a
+        // relative path resolves against nothing and paints a broken image
+        // before it is even tried. The panel fills these in from disk where it
+        // knows which file the prose came from; anywhere else the alt text
+        // stands in, which is what it is for.
+        const src = escapeHtml(token.href)
+        const alt = escapeHtml(token.text ?? '')
+        const title = token.title ? ` title="${escapeHtml(token.title)}"` : ''
+        return `<img data-src="${src}" alt="${alt}"${title}>`
+      },
     },
   })
 }
@@ -232,7 +243,14 @@ export function renderMarkdownBlocks(source: string): MarkdownBlock[] {
     line += newlines
     // Blank lines between blocks belong to neither, and have nothing to render.
     if (token.type === 'space') continue
-    const html = DOMPurify.sanitize(fileParser.parser([token], { async: false }), { ADD_ATTR: ['target'] })
+    // No options argument. Passing one replaces the parser's own — renderer
+    // included — so `{ async: false }` was quietly handing every block to
+    // marked's default renderer: no highlighting on a code fence, no
+    // `target=_blank` on a link, and an image with a relative `src` that
+    // resolves against nothing. The instance is not async, so there was never
+    // anything to turn off.
+    const rendered = fileParser.parser([token]) as string
+    const html = DOMPurify.sanitize(rendered, { ADD_ATTR: ['target'] })
     blocks.push({
       html,
       startLine,

@@ -63,6 +63,9 @@ export const keys = {
   files: (hostId: string) => ['host', hostId, 'files'] as const,
   fileDir: (hostId: string, path: string) => ['host', hostId, 'files', 'dir', path] as const,
   fileContent: (hostId: string, path: string) => ['host', hostId, 'files', 'content', path] as const,
+  /** A file a preview pulls in behind the one that was opened. Its own key
+   *  rather than fileContent's, so a blob is not pinned for the session. */
+  fileAsset: (hostId: string, path: string) => ['host', hostId, 'files', 'asset', path] as const,
   fileSearch: (hostId: string, root: string, q: string) =>
     ['host', hostId, 'files', 'search', root, q] as const,
   fileGrep: (hostId: string, root: string, q: string, opts: GrepOpts) =>
