@@ -7,7 +7,6 @@
 
 import { useEffect, useState, type RefObject } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import DOMPurify from 'dompurify'
 
 import { dataUrl, mimeForPath } from '../filetype.ts'
 import { fileAssetQuery } from '../queries.ts'
@@ -19,9 +18,15 @@ const LANES = 6
 /**
  * Renders the page with what it references pulled in.
  *
- * The order matters and is not obvious: references are collected from the
- * parsed document *before* sanitising, because DOMPurify does not keep `<link>`
- * and the stylesheet would be gone before it could be read.
+ * Deliberately not sanitised. The frame it goes into withholds every
+ * capability there is, and Chromium builds no JavaScript execution context for
+ * such a frame at all — a raw `<script>` in a `sandbox=""` srcdoc does not run,
+ * which was measured before this was written. Running DOMPurify over it as well
+ * bought nothing and cost the feature: it strips `<style>`, which is precisely
+ * the thing a page needs to look like itself.
+ *
+ * The sanitiser still belongs where markdown is injected into the app's own
+ * DOM. Here there is a frame instead, and the frame is stronger.
  */
 export function HtmlPreview({
   hostId,
@@ -111,16 +116,12 @@ export function HtmlPreview({
         el.replaceWith(style)
       }
 
-      const clean = DOMPurify.sanitize(doc.documentElement.outerHTML, {
-        WHOLE_DOCUMENT: true,
-        // Scripts are already impossible — the sandbox creates no execution
-        // context for the frame. These are about shape: no frames inside the
-        // frame, no <base> rewriting every URL out from under the resolver
-        // above, and nothing that can navigate or refresh.
-        FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'base', 'meta'],
-      })
+      // <base> would rewrite every relative URL the resolver above did not
+      // inline, which is a correctness problem rather than a safety one: the
+      // frame cannot reach the network either way.
+      for (const base of doc.querySelectorAll('base')) base.remove()
 
-      if (!cancelled) setSrcDoc(clean)
+      if (!cancelled) setSrcDoc(doc.documentElement.outerHTML)
     })()
 
     return () => {
