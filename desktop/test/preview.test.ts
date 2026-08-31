@@ -13,7 +13,7 @@ import {
   MAX_ASSETS,
   planAssets,
   resolveAsset,
-  within,
+  withinRoot,
   type AssetRef,
 } from '../src/renderer/preview.ts'
 
@@ -95,10 +95,10 @@ test('a page does not inline itself', () => {
 })
 
 test('within is not fooled by a sibling that shares a prefix', () => {
-  assert.equal(within('/a/repo', '/a/repo/x'), true)
-  assert.equal(within('/a/repo', '/a/repo'), true)
-  assert.equal(within('/a/repo', '/a/repo-evil/x'), false)
-  assert.equal(within('/a/repo/', '/a/repo/x'), true)
+  assert.equal(withinRoot('/a/repo', '/a/repo/x'), true)
+  assert.equal(withinRoot('/a/repo', '/a/repo'), true)
+  assert.equal(withinRoot('/a/repo', '/a/repo-evil/x'), false)
+  assert.equal(withinRoot('/a/repo/', '/a/repo/x'), true)
 })
 
 test('planning dedupes by path and keeps the order it found them', () => {

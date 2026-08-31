@@ -36,6 +36,10 @@ dependencies:
   shared_preferences: ^2.5.3
   # Markdown rendering
   flutter_markdown: ^0.7.6
+  # HTML preview: a webview to render the page, and a parser to rewrite it
+  # before it gets there. See docs/specs/51-file-previews.md.
+  webview_flutter: ^4.10.0
+  html: ^0.15.5
   # Syntax highlighting
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0

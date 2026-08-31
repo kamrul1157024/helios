@@ -10,21 +10,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
+import '../utils/file_types.dart';
+import '../widgets/html_preview.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 
 class FileBrowserScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String rootPath;
-  /// If set, the file viewer opens immediately for this path.
-  final String? openFilePath;
+
+  /// Where to start browsing, if not at the root — "show in folder" from the
+  /// viewer lands here, with the root left alone.
+  final String? startPath;
   final String? sessionId;
 
   const FileBrowserScreen({
     super.key,
     required this.hostId,
     required this.rootPath,
-    this.openFilePath,
+    this.startPath,
     this.sessionId,
   });
 
@@ -40,7 +44,7 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
   @override
   void initState() {
     super.initState();
-    _currentPath = widget.rootPath;
+    _currentPath = widget.startPath ?? widget.rootPath;
     _rootPath = widget.rootPath;
   }
 
@@ -51,17 +55,6 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
   /// the browser backwards. Now A's answer lands under A's key, and the build
   /// is watching B's.
   (String, String) get _listingKey => (widget.hostId, _currentPath);
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Open a specific file immediately if requested (e.g. tapped from transcript).
-    if (widget.openFilePath != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _openFile(widget.openFilePath!);
-      });
-    }
-  }
 
   DaemonAPIService? get _svc =>
       context.read<HostManager>().serviceFor(widget.hostId);
@@ -158,11 +151,20 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
 
   Future<void> _openFile(String path) async {
     if (!mounted) return;
-    Navigator.of(context).push(
+    final reveal = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => FileViewerScreen(path: path, hostId: widget.hostId, sessionId: widget.sessionId),
+        settings: const RouteSettings(name: '/file-viewer'),
+        builder: (_) => FileViewerScreen(
+          path: path,
+          hostId: widget.hostId,
+          sessionId: widget.sessionId,
+          rootPath: _rootPath,
+        ),
       ),
     );
+    // "Show in folder" comes back as the directory to move to, rather than
+    // pushing a second browser on top of this one.
+    if (reveal != null && mounted) _goTo(reveal);
   }
 
   List<_BreadcrumbSegment> _buildBreadcrumbs() {
@@ -380,7 +382,17 @@ class FileViewerScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String? sessionId;
 
-  const FileViewerScreen({super.key, required this.path, required this.hostId, this.sessionId});
+  /// The checkout this file belongs to. A preview reads nothing outside it, and
+  /// "show in folder" browses from it. Absent means the file's own directory.
+  final String? rootPath;
+
+  const FileViewerScreen({
+    super.key,
+    required this.path,
+    required this.hostId,
+    this.sessionId,
+    this.rootPath,
+  });
 
   @override
   rp.ConsumerState<FileViewerScreen> createState() => _FileViewerScreenState();
@@ -394,10 +406,47 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
   /// subscribe outside a build, which Riverpod rejects.
   rp.AsyncValue<FileReadResult?> _file = const rp.AsyncLoading();
 
+  /// An HTML file opens rendered, and can be turned back into source.
+  bool _htmlPreview = true;
+
   FileReadResult? get _result => _file.valueOrNull;
   bool get _loading => _file.isLoading;
 
   (String, String) get _fileKey => (widget.hostId, widget.path);
+
+  /// What a preview may read from, and what "show in folder" browses.
+  String get _root => widget.rootPath ?? _directory;
+
+  String get _directory => widget.path.substring(0, widget.path.lastIndexOf('/'));
+
+  /// Whether what is on screen is text the reader can point at.
+  bool get _showsText {
+    final file = _result;
+    if (file == null || file.content == null) return false;
+    if (file.isImage || file.isBinary) return false;
+    return !(isHtmlPath(widget.path) && _htmlPreview);
+  }
+
+  /// Hands the directory back to the listing underneath, if there is one, so
+  /// the stack does not grow a second browser every time.
+  void _showInFolder() {
+    final nav = Navigator.of(context);
+    if (nav.canPop() && ModalRoute.of(context)?.settings.name == '/file-viewer') {
+      nav.pop(_directory);
+      return;
+    }
+    nav.push(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/file-browser'),
+        builder: (_) => FileBrowserScreen(
+          hostId: widget.hostId,
+          rootPath: _root,
+          startPath: _directory,
+          sessionId: widget.sessionId,
+        ),
+      ),
+    );
+  }
 
   bool _userConfirmedLarge = false;
   static const _softLimit = 1024 * 1024; // 1 MB
@@ -457,7 +506,8 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
           settings: const RouteSettings(name: '/file-browser'),
           builder: (_) => FileBrowserScreen(
             hostId: widget.hostId,
-            rootPath: widget.path,
+            rootPath: widget.rootPath ?? widget.path,
+            startPath: widget.path,
           ),
         ),
       );
@@ -485,15 +535,20 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
           ],
         ),
         actions: [
+          // Back belongs to wherever the file was opened from — the transcript,
+          // or the listing. Getting to the folder is a thing you ask for, so it
+          // is a button rather than something the back gesture does for you.
           IconButton(
-            icon: const Icon(Icons.chat_bubble_outline),
-            tooltip: 'Back to chat',
-            onPressed: () {
-              final nav = Navigator.of(context);
-              nav.pop();
-              if (nav.canPop()) nav.pop();
-            },
+            icon: const Icon(Icons.folder_open_outlined),
+            tooltip: 'Show in folder',
+            onPressed: _showInFolder,
           ),
+          if (isHtmlPath(widget.path))
+            IconButton(
+              icon: Icon(_htmlPreview ? Icons.code : Icons.article_outlined),
+              tooltip: _htmlPreview ? 'Show source' : 'Render the page',
+              onPressed: () => setState(() => _htmlPreview = !_htmlPreview),
+            ),
           if (_result?.content != null && !_result!.isBinary)
             IconButton(
               icon: const Icon(Icons.copy),
@@ -513,7 +568,9 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
         ],
       ),
       body: _buildContent(theme),
-      bottomNavigationBar: widget.sessionId != null
+      // Only over something with lines in it. A picture and a rendered page
+      // have none, so the bar would be offering a gesture that does nothing.
+      bottomNavigationBar: widget.sessionId != null && _showsText
           ? _buildAskAIBar(theme)
           : null,
     );
@@ -692,6 +749,15 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
     // Binary detection
     if (_result!.isBinary) {
       return _buildBinaryView(theme);
+    }
+
+    if (isHtmlPath(widget.path) && _htmlPreview) {
+      return HtmlPreview(
+        hostId: widget.hostId,
+        html: _result!.content ?? '',
+        path: widget.path,
+        root: _root,
+      );
     }
 
     final content = _result!.content ?? '';
