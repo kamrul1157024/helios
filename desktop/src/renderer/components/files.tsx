@@ -102,7 +102,9 @@ export function FilesPanel({
    * in different repositories lost them on every switch.
    */
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [side, setSide] = useState<'tree' | 'find'>('tree')
+  // null is collapsed. A narrow Files pane beside a transcript has no room for
+  // a tree as well as an editor, and the tree is the half you can do without.
+  const [side, setSide] = useState<Side>('tree')
   const [findSeq, setFindSeq] = useState(0)
   const [quickOpen, setQuickOpen] = useState(false)
   const [quickOpenQuery, setQuickOpenQuery] = useState('')
@@ -225,6 +227,7 @@ export function FilesPanel({
     const saved = readWorkspace(memory)
     setRootOverride(saved?.root ?? null)
     setExpanded(new Set(saved?.expanded ?? []))
+    setSide(saved?.side === undefined ? 'tree' : saved.side)
     views.current = saved?.view ?? {}
 
     let cancelled = false
@@ -253,13 +256,14 @@ export function FilesPanel({
       open: tabs.map((tab) => tab.path),
       active: activePath,
       expanded: [...expanded],
+      side,
       // Pruned to what is open: a closed tab's position is not worth carrying,
       // and the record would otherwise grow for the life of the session.
       view: Object.fromEntries(
         tabs.map((tab) => [tab.path, views.current[tab.path]]).filter(([, at]) => at !== undefined),
       ) as Record<string, ReadingPosition>,
     })
-  }, [memory, loadedFor, rootOverride, tabs, activePath, expanded, viewTick])
+  }, [memory, loadedFor, rootOverride, tabs, activePath, expanded, side, viewTick])
 
   const save = useCallback(
     async (path: string): Promise<void> => {
@@ -377,6 +381,9 @@ export function FilesPanel({
       if (key === 'p' && !event.shiftKey) {
         event.preventDefault()
         setQuickOpen(true)
+      } else if (key === 'b' && !event.shiftKey) {
+        event.preventDefault()
+        setSide((current) => (current === null ? 'tree' : null))
       } else if (key === 'f' && event.shiftKey) {
         event.preventDefault()
         setSide('find')
@@ -417,14 +424,25 @@ export function FilesPanel({
 
   return (
     <div className="workspace">
-      <aside className="ws-side">
+      <aside className="ws-side" hidden={side === null}>
         <div className="ws-side-head">
-          <button className={side === 'tree' ? 'ws-view on' : 'ws-view'} onClick={() => setSide('tree')}>
+          {/* Clicking the one already showing puts it away, which is how the
+              activity bar this borrows from behaves. */}
+          <button
+            className={side === 'tree' ? 'ws-view on' : 'ws-view'}
+            title="Explorer (⌘B)"
+            onClick={() => setSide(side === 'tree' ? null : 'tree')}
+          >
             Explorer
           </button>
           <button
             className={side === 'find' ? 'ws-view on' : 'ws-view'}
+            title="Search (⇧⌘F)"
             onClick={() => {
+              if (side === 'find') {
+                setSide(null)
+                return
+              }
               setSide('find')
               setFindSeq((seq) => seq + 1)
             }}
@@ -487,6 +505,18 @@ export function FilesPanel({
 
       <section className="ws-main">
         <div className="ws-tabs">
+          {/* The way back. Collapsing from inside the explorer would otherwise
+              leave nothing on screen saying it is there, and a keyboard
+              shortcut is not something you can see. */}
+          <button
+            className={`ws-side-toggle ${side === null ? 'off' : ''}`}
+            title={side === null ? 'Show the explorer (⌘B)' : 'Hide the explorer (⌘B)'}
+            aria-label={side === null ? 'Show the explorer' : 'Hide the explorer'}
+            aria-expanded={side !== null}
+            onClick={() => setSide(side === null ? 'tree' : null)}
+          >
+            <Chevron dir={side === null ? 'right' : 'left'} />
+          </button>
           {tabs.map((tab) => (
             <div
               key={tab.path}
@@ -937,6 +967,9 @@ function basename(path: string): string {
   return path.split('/').pop() || path
 }
 
+/** Which list the explorer shows, or nothing at all. */
+type Side = 'tree' | 'find' | null
+
 /** What the panel remembers about a session between visits. */
 interface Workspace {
   root: string | null
@@ -946,6 +979,9 @@ interface Workspace {
   expanded?: string[]
   /** Where each file was left, by path. Absent in older records. */
   view?: Record<string, ReadingPosition>
+  /** The explorer, or null for collapsed. Absent in records written before it
+   *  could be, which read as the tree — the panel has always opened that way. */
+  side?: Side
 }
 
 function readWorkspace(key: string): Workspace | null {

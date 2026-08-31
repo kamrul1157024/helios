@@ -7,7 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { silenceDeviceReports } from './deviceReports.ts'
 import { linkHandler, webLinkActivate } from './links.ts'
 import { bridge } from '../bridge.ts'
-import { currentTab, store, terminalId, useStore, type Tab } from '../store.ts'
+import { store, terminalId, useStore, type Tab } from '../store.ts'
 import { canResume, hasTerminal, needsRecovery, type Session } from '../../shared/models.ts'
 
 /**
@@ -21,14 +21,14 @@ bridge.term.onOutput(({ tabId, data }) => sinks.get(tabId)?.(data))
 const encoder = new TextEncoder()
 
 /**
- * The terminal panel: the selected session's terminal, and every other open one
- * kept mounted behind it.
+ * The `panel:terminal` item: what stands in for a terminal there is not one of
+ * yet, and the thing that goes and gets one.
  *
- * Mounted, not rendered on demand, because an xterm that unmounts loses its
- * scrollback and neither the daemon nor the main process can replay it — only
- * the visible pane is `active`, and the rest sit hidden and silent.
+ * It holds the item's place in the strip, so a session whose agent attaches
+ * while the user is reading it does not shuffle the arrangement underneath
+ * them — the tab is already there, and the pane arrives inside it.
  */
-export function TerminalPanes({
+export function TerminalPlaceholder({
   hostId,
   session,
   visible,
@@ -36,14 +36,9 @@ export function TerminalPanes({
   hostId: string | null
   session: Session | null
   visible: boolean
-}): JSX.Element {
+}): JSX.Element | null {
   const tabs = useStore((s) => s.tabs)
-  const activeTab = useStore(currentTab)
   const agent = hostId && session ? tabs.find((t) => t.id === terminalId(hostId, session.session_id)) : undefined
-  // The strip decides which of the session's terminals is in front; the
-  // agent's is the one a session starts with and the fallback for everything
-  // that does not name one.
-  const current = (activeTab ? tabs.find((t) => t.id === activeTab) : undefined) ?? agent
   const detached = useStore((s) => s.detached)
   const isDetached = Boolean(hostId && session && detached.includes(terminalId(hostId, session.session_id)))
 
@@ -64,48 +59,63 @@ export function TerminalPanes({
     else if (needsRecovery(session)) void store.openTerminal(hostId, session, true)
   }, [visible, agent, isDetached, hostId, session])
 
-  return (
-    <div className={visible ? 'panes' : 'panes hidden'}>
-      {tabs.map((tab) => (
-        <TerminalPane key={tab.id} tab={tab} active={visible && tab.id === current?.id} />
-      ))}
+  if (!hostId || !session) return null
 
-      {visible && !current && hostId && session && (
-        <div className="pane-empty">
-          {/* Resume, not wake, for a terminated session: a wake would start the
-              host and attach to a session the daemon still refuses prompts for.
-              Resuming moves it back to idle, and the effect above attaches as
-              soon as the handle lands. */}
-          <p>
-            {canResume(session)
-              ? 'Session terminated — resume to bring the agent back.'
-              : isDetached
-                ? 'Disconnected — the agent kept running.'
-                : 'No terminal attached to this session.'}
-          </p>
-          {canResume(session) ? (
-            <button className="filled" onClick={() => void store.resumeSession(hostId, session.session_id)}>
-              Resume
-            </button>
-          ) : (
-            <button
-              className="filled"
-              onClick={() => void store.openTerminal(hostId, session, !hasTerminal(session))}
-            >
-              {hasTerminal(session) ? 'Attach' : 'Wake and attach'}
-            </button>
-          )}
-        </div>
+  return (
+    <div className="pane-empty">
+      {/* Resume, not wake, for a terminated session: a wake would start the
+          host and attach to a session the daemon still refuses prompts for.
+          Resuming moves it back to idle, and the effect above attaches as
+          soon as the handle lands. */}
+      <p>
+        {canResume(session)
+          ? 'Session terminated — resume to bring the agent back.'
+          : isDetached
+            ? 'Disconnected — the agent kept running.'
+            : 'No terminal attached to this session.'}
+      </p>
+      {canResume(session) ? (
+        <button className="filled" onClick={() => void store.resumeSession(hostId, session.session_id)}>
+          Resume
+        </button>
+      ) : (
+        <button
+          className="filled"
+          onClick={() => void store.openTerminal(hostId, session, !hasTerminal(session))}
+        >
+          {hasTerminal(session) ? 'Attach' : 'Wake and attach'}
+        </button>
       )}
     </div>
   )
 }
 
-function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Element {
+/**
+ * One terminal, mounted for as long as its tab exists.
+ *
+ * Mounted, not rendered on demand, because an xterm that unmounts loses its
+ * scrollback and neither the daemon nor the main process can replay it. A pane
+ * whose tab is not in front of its group is hidden rather than dropped.
+ *
+ * `visible` is whether it is on screen anywhere — several are, once the session
+ * is split. `focused` is whether its group is the one the keyboard belongs to,
+ * which is a narrower question and the only one worth stealing the caret for.
+ */
+export function TerminalPane({
+  tab,
+  active,
+  focused,
+}: {
+  tab: Tab
+  active: boolean
+  focused: boolean
+}): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const hostSized = useRef(false)
+  /** Whether the terminal has met the DOM yet; see `apply` below. */
+  const opened = useRef(false)
   const theme = useStore((s) => s.terminalTheme)
 
   // Assigned rather than passed on construction: rebuilding the terminal to
@@ -142,13 +152,18 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon(webLinkActivate))
-    term.open(container)
 
-    try {
-      term.loadAddon(new WebglAddon())
-    } catch {
-      // No GPU context — the canvas renderer is slower but always available.
-    }
+    // Deliberately not opened here. `open` measures a character against the
+    // element it is given, and a pane that mounts behind another tab has no
+    // layout to measure — the cell comes out zero wide, and nothing ever
+    // measures again: xterm has no resize observer of its own, and
+    // `proposeDimensions` gives up on a zero cell, so the pane can no longer
+    // even ask the host for a size. It renders an empty grid with a cursor in
+    // it until a reconnect builds a new terminal.
+    //
+    // So the element waits until it has been laid out; see the effect below.
+    // Writing before `open` is fine — the bytes land in the buffer, and the
+    // snapshot the host replays on attach is there when the pane is shown.
 
     term.onData((data) => void bridge.term.input(tab.id, encoder.encode(data)))
     term.onBinary((data) => {
@@ -167,6 +182,7 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      opened.current = false
     }
   }, [tab.id])
 
@@ -189,6 +205,31 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     const apply = (): void => {
       // A hidden element measures as zero; fit() would then propose 1×1.
       if (container.clientWidth === 0 || container.clientHeight === 0) return
+      // First time this pane has had a size: this is where the terminal meets
+      // the DOM. Opening earlier would measure a character against an element
+      // with no layout and leave the cell zero wide for good.
+      if (!opened.current) {
+        opened.current = true
+        term.open(container)
+        // The renderer needs the element, so it cannot be loaded before the
+        // open above. One WebGL context per terminal, and the browser evicts
+        // the oldest past its limit — a split puts more of them on screen at
+        // once, so a lost context is now something that happens.
+        try {
+          const webgl = new WebglAddon()
+          webgl.onContextLoss(() => {
+            webgl.dispose()
+            try {
+              term.loadAddon(new WebglAddon())
+            } catch {
+              // The canvas renderer is slower and always available.
+            }
+          })
+          term.loadAddon(webgl)
+        } catch {
+          // No GPU context — the canvas renderer is slower but always available.
+        }
+      }
       const dims = fit.proposeDimensions()
       if (!dims?.cols || !dims.rows) return
       // Proposed, not applied. fit() would resize the grid here, and the host
@@ -205,12 +246,15 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     }
 
     apply()
-    term.focus()
+    // Only the focused group's terminal takes the caret. With two panes on
+    // screen every one of them would otherwise claim it, and the last to
+    // render would win on every layout change.
+    if (focused) term.focus()
 
     const observer = new ResizeObserver(apply)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [active, tab.id])
+  }, [active, focused, tab.id])
 
   /**
    * Adopt the size the host settled on, which is not always the one proposed
@@ -242,8 +286,10 @@ function TerminalPane({ tab, active }: { tab: Tab; active: boolean }): JSX.Eleme
     return () => clearTimeout(timer)
   }, [live])
 
+  // Whether it is on screen is the group's business, not the pane's: the item
+  // wrapper carries `hidden`, and a pane that is up fills the cell it is in.
   return (
-    <div className={`pane ${active ? 'active' : ''}`}>
+    <div className="pane">
       <div className="pane-term" ref={hostRef} />
       {tab.status.state !== 'live' && (
         <div className="pane-overlay">

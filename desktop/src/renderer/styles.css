@@ -600,8 +600,8 @@ small {
 
 /* The panels inside a session — transcript, terminal, git, files — sit on the
    detail panel, so anything of theirs that paints has to give way too. */
-[data-glass='on'] .panes,
 [data-glass='on'] .pane,
+[data-glass='on'] .pane-empty,
 [data-glass='on'] .pane-term,
 [data-glass='on'] .chat,
 [data-glass='on'] .chat-scroll {
@@ -1360,13 +1360,17 @@ small {
 }
 
 /* A mounted panel waiting its turn. hidden alone would be overridden by the
-   flex display its contents need. */
+   flex display its contents need.
+
+   Several of these share one grid cell — the items of one group, one of which
+   is in front. The hidden ones generate no box and so size no track: a wide
+   diff sitting behind a file tree cannot widen the group it is in. */
 .panel-keep {
-  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .panel-keep[hidden] {
@@ -1557,11 +1561,112 @@ small {
   border-radius: var(--r-sm);
 }
 
+/* The groups, laid out flat.
+
+   One grid rather than nested containers, and every child a direct child of it:
+   moving a tab from one group to another is then a change to one `grid-column`
+   on a node that stays exactly where it is in the DOM. A nested layout would
+   have to re-parent the node, and a re-parent in React is an unmount — which
+   disposes the xterm and takes the scrollback with it.
+
+   The tracks come from the layout as inline styles, because they are data: one
+   `fr` per group, a fixed gutter between neighbours. */
 .panel-body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  display: flex;
+  display: grid;
+}
+
+/* Nothing is selected, or the session is still loading: one child, filling it. */
+.panel-body > .panel-empty,
+.panel-body > .panel-loading {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+}
+
+/* A group that is not the focused one still reads its tabs, but the underline
+   marking the one in front belongs to the group with the keyboard. */
+.panel-tabs:not(.focused) button.active {
+  color: var(--on-surface-variant);
+  border-bottom-color: var(--outline-variant);
+}
+
+/* Where a dragged tab would land in this strip. */
+.panel-tabs button.insert {
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.tab-insert {
+  align-self: center;
+  width: 2px;
+  height: 20px;
+  flex: none;
+  background: var(--primary);
+}
+
+/* The gutter between two groups. Wider to the pointer than it looks, because a
+   6px target is a miss most of the time. */
+.group-sash {
+  position: relative;
+  z-index: 2;
+  background: var(--outline-variant);
+  opacity: 0.5;
+}
+
+.group-sash.row {
+  cursor: col-resize;
+}
+
+.group-sash.column {
+  cursor: row-resize;
+}
+
+.group-sash::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+
+.group-sash:hover,
+.group-sash:active {
+  background: var(--primary);
+  opacity: 1;
+}
+
+/* Only mounted while a tab is in flight; see DropZone in detail.tsx. */
+.group-drop {
+  z-index: 3;
+  border-radius: var(--r-md);
+  transition: background 90ms ease;
+}
+
+.group-drop.over {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--primary) 50%, transparent);
+  outline-offset: -1px;
+}
+
+/* The half the new group would take, drawn where it would go. */
+.group-drop.over.before,
+.group-drop.over.after {
+  background: linear-gradient(
+    var(--drop-angle, 90deg),
+    color-mix(in srgb, var(--primary) 22%, transparent) 0 50%,
+    transparent 50% 100%
+  );
+}
+
+.group-drop.over.after {
+  --drop-angle: 270deg;
+}
+
+.panel-body.column .group-drop.over.before {
+  --drop-angle: 180deg;
+}
+
+.panel-body.column .group-drop.over.after {
+  --drop-angle: 0deg;
 }
 
 .panel-error {
@@ -2735,6 +2840,39 @@ small {
   background: color-mix(in srgb, var(--on-surface) 3%, transparent);
 }
 
+/* Collapsed. `hidden` alone would lose to the flex display above. */
+.ws-side[hidden] {
+  display: none;
+}
+
+/* Sits at the head of the file tabs, which is the one strip that is there
+   whether or not a file is open. Pinned, because that strip scrolls once
+   enough files are open and the way back must not scroll away with it. */
+.ws-side-toggle {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+  margin-right: 2px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--on-surface-variant);
+  background: var(--surface-low);
+}
+
+.ws-side-toggle:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+}
+
+.ws-side-toggle.off {
+  color: var(--primary);
+}
+
 .ws-side-head {
   display: flex;
   align-items: center;
@@ -3220,44 +3358,30 @@ small {
   font-size: 22px;
 }
 
-.panes {
-  flex: 1;
-  position: relative;
-  min-height: 0;
-  background: var(--surface-container);
-}
-
-/* Still mounted, just out of the layout, so the panes it holds keep their
-   scrollback while the user reads another panel. */
-.panes.hidden {
-  display: none;
-}
-
 .pane-empty {
-  position: absolute;
-  inset: 0;
+  flex: 1;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 12px;
   color: var(--on-surface-variant);
+  background: var(--surface-container);
 }
 
 .pane-empty p {
   margin: 0;
 }
 
-/* Hidden rather than unmounted: an unmounted xterm loses its scrollback, and
-   the connection behind it would have to replay from scratch. */
+/* One terminal, filling the cell of whichever group holds its tab. Hidden by
+   the item wrapper rather than unmounted: an unmounted xterm loses its
+   scrollback, and the connection behind it cannot replay from scratch. */
 .pane {
-  position: absolute;
-  inset: 0;
-  display: none;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   padding: 10px 12px;
-}
-
-.pane.active {
-  display: block;
+  background: var(--surface-container);
 }
 
 .pane-term {
