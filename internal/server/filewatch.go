@@ -67,8 +67,8 @@ type watchEntry struct {
 	lastRead time.Time
 	// mtime and size gate the hash for a file. A directory and a repo have no
 	// gate: their digests are cheap enough to take every sweep.
-	mtime time.Time
-	size  int64
+	mtime  time.Time
+	size   int64
 	digest string
 	gone   bool
 	// seen is false until the first look. It is what makes a new entry compute
