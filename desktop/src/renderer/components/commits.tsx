@@ -155,10 +155,19 @@ function ScopeMenu({
   onClose: () => void
 }): JSX.Element {
   const [all, setAll] = useState(false)
-  const { data, error, isFetching, hasNextPage, fetchNextPage } = useInfiniteQuery(
+  const { data, error, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } = useInfiniteQuery(
     gitLogPagesQuery(hostId, root, all),
   )
   const commits = useMemo(() => data?.pages.flatMap((page) => page.commits) ?? [], [data])
+  /**
+   * A fetch the reader is waiting on: the first page, or the next one.
+   *
+   * Not every fetch is. A working-tree write invalidates the whole `git`
+   * prefix, so this log refetches whenever the agent touches a file — and
+   * saying so pulled "Load more" out from under the pointer and put a
+   * "Loading…" line in its place, for an answer nobody had asked for.
+   */
+  const loading = isFetchingNextPage || (isFetching && commits.length === 0)
   // The newest page answers for the branch: base and scope do not move between
   // pages, and has_more is the last page's to report.
   const log = data?.pages[data.pages.length - 1] ?? null
@@ -282,9 +291,9 @@ function ScopeMenu({
             </button>
           ))}
 
-          {isFetching && <p className="empty-note">Loading…</p>}
-          {!isFetching && !error && commits.length === 0 && <p className="empty-note">No commits.</p>}
-          {hasNextPage && !isFetching && (
+          {loading && <p className="empty-note">Loading…</p>}
+          {!loading && !error && commits.length === 0 && <p className="empty-note">No commits.</p>}
+          {hasNextPage && !loading && (
             <button className="commit-more" onClick={() => void fetchNextPage()}>
               Load more
             </button>
