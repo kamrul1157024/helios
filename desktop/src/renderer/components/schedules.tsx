@@ -15,6 +15,7 @@ import { keys } from '../keys.ts'
 import { scheduleLogQuery, scheduleRunsQuery, schedulesQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { sessionLabel, type CheckResult, type Schedule } from '../../shared/models.ts'
+import { schedulePrompt } from '../schedule-prompt.ts'
 
 /** The drag payload: one schedule's id, carried on the event. */
 export const SCHEDULE_DRAG = 'application/x-helios-schedule'
@@ -28,10 +29,29 @@ export const SCHEDULE_DRAG = 'application/x-helios-schedule'
  * drag is the edit. The rule that link carries is asked in the main panel, not
  * over the top of the list.
  */
-export function ScheduleList({ hostId }: { hostId: string }): JSX.Element {
-  const { data: schedules = [], error } = useQuery(schedulesQuery(hostId))
+export function ScheduleList({
+  hostId,
+  query = '',
+}: {
+  hostId: string
+  query?: string
+}): JSX.Element {
+  const { data: all = [], error } = useQuery(schedulesQuery(hostId))
   const selected = useStore((s) => s.scheduleSelection)
   const [over, setOver] = useState('')
+
+  // Searched over what a person would remember about one: its name, what it
+  // does, and the check behind it.
+  const schedules = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (needle === '') return all
+    return all.filter((sc) =>
+      [sc.name, sc.prompt, sc.cron, sc.check_cmd, sc.check_file, sc.cwd]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    )
+  }, [all, query])
 
   const depths = useMemo(() => depthOf(schedules), [schedules])
 
@@ -47,8 +67,9 @@ export function ScheduleList({ hostId }: { hostId: string }): JSX.Element {
   if (schedules.length === 0) {
     return (
       <div className="sched-empty">
-        Nothing scheduled here yet — a saved prompt with a clock, or a check that decides when
-        there is something to do.
+        {query.trim() === ''
+          ? 'Nothing scheduled here yet — a saved prompt with a clock, or a check that decides when there is something to do.'
+          : 'Nothing here matches that.'}
       </div>
     )
   }
@@ -129,7 +150,7 @@ export function SchedulePanel(): JSX.Element {
       <div className="panel-empty">
         <p>Pick a schedule, or write a new one.</p>
         {hosts[0] && (
-          <button className="btn primary" onClick={() => store.editSchedule(hosts[0]?.id ?? '')}>
+          <button className="btn primary" onClick={() => store.newSchedule(hosts[0]?.id ?? '')}>
             + New schedule
           </button>
         )}
@@ -137,6 +158,9 @@ export function SchedulePanel(): JSX.Element {
     )
   }
 
+  if (selection.choosing) {
+    return <NewSchedule hostId={selection.hostId} />
+  }
   if (selection.linkTo) {
     return (
       <LinkPanel hostId={selection.hostId} childId={selection.scheduleId} parentId={selection.linkTo} />
@@ -146,6 +170,88 @@ export function SchedulePanel(): JSX.Element {
     return <ScheduleEditor hostId={selection.hostId} scheduleId={selection.scheduleId} />
   }
   return <ScheduleDetail hostId={selection.hostId} scheduleId={selection.scheduleId} />
+}
+
+/**
+ * Two ways to make one, and the first is the one people want.
+ *
+ * Describing it opens an ordinary session with a prompt: the agent has the
+ * `helios` skill, installed during setup, so it knows the CLI it is about to
+ * call. The form is there for the times you want to be exact, and for when
+ * there is no agent to ask.
+ */
+function NewSchedule({ hostId }: { hostId: string }): JSX.Element {
+  const [description, setDescription] = useState('')
+  const [cwd, setCwd] = useState('')
+  const [error, setError] = useState('')
+
+  const describe = useMutation({
+    mutationFn: async () => {
+      const started = await api(hostId).createSession({
+        prompt: schedulePrompt(description, cwd),
+        cwd,
+      })
+      // Straight to the session: what it does next is the answer, and it is
+      // an ordinary transcript.
+      store.select(hostId, started.session_id)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
+  return (
+    <div className="sched-detail">
+      <header className="sched-detail-head">
+        <h2>New schedule</h2>
+      </header>
+
+      <div className="sched-detail-body sched-form">
+        <label className="field">
+          <span>Describe it</span>
+          <textarea
+            rows={4}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={
+              'every 15 minutes, run the go tests in ~/work/helios and if they fail, ' +
+              'start an agent to fix them'
+            }
+          />
+          <em className="dim">
+            An agent reads this, works out the schedule, and creates it with the CLI. You see
+            what it made before it ever fires.
+          </em>
+        </label>
+
+        <label className="field">
+          <span>In</span>
+          <input
+            value={cwd}
+            onChange={(e) => setCwd(e.target.value)}
+            placeholder="optional — a directory for the agent to work in"
+          />
+        </label>
+
+        {error && <p className="error">{error}</p>}
+      </div>
+
+      <footer className="sched-detail-foot">
+        <button className="btn" onClick={() => store.editSchedule(hostId)}>
+          Set it up manually
+        </button>
+        <span className="spacer" />
+        <button className="btn" onClick={() => store.clearScheduleSelection()}>
+          Cancel
+        </button>
+        <button
+          className="btn primary"
+          disabled={description.trim() === '' || describe.isPending}
+          onClick={() => describe.mutate()}
+        >
+          {describe.isPending ? 'Starting…' : 'Ask an agent'}
+        </button>
+      </footer>
+    </div>
+  )
 }
 
 type DetailTab = 'overview' | 'runs' | 'log'

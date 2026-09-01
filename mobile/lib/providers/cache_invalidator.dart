@@ -45,6 +45,8 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
       ref.invalidate(sessionsProvider);
     case CacheTarget.notifications:
       ref.invalidate(notificationsProvider(host));
+    case CacheTarget.schedules:
+      ref.invalidate(schedulesProvider(host));
     case CacheTarget.providers:
       ref.invalidate(providersProvider(host));
       ref.invalidate(readyProvidersProvider(host));

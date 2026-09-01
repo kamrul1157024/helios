@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'cache_effects.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
+import '../models/schedule.dart';
 import '../models/session.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
@@ -29,6 +30,27 @@ final hostManagerProvider = Provider<HostManager>(
 final serviceProvider = Provider.family<DaemonAPIService?, String>(
   (ref, hostId) => ref.watch(hostManagerProvider).serviceFor(hostId),
 );
+
+// ─── Schedules ──────────────────────────────────────────────────────────────
+
+/// A host's schedules, parents before children so the tree renders in one pass.
+final schedulesProvider = FutureProvider.family<List<Schedule>, String>((ref, hostId) async {
+  final service = ref.watch(serviceProvider(hostId));
+  if (service == null) return const [];
+  return service.listSchedules();
+});
+
+/// One schedule's runs.
+///
+/// Ordinary sessions, asked for by what started them — which is why there is no
+/// second list widget anywhere: the runs list is the session list.
+final scheduleRunsProvider =
+    FutureProvider.family<List<Session>, (String, String)>((ref, arg) async {
+  final (hostId, scheduleId) = arg;
+  final service = ref.watch(serviceProvider(hostId));
+  if (service == null) return const [];
+  return service.listSessions(SessionQuery(scheduleId: scheduleId));
+});
 
 // ─── Sessions and notifications ─────────────────────────────────────────────
 

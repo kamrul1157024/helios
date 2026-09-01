@@ -175,6 +175,9 @@ export function Sidebar({
   const notifications = useHostNotifications()
   const selection = useStore((s) => s.selection)
   const mode = useStore((s) => s.sidebarMode)
+  // Its own search, because the two lists hold different things and a query
+  // typed against one is meaningless against the other.
+  const scheduleQuery = useStore((s) => s.scheduleQuery)
   const query = useStore((s) => s.query)
   const sortMode = useHostSortModes()
   const groupMode = useStore((s) => s.grouping)
@@ -360,7 +363,74 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" ref={aside}>
-      <header className="sidebar-head">
+      {/* Above everything, because it decides what everything below is about:
+          the search, the arrange control and the + button all belong to one
+          list or the other. */}
+      <div className="sidebar-modes">
+        <button
+          className={mode === 'sessions' ? 'active' : ''}
+          onClick={() => store.setSidebarMode('sessions')}
+        >
+          sessions
+        </button>
+        <button
+          className={mode === 'schedules' ? 'active' : ''}
+          onClick={() => store.setSidebarMode('schedules')}
+        >
+          schedules
+        </button>
+      </div>
+
+      {mode === 'schedules' && (
+        <>
+          <header className="sidebar-head">
+            <div className="search-field">
+              <Search className="search-icon" />
+              <input
+                className="search"
+                placeholder="Search schedules"
+                value={scheduleQuery}
+                onChange={(event) => store.setScheduleQuery(event.target.value)}
+              />
+              {scheduleQuery !== '' && (
+                <button
+                  className="search-clear"
+                  aria-label="Clear the search"
+                  onClick={() => store.setScheduleQuery('')}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            <button
+              className="tool primary"
+              aria-label="New schedule"
+              title="New schedule"
+              onClick={() => store.newSchedule(selection?.hostId ?? hosts[0]?.id ?? '')}
+            >
+              <Plus />
+            </button>
+          </header>
+
+          <div className="sidebar-list">
+            {hosts.map((host) => (
+              <div className="host-group" key={host.id}>
+                {hosts.length > 1 && (
+                  <div className="host-head">
+                    <span className="host-title">
+                      <span className={`host-dot ${hostStatus[host.id]?.state ?? 'connecting'}`} />
+                      <span className="host-name">{host.name}</span>
+                    </span>
+                  </div>
+                )}
+                <ScheduleList hostId={host.id} query={scheduleQuery} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <header className="sidebar-head" hidden={mode === 'schedules'}>
         <div className="search-field">
           <Search className="search-icon" />
           <input
@@ -411,52 +481,6 @@ export function Sidebar({
           <Plus />
         </button>
       </header>
-
-      {/* Sessions and schedules are two lists of the same shape — grouped by
-          host, one row per thing, one detail in the main panel — so they share
-          the sidebar rather than fighting for it. */}
-      <div className="sidebar-modes">
-        <button
-          className={mode === 'sessions' ? 'active' : ''}
-          onClick={() => store.setSidebarMode('sessions')}
-        >
-          sessions
-        </button>
-        <button
-          className={mode === 'schedules' ? 'active' : ''}
-          onClick={() => store.setSidebarMode('schedules')}
-        >
-          schedules
-        </button>
-      </div>
-
-      {mode === 'schedules' && (
-        <>
-          <div className="sidebar-list">
-            {hosts.map((host) => (
-              <div className="host-group" key={host.id}>
-                {hosts.length > 1 && (
-                  <div className="host-head">
-                    <span className="host-title">
-                      <span className={`host-dot ${hostStatus[host.id]?.state ?? 'connecting'}`} />
-                      <span className="host-name">{host.name}</span>
-                    </span>
-                  </div>
-                )}
-                <ScheduleList hostId={host.id} />
-              </div>
-            ))}
-          </div>
-          <footer className="sidebar-foot">
-            <button
-              className="btn tiny"
-              onClick={() => store.editSchedule(selection?.hostId ?? hosts[0]?.id ?? '')}
-            >
-              + New schedule
-            </button>
-          </footer>
-        </>
-      )}
 
       <div className="sidebar-list" hidden={mode === 'schedules'}>
         {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {

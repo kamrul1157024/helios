@@ -81,6 +81,8 @@ export interface ScheduleSelection {
   editing: boolean
   /** Set while the reader is being asked what a dropped link means. */
   linkTo?: string
+  /** Set while the reader is choosing between describing one and writing one. */
+  choosing?: boolean
 }
 
 export interface Selection {
@@ -189,6 +191,13 @@ export interface State {
    * rather than fighting for it. See docs/specs/55-scheduled-runs.md.
    */
   sidebarMode: SidebarMode
+  /**
+   * The schedules list's own search.
+   *
+   * Separate from `query`: the two lists hold different things, and a query
+   * typed against sessions is meaningless against schedules.
+   */
+  scheduleQuery: string
   /**
    * The schedule the main panel is showing, if any. `scheduleId` is empty for
    * one being created, which is a draft with nowhere to be selected from.
@@ -345,6 +354,7 @@ const initial: State = {
   tabs: [],
   selection: null,
   sidebarMode: 'sessions',
+  scheduleQuery: '',
   scheduleSelection: null,
   layouts: {},
   detached: [],
@@ -942,9 +952,25 @@ class Store {
     this.set({ sidebarMode: mode })
   }
 
+  setScheduleQuery(query: string): void {
+    this.set({ scheduleQuery: query })
+  }
+
   /** Shows a schedule in the main panel. */
   selectSchedule(hostId: string, scheduleId: string): void {
     this.set({ sidebarMode: 'schedules', scheduleSelection: { hostId, scheduleId, editing: false } })
+  }
+
+  /**
+   * Starts a new schedule, at the fork: describe it and let an agent build it,
+   * or fill in the form. Most people want the first, so it is what the button
+   * opens.
+   */
+  newSchedule(hostId: string): void {
+    this.set({
+      sidebarMode: 'schedules',
+      scheduleSelection: { hostId, scheduleId: '', editing: false, choosing: true },
+    })
   }
 
   /** Opens the editor for a new schedule, or for the one already selected. */

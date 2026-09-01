@@ -4925,11 +4925,12 @@ hr {
 
 /* ─── Schedules ─────────────────────────────────────────────────────────── */
 
-/* Sessions or schedules: two lists of the same shape, one sidebar. */
+/* Sessions or schedules, above everything: it decides what the search, the
+   arrange control and the + button below it are about. */
 .sidebar-modes {
   display: flex;
   gap: 2px;
-  padding: 0 10px 8px;
+  padding: 10px 10px 6px;
 }
 
 .sidebar-modes button {
@@ -4947,11 +4948,6 @@ hr {
   background: var(--surface-high);
   border-color: var(--outline-variant);
   color: var(--on-surface);
-}
-
-.sidebar-foot {
-  padding: 8px 10px;
-  border-top: 1px solid var(--outline-variant);
 }
 
 .sched-rows {
