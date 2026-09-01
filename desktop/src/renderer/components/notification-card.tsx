@@ -164,18 +164,48 @@ function QuestionCard({
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
   const questions = (Array.isArray(payload.questions) ? payload.questions : []) as Question[]
-  // Question index → option index. Indices rather than labels: the daemon
+  // Question index → option indices. Indices rather than labels: the daemon
   // answers by moving the CLI's own highlight, so position is what it needs.
-  const [chosen, setChosen] = useState<Record<number, number>>({})
+  // A multi-select question keeps several; the rest replace the one they hold.
+  const [chosen, setChosen] = useState<Record<number, number[]>>({})
+  // Question index → what was typed instead of picking.
+  const [typed, setTyped] = useState<Record<number, string>>({})
+
+  const pick = (question: Question, questionIndex: number, optionIndex: number): void =>
+    setChosen((current) => {
+      const held = current[questionIndex] ?? []
+      if (!question.multiSelect) {
+        return { ...current, [questionIndex]: [optionIndex] }
+      }
+      const next = held.includes(optionIndex)
+        ? held.filter((i) => i !== optionIndex)
+        : [...held, optionIndex].sort((a, b) => a - b)
+      return { ...current, [questionIndex]: next }
+    })
+
+  const answered = (index: number): boolean =>
+    (chosen[index] ?? []).length > 0 || (typed[index] ?? '').trim() !== ''
 
   const submit = (): void => {
     const selections = Object.entries(chosen)
-      .map(([questionIndex, optionIndex]) => ({
-        question_index: Number(questionIndex),
-        option_index: optionIndex,
-      }))
+      .flatMap(([questionIndex, optionIndexes]) =>
+        optionIndexes.map((optionIndex) => ({
+          question_index: Number(questionIndex),
+          option_index: optionIndex,
+        })),
+      )
       .sort((a, b) => a.question_index - b.question_index)
-    void act({ action: 'answer', selections })
+
+    // One text field on the wire for the whole set, so an answer past the
+    // first says which question it belongs to.
+    const written = questions
+      .map((question, index) => [question, (typed[index] ?? '').trim()] as const)
+      .filter(([, text]) => text !== '')
+      .map(([question, text]) =>
+        questions.length === 1 ? text : `${question.header ?? question.question}: ${text}`,
+      )
+
+    void act({ action: 'answer', selections, text: written.join('\n') })
   }
 
   return (
@@ -187,25 +217,34 @@ function QuestionCard({
           {(question.options ?? []).map((option, optionIndex) => (
             <button
               key={optionIndex}
-              className={`option ${chosen[questionIndex] === optionIndex ? 'chosen' : ''}`}
-              onClick={() => setChosen((current) => ({ ...current, [questionIndex]: optionIndex }))}
+              className={`option ${(chosen[questionIndex] ?? []).includes(optionIndex) ? 'chosen' : ''}`}
+              onClick={() => pick(question, questionIndex, optionIndex)}
             >
-              <span className="option-label">{option.label}</span>
+              <span className="option-label">
+                {question.multiSelect &&
+                  ((chosen[questionIndex] ?? []).includes(optionIndex) ? '☑ ' : '☐ ')}
+                {option.label}
+              </span>
               {option.description && <span className="option-desc">{option.description}</span>}
             </button>
           ))}
-          {/* Answering drives the CLI's own list, which takes one highlighted
-              option per question. Picking several needs the terminal. */}
-          {question.multiSelect && (
-            <small className="option-desc">Pick one here, or answer in the terminal to choose several.</small>
-          )}
+          <label className="field">
+            <span>Other</span>
+            <input
+              value={typed[questionIndex] ?? ''}
+              placeholder="Answer in your own words"
+              onChange={(event) =>
+                setTyped((current) => ({ ...current, [questionIndex]: event.target.value }))
+              }
+            />
+          </label>
         </div>
       ))}
 
       <Actions busy={busy}>
         {/* Every question, not just one: the daemon walks the CLI through them
             in order and a gap would leave it stranded. */}
-        <button disabled={Object.keys(chosen).length !== questions.length} onClick={submit}>
+        <button disabled={!questions.every((_, index) => answered(index))} onClick={submit}>
           Submit
         </button>
         <button className="ghost" onClick={() => void act({ action: 'skip' })}>
