@@ -59,6 +59,7 @@ what is merged. Some are superseded and stay here for the history.
 | [49-mobile-query-data-layer.md](49-mobile-query-data-layer.md) | A Query Data Layer for the Mobile App |
 | [50-desktop-split-layout.md](50-desktop-split-layout.md) | Editor Groups for the Desktop: Two Panels Side by Side, Remembered Per Session |
 | [51-file-previews.md](51-file-previews.md) | File Previews: Show the Image, Render the Page |
+| [52-transcript-freshness.md](52-transcript-freshness.md) | Transcript Freshness: Heal a Missed Event Without a Spinner |
 | [ai-narration.md](ai-narration.md) | AI Narration for Voice Mode |
 | [desktop-notification-handoff.md](desktop-notification-handoff.md) | Hand desktop notifications to the desktop app |
 | [desktop-notification-service.md](desktop-notification-service.md) | Desktop Notification Service |

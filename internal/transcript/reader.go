@@ -55,6 +55,11 @@ type TranscriptResult struct {
 	// messages are then a fresh newest page rather than a delta, and the
 	// caller has to replace what it holds instead of appending.
 	EpochChanged bool `json:"epoch_changed,omitempty"`
+	// MoreAfter says the limit cut a delta short and more messages follow the
+	// last one returned. HasMore cannot carry this: on a delta it reports
+	// whether *older* pages exist, which is what a caller paging backwards
+	// asks, and the two answers disagree.
+	MoreAfter bool `json:"more_after,omitempty"`
 }
 
 // claudeEntry is the raw structure of a Claude .jsonl line.

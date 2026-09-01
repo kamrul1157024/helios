@@ -71,6 +71,10 @@ class TranscriptResult {
   /// messages are a fresh newest page and replace what is held.
   final bool epochChanged;
 
+  /// Set when the limit cut a delta short and more messages follow the last
+  /// one here. Distinct from [hasMore], which is about older pages.
+  final bool moreAfter;
+
   TranscriptResult({
     required this.messages,
     required this.total,
@@ -79,6 +83,7 @@ class TranscriptResult {
     required this.hasMore,
     this.epoch = '',
     this.epochChanged = false,
+    this.moreAfter = false,
   });
 
   factory TranscriptResult.fromJson(Map<String, dynamic> json) {
@@ -91,6 +96,7 @@ class TranscriptResult {
       hasMore: json['has_more'] as bool? ?? false,
       epoch: json['epoch'] as String? ?? '',
       epochChanged: json['epoch_changed'] as bool? ?? false,
+      moreAfter: json['more_after'] as bool? ?? false,
     );
   }
 }

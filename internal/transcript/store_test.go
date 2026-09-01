@@ -263,6 +263,81 @@ func TestStoreDeltaReturnsOnlyWhatIsNew(t *testing.T) {
 	}
 }
 
+// A delta cut short by the limit must hand back the oldest of what is new.
+// Handing back the newest leaves the caller a hole it cannot name a cursor for:
+// its list ends at afterSeq, and the messages between there and what it was
+// given are unreachable.
+func TestStoreDeltaCutShortKeepsTheOldest(t *testing.T) {
+	path := writeTranscript(t, "one", "two")
+	s := NewStore()
+
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	newest := first.Messages[len(first.Messages)-1].Seq
+
+	appendTo(t, path, "three", "four", "five", "six")
+
+	delta, err := s.Delta(ParseClaudeLine, path, first.Epoch, newest, 2)
+	if err != nil {
+		t.Fatalf("Delta: %v", err)
+	}
+	if got := contents(delta.Messages); fmt.Sprint(got) != "[three four]" {
+		t.Fatalf("delta = %v, want the oldest two [three four]", got)
+	}
+	if !delta.MoreAfter {
+		t.Fatal("truncated delta did not report MoreAfter; the caller would stop two messages short and never learn of it")
+	}
+}
+
+func TestStoreDeltaLoopReproducesTheWholeRange(t *testing.T) {
+	path := writeTranscript(t, "one")
+	s := NewStore()
+
+	first, err := s.Page(ParseClaudeLine, path, 10, 0)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	appendTo(t, path, "two", "three", "four", "five", "six", "seven")
+
+	// What a client does: ask, append, advance the cursor to the last seq it
+	// was given, ask again while the answer says more follows.
+	cursor := first.Messages[len(first.Messages)-1].Seq
+	var got []Message
+	for range 10 {
+		delta, err := s.Delta(ParseClaudeLine, path, first.Epoch, cursor, 2)
+		if err != nil {
+			t.Fatalf("Delta: %v", err)
+		}
+		got = append(got, delta.Messages...)
+		if !delta.MoreAfter {
+			break
+		}
+		cursor = delta.Messages[len(delta.Messages)-1].Seq
+	}
+
+	if want := "[two three four five six seven]"; fmt.Sprint(contents(got)) != want {
+		t.Fatalf("looped delta = %v, want %s", contents(got), want)
+	}
+}
+
+func TestStorePageNeverReportsMoreAfter(t *testing.T) {
+	path := writeTranscript(t, "one", "two", "three")
+	s := NewStore()
+
+	page, err := s.Page(ParseClaudeLine, path, 1, 0)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if page.MoreAfter {
+		t.Fatal("a page reported MoreAfter; it belongs to the delta path, and HasMore already answers this one")
+	}
+	if !page.HasMore {
+		t.Fatal("HasMore lost its meaning on the paging path")
+	}
+}
+
 func TestStoreDeltaOnAStaleEpochResets(t *testing.T) {
 	path := writeTranscript(t, "one", "two")
 	s := NewStore()
