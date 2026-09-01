@@ -12,7 +12,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
 import { keys } from '../keys.ts'
-import { providersQuery, scheduleLogQuery, scheduleRunsQuery, schedulesQuery } from '../queries.ts'
+import {
+  directoriesQuery,
+  modelsQuery,
+  providersQuery,
+  scheduleLogQuery,
+  scheduleRunsQuery,
+  schedulesQuery,
+} from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { sessionLabel, type CheckResult, type Schedule } from '../../shared/models.ts'
 import { schedulePrompt } from '../schedule-prompt.ts'
@@ -320,17 +327,25 @@ function NewSchedule({ hostId: initialHost }: { hostId: string }): JSX.Element {
   const [description, setDescription] = useState('')
   const [cwd, setCwd] = useState('')
   const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [mode, setMode] = useState('')
   const [error, setError] = useState('')
 
   // Which machine runs it is part of the schedule, not a detail to infer, and
   // which agent writes it is the same choice the new-session dialog offers.
   const { data: providers = [] } = useQuery(providersQuery(hostId))
   const agent = provider || providers[0]?.id || 'claude'
+  // The same three the new-session dialog asks for, and for the same reason: a
+  // schedule runs unattended, so "which model" and "how much may it do without
+  // asking" are worse left to an agent's guess than anywhere else in the app.
+  const { data: models = [] } = useQuery({ ...modelsQuery(hostId, agent), enabled: agent !== '' })
+  const { data: directories = [] } = useQuery(directoriesQuery(hostId))
+  const modes = providers.find((p) => p.id === agent)?.permission_modes ?? []
 
   const describe = useMutation({
     mutationFn: async () => {
       const started = await api(hostId).createSession({
-        prompt: schedulePrompt(description, cwd),
+        prompt: schedulePrompt(description, cwd, { model, mode }),
         cwd,
         provider: agent,
       })
@@ -387,15 +402,34 @@ function NewSchedule({ hostId: initialHost }: { hostId: string }): JSX.Element {
         <label className="field">
           <span>In</span>
           <input
+            list="schedule-directories"
             value={cwd}
+            spellCheck={false}
             onChange={(e) => setCwd(e.target.value)}
             placeholder="optional — a directory for the agent to work in"
           />
+          {/* The directories this daemon already has sessions in, as the
+              new-session dialog offers them: the value is the path, and the
+              project name tells two checkouts of one repository apart. */}
+          <datalist id="schedule-directories">
+            {directories.map((dir) => (
+              <option key={dir.cwd} value={dir.cwd} label={dir.project || undefined} />
+            ))}
+          </datalist>
         </label>
 
         <label className="field">
           <span>Agent</span>
-          <select value={agent} onChange={(e) => setProvider(e.target.value)}>
+          <select
+            value={agent}
+            onChange={(e) => {
+              setProvider(e.target.value)
+              // Both belong to the agent that was chosen, and neither survives
+              // a change of it.
+              setModel('')
+              setMode('')
+            }}
+          >
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -403,6 +437,36 @@ function NewSchedule({ hostId: initialHost }: { hostId: string }): JSX.Element {
             ))}
           </select>
         </label>
+
+        <label className="field">
+          <span>Model</span>
+          <select value={model} onChange={(e) => setModel(e.target.value)}>
+            <option value="">Default</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {modes.length > 0 && (
+          <label className="field">
+            <span>Permission mode</span>
+            <select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <option value="">Provider default</option>
+              {modes.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <em className="dim">
+              A schedule runs with nobody watching, so a mode that stops to ask stops until
+              somebody answers.
+            </em>
+          </label>
+        )}
 
         {error && <p className="error">{error}</p>}
       </div>

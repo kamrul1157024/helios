@@ -10,7 +10,16 @@
 // schedules and back, checking what is on screen each time.
 import type { Page } from '@playwright/test'
 
-import { ALPHA, BETA, GAMMA, TRANSCRIPT_TEXT, appendTranscript, pushEvent, resetTranscripts } from './daemon.ts'
+import {
+  ALPHA,
+  BETA,
+  GAMMA,
+  REPO,
+  TRANSCRIPT_TEXT,
+  appendTranscript,
+  pushEvent,
+  resetTranscripts,
+} from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 const ALPHA_TITLE = 'Alpha'
@@ -194,6 +203,22 @@ test('a schedule row answers the second mouse button', async ({ window }) => {
   await menu.locator('button.danger', { hasText: 'Delete' }).click()
   await expect.poll(() => asked.length).toBe(1)
   expect(asked[0]).toContain('nightly-sweep')
+})
+
+// A schedule runs with nobody watching, so which model it uses and how much it
+// may do without asking are worse left implicit here than anywhere else.
+test('the new schedule form asks for the model, the mode and where it runs', async ({ window }) => {
+  await switchSidebar(window, 'schedules')
+  await window.locator('button', { hasText: '+ New schedule' }).first().click()
+
+  const form = window.locator('.sched-form')
+  await expect(form.locator('label', { hasText: 'Model' }).locator('select')).toBeVisible()
+  await expect(form.locator('label', { hasText: 'Permission mode' }).locator('select')).toBeVisible()
+
+  // The directory field completes from what the daemon already runs sessions in.
+  const where = form.locator('label', { hasText: 'In' }).locator('input')
+  await expect(where).toHaveAttribute('list', 'schedule-directories')
+  await expect(window.locator('#schedule-directories option')).toHaveAttribute('value', REPO)
 })
 
 test('the schedules list does not carry the session panels away with it', async ({ window }) => {

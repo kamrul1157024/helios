@@ -754,13 +754,25 @@ cron field and most people would rather say what they mean:
 │                        │              out the schedule, and       │
 │                        │              creates it with the CLI.    │
 │                        │                                          │
-│                        │  In          [ ~/work/helios           ] │
+│                        │  In          [ ~/work/helios         ⌄ ] │
 │                        │  Agent       [ claude                ▾ ] │
+│                        │  Model       [ Default               ▾ ] │
+│                        │  Permission  [ bypassPermissions     ▾ ] │
 │                        │                                          │
 │                        │  [Set it up manually]  [Cancel] [Ask an  │
 │                        │                                 agent]   │
 └────────────────────────┴──────────────────────────────────────────┘
 ```
+
+**In**, **Model** and **Permission mode** are the new-session dialog's own three, and they are
+here for a reason particular to schedules: this one runs with nobody watching. A mode that stops
+to ask stops until somebody answers, which for a 3am job means until morning. Left to an agent
+reading a sentence of English, the choice is a guess; picked here, it is stated. **In** completes
+from the directories the daemon already runs sessions in, as it does in that dialog.
+
+They reach the schedule through the prompt — `Give it --model …`, `Give it --permission-mode …` —
+rather than through the API, because the agent is the thing that creates the schedule and the CLI
+is what it will type.
 
 **Ask an agent** starts an ordinary session with a short prompt. Short because the manual it
 needs is a skill rather than a wall of text: `skills/helios/SKILL.md`, embedded in the binary

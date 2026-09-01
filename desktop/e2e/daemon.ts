@@ -268,6 +268,16 @@ function answer(path: string, q: (name: string) => string): unknown {
       return { root: q('path'), matches: [], scanned: 0, truncated: false }
     case '/api/schedules':
       return { schedules: SCHEDULES }
+    // What the new-schedule form offers: a schedule runs unattended, so the
+    // model and the permission mode are picked rather than guessed.
+    case '/api/providers':
+      return {
+        providers: [
+          { id: 'claude', name: 'Claude', permission_modes: ['default', 'bypassPermissions'] },
+        ],
+      }
+    case '/api/providers/claude/models':
+      return { models: [{ id: 'opus', name: 'Opus' }, { id: 'sonnet', name: 'Sonnet' }] }
     default:
       // A transcript that says which session it belongs to, which is the whole
       // point of the sync test: a panel showing the wrong one is only visible

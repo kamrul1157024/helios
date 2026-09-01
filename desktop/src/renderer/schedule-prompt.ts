@@ -10,7 +10,14 @@
  * Deliberately short. The skill carries the flags, the rules and the examples;
  * repeating them here would give the agent two manuals that can disagree.
  */
-export function schedulePrompt(description: string, cwd: string): string {
+export function schedulePrompt(
+  description: string,
+  cwd: string,
+  // Picked in the form rather than left to the agent to guess, and written as
+  // the flags the CLI takes, because running that CLI is what the agent does
+  // next.
+  options: { model?: string; mode?: string } = {},
+): string {
   return [
     'Create a Helios schedule from this description:',
     '',
@@ -20,6 +27,8 @@ export function schedulePrompt(description: string, cwd: string): string {
     'a timer, a one-shot, a monitor with a check, or a job that runs after another —',
     'and create it with a name that reads well in a list.',
     cwd ? `Unless the description says otherwise, it should run in ${cwd}.` : '',
+    options.model ? `Give it --model ${options.model}.` : '',
+    options.mode ? `Give it --permission-mode ${options.mode}.` : '',
     '',
     'Then run `helios schedule list` and tell me in one or two lines what you made,',
     'when it next fires, and anything you had to guess.',
