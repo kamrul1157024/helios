@@ -136,3 +136,49 @@ func TestParseQuestions(t *testing.T) {
 		t.Errorf("questions = %+v, want nil for input that cannot be read", got)
 	}
 }
+
+func TestOptionDescriptions(t *testing.T) {
+	got := optionDescriptions(questionSpec{Options: []questionOption{
+		{Label: "Yes", Description: "  Ship it.  "},
+		{Label: "No"},
+	}})
+	if len(got) != 2 || got[0] != "Ship it." || got[1] != "" {
+		t.Errorf("descriptions = %q, want the first trimmed and the second blank", got)
+	}
+
+	// A question with nothing to explain leaves the field out of the overlay
+	// JSON entirely, which is what an older host has always received.
+	none := optionDescriptions(questionSpec{Options: []questionOption{{Label: "Yes"}, {Label: "No"}}})
+	if none != nil {
+		t.Errorf("descriptions = %q, want nil when no option carries one", none)
+	}
+}
+
+func TestParseQuestionsReadsMultiSelect(t *testing.T) {
+	qs := parseQuestions(json.RawMessage(
+		`{"questions":[{"question":"Which?","header":"Checks","multiSelect":true,` +
+			`"options":[{"label":"Unit","description":"go test ./..."},{"label":"Race"}]}]}`))
+	if len(qs) != 1 {
+		t.Fatalf("questions = %+v, want one", qs)
+	}
+	if !qs[0].MultiSelect {
+		t.Error("multiSelect was dropped")
+	}
+	if qs[0].Options[0].Description != "go test ./..." {
+		t.Errorf("description = %q, want the option's own words", qs[0].Options[0].Description)
+	}
+}
+
+// Two options ticked on one question are two selections sharing a question
+// index. The wire shape already allowed this; nothing about it is new.
+func TestQuestionReason_TwoOptionsOnOneQuestion(t *testing.T) {
+	d := &notifications.Decision{Response: json.RawMessage(
+		`{"selections":[{"question_index":0,"option_index":0},{"question_index":0,"option_index":1}]}`)}
+
+	got := questionReason(threeQuestions[:1], d)
+	for _, want := range []string{"Every host", "Only the active host"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reason is missing %q:\n%s", want, got)
+		}
+	}
+}

@@ -1235,7 +1235,10 @@ func TestQuestion_SkippedFromTheTerminal(t *testing.T) {
 // A free-text question has no options to list, so the overlay stays away and
 // the phone keeps it. Painting a choice-less box would block the terminal on a
 // prompt it cannot answer.
-func TestQuestion_FreeTextIsLeftToThePhone(t *testing.T) {
+// A question with no options wants free text. The overlay opens the field for
+// it rather than sending the whole set to the phone, which is what it did
+// before the field existed.
+func TestQuestion_FreeTextOpensTheFieldInTheTerminal(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 	overlays, _ := withTerminal(ctx)
@@ -1245,10 +1248,9 @@ func TestQuestion_FreeTextIsLeftToThePhone(t *testing.T) {
 		ToolInput: questionInput(t, oneQuestion("What should it be called?", "Name")),
 	})
 
-	select {
-	case o := <-overlays.painted:
-		t.Fatalf("painted %+v, want nothing the terminal cannot answer", o)
-	case <-time.After(200 * time.Millisecond):
+	o := awaitOverlay(t, overlays)
+	if o.Input == nil || !o.Input.Active {
+		t.Fatalf("painted %+v, want an open answer field", o)
 	}
 
 	ctx.Mgr.Resolve(notifID, notifications.Decision{
@@ -1693,6 +1695,12 @@ func (p *paintedOverlays) SetOverlay(sessionID string, o terminal.Overlay) error
 func (p *paintedOverlays) ClearOverlay(sessionID string) error {
 	p.cleared <- sessionID
 	return nil
+}
+
+// OverlayProtocol reports a host of this build, so a prompt that needs
+// checkboxes or the answer field is painted rather than left to the phone.
+func (p *paintedOverlays) OverlayProtocol(sessionID string) int {
+	return terminal.HostProtocol
 }
 
 // withTerminal gives a context a terminal that can be painted on, as a live
