@@ -65,6 +65,12 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Mermaid, carried rather than fetched: the diagram webview has no network,
+  # for the same reason the HTML preview has none. MIT — see
+  # assets/mermaid/mermaid-LICENSE.txt.
+  assets:
+    - assets/mermaid/mermaid.min.js
+
   # A real terminal face, because Android's "monospace" is Droid Sans Mono:
   # its box-drawing characters do not join, which is most of what a TUI is
   # made of. JetBrains Mono is SIL OFL 1.1 — see JetBrainsMono-OFL.txt.

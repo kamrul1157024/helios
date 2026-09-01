@@ -25,6 +25,7 @@ import {
   renderMarkdown,
   resolveFilePath,
 } from '../markdown.ts'
+import { useMermaid } from '../mermaid.ts'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -554,6 +555,8 @@ function Assistant({ message, hostId, cwd }: MessageProps): JSX.Element | null {
   const text = message.content ?? ''
   const html = useMemo(() => renderMarkdown(text), [text])
   const paths = useMemo(() => extractFilePaths(text), [text])
+  const body = useRef<HTMLDivElement | null>(null)
+  useMermaid(body, html)
 
   if (!text.trim()) return null
 
@@ -569,7 +572,7 @@ function Assistant({ message, hostId, cwd }: MessageProps): JSX.Element | null {
           ⧉
         </button>
       </div>
-      <div className="msg-body md" dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="msg-body md" ref={body} dangerouslySetInnerHTML={{ __html: html }} />
       {paths.length > 0 && (
         <div className="file-chips">
           {paths.map((path) => (

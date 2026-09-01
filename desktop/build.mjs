@@ -58,6 +58,18 @@ const configs = [
     loader: { '.css': 'css' },
   },
   {
+    // Mermaid, fetched on demand by src/renderer/mermaid.ts. It is bigger than
+    // everything else here put together, and most transcripts hold no diagram
+    // at all, so it is not something every window should parse at startup.
+    ...common,
+    entryPoints: [resolve(root, 'src/renderer/mermaid-entry.ts')],
+    outfile: resolve(out, 'renderer/mermaid.js'),
+    platform: 'browser',
+    format: 'iife',
+    globalName: 'heliosMermaid',
+    target: 'chrome128',
+  },
+  {
     // The approval HUD: its own window, its own bundle, same preload. Sharing
     // the renderer bundle would drag xterm and the whole app shell into a
     // window that shows two buttons.

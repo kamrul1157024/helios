@@ -1946,6 +1946,23 @@ small {
   tab-size: 4;
 }
 
+/* A drawn diagram. Sideways rather than shrunk: mermaid sizes a wide flowchart
+   at the width it needs, and scaling that down to a panel makes labels that
+   cannot be read. */
+figure.mermaid {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-container);
+  overflow-x: auto;
+  text-align: center;
+}
+
+figure.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* ─── File chips ────────────────────────────────────────────────────────── */
 
 .file-chips {

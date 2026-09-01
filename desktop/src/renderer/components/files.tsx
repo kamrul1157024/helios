@@ -5,6 +5,7 @@ import { api, statusOf } from '../bridge.ts'
 import { dataUrl, extensionOf, kindOf, type FileKind } from '../filetype.ts'
 import { keys } from '../keys.ts'
 import { isMarkdownPath, languageForPath, renderMarkdownBlocks } from '../markdown.ts'
+import { useMermaid } from '../mermaid.ts'
 import { fileContentQuery, worktreesQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { byLastTouched, type FileContent, type Worktree } from '../../shared/models.ts'
@@ -715,6 +716,7 @@ function FileView({
   const [selection, clearSelection] = useTextSelection(preview)
   // Markdown renders its images without a src; this puts the bytes in.
   useInlineImages(preview, { hostId, basePath: file.path, root, revision: blocks })
+  useMermaid(preview, blocks)
   const [width, setWidth] = useState(readReadingWidth)
   /** An image's pixel size, once it has loaded, and whether to show it at that. */
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)

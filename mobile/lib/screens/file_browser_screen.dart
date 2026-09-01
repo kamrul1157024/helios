@@ -12,6 +12,7 @@ import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../utils/file_types.dart';
 import '../widgets/html_preview.dart';
+import '../widgets/mermaid_diagram.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 
@@ -1177,12 +1178,16 @@ class _SyntaxHighlightBuilder extends MarkdownElementBuilder {
     if (rawLang.isEmpty && !code.contains('\n')) return null;
 
     final lang = rawLang.replaceFirst('language-', '');
-    return HighlightView(
+    final block = HighlightView(
       code.trimRight(),
       language: lang.isNotEmpty ? lang : 'plaintext',
       theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
       padding: const EdgeInsets.all(12),
       textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace', height: 1.5),
     );
+    if (lang == 'mermaid') {
+      return MermaidDiagram(source: code.trimRight(), isDark: isDark, fallback: block);
+    }
+    return block;
   }
 }
