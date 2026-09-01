@@ -65,8 +65,14 @@ func decodeKeys(p []byte) []event {
 
 // decodeEscape reads one escape sequence from the front of p, which begins with
 // ESC, and reports how many bytes it consumed.
+//
+// Cursor keys arrive two ways. In the default mode a terminal sends them as CSI
+// — "ESC [ A". A full-screen application switches the terminal into application
+// cursor keys mode (DECCKM, "ESC [ ? 1 h"), after which the same keys arrive as
+// SS3 — "ESC O A". Both have to move the highlight, or the prompt is unanswerable
+// with the arrow keys the moment an alt-screen agent is on screen.
 func decodeEscape(p []byte) (event, int) {
-	if len(p) < 3 || p[1] != '[' {
+	if len(p) < 3 || (p[1] != '[' && p[1] != 'O') {
 		return event{kind: keyCancel}, 1
 	}
 	switch p[2] {
@@ -75,7 +81,7 @@ func decodeEscape(p []byte) (event, int) {
 	case 'B':
 		return event{kind: keyNext}, 3
 	}
-	// Some other CSI — a mouse report, a bracketed-paste marker, a function
+	// Some other CSI/SS3 — a mouse report, a bracketed-paste marker, a function
 	// key. Skip to its final byte rather than reading its parameters as
 	// keystrokes: an unread "\x1b[3~" would otherwise select choice three.
 	i := 2
