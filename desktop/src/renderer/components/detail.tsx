@@ -189,18 +189,28 @@ export function Detail(): JSX.Element {
       !(item === panelItem('terminal') && term),
   )
 
-  if (sidebarMode === 'schedules') {
-    return (
-      <div className="detail">
-        <PanelBoundary resetKey="schedules">
-          <SchedulePanel />
-        </PanelBoundary>
-      </div>
-    )
-  }
+  // The schedules panel covers the session detail; it does not replace it.
+  //
+  // Unmounting is what this file spends its effort avoiding: a terminal pane
+  // that leaves the tree disposes its xterm, while the connection behind it
+  // lives in the main process and keeps counting bytes — so the replacement
+  // asks the host to catch it up from a sequence it has already passed and gets
+  // an empty grid. Switching the sidebar between its two lists must not cost
+  // the reader the terminal they were watching, so the detail stays mounted
+  // with no layout, and TerminalPane's ResizeObserver refits it on the way
+  // back.
+  const showingSchedules = sidebarMode === 'schedules'
 
   return (
-    <div className="detail">
+    <>
+      {showingSchedules && (
+        <div className="detail">
+          <PanelBoundary resetKey="schedules">
+            <SchedulePanel />
+          </PanelBoundary>
+        </div>
+      )}
+      <div className="detail" style={showingSchedules ? { display: 'none' } : undefined}>
       {hostId && session && (
         <>
           {/* Keyed: the header holds a rename in progress, and switching
@@ -362,8 +372,9 @@ export function Detail(): JSX.Element {
               onReset={() => store.evenGroups({ hostId, sessionId: session.session_id })}
             />
           ))}
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 
