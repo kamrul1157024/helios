@@ -57,6 +57,10 @@ type NewSession struct {
 	CWD             string
 	PermissionMode  string
 	SkipPermissions bool
+	// ScheduleID marks a session the clock started rather than a person, and
+	// is the only thing that distinguishes one. Nothing in the session's
+	// behaviour reads it; the lists do.
+	ScheduleID string
 }
 
 // StartedSession is what the caller gets back, and what both APIs report.
@@ -104,11 +108,12 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
 	// agent's first hook arrives.
 	event := "Launch"
 	sess := &store.Session{
-		SessionID: sessionID,
-		Source:    req.Provider,
-		CWD:       req.CWD,
-		Status:    "starting",
-		LastEvent: &event,
+		SessionID:  sessionID,
+		Source:     req.Provider,
+		CWD:        req.CWD,
+		Status:     "starting",
+		LastEvent:  &event,
+		ScheduleID: req.ScheduleID,
 	}
 	if err := sh.DB.UpsertSession(sess); err != nil {
 		log.Printf("create-session: register session %s: %v", sessionID, err)

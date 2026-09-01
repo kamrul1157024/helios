@@ -192,6 +192,50 @@ func (s *Store) migrate() error {
 		)`},
 		{"add_sessions_group_key", `ALTER TABLE sessions ADD COLUMN group_key TEXT`},
 		{"drop_sessions_groups", `ALTER TABLE sessions DROP COLUMN groups`},
+		// A saved prompt with something that decides when it runs. See
+		// docs/specs/55-scheduled-runs.md.
+		{"create_schedules", `CREATE TABLE IF NOT EXISTS schedules (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL,
+			kind            TEXT NOT NULL DEFAULT 'timer',
+			enabled         INTEGER NOT NULL DEFAULT 1,
+			cron            TEXT NOT NULL DEFAULT '',
+			tz              TEXT NOT NULL DEFAULT '',
+			run_at          TEXT NOT NULL DEFAULT '',
+			after_id        TEXT NOT NULL DEFAULT '',
+			after_when      TEXT NOT NULL DEFAULT '',
+			after_session   TEXT NOT NULL DEFAULT '',
+			mode            TEXT NOT NULL DEFAULT 'new',
+			prompt          TEXT NOT NULL DEFAULT '',
+			cwd             TEXT NOT NULL DEFAULT '',
+			provider        TEXT NOT NULL DEFAULT '',
+			model           TEXT NOT NULL DEFAULT '',
+			permission_mode TEXT NOT NULL DEFAULT '',
+			target_session  TEXT NOT NULL DEFAULT '',
+			check_cmd       TEXT NOT NULL DEFAULT '',
+			check_file      TEXT NOT NULL DEFAULT '',
+			check_args      TEXT NOT NULL DEFAULT '',
+			check_match     TEXT NOT NULL DEFAULT '',
+			next_run_at     TEXT NOT NULL DEFAULT '',
+			last_fired_at   TEXT NOT NULL DEFAULT '',
+			last_session_id TEXT NOT NULL DEFAULT '',
+			last_status     TEXT NOT NULL DEFAULT '',
+			last_error      TEXT NOT NULL DEFAULT '',
+			done_at         TEXT NOT NULL DEFAULT '',
+			last_check_at   TEXT NOT NULL DEFAULT '',
+			last_check_exit INTEGER,
+			last_check_out  TEXT NOT NULL DEFAULT '',
+			fail_streak     INTEGER NOT NULL DEFAULT 0,
+			failing_since   TEXT NOT NULL DEFAULT '',
+			fires_today     INTEGER NOT NULL DEFAULT 0,
+			fires_day       TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL
+		)`},
+		{"create_schedules_due_index",
+			`CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at)`},
+		// Which schedule started a session, so the sidebar can leave the
+		// clock's work out and the runs list can show only it.
+		{"add_sessions_schedule_id", `ALTER TABLE sessions ADD COLUMN schedule_id TEXT`},
 	}
 
 	for _, cm := range columnMigrations {
