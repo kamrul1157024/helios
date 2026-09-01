@@ -58,8 +58,9 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
     case CacheTarget.transcript:
       break;
     case CacheTarget.git:
-      // No git event names a path, and a commit moves status, log, diff and
-      // worktrees together, so the whole family goes.
+      // The whole family: a commit moves status, log, diff and worktrees
+      // together, and `file_changed` names a working-tree path rather than the
+      // cwd these are keyed by.
       ref.invalidate(gitStatusProvider);
       ref.invalidate(gitLogProvider);
       ref.invalidate(gitDiffProvider);
@@ -67,9 +68,12 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
       ref.invalidate(gitWorktreesProvider);
     case CacheTarget.files:
       ref.invalidate(listFilesProvider);
-      // readFile is deliberately left alone: a viewer may hold an edited
-      // buffer, and dropping the entry under it would mark a dirty file clean.
-      break;
+      // Content too, which the desktop cannot do: this client has no PUT at
+      // all (`api_client.dart`), so no buffer here can be dirty and there is
+      // nothing to lose. An editor on this side would have to take the
+      // desktop's rule instead — refetch, compare, and leave a dirty buffer
+      // alone. See docs/specs/54-file-change-events.md.
+      ref.invalidate(readFileProvider);
   }
 }
 

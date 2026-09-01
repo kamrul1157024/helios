@@ -1044,6 +1044,7 @@ func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUse:"+input.ToolName)
 	updateSessionTranscript(ctx, &input)
+	pokeFiles(ctx)
 
 	// The tool finished, so the question is answered. Retract the notification
 	// on every other surface. Which side answered does not matter.
@@ -1075,6 +1076,9 @@ func handleToolPostFailure(ctx *provider.HookContext, w http.ResponseWriter, r *
 
 	ctx.DB.UpdateSessionStatus(input.SessionID, "active", "PostToolUseFailure:"+input.ToolName)
 	updateSessionTranscript(ctx, &input)
+	// A command that failed at step nine still wrote at steps one to eight, and
+	// the watcher decides for itself whether anything actually moved.
+	pokeFiles(ctx)
 	// A tool that ran and failed was still permitted by somebody.
 	resolveToolPermissions(ctx, input.SessionID, input.ToolName)
 
@@ -1272,6 +1276,16 @@ func killSessionWindow(ctx *provider.HookContext, sessionID string) {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+// pokeFiles tells the daemon a tool just ran, so now is a good time to check
+// the paths clients are watching. No path is passed and no tool input is read:
+// working out which tools write, in which provider, is exactly the coupling the
+// digest exists to avoid. See docs/specs/54-file-change-events.md.
+func pokeFiles(ctx *provider.HookContext) {
+	if ctx.FilesTouched != nil {
+		ctx.FilesTouched()
+	}
 }
 
 func summarizeToolInput(raw json.RawMessage) string {

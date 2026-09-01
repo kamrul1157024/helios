@@ -314,6 +314,11 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
+	// Reports files moving under the clients that are reading them. Its own
+	// loop rather than a tick here: most sweeps come from a tool hook poking
+	// it, and only the fallback is on a clock.
+	go shared.Files.Run(ctx)
+
 	// Start both servers
 	errCh := make(chan error, 2)
 

@@ -47,10 +47,30 @@ func (s *PublicServer) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := os.ReadDir(clean)
+	result, err := listDir(clean)
 	if err != nil {
 		jsonError(w, "failed to read directory", http.StatusInternalServerError)
 		return
+	}
+
+	// Reading a directory is what subscribes to it. See filewatch.go.
+	s.files().Watch(clean, WatchDir)
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"path":    clean,
+		"entries": result,
+	})
+}
+
+// listDir reads one directory into the shape the API returns.
+//
+// Shared with the file watcher's digest (filewatch.go) on purpose: a digest
+// built from the same entries as the answer cannot disagree with what the
+// client has on screen.
+func listDir(clean string) ([]fileEntry, error) {
+	entries, err := os.ReadDir(clean)
+	if err != nil {
+		return nil, err
 	}
 
 	result := make([]fileEntry, 0, len(entries))
@@ -75,11 +95,7 @@ func (s *PublicServer) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name)
 	})
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"path":    clean,
-		"entries": result,
-	})
+	return result, nil
 }
 
 // handleReadFile returns the content of the file at the given path query param.
@@ -122,6 +138,9 @@ func (s *PublicServer) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to read file", http.StatusInternalServerError)
 		return
 	}
+
+	// Reading a file is what subscribes to it. See filewatch.go.
+	s.files().Watch(clean, WatchFile)
 
 	body := map[string]interface{}{
 		"path":     clean,

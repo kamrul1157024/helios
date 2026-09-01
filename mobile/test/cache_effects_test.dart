@@ -66,8 +66,73 @@ void main() {
       const [
         InvalidateTarget(CacheTarget.sessions, host),
         InvalidateTarget(CacheTarget.notifications, host),
+        // Files and git for a second reason: a path whose watch expired while
+        // a screen sat open is not being swept, and re-reading re-registers it.
+        InvalidateTarget(CacheTarget.files, host),
+        InvalidateTarget(CacheTarget.git, host),
       ],
     );
+  });
+
+  // Every path the daemon names has changed *content*, not merely a changed
+  // mtime — it compares digests before it says anything. See spec 54.
+  group('file_changed', () {
+    const named = {
+      'paths': [
+        {'path': '/repo/a.go', 'kind': 'file', 'mod_time': '2026-09-01T04:03:11.204Z'},
+      ],
+    };
+
+    test('takes out the files and the git reads', () {
+      expect(
+        effectsFor(host, 'file_changed', named),
+        const [
+          InvalidateTarget(CacheTarget.files, host),
+          InvalidateTarget(CacheTarget.git, host),
+        ],
+      );
+    });
+
+    // A working-tree write moves `git status`, and a repo entry is a commit or
+    // a checkout, so both kinds reach git the same way.
+    test('a repo entry takes out the same targets', () {
+      expect(
+        effectsFor(host, 'file_changed', const {
+          'paths': [
+            {'path': '/repo', 'kind': 'repo'},
+          ],
+        }),
+        hasLength(2),
+      );
+    });
+
+    test('a deletion is a change like any other', () {
+      expect(
+        effectsFor(host, 'file_changed', const {
+          'paths': [
+            {'path': '/repo/gone.go', 'kind': 'file', 'gone': true},
+          ],
+        }),
+        hasLength(2),
+      );
+    });
+
+    test('another host is not answered for', () {
+      expect(
+        effectsFor(other, 'file_changed', named),
+        const [
+          InvalidateTarget(CacheTarget.files, other),
+          InvalidateTarget(CacheTarget.git, other),
+        ],
+      );
+    });
+
+    test('an event naming nothing does nothing', () {
+      expect(effectsFor(host, 'file_changed', const {}), isEmpty);
+      expect(effectsFor(host, 'file_changed', const {'paths': []}), isEmpty);
+      expect(effectsFor(host, 'file_changed', const {'paths': 'nonsense'}), isEmpty);
+      expect(effectsFor(host, 'file_changed', null), isEmpty);
+    });
   });
 
   // A permission request writes waiting_permission to the session and announces

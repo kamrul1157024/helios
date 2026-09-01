@@ -151,12 +151,32 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
     case 'session_deleted':
       return [InvalidateTarget(CacheTarget.sessions, hostId)];
 
+    case 'file_changed':
+      // Every path named has changed *content*, not merely a changed mtime —
+      // the daemon compares digests before it says anything (spec 54). Which
+      // paths they are does not change the answer here: both families are
+      // invalidated whole, and Riverpod refetches only the entries something is
+      // watching, so naming one costs the same as naming all of them.
+      //
+      // Git comes too. A working-tree write moves `git status`, and a repo
+      // entry is a commit or a checkout.
+      final named = map['paths'];
+      if (named is! List || named.isEmpty) return const [];
+      return [
+        InvalidateTarget(CacheTarget.files, hostId),
+        InvalidateTarget(CacheTarget.git, hostId),
+      ];
+
     case 'stream_reconnected':
       // The socket was down and the daemon keeps no replay buffer, so anything
-      // that changed in the gap was announced to nobody.
+      // that changed in the gap was announced to nobody. Files and git are here
+      // for a second reason: a path whose watch expired while a screen sat open
+      // is no longer being swept, and re-reading is what registers it again.
       return [
         InvalidateTarget(CacheTarget.sessions, hostId),
         InvalidateTarget(CacheTarget.notifications, hostId),
+        InvalidateTarget(CacheTarget.files, hostId),
+        InvalidateTarget(CacheTarget.git, hostId),
       ];
 
     case 'notification':

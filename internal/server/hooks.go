@@ -88,6 +88,7 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		PromptSubmitted: func(sessionID string) {
 			s.shared.Signals.Fire(SignalPromptSubmitted, sessionID)
 		},
+		FilesTouched: s.shared.Files.Poke,
 		Report: func(event provider.ReportEvent) {
 			s.shared.Reporter.AddEvent(reporter.Event{
 				Type:      event.Type,

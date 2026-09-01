@@ -135,7 +135,12 @@ export function registerIpc(deps: IpcDeps): void {
   hosts.on('hosts', (list) => send('hosts:changed', list))
   hosts.on('status', (status: { id: string; state: string }) => {
     send('hosts:status', status)
-    if (status.state === 'online') void reconcile(status.id)
+    if (status.state !== 'online') return
+    void reconcile(status.id)
+    // The renderer's cache missed the same window the tray did, and it hears
+    // nothing from `reconcile`. A synthetic event is how it learns the socket
+    // came back — there is no replay buffer to ask (spec 54).
+    send('hosts:event', { hostId: status.id, event: { type: 'stream_reconnected', data: {} } })
   })
   hosts.on('event', ({ hostId, event }: { hostId: string; event: { type: string; data: Record<string, unknown> } }) => {
     notifier.handleEvent(hostId, event.type, event.data)
