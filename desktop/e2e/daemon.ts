@@ -39,7 +39,17 @@ function session(id: string, title: string): Session {
   }
 }
 
-const SESSIONS = [session(ALPHA, 'Alpha'), session(BETA, 'Beta')]
+/**
+ * A session whose agent has not written its log yet.
+ *
+ * Every session looks like this for the first second of its life: the daemon
+ * answers the transcript with nothing and no epoch, because the file the agent
+ * writes does not exist. What the panel does with that answer afterwards is the
+ * point — it used to keep it for ever.
+ */
+export const GAMMA = 's-gamma'
+
+const SESSIONS = [session(ALPHA, 'Alpha'), session(BETA, 'Beta'), session(GAMMA, 'Gamma')]
 
 /**
  * The sessions the schedule below started, kept out of the ordinary list.
@@ -72,16 +82,37 @@ const EXTRA: Record<string, string[]> = {}
 
 export function appendTranscript(sessionId: string, text: string): void {
   ;(EXTRA[sessionId] ??= []).push(text)
+  // The record moves with the log, as it does on a real daemon: last_event_at
+  // is the only thing that tells a panel there is more to read.
+  const record = [...SESSIONS, ...RUNS].find((s) => s.session_id === sessionId)
+  if (record) record.last_event_at = new Date().toISOString()
 }
 
 export function resetTranscripts(): void {
   for (const key of Object.keys(EXTRA)) delete EXTRA[key]
+  for (const record of [...SESSIONS, ...RUNS]) record.last_event_at = '2026-01-01T00:00:00Z'
 }
+
+/**
+ * Wakes every connected client, the way a status change does.
+ *
+ * The type rides in the SSE event name and the payload in data, which is the
+ * shape the daemon writes (internal/server/sse.go:85) and the only one the
+ * client reads a session id out of.
+ */
+export function pushEvent(type: string, data: Record<string, unknown>): void {
+  for (const stream of openStreams) {
+    stream.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+}
+
+// Held outside startDaemon so a test can push an event without a handle.
+const openStreams = new Set<http.ServerResponse>()
 
 function transcriptFor(id: string): { seq: number; role: string; content: string; timestamp: string }[] {
   const first = TRANSCRIPT_TEXT[id]
-  if (!first) return []
-  return [first, ...(EXTRA[id] ?? [])].map((content, seq) => ({
+  const all = first === undefined ? (EXTRA[id] ?? []) : [first, ...(EXTRA[id] ?? [])]
+  return all.map((content, seq) => ({
     seq,
     role: 'assistant',
     content,
@@ -156,7 +187,7 @@ function grepMatches(root: string, query: string): GrepMatch[] {
 export async function startDaemon(): Promise<StubDaemon> {
   // Held open so the process can be shut down without waiting for the event
   // stream, which by design never ends on its own.
-  const streams = new Set<http.ServerResponse>()
+  const streams = openStreams
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -255,6 +286,12 @@ function answer(path: string, q: (name: string) => string): unknown {
         const all = transcriptFor(id)
         const after = q('after_seq')
         const messages = after === '' ? all : all.filter((m) => m.seq > Number(after))
+        // Nothing written yet: the daemon takes an early return that carries no
+        // epoch at all (internal/server/api.go:446), and a client that treats a
+        // missing epoch as "wait for a delta" waits for ever.
+        if (all.length === 0) {
+          return { messages: [], total: 0, returned: 0, offset: 0, has_more: false }
+        }
         return {
           messages,
           total: all.length,

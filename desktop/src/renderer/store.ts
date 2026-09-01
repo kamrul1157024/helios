@@ -953,6 +953,12 @@ class Store {
       scheduleSelection: null,
     }))
     this.touch(hostId, sessionId)
+    // Asked again on the way in. The transcript never goes stale on its own —
+    // it must not rebuild under a reader mid-scroll — so opening a session is
+    // the moment to check it against the daemon. Invalidation rather than a
+    // reset: what is held stays on screen and is replaced when the answer
+    // arrives, so there is no spinner and no jump.
+    void queryClient.invalidateQueries({ queryKey: keys.transcript(hostId, sessionId) })
   }
 
   // ─── Schedules ─────────────────────────────────────────────────────────

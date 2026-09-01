@@ -10,11 +10,12 @@
 // schedules and back, checking what is on screen each time.
 import type { Page } from '@playwright/test'
 
-import { ALPHA, BETA, TRANSCRIPT_TEXT, appendTranscript, resetTranscripts } from './daemon.ts'
+import { ALPHA, BETA, GAMMA, TRANSCRIPT_TEXT, appendTranscript, pushEvent, resetTranscripts } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 const ALPHA_TITLE = 'Alpha'
 const BETA_TITLE = 'Beta'
+const GAMMA_TITLE = 'Gamma'
 
 async function open(window: Page, title: string): Promise<void> {
   await window.locator('.session-row', { hasText: title }).click()
@@ -84,6 +85,35 @@ test('the transcript belongs to the session the sidebar has selected', async ({ 
   await open(window, ALPHA_TITLE)
   await expect(transcript(window)).toContainText(TRANSCRIPT_TEXT[ALPHA] as string)
   await expect(transcript(window)).not.toContainText(TRANSCRIPT_TEXT[BETA] as string)
+})
+
+// The transcript never goes stale by itself and nothing on the wire invalidates
+// it, so the empty answer served in the second before the agent's log exists
+// used to be kept for the life of the window: a session with plenty in its
+// terminal, and "No transcript yet." beside it.
+test('a transcript that was empty when first asked for is asked again', async ({ window }) => {
+  await open(window, GAMMA_TITLE)
+  await showPanel(window, 'agent')
+  await expect(window.locator('.panel-keep:not([hidden])')).toContainText('No transcript yet')
+
+  appendTranscript(GAMMA, 'the agent finally wrote something')
+
+  // No click on the session: the record moving is what a client sitting on a
+  // starting session has to notice.
+  pushEvent('session_status', { session_id: GAMMA, status: 'idle' })
+  await expect(transcript(window)).toContainText('the agent finally wrote something')
+})
+
+test('coming back to a session picks up what the daemon has, without a spinner', async ({ window }) => {
+  await open(window, GAMMA_TITLE)
+  await showPanel(window, 'agent')
+  await expect(window.locator('.panel-keep:not([hidden])')).toContainText('No transcript yet')
+
+  appendTranscript(GAMMA, 'written while nobody asked')
+  await open(window, ALPHA_TITLE)
+  await open(window, GAMMA_TITLE)
+
+  await expect(transcript(window)).toContainText('written while nobody asked')
 })
 
 test('switching the sidebar to schedules and back keeps the same terminal', async ({ window }) => {
