@@ -174,6 +174,28 @@ test('opening a run from its schedule unfolds the section and selects it', async
   await expect(row).toHaveClass(/selected/)
 })
 
+// The second mouse button, on the row rather than in the panel: pausing or
+// deleting a job should not need it opened first.
+test('a schedule row answers the second mouse button', async ({ window }) => {
+  await switchSidebar(window, 'schedules')
+  await window.locator('.sched-row', { hasText: 'nightly-sweep' }).click({ button: 'right' })
+
+  const menu = window.locator('.line-menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.locator('button', { hasText: 'Pause' })).toBeVisible()
+  await expect(menu.locator('button.danger', { hasText: 'Delete' })).toBeVisible()
+
+  // A delete asks first, and the question names what it is about to take.
+  const asked: string[] = []
+  window.on('dialog', (dialog) => {
+    asked.push(dialog.message())
+    void dialog.dismiss()
+  })
+  await menu.locator('button.danger', { hasText: 'Delete' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toContain('nightly-sweep')
+})
+
 test('the schedules list does not carry the session panels away with it', async ({ window }) => {
   await open(window, ALPHA_TITLE)
   await showPanel(window, 'agent')

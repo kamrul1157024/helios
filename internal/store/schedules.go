@@ -319,32 +319,80 @@ func (s *Store) ClaimSchedule(id, expectedNext, newNext, firedAt string) (bool, 
 	return n == 1, nil
 }
 
-// DeleteSchedule removes a schedule, detaches whatever followed it, and
-// releases the sessions it produced.
+// DeleteSchedule removes a schedule and everything chained under it, and
+// releases the sessions they produced. It returns every id it deleted, the
+// parent first.
 //
-// The children are paused rather than deleted or promoted: they have no clock
-// of their own, so a child left enabled with no parent would simply never run
-// again, silently. Paused with a reason is the same fact, visible.
+// The chain goes with the parent because a link has no clock of its own: a
+// child left behind can never fire again whether it is paused or not, and a
+// list of jobs that will never run is a list nobody can read. Deleting the
+// branch is the same fact with nothing left over.
 //
 // The runs are let go entirely. A session is hidden from the ordinary list only
 // because its schedule is the place to find it — delete the schedule and that
 // place is gone, so the tag would make real work invisible in every client at
 // once, with no way back and its memory still spent. Clearing it turns them
 // back into ordinary sessions, which is what they always were.
-func (s *Store) DeleteSchedule(id string) error {
-	if _, err := s.db.Exec(`
-		UPDATE schedules
-		SET enabled = 0, last_status = 'blocked', last_error = 'the job this followed was deleted'
-		WHERE after_id = ?`, id); err != nil {
-		return fmt.Errorf("detach children of %s: %w", id, err)
+func (s *Store) DeleteSchedule(id string) ([]string, error) {
+	branch, err := s.scheduleBranch(id)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := s.db.Exec(`UPDATE sessions SET schedule_id = NULL WHERE schedule_id = ?`, id); err != nil {
-		return fmt.Errorf("release runs of %s: %w", id, err)
+	for _, at := range branch {
+		if _, err := s.db.Exec(`UPDATE sessions SET schedule_id = NULL WHERE schedule_id = ?`, at); err != nil {
+			return nil, fmt.Errorf("release runs of %s: %w", at, err)
+		}
+		if _, err := s.db.Exec(`DELETE FROM schedules WHERE id = ?`, at); err != nil {
+			return nil, fmt.Errorf("delete schedule %s: %w", at, err)
+		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM schedules WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete schedule %s: %w", id, err)
+	return branch, nil
+}
+
+// ScheduleBranch is a schedule and everything chained under it, parents before
+// children — what a delete will take, so a client can say so before it asks.
+func (s *Store) ScheduleBranch(id string) ([]string, error) { return s.scheduleBranch(id) }
+
+// Walked breadth-first with a seen set rather than recursively: after_id is
+// editable, and a cycle in it must not become a hang.
+func (s *Store) scheduleBranch(id string) ([]string, error) {
+	branch := []string{id}
+	seen := map[string]bool{id: true}
+	for at := 0; at < len(branch); at++ {
+		children, err := s.scheduleChildren(branch[at])
+		if err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			if seen[child] {
+				continue
+			}
+			seen[child] = true
+			branch = append(branch, child)
+		}
 	}
-	return nil
+	return branch, nil
+}
+
+func (s *Store) scheduleChildren(id string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT id FROM schedules WHERE after_id = ?`, id)
+	if err != nil {
+		return nil, fmt.Errorf("children of %s: %w", id, err)
+	}
+	defer rows.Close()
+
+	var children []string
+	for rows.Next() {
+		var child string
+		if err := rows.Scan(&child); err != nil {
+			return nil, fmt.Errorf("children of %s: %w", id, err)
+		}
+		children = append(children, child)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("children of %s: %w", id, err)
+	}
+	return children, nil
 }
 
 // ReleaseOrphanedRuns unhides sessions whose schedule is already gone.

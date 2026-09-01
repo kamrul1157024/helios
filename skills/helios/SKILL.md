@@ -123,7 +123,7 @@ helios schedule edit <name> [same flags]   # only what you pass changes
 helios schedule run <name>                 # fire now, out of turn
 helios schedule enable <name>
 helios schedule disable <name>             # pause, keeping its place in the clock
-helios schedule rm <name>                  # deletes it; anything following it is paused
+helios schedule rm <name>                  # deletes it, and everything chained under it
 helios schedule logs <name> [--follow]     # its checks and fires, with output
 ```
 

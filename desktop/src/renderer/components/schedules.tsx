@@ -16,6 +16,7 @@ import { providersQuery, scheduleLogQuery, scheduleRunsQuery, schedulesQuery } f
 import { store, useStore } from '../store.ts'
 import { sessionLabel, type CheckResult, type Schedule } from '../../shared/models.ts'
 import { schedulePrompt } from '../schedule-prompt.ts'
+import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** The drag payload: one schedule's id, carried on the event. */
 export const SCHEDULE_DRAG = 'application/x-helios-schedule'
@@ -39,9 +40,42 @@ export function ScheduleList({
   /** A host with nothing on it says nothing, when another host has something. */
   quiet?: boolean
 }): JSX.Element | null {
+  const client = useQueryClient()
   const { data: all = [], error } = useQuery(schedulesQuery(hostId))
   const selected = useStore((s) => s.scheduleSelection)
   const [over, setOver] = useState('')
+  const [menu, setMenu] = useState<{ schedule: Schedule; x: number; y: number } | null>(null)
+
+  const invalidate = (): void => {
+    void client.invalidateQueries({ queryKey: keys.schedules(hostId) })
+  }
+
+  const actionsFor = (sc: Schedule): MenuAction[] => [
+    { label: 'Open', run: () => store.selectSchedule(hostId, sc.id) },
+    {
+      label: 'Run now',
+      title: 'Fire it out of turn, without moving when it fires next',
+      run: () => void api(hostId).runSchedule(sc.id).then(invalidate),
+    },
+    {
+      label: sc.enabled ? 'Pause' : 'Resume',
+      run: () => void api(hostId).updateSchedule(sc.id, { enabled: !sc.enabled }).then(invalidate),
+    },
+    { label: 'Edit', run: () => store.editSchedule(hostId, sc.id) },
+    {
+      label: 'Delete',
+      danger: true,
+      run: () => {
+        if (!confirmDelete(all, sc.id)) return
+        void api(hostId)
+          .deleteSchedule(sc.id)
+          .then(() => {
+            invalidate()
+            if (selected?.scheduleId === sc.id) store.clearScheduleSelection()
+          })
+      },
+    },
+  ]
 
   // Searched over what a person would remember about one: its name, what it
   // does, and the check behind it.
@@ -113,6 +147,10 @@ export function ScheduleList({
             store.linkSchedule(hostId, moved, sc.id)
           }}
           onClick={() => store.selectSchedule(hostId, sc.id)}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            setMenu({ schedule: sc, x: event.clientX, y: event.clientY })
+          }}
         >
           <span className="sched-row-top">
             <span className="sched-kind" title={kindTitle(sc)}>
@@ -125,7 +163,58 @@ export function ScheduleList({
           {over === sc.id && <span className="sched-drop-hint">run it after {sc.name}</span>}
         </div>
       ))}
+      {menu && (
+        <SelectionMenu
+          x={menu.x}
+          y={menu.y}
+          actions={actionsFor(menu.schedule)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
+  )
+}
+
+/** A schedule and everything chained under it, parents first. */
+function branchOf(schedules: Schedule[], id: string): Schedule[] {
+  const byId = new Map(schedules.map((sc) => [sc.id, sc]))
+  const branch: Schedule[] = []
+  const seen = new Set<string>()
+  const root = byId.get(id)
+  if (!root) return branch
+  branch.push(root)
+  seen.add(id)
+  // Breadth-first with a seen set: after_id is editable, and a cycle in it must
+  // not become a hang.
+  for (let at = 0; at < branch.length; at++) {
+    for (const sc of schedules) {
+      if (sc.after_id !== branch[at]?.id || seen.has(sc.id)) continue
+      seen.add(sc.id)
+      branch.push(sc)
+    }
+  }
+  return branch
+}
+
+/**
+ * Asks before a delete, and names what will go with it.
+ *
+ * A job that follows another has no clock of its own, so it cannot be left
+ * behind: the daemon deletes the branch. Saying which jobs those are is the
+ * whole point of asking — "delete this schedule?" is a different question from
+ * "delete these three".
+ */
+function confirmDelete(schedules: Schedule[], id: string): boolean {
+  const branch = branchOf(schedules, id)
+  const name = branch[0]?.name ?? 'this schedule'
+  if (branch.length < 2) {
+    return window.confirm(`Delete ${name}? Its runs stay, as ordinary sessions.`)
+  }
+  const followers = branch.slice(1).map((sc) => sc.name)
+  return window.confirm(
+    `Delete ${name} and the ${followers.length} chained under it — ${followers.join(', ')}?\n\n` +
+      'A job that follows another has no clock of its own, so it cannot be kept without it. ' +
+      'Their runs stay, as ordinary sessions.',
   )
 }
 
@@ -426,9 +515,7 @@ function ScheduleDetail({ hostId, scheduleId }: { hostId: string; scheduleId: st
         <button
           className="btn danger"
           onClick={() => {
-            if (window.confirm('Delete this schedule? Anything that followed it will be paused.')) {
-              remove.mutate()
-            }
+            if (confirmDelete(schedules, scheduleId)) remove.mutate()
           }}
         >
           Delete

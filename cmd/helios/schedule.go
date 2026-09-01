@@ -27,7 +27,7 @@ const scheduleUsage = `Usage: helios schedule <command>
   list                       every schedule, with what it does and when
   add "<prompt>" [flags]     create one
   edit <name> [flags]        change one
-  rm <name>                  delete it, and detach whatever followed it
+  rm <name>                  delete it, and everything chained under it
   enable <name>              unpause
   disable <name>             pause, keeping its place in the clock
   run <name>                 fire it now, out of turn

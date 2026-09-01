@@ -96,26 +96,50 @@ func TestClaimScheduleIsOnceOnly(t *testing.T) {
 	}
 }
 
-func TestDeleteSchedulePausesItsChildren(t *testing.T) {
+// A link has no clock of its own, so an orphan can never fire again. The whole
+// branch goes with the parent — grandchildren included.
+func TestDeleteScheduleTakesTheWholeChain(t *testing.T) {
 	s := scheduleStore(t)
-	parent := timer("p", "parent", "2026-03-02T09:00:00Z")
-	child := &Schedule{ID: "c", Name: "child", Kind: "after", Mode: "new", Enabled: true,
-		AfterID: "p", AfterWhen: "success", Prompt: "then this"}
-	s.CreateSchedule(parent)
-	s.CreateSchedule(child)
+	s.CreateSchedule(timer("p", "parent", "2026-03-02T09:00:00Z"))
+	s.CreateSchedule(&Schedule{ID: "c", Name: "child", Kind: "after", Mode: "new", Enabled: true,
+		AfterID: "p", AfterWhen: "success", Prompt: "then this"})
+	s.CreateSchedule(&Schedule{ID: "g", Name: "grandchild", Kind: "after", Mode: "new", Enabled: true,
+		AfterID: "c", AfterWhen: "success", Prompt: "and then this"})
+	// Another tree entirely, which must be left alone.
+	s.CreateSchedule(timer("other", "unrelated", "2026-03-02T09:00:00Z"))
 
-	if err := s.DeleteSchedule("p"); err != nil {
+	deleted, err := s.DeleteSchedule("p")
+	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	got, _ := s.GetSchedule("c")
-	if got == nil {
-		t.Fatal("the child should survive its parent")
+	if len(deleted) != 3 {
+		t.Fatalf("want the branch reported back, got %v", deleted)
 	}
-	if got.Enabled {
-		t.Fatal("an orphan with no clock should be paused, not left enabled and silent")
+	for _, id := range []string{"p", "c", "g"} {
+		got, _ := s.GetSchedule(id)
+		if got != nil {
+			t.Fatalf("%s should have gone with the branch", id)
+		}
 	}
-	if got.LastStatus != "blocked" || got.LastError == "" {
-		t.Fatalf("the reason should be on the row: %+v", got)
+	if got, _ := s.GetSchedule("other"); got == nil {
+		t.Fatal("a schedule in another tree should be untouched")
+	}
+}
+
+// after_id is editable, and a cycle in it must not become a hang.
+func TestDeleteScheduleSurvivesACycle(t *testing.T) {
+	s := scheduleStore(t)
+	s.CreateSchedule(&Schedule{ID: "a", Name: "a", Kind: "after", Mode: "new", Enabled: true,
+		AfterID: "b", Prompt: "one"})
+	s.CreateSchedule(&Schedule{ID: "b", Name: "b", Kind: "after", Mode: "new", Enabled: true,
+		AfterID: "a", Prompt: "two"})
+
+	deleted, err := s.DeleteSchedule("a")
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(deleted) != 2 {
+		t.Fatalf("want both, got %v", deleted)
 	}
 }
 
@@ -130,7 +154,7 @@ func TestDeleteScheduleReleasesItsRuns(t *testing.T) {
 	s.UpsertSession(run)
 	s.UpsertSession(mine)
 
-	if err := s.DeleteSchedule("sched"); err != nil {
+	if _, err := s.DeleteSchedule("sched"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 

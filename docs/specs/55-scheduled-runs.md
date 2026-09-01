@@ -352,9 +352,12 @@ are three sessions, and if they share a working tree they will fight over it —
 user's arrangement to make, and the list shows them side by side so it is visible.
 
 **Cycles are refused at save**, walking the parent chain before writing: A after B after A is a
-400, not a hang. **Deleting a parent** detaches its children and pauses them, with "the job this
-followed was deleted" on the row — dropping a parent should not quietly start orphans on their
-own clock, since they have no clock.
+400, not a hang. **Deleting a parent deletes the branch** — children, grandchildren, and the
+schedule logs that went with them. A job that follows another has no clock of its own, so an
+orphan can never fire again whether it is paused or not, and a list of jobs that will never run
+is a list nobody can read. The clients say which ones before they ask: "Delete nightly-sweep and
+the 2 chained under it — greet-hello, greet-hola?". The runs are released either way, and stay
+as ordinary sessions.
 
 A schedule has exactly one trigger. Dragging a timer under a parent clears its cron and makes it
 an `after`; dragging it back out leaves it paused with no trigger until one is chosen. Two ways

@@ -129,13 +129,18 @@ func (sh *Shared) patchSchedule(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (sh *Shared) deleteSchedule(w http.ResponseWriter, id string) {
-	if err := sh.DB.DeleteSchedule(id); err != nil {
+	// The whole branch goes: a job chained under this one has no clock of its
+	// own and could never run again.
+	deleted, err := sh.DB.DeleteSchedule(id)
+	if err != nil {
 		jsonError(w, "failed to delete schedule", http.StatusInternalServerError)
 		return
 	}
-	RemoveScheduleLog(id)
-	sh.broadcastSchedule("schedule_deleted", id)
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true})
+	for _, gone := range deleted {
+		RemoveScheduleLog(gone)
+		sh.broadcastSchedule("schedule_deleted", gone)
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "deleted": deleted})
 }
 
 // runSchedule fires out of turn: the "Run now" button and the CLI's `run`.

@@ -135,7 +135,11 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
                         context: context,
                         builder: (dialogContext) => AlertDialog(
                           title: const Text('Delete this schedule?'),
-                          content: const Text('Anything that followed it will be paused.'),
+                          content: const Text(
+                            'Anything chained under it goes with it — a job that '
+                            'follows another has no clock of its own. Their runs '
+                            'stay, as ordinary sessions.',
+                          ),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(dialogContext, false),
