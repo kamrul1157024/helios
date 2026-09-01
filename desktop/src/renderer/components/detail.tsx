@@ -10,6 +10,7 @@ import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
+import { SchedulePanel } from './schedules.tsx'
 import {
   isVisible,
   panelItem,
@@ -88,6 +89,9 @@ function slotOf(tab: Tab): ItemId {
 
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
+  // Schedules borrow the same panel: the sidebar decides which list it is
+  // showing, and the main area shows whatever that list selected.
+  const sidebarMode = useStore((s) => s.sidebarMode)
   const { sessions } = useHostSessions()
   const notifications = useHostNotifications()
   const layout = useStore(currentLayout)
@@ -173,6 +177,16 @@ export function Detail(): JSX.Element {
       // empty wrapper there would stack a transparent box over the terminal.
       !(item === panelItem('terminal') && term),
   )
+
+  if (sidebarMode === 'schedules') {
+    return (
+      <div className="detail">
+        <PanelBoundary resetKey="schedules">
+          <SchedulePanel />
+        </PanelBoundary>
+      </div>
+    )
+  }
 
   return (
     <div className="detail">

@@ -4925,112 +4925,273 @@ hr {
 
 /* ─── Schedules ─────────────────────────────────────────────────────────── */
 
-.sched-list {
+/* Sessions or schedules: two lists of the same shape, one sidebar. */
+.sidebar-modes {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px 8px;
+}
+
+.sidebar-modes button {
+  flex: 1;
+  background: var(--surface-low);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.sidebar-modes button.active {
+  background: var(--surface-high);
+  border-color: var(--outline-variant);
+  color: var(--on-surface);
+}
+
+.sidebar-foot {
+  padding: 8px 10px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.sched-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
 }
 
-.sched-card {
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--r-md);
-  padding: 10px 12px;
-  background: var(--surface-container);
-  cursor: grab;
-}
-
-/* A job dragged onto another runs after it, so the drop target says so. */
-.sched-card.drop {
-  border-color: var(--primary);
-  background: var(--surface-high);
-}
-
-.sched-card.paused {
-  opacity: 0.6;
-}
-
-.sched-head {
+.sched-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.sched-row:hover {
+  background: var(--surface-low);
+}
+
+.sched-row.active {
+  background: var(--surface-high);
+  border-left-color: var(--primary);
+}
+
+/* A job dragged onto another runs after it, so the row under the pointer says
+   what dropping would mean. */
+.sched-row.drop {
+  background: var(--surface-high);
+  border-left-color: var(--primary);
+  outline: 1px dashed var(--primary);
+  outline-offset: -2px;
+}
+
+.sched-row.paused {
+  opacity: 0.55;
+}
+
+.sched-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.sched-row-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-row-state,
+.sched-row-sub {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.sched-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-row-state.bad {
+  color: var(--error);
+}
+.sched-row-state.warn {
+  color: var(--syn-type);
+}
+.sched-row-state.busy {
+  color: var(--primary);
 }
 
 .sched-kind {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--on-surface-variant);
 }
 
-.sched-name {
-  font-weight: 600;
+.sched-drop-hint {
+  font-size: 11px;
+  color: var(--primary);
+}
+
+.sched-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+/* The main panel: a schedule's detail, its editor, and the link question all
+   share this frame. */
+.sched-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sched-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.sched-detail-head h2 {
+  font-size: 15px;
+  margin: 0 0 2px;
+}
+
+.sched-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.sched-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.sched-tabs button.active {
+  color: var(--on-surface);
+  border-bottom-color: var(--primary);
+}
+
+.sched-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.sched-detail-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--outline-variant);
+  font-size: 12px;
+}
+
+.sched-detail-foot .spacer {
   flex: 1;
 }
 
-.sched-next {
-  font-size: 12px;
+.sched-facts {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 10px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.sched-facts dt {
   color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.sched-facts dd {
+  margin: 0;
+}
+
+.sched-prompt {
+  background: var(--surface-low);
+  border-radius: var(--r-md);
+  padding: 10px;
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .sched-toggle {
   background: none;
-  border: none;
-  color: var(--outline);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-sm);
+  color: var(--on-surface-variant);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 11px;
+  padding: 3px 8px;
 }
 
 .sched-toggle.on {
   color: var(--primary);
+  border-color: var(--primary);
 }
 
-.sched-what,
-.sched-last {
+.sched-form .field {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin-bottom: 12px;
+  border: none;
+  padding: 0;
+}
+
+.sched-form .field > span:first-child {
+  color: var(--on-surface-variant);
   font-size: 12px;
-  color: var(--on-surface-variant);
-  margin-top: 3px;
 }
 
-.sched-last.good {
-  color: var(--on-surface-variant);
-}
-.sched-last.bad {
-  color: var(--error);
-}
-.sched-last.warn {
-  color: var(--syn-type);
+.sched-form .field em {
+  grid-column: 2;
+  font-size: 11px;
+  font-style: normal;
 }
 
-.sched-row-actions {
+.radio-set {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.radio-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.sched-drop-hint {
-  font-size: 12px;
-  color: var(--primary);
-  flex: 1;
-}
-
-.sched-actions {
-  display: flex;
-  justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
+  font-size: 13px;
 }
 
 .sched-runs {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 10px 0;
 }
 
 .sched-run {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 6px 8px;
   background: none;
   border: none;
@@ -5090,9 +5251,6 @@ hr {
   white-space: pre-wrap;
 }
 
-.radio-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+.sched-log.tall {
+  max-height: none;
 }

@@ -29,6 +29,7 @@ import {
   type GroupNode,
 } from './grouping.ts'
 import { GroupPicker } from './group-picker.tsx'
+import { ScheduleList } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
@@ -163,18 +164,17 @@ export function Sidebar({
   onNewSession,
   onAddHost,
   onSettings,
-  onSchedules,
 }: {
   onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
   onAddHost: () => void
   onSettings: () => void
-  onSchedules: () => void
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
   const { sessions, stats, pending: awaiting } = useHostSessions()
   const notifications = useHostNotifications()
   const selection = useStore((s) => s.selection)
+  const mode = useStore((s) => s.sidebarMode)
   const query = useStore((s) => s.query)
   const sortMode = useHostSortModes()
   const groupMode = useStore((s) => s.grouping)
@@ -412,7 +412,53 @@ export function Sidebar({
         </button>
       </header>
 
-      <div className="sidebar-list">
+      {/* Sessions and schedules are two lists of the same shape — grouped by
+          host, one row per thing, one detail in the main panel — so they share
+          the sidebar rather than fighting for it. */}
+      <div className="sidebar-modes">
+        <button
+          className={mode === 'sessions' ? 'active' : ''}
+          onClick={() => store.setSidebarMode('sessions')}
+        >
+          sessions
+        </button>
+        <button
+          className={mode === 'schedules' ? 'active' : ''}
+          onClick={() => store.setSidebarMode('schedules')}
+        >
+          schedules
+        </button>
+      </div>
+
+      {mode === 'schedules' && (
+        <>
+          <div className="sidebar-list">
+            {hosts.map((host) => (
+              <div className="host-group" key={host.id}>
+                {hosts.length > 1 && (
+                  <div className="host-head">
+                    <span className="host-title">
+                      <span className={`host-dot ${hostStatus[host.id]?.state ?? 'connecting'}`} />
+                      <span className="host-name">{host.name}</span>
+                    </span>
+                  </div>
+                )}
+                <ScheduleList hostId={host.id} />
+              </div>
+            ))}
+          </div>
+          <footer className="sidebar-foot">
+            <button
+              className="btn tiny"
+              onClick={() => store.editSchedule(selection?.hostId ?? hosts[0]?.id ?? '')}
+            >
+              + New schedule
+            </button>
+          </footer>
+        </>
+      )}
+
+      <div className="sidebar-list" hidden={mode === 'schedules'}>
         {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
@@ -782,7 +828,7 @@ export function Sidebar({
         <button className="link" onClick={onAddHost}>
           Add host
         </button>
-        <AppMenu onSettings={onSettings} onSchedules={onSchedules} />
+        <AppMenu onSettings={onSettings} />
       </footer>
 
       {menu && (
@@ -999,13 +1045,7 @@ function NewGroupField({
  * neither of which is where the eye goes, and the app menu is not somewhere a
  * user looks on the platforms where the window is the whole of the app.
  */
-function AppMenu({
-  onSettings,
-  onSchedules,
-}: {
-  onSettings: () => void
-  onSchedules: () => void
-}): JSX.Element {
+function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
   const menu = useRef<HTMLDetailsElement | null>(null)
 
   // <details> only closes on its own summary, so a menu left open stays open
@@ -1037,7 +1077,6 @@ function AppMenu({
           if (menu.current) menu.current.open = false
         }}
       >
-        <button onClick={onSchedules}>Schedules…</button>
         <button onClick={onSettings}>Settings…</button>
         {/* Closing the window leaves the app on the tray so approvals keep
             arriving; this is the one control that actually ends it. */}

@@ -71,6 +71,18 @@ function shellLabel(termId: string): string {
   return index ? `sh ${index}` : 'shell'
 }
 
+export type SidebarMode = 'sessions' | 'schedules'
+
+/** What the main panel is showing about a schedule. */
+export interface ScheduleSelection {
+  hostId: string
+  /** Empty while a new one is being written. */
+  scheduleId: string
+  editing: boolean
+  /** Set while the reader is being asked what a dropped link means. */
+  linkTo?: string
+}
+
 export interface Selection {
   hostId: string
   sessionId: string
@@ -169,6 +181,19 @@ export interface State {
   /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
   selection: Selection | null
+  /**
+   * Which list the sidebar is showing.
+   *
+   * Sessions and schedules are two lists of the same shape — grouped by host,
+   * one row per thing, one detail in the main panel — so they share the sidebar
+   * rather than fighting for it. See docs/specs/55-scheduled-runs.md.
+   */
+  sidebarMode: SidebarMode
+  /**
+   * The schedule the main panel is showing, if any. `scheduleId` is empty for
+   * one being created, which is a draft with nowhere to be selected from.
+   */
+  scheduleSelection: ScheduleSelection | null
   /**
    * How each session's panels are arranged, by `sessionKey`: which groups sit
    * beside each other, what is in each strip, and which item of each is in
@@ -319,6 +344,8 @@ const initial: State = {
   hostStatus: {},
   tabs: [],
   selection: null,
+  sidebarMode: 'sessions',
+  scheduleSelection: null,
   layouts: {},
   detached: [],
   fileTarget: null,
@@ -901,8 +928,46 @@ class Store {
     this.set((s) => ({
       selection: { hostId, sessionId },
       layouts: withLayout(s.layouts, hostId, sessionId),
+      // Selecting a session is what the sessions list is for, and a run opened
+      // from a schedule means the reader has moved on to the run itself.
+      sidebarMode: 'sessions' as SidebarMode,
+      scheduleSelection: null,
     }))
     this.touch(hostId, sessionId)
+  }
+
+  // ─── Schedules ─────────────────────────────────────────────────────────
+
+  setSidebarMode(mode: SidebarMode): void {
+    this.set({ sidebarMode: mode })
+  }
+
+  /** Shows a schedule in the main panel. */
+  selectSchedule(hostId: string, scheduleId: string): void {
+    this.set({ sidebarMode: 'schedules', scheduleSelection: { hostId, scheduleId, editing: false } })
+  }
+
+  /** Opens the editor for a new schedule, or for the one already selected. */
+  editSchedule(hostId: string, scheduleId = ''): void {
+    this.set({ sidebarMode: 'schedules', scheduleSelection: { hostId, scheduleId, editing: true } })
+  }
+
+  /**
+   * Asks what a new link means, in the main panel.
+   *
+   * Dropping one job onto another is only half the decision — whether a failed
+   * parent still releases the child is the other half, and guessing it is how a
+   * chain surprises someone at 3am.
+   */
+  linkSchedule(hostId: string, childId: string, parentId: string): void {
+    this.set({
+      sidebarMode: 'schedules',
+      scheduleSelection: { hostId, scheduleId: childId, editing: false, linkTo: parentId },
+    })
+  }
+
+  clearScheduleSelection(): void {
+    this.set({ scheduleSelection: null })
   }
 
   /**

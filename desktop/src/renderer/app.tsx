@@ -6,7 +6,6 @@ import { store, terminalId, useStore } from './store.ts'
 import { Detail } from './components/detail.tsx'
 import { HostsDialog } from './components/hosts.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
-import { SchedulesDialog } from './components/schedules.tsx'
 import { SettingsDialog } from './components/settings.tsx'
 import { Sidebar } from './components/sidebar.tsx'
 
@@ -14,10 +13,7 @@ export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
   const toast = useStore((s) => s.toast)
   const pairingLink = useStore((s) => s.pairingLink)
-  const [dialog, setDialog] = useState<'new' | 'hosts' | 'settings' | 'schedules' | null>(null)
-  // Schedules belong to a host, so the dialog needs one: whichever host the
-  // selected session is on, or the first paired one.
-  const scheduleHost = useStore((s) => s.selection?.hostId ?? s.hosts[0]?.id ?? '')
+  const [dialog, setDialog] = useState<'new' | 'hosts' | 'settings' | null>(null)
   // Where the new-session dialog should start when it was opened from a
   // project rather than from the toolbar: the point of the project's own
   // button is that it does not ask again which project it meant.
@@ -84,7 +80,6 @@ export function App(): JSX.Element {
           }}
           onAddHost={() => setDialog('hosts')}
           onSettings={() => setDialog('settings')}
-          onSchedules={() => setDialog('schedules')}
         />
         <main className="main">
           <Detail />
@@ -94,9 +89,6 @@ export function App(): JSX.Element {
       {dialog === 'new' && <NewSessionDialog seed={seed} onClose={() => setDialog(null)} />}
       {dialog === 'hosts' && <HostsDialog onClose={() => setDialog(null)} />}
       {dialog === 'settings' && <SettingsDialog onClose={() => setDialog(null)} />}
-      {dialog === 'schedules' && scheduleHost !== '' && (
-        <SchedulesDialog hostId={scheduleHost} onClose={() => setDialog(null)} />
-      )}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>
