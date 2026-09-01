@@ -869,6 +869,14 @@ class Store {
       queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) =>
         patchSessionInPage(page, effect.sessionId, effect.patch),
       )
+      // The automated section is a second list of the same records, and it is
+      // patched here for the same reason as the first: the refetch behind this
+      // is what makes it true, but the patch is what paints now.
+      queryClient.setQueryData<Session[]>(keys.jobSessions(hostId), (runs) =>
+        runs?.map((run) =>
+          run.session_id === effect.sessionId ? { ...run, ...effect.patch } : run,
+        ),
+      )
       if (effect.patch.status === 'terminated' && was && was.status !== 'terminated') {
         this.onTerminated(hostId, effect.sessionId)
       }

@@ -15,10 +15,12 @@ import {
   BETA,
   GAMMA,
   REPO,
+  RUN,
   TRANSCRIPT_TEXT,
   appendTranscript,
   pushEvent,
   resetTranscripts,
+  setSessionStatus,
 } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
@@ -166,6 +168,21 @@ test('automated runs are folded away until asked for', async ({ window }) => {
 
   await header.click()
   await expect(window.locator('.session-row', { hasText: 'Nightly run' })).toHaveCount(0)
+})
+
+// The automated section is a second list of sessions, and a status event used
+// to reach only the first: a run that had finished, been terminated and had its
+// panel say so still read "Starting" in the sidebar beside it.
+test('a run that finishes says so in the sidebar', async ({ window }) => {
+  await window.locator('.auto-head').click()
+  const row = window.locator('.session-row', { hasText: 'Nightly run' })
+  await expect(row).toBeVisible()
+  await expect(row).not.toContainText('Terminated')
+
+  setSessionStatus(RUN, 'terminated')
+  pushEvent('session_status', { session_id: RUN, status: 'terminated' })
+
+  await expect(row).toContainText('Terminated')
 })
 
 test('opening a run from its schedule unfolds the section and selects it', async ({ window }) => {

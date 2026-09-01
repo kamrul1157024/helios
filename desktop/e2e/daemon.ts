@@ -88,9 +88,28 @@ export function appendTranscript(sessionId: string, text: string): void {
   if (record) record.last_event_at = new Date().toISOString()
 }
 
+/** Back to how each test expects to find the daemon. */
 export function resetTranscripts(): void {
   for (const key of Object.keys(EXTRA)) delete EXTRA[key]
-  for (const record of [...SESSIONS, ...RUNS]) record.last_event_at = '2026-01-01T00:00:00Z'
+  for (const record of [...SESSIONS, ...RUNS]) {
+    record.last_event_at = '2026-01-01T00:00:00Z'
+    if (record.session_id === PAST_RUN) continue
+    record.status = 'idle'
+    record.terminal = `/tmp/helios/${record.session_id}.sock`
+  }
+}
+
+/**
+ * Moves a session the way the daemon does before it announces it.
+ *
+ * A stub that only pushed the event would have the refetch behind it put the
+ * old status straight back, which is not a failure any daemon can produce.
+ */
+export function setSessionStatus(sessionId: string, status: Session['status']): void {
+  const record = [...SESSIONS, ...RUNS].find((s) => s.session_id === sessionId)
+  if (!record) return
+  record.status = status
+  if (status === 'terminated') delete record.terminal
 }
 
 /**

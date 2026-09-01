@@ -216,9 +216,16 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
       // The payload carries a status and little else, but the record behind it
       // moved with it — last_event_at above all, which is the only thing telling
       // the transcript there is more of it to read.
+      // Three lists hold a session and all three have to hear this: the
+      // ordinary one, the automated section — where every scheduled run lives,
+      // and where a run that has finished used to sit reading "Starting" for
+      // ever — and the single-session read the detail panel falls back to for a
+      // run the ordinary list does not carry.
       return [
         { kind: 'patchSession', sessionId, patch },
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.session(hostId, sessionId) },
       ]
     }
 
