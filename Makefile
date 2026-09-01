@@ -201,12 +201,9 @@ else
 	@echo "Desktop packages: desktop/release"
 endif
 
-## Build the desktop app and install it into /Applications (macOS)
+## Build the desktop app and install it (macOS: /Applications; Linux: system package via apt)
 desktop-install: desktop-app
-ifneq ($(UNAME_S),Darwin)
-	@echo "make desktop-install is macOS-only; on Linux install the AppImage or .deb from desktop/release" >&2
-	@exit 1
-else
+ifeq ($(UNAME_S),Darwin)
 	@test -d "$(DESKTOP_APP)" || (echo "$(DESKTOP_APP) not found — see desktop/release" >&2 && exit 1)
 	# Replaced rather than copied over: a copy leaves the previous build's files
 	# behind inside the bundle.
@@ -214,6 +211,10 @@ else
 	cp -R "$(DESKTOP_APP)" /Applications/Helios.app
 	xattr -dr com.apple.quarantine /Applications/Helios.app 2>/dev/null || true
 	@echo "Helios.app installed to /Applications"
+else
+	@deb="$$(ls -t desktop/release/*.deb 2>/dev/null | head -1)"; \
+	test -n "$$deb" || (echo "No .deb found in desktop/release — see desktop/release" >&2 && exit 1); \
+	sudo apt install -y "$$deb" && echo "Helios desktop installed via $$deb"
 endif
 
 desktop-clean:
