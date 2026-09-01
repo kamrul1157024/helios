@@ -379,6 +379,43 @@ func TestTick_FinishedRunIsTerminatedAndStillReleasesItsChain(t *testing.T) {
 	}
 }
 
+// An agent that dies before its first hook leaves the session at `starting`,
+// and nothing else will ever move it. The run has to be called a failure, or
+// the schedule reads as working for ever and its chain never advances.
+func TestTick_ARunThatNeverStartsIsAFailure(t *testing.T) {
+	s, shared := newSchedulerTest(t)
+	now := time.Now()
+
+	seedSchedule(t, shared.DB, &store.Schedule{ID: "parent", Name: "parent", Kind: "once", RunAt: rfc(now)})
+	seedSchedule(t, shared.DB, &store.Schedule{ID: "child", Name: "child", Kind: "after",
+		AfterID: "parent", AfterWhen: "any"})
+	seedSessionWithStatus(t, shared.DB, "parent-session", "starting")
+	shared.DB.RecordFire("parent", "parent-session", "running", "", now.Add(-2*BootGrace))
+
+	// Still inside the grace: a slow boot is not a failure.
+	s.Tick(now.Add(-2*BootGrace + time.Minute))
+	got, _ := shared.DB.GetSchedule("parent")
+	if got.LastStatus != "running" {
+		t.Fatalf("a booting agent should still be running, got %q", got.LastStatus)
+	}
+
+	s.Tick(now)
+
+	got, _ = shared.DB.GetSchedule("parent")
+	if got.LastStatus != "failed" || got.LastError == "" {
+		t.Fatalf("want a recorded failure, got %q / %q", got.LastStatus, got.LastError)
+	}
+	run, _ := shared.DB.GetSession("parent-session")
+	if run.Status != "terminated" {
+		t.Fatalf("a run given up on should not be left holding a terminal, got %q", run.Status)
+	}
+	// The link said "either way", so it goes.
+	child, _ := shared.DB.GetSchedule("child")
+	if child.LastSessionID == "" {
+		t.Fatalf("an 'any' link should still run, got %q", child.LastStatus)
+	}
+}
+
 // A resume schedule keeps its session: the conversation is what it is for.
 func TestTick_ResumeRunKeepsItsSession(t *testing.T) {
 	s, shared := newSchedulerTest(t)

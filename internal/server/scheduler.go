@@ -31,6 +31,14 @@ import (
 // hour.
 const FireGrace = 5 * time.Minute
 
+// How long a fired run may sit in `starting` before it is called a failure.
+//
+// Generous, because a cold agent loads a transcript, its MCP servers and the
+// user's settings before it reports in, and calling a slow boot a failure would
+// terminate work that was about to happen. Minutes rather than the 25 seconds a
+// resumed session gets: nobody is waiting at a keyboard for this one.
+const BootGrace = 3 * time.Minute
+
 // Three failures in a row and a schedule stops trying. A schedule that cannot
 // work should say so once, not write the same line into the log every night.
 const maxFailStreak = 3
@@ -316,8 +324,29 @@ func (s *Scheduler) settleRunning(now time.Time) {
 		case "failed":
 			s.finishFailed(sc, now, "the run did not finish cleanly")
 			s.endRun(sc)
+		default:
+			if s.stalledAtBoot(sc, now) {
+				s.fail(sc, now, fmt.Sprintf("the agent never started — session %s said nothing in %s",
+					short(sc.LastSessionID), BootGrace))
+				s.endRun(sc)
+			}
 		}
 	}
+}
+
+// stalledAtBoot reports a run whose agent never said anything at all.
+//
+// A session's status is written by the agent's own hooks, so an agent that dies
+// before its first one leaves the row at `starting` and nothing ever moves it
+// again: the run reads as still working, the schedule stays `running` for ever,
+// and every job chained behind it waits for ever. The reaper is no help — a
+// dead terminal is a cold session by design (internal/daemon/reaper.go:16-30).
+func (s *Scheduler) stalledAtBoot(sc *store.Schedule, now time.Time) bool {
+	sess, err := s.shared.DB.GetSession(sc.LastSessionID)
+	if err != nil || sess == nil || sess.Status != "starting" {
+		return false
+	}
+	return now.Sub(parseTime(sc.LastFiredAt)) > BootGrace
 }
 
 // endRun closes the terminal a finished run was using.

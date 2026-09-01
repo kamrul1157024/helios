@@ -316,6 +316,16 @@ them, and the transcript stays readable either way. So the tick that settles a r
 terminates its session (`Shared.EndSession`, shared with the terminate route). A **resume**
 schedule is the exception: the conversation it keeps going is the point of it.
 
+**And a run that never starts is a failure, on a deadline.** A session's status is written by
+the agent's own hooks, so an agent that dies before its first one leaves the row at `starting`
+and nothing ever moves it again — the run reads as still working and the chain behind it waits
+for ever. The reaper is no help: a dead terminal is a cold session by design
+(`internal/daemon/reaper.go:16-30`). So a run still at `starting` `BootGrace` (3 minutes) after
+it fired is recorded as failed, said so in the schedule's log, and closed. Minutes rather than
+the 25 seconds a resumed session gets, because a cold agent loads a transcript, its MCP servers
+and the user's settings before it says anything, and nobody is waiting at a keyboard for this
+one.
+
 That is why a chain reads the parent's *recorded* outcome — `last_status`, written by
 `settleRunning` earlier in the same tick — rather than the parent session's status. The table
 above still decides what gets recorded; reading the session directly would now find every
