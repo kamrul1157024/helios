@@ -30,6 +30,14 @@ export interface StubDaemon {
    * passes before the event has even crossed the socket.
    */
   reads(path: string): number
+  /**
+   * How many times the content search has been run.
+   *
+   * A refetch of a search nobody re-typed asks the same question and gets the
+   * same answer, so it leaves no mark on the results. Counting the asking is
+   * how a test knows the refetch it provoked has happened at all.
+   */
+  greps(): number
   close(): Promise<void>
 }
 
@@ -232,6 +240,7 @@ export async function startDaemon(): Promise<StubDaemon> {
   // worth having true here so the test cannot pass for the wrong reason.
   let revision = 0
   const readCount = new Map<string, number>()
+  let grepCount = 0
 
   const held = (target: string): FileAnswer => {
     readCount.set(target, (readCount.get(target) ?? 0) + 1)
@@ -254,6 +263,7 @@ export async function startDaemon(): Promise<StubDaemon> {
       return
     }
 
+    if (path === '/api/files/grep') grepCount += 1
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify(answer(path, q, held)))
   })
@@ -268,6 +278,7 @@ export async function startDaemon(): Promise<StubDaemon> {
       for (const stream of streams) stream.write(frame)
     },
     reads: (target) => readCount.get(target) ?? 0,
+    greps: () => grepCount,
     setFile: (target, content) => {
       contents.set(target, content)
       revision += 1

@@ -56,7 +56,7 @@ export function FindInFiles({
    */
   const [submitted, setSubmitted] = useState<Submitted | null>(null)
 
-  const { data, error, isFetching } = useQuery({
+  const { data, error, isFetching, isPlaceholderData } = useQuery({
     ...grepQuery(hostId, root, submitted?.q ?? '', {
       regex: submitted?.regex ?? false,
       caseSensitive: submitted?.caseSensitive ?? false,
@@ -68,6 +68,20 @@ export function FindInFiles({
   const matches = submitted ? (data?.matches ?? null) : null
   const truncated = data?.truncated ?? false
   const groups = groupByFile(matches ?? [])
+
+  /**
+   * A fetch worth saying anything about, which is not every fetch.
+   *
+   * An agent writing a file invalidates every read under `files`, this one
+   * included, so a background refetch arrives whenever the session is busy.
+   * Announcing those emptied the panel and filled it again a moment later,
+   * under a reader who had asked for nothing — which is what `keepPreviousData`
+   * above was already holding the results to prevent.
+   *
+   * What is left is the two cases the reader is waiting on: a first search with
+   * nothing on screen yet, and a new one running behind the last one's results.
+   */
+  const searching = isFetching && (matches === null || isPlaceholderData)
 
   return (
     <div className="find">
@@ -101,33 +115,32 @@ export function FindInFiles({
       </div>
 
       <div className="find-results">
-        {isFetching && <p className="empty-note">Searching…</p>}
+        {searching && <p className="empty-note">Searching…</p>}
         {error && <p className="empty-note">{error.message}</p>}
-        {!isFetching && !error && matches !== null && matches.length === 0 && (
+        {!searching && !error && matches !== null && matches.length === 0 && (
           <>
             <p className="empty-note">No results under {root}.</p>
             {onPickRoot && <RootSuggestions root={root} worktrees={worktrees} onPick={onPickRoot} />}
           </>
         )}
-        {!isFetching &&
-          groups.map(([rel, hits]) => (
-            <div key={rel} className="find-group">
-              <span className="find-file" title={rel}>
-                {rel}
-                <span className="find-count">{hits.length}</span>
-              </span>
-              {hits.map((hit) => (
-                <button
-                  key={`${hit.line}:${hit.column}`}
-                  className="find-hit"
-                  onClick={() => onOpen(hit.path, hit.line, hit.column)}
-                >
-                  <span className="find-line">{hit.line}</span>
-                  <span className="find-text">{hit.text.trim()}</span>
-                </button>
-              ))}
-            </div>
-          ))}
+        {groups.map(([rel, hits]) => (
+          <div key={rel} className="find-group">
+            <span className="find-file" title={rel}>
+              {rel}
+              <span className="find-count">{hits.length}</span>
+            </span>
+            {hits.map((hit) => (
+              <button
+                key={`${hit.line}:${hit.column}`}
+                className="find-hit"
+                onClick={() => onOpen(hit.path, hit.line, hit.column)}
+              >
+                <span className="find-line">{hit.line}</span>
+                <span className="find-text">{hit.text.trim()}</span>
+              </button>
+            ))}
+          </div>
+        ))}
         {truncated && matches !== null && matches.length > 0 && (
           <p className="empty-note">Showing the first {matches.length} results.</p>
         )}
