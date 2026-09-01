@@ -260,3 +260,34 @@ func TestHostIgnoresOverlayFromANonControlViewer(t *testing.T) {
 		t.Error("a non-control viewer set an overlay")
 	}
 }
+
+// The new fields have to survive the socket, not just the renderer: the daemon
+// marshals them here and a separate ptyhost process is what draws them.
+func TestHostOverlayCarriesDescriptionsCheckboxesAndTheField(t *testing.T) {
+	h, _, ctl, view := overlaidHost(t, "ov-rich")
+
+	setOverlayAndWait(t, h, ctl, Overlay{
+		Title:    "Which checks to run",
+		Options:  []string{"Unit tests", "Race detector"},
+		Details:  []string{"go test across the daemon.", "Slow, but it finds the races."},
+		Checked:  []bool{true, false},
+		Input:    &OverlayInput{Label: "Other…", Value: "just the linter", Active: true},
+		Selected: 2,
+	})
+
+	// One frame carries the whole box, so it is waited for once and then read.
+	f, ok := nextFrameMatching(t, view, 3*time.Second, carries("Which checks to run"))
+	if !ok {
+		t.Fatal("the interactive viewer never received the overlay")
+	}
+	for _, want := range []string{
+		"go test across the daemon.", // a description
+		"[x] Unit tests",             // a ticked choice
+		"[ ] Race detector",          // an unticked one
+		"just the linter█",           // the open field, caret and all
+	} {
+		if !strings.Contains(string(f.Payload), want) {
+			t.Errorf("the painted overlay is missing %q", want)
+		}
+	}
+}
