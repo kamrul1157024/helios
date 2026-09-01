@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"strings"
 	"time"
@@ -178,4 +179,21 @@ func run(ctx context.Context, binary string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("tailscale %s: %w", strings.Join(args, " "), err)
 	}
 	return out, nil
+}
+
+// permissionHint rewrites tailscaled's "Access denied" response into a direct
+// remedy. On Linux, publishing a serve/funnel mapping requires either root or
+// a designated operator; the raw CLI message states this correctly but as two
+// lines of prose, which a cramped error panel (the TUI, the mobile app)
+// truncates before the fix is legible.
+func permissionHint(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "Access denied") {
+		return err
+	}
+	username := "$USER"
+	if u, uerr := user.Current(); uerr == nil && u.Username != "" {
+		username = u.Username
+	}
+	return fmt.Errorf("tailscale needs elevated permission on this machine — "+
+		"run `sudo tailscale set --operator=%s` once, then retry", username)
 }

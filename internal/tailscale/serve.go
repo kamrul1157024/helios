@@ -214,7 +214,7 @@ func (t *Tunnel) start(ctx context.Context, localPort int) error {
 	}
 
 	if _, err := run(ctx, t.binary, t.publishArgs()...); err != nil {
-		return err
+		return permissionHint(err)
 	}
 
 	if err := t.waitPublished(ctx); err != nil {
