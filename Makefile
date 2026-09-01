@@ -214,6 +214,7 @@ ifeq ($(UNAME_S),Darwin)
 else
 	@deb="$$(ls -t desktop/release/*.deb 2>/dev/null | head -1)"; \
 	test -n "$$deb" || (echo "No .deb found in desktop/release — see desktop/release" >&2 && exit 1); \
+	case "$$deb" in /*) ;; *) deb="./$$deb" ;; esac; \
 	sudo apt install -y "$$deb" && echo "Helios desktop installed via $$deb"
 endif
 
