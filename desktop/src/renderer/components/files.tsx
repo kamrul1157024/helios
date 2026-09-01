@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { api, statusOf } from '../bridge.ts'
+import { api, bridge, statusOf } from '../bridge.ts'
 import { dataUrl, extensionOf, kindOf, type FileKind } from '../filetype.ts'
-import { keys } from '../keys.ts'
+import { fileEffectFor, keys } from '../keys.ts'
 import { isMarkdownPath, languageForPath, renderMarkdownBlocks } from '../markdown.ts'
 import { useMermaid } from '../mermaid.ts'
 import { fileContentQuery, worktreesQuery } from '../queries.ts'
@@ -48,6 +48,13 @@ interface OpenTab {
    *  on that would throw away the cursor of whoever pressed ⌘S. */
   version: number
   cursor: Cursor | null
+  /** The file changed under an unsaved buffer. Raises the bar; changes nothing
+   *  else. Cleared by a reload or by a save that lands. */
+  staleOnDisk: boolean
+  /** This version came from an event rather than from a person, so the editor
+   *  must not take focus when it remounts — the user may be typing somewhere
+   *  else entirely. Cleared by the effect that follows the render using it. */
+  quiet: boolean
 }
 
 /** What the file is, as opposed to what the window is doing with it. */
@@ -193,6 +200,8 @@ export function FilesPanel({
             mode: kindOf(path) !== 'text' || isMarkdownPath(path) ? 'preview' : 'edit',
             version: 0,
             cursor: at ? { ...at, seq: 1 } : null,
+            staleOnDisk: false,
+            quiet: false,
           },
         ])
         if (activate) setActivePath(path)
@@ -282,7 +291,7 @@ export function FilesPanel({
   }, [memory, loadedFor, rootOverride, tabs, activePath, expanded, side, viewTick])
 
   const save = useCallback(
-    async (path: string): Promise<void> => {
+    async (path: string, quiet = true): Promise<void> => {
       const tab = tabsRef.current.find((t) => t.path === path)
       const onDisk = client.getQueryData(fileContentQuery(hostId, path).queryKey)
       if (!tab || !tab.dirty || !onDisk || shapeOf(onDisk).readOnly) return
@@ -295,7 +304,11 @@ export function FilesPanel({
         client.setQueryData(fileContentQuery(hostId, path).queryKey, (current) =>
           current ? { ...current, content: text, mod_time: result.mod_time } : current,
         )
-        setTabs((current) => current.map((t) => (t.path === path ? { ...t, dirty: false } : t)))
+        // The bar goes with the save: what is on disk is now what is in the
+        // buffer, whoever else had written to it in between.
+        setTabs((current) =>
+          current.map((t) => (t.path === path ? { ...t, dirty: false, staleOnDisk: false } : t)),
+        )
       } catch (err) {
         // The agent edits the same files, so this is a real outcome rather than
         // an edge case: reload, then decide what to keep.
@@ -306,6 +319,18 @@ export function FilesPanel({
     [hostId, client],
   )
 
+  /** Replaces the buffer from disk. `quiet` keeps the editor from taking focus. */
+  const adopt = useCallback((path: string, quiet: boolean): void => {
+    delete drafts.current[path]
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.path === path
+          ? { ...tab, dirty: false, staleOnDisk: false, quiet, version: tab.version + 1 }
+          : tab,
+      ),
+    )
+  }, [])
+
   const reload = useCallback(
     async (path: string): Promise<void> => {
       try {
@@ -313,32 +338,103 @@ export function FilesPanel({
         // its own, precisely so nothing but this and the effect below can move
         // it under an open buffer.
         await client.fetchQuery({ ...fileContentQuery(hostId, path), staleTime: 0 })
-        delete drafts.current[path]
-        setTabs((current) =>
-          current.map((tab) =>
-            tab.path === path ? { ...tab, dirty: false, version: tab.version + 1 } : tab,
-          ),
-        )
+        adopt(path, false)
       } catch (err) {
         store.fail(err)
       }
     },
-    [hostId, client],
+    [hostId, client, adopt],
   )
 
+  /**
+   * Brings one tab in line with the disk after something said the file moved.
+   *
+   * Reads around the cache on purpose. `fetchQuery` would write the answer into
+   * the entry `ActiveFile` derives `saved` from, and under a dirty tab that
+   * moves two things at once: the text the unsaved marker is decided against,
+   * and the `mod_time` a later save sends as its base — which would turn the
+   * 409 that protects the other writer into a silent overwrite.
+   */
+  const syncFromDisk = useCallback(
+    async (path: string, quiet = true): Promise<void> => {
+      const tab = tabsRef.current.find((t) => t.path === path)
+      const held = client.getQueryData(fileContentQuery(hostId, path).queryKey)
+      if (!tab || !held) return
+
+      let fresh: FileContent | null = null
+      try {
+        fresh = await api(hostId).readFile(path)
+      } catch (err) {
+        // Gone is a real answer and the bar reports it. Anything else is a
+        // transient, and the next event or the next arrival tries again.
+        if (statusOf(err) !== 404) return
+      }
+
+      switch (fileEffectFor(tab, held.content, fresh?.content ?? null)) {
+        case 'ignore':
+          return
+        case 'mark':
+          setTabs((current) =>
+            current.map((t) => (t.path === path ? { ...t, staleOnDisk: true } : t)),
+          )
+          return
+        case 'reload':
+          // The answer is already in hand, so this writes it rather than
+          // fetching the same bytes a second time.
+          if (fresh) client.setQueryData(fileContentQuery(hostId, path).queryKey, fresh)
+          adopt(path, quiet)
+      }
+    },
+    [hostId, client, adopt],
+  )
+
+  /**
+   * The daemon says a path it was asked to watch has changed content.
+   *
+   * Every open tab, not just the one in front: a background tab holds no query,
+   * but it holds a draft and an unsaved marker, and its cache entry is what the
+   * user sees the moment they click it.
+   */
+  useEffect(() => {
+    return bridge.hosts.onEvent(({ hostId: from, event }) => {
+      if (from !== hostId || event.type !== 'file_changed') return
+      const named = event.data.paths
+      if (!Array.isArray(named)) return
+      const moved = new Set(
+        named.map((entry) => (entry as { path?: unknown }).path).filter((p): p is string => typeof p === 'string'),
+      )
+      for (const tab of tabsRef.current) {
+        if (moved.has(tab.path)) void syncFromDisk(tab.path)
+      }
+    })
+  }, [hostId, syncFromDisk])
+
+  /**
+   * Clears the quiet flag once the render that used it has happened.
+   *
+   * It is read on mount only, so leaving it set would suppress the focus a
+   * later tab switch is right to take. Clearing does not bump the version, so
+   * nothing remounts.
+   */
+  const activeTab = tabs.find((tab) => tab.path === activePath) ?? null
+  useEffect(() => {
+    if (!activeTab?.quiet) return
+    setTabs((current) => current.map((t) => (t.quiet ? { ...t, quiet: false } : t)))
+  }, [activeTab?.path, activeTab?.version, activeTab?.quiet])
+
   // The agent edits the tree while the user is elsewhere, so the buffer that
-  // was accurate on the way out is stale on the way back. Unsaved edits
-  // outrank what is on disk and are left alone; the file keeps its unsaved
-  // marker and the user can revert deliberately.
+  // was accurate on the way out is stale on the way back. Every clean tab, not
+  // just the one in front — and a read is also what re-registers the path with
+  // the daemon's watcher after its TTL expired. Unsaved edits outrank what is
+  // on disk and are left alone; the file keeps its unsaved marker, and the bar
+  // appears if what is on disk really did move.
   const wasVisible = useRef(visible)
   useEffect(() => {
     const returning = visible && !wasVisible.current
     wasVisible.current = visible
-    if (!returning || !activePath) return
-    const tab = tabsRef.current.find((t) => t.path === activePath)
-    if (!tab || tab.dirty) return
-    void reload(activePath)
-  }, [visible, activePath, reload])
+    if (!returning) return
+    for (const tab of tabsRef.current) void syncFromDisk(tab.path, tab.path !== activePath)
+  }, [visible, activePath, syncFromDisk])
 
   const close = (path: string): void => {
     const tab = tabsRef.current.find((t) => t.path === path)
@@ -568,6 +664,11 @@ export function FilesPanel({
             }}
             onSave={() => void save(active.path)}
             onReload={() => void reload(active.path)}
+            onDismissStale={() =>
+              setTabs((current) =>
+                current.map((t) => (t.path === active.path ? { ...t, staleOnDisk: false } : t)),
+              )
+            }
             onMode={(mode) =>
               setTabs((current) => current.map((t) => (t.path === active.path ? { ...t, mode } : t)))
             }
@@ -629,6 +730,7 @@ function ActiveFile({
   onChange,
   onSave,
   onReload,
+  onDismissStale,
   onMode,
   restore,
   onPositionChange,
@@ -642,6 +744,7 @@ function ActiveFile({
   onChange: (text: string, dirty: boolean) => void
   onSave: () => void
   onReload: () => void
+  onDismissStale: () => void
   onMode: (mode: 'edit' | 'preview') => void
   restore: ReadingPosition | null
   onPositionChange: (at: ReadingPosition) => void
@@ -671,6 +774,7 @@ function ActiveFile({
       onChange={(text) => onChange(text, text !== data.content)}
       onSave={onSave}
       onReload={onReload}
+      onDismissStale={onDismissStale}
       onMode={onMode}
       restore={restore}
       onPositionChange={onPositionChange}
@@ -687,6 +791,7 @@ function FileView({
   onChange,
   onSave,
   onReload,
+  onDismissStale,
   onMode,
   restore,
   onPositionChange,
@@ -699,6 +804,9 @@ function FileView({
   onChange: (text: string) => void
   onSave: () => void
   onReload: () => void
+  /** Keep the buffer and put the bar away. The save still 409s, which is right:
+   *  the other writer's change is still on disk and the user chose theirs. */
+  onDismissStale: () => void
   onMode: (mode: 'edit' | 'preview') => void
   /** Where this file was last left, or null if it has not been opened before. */
   restore: ReadingPosition | null
@@ -881,6 +989,22 @@ function FileView({
         )}
       </header>
 
+      {/* The file moved under an unsaved buffer. Nothing has been touched: the
+          reader decides whether to take what is on disk or keep what they
+          typed. No merge, and no dialog in the way of either answer. */}
+      {file.staleOnDisk && (
+        <div className="ws-stale-bar" role="status">
+          <span>Changed on disk. Your unsaved edits are still here.</span>
+          <span className="grow" />
+          <button className="filled tiny" onClick={onReload}>
+            Reload
+          </button>
+          <button className="icon-btn tiny" title="Keep my version" onClick={onDismissStale}>
+            ✕
+          </button>
+        </div>
+      )}
+
       {source ? (
         <div className={`ws-image ${natural ? 'natural' : ''}`}>
           <img
@@ -965,6 +1089,7 @@ function FileView({
           onChange={onChange}
           onSave={onSave}
           cursor={file.cursor}
+          autoFocus={!file.quiet}
           restore={restore}
           onViewChange={onPositionChange}
           onContextMenu={(at) => setMenu({ x: at.x, y: at.y, range: { start: at.startLine, end: at.endLine } })}

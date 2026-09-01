@@ -2097,3 +2097,47 @@ func TestElicitation_ThePhoneStillFillsInTheForm(t *testing.T) {
 	awaitCleared(t, overlays)
 	assertStatus(t, db, "sess-1", "waiting_permission")
 }
+
+// The hook is a hint that now is a good time to look, not a description of
+// what happened. It must not depend on the tool name or on the tool input:
+// working out which tools write, per provider, is the coupling the daemon's
+// digest exists to avoid. See docs/specs/54-file-change-events.md.
+func TestToolPostPokesTheFileWatcher(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler func(*provider.HookContext, http.ResponseWriter, *http.Request, json.RawMessage)
+		tool    string
+		input   string
+	}{
+		{"write", handleToolPost, "Write", `{"file_path":"/tmp/a.txt"}`},
+		{"bash", handleToolPost, "Bash", `{"command":"sed -i s/a/b/ x"}`},
+		{"no tool input", handleToolPost, "Bash", ""},
+		// A command that failed at step nine still wrote at steps one to eight.
+		{"failure", handleToolPostFailure, "Bash", `{"command":"make"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _, _ := setupCtx(t)
+			pokes := 0
+			ctx.FilesTouched = func() { pokes++ }
+
+			in := hookInput{SessionID: "s1", ToolName: tc.tool}
+			if tc.input != "" {
+				in.ToolInput = json.RawMessage(tc.input)
+			}
+			callHook(tc.handler, ctx, in)
+
+			if pokes != 1 {
+				t.Errorf("poked %d times, want 1", pokes)
+			}
+		})
+	}
+}
+
+// A provider built without a watcher — every context in these tests before
+// this change — must not panic.
+func TestToolPostWithoutAWatcher(t *testing.T) {
+	ctx, _, _ := setupCtx(t)
+	ctx.FilesTouched = nil
+	callHook(handleToolPost, ctx, hookInput{SessionID: "s1", ToolName: "Write"})
+}

@@ -266,6 +266,35 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
     case 'session_evicted':
       return [{ kind: 'invalidate', queryKey: keys.host(hostId) }]
 
+    // Every path named has changed *content*, not merely a changed mtime: the
+    // daemon compares digests before it says anything (spec 54). Which paths
+    // they are does not change the answer here — both prefixes go, and React
+    // Query refetches only what has an observer, so naming one costs the same
+    // as naming all of them.
+    //
+    // Git comes too. A working-tree write moves `git status`, and a repo entry
+    // is a commit or a checkout.
+    case 'file_changed': {
+      const named = event.data.paths
+      if (!Array.isArray(named) || named.length === 0) return []
+      return [
+        { kind: 'invalidate', queryKey: keys.files(hostId) },
+        { kind: 'invalidate', queryKey: keys.git(hostId) },
+      ]
+    }
+
+    // The socket was down and the daemon keeps no replay buffer, so anything
+    // that moved in the gap was announced to nobody. Files and git for a second
+    // reason: a path whose watch expired while a tab sat open is not being
+    // swept, and re-reading is what registers it again.
+    case 'stream_reconnected':
+      return [
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.notifications(hostId) },
+        { kind: 'invalidate', queryKey: keys.files(hostId) },
+        { kind: 'invalidate', queryKey: keys.git(hostId) },
+      ]
+
     // 'show' instructs the window, and the terminal events move connections:
     // 'terminal_opened' re-lists a session's shells and attaches the ones this
     // client is missing, 'terminal_closed' tears a tab down. The store handles
@@ -277,4 +306,44 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+// ─── What a file event does to one open tab ─────────────────────────────────
+
+/**
+ * What to do with a tab once its file has been re-read.
+ *
+ * `reload` replaces the buffer, `mark` raises the changed-on-disk bar, and
+ * `ignore` does nothing at all.
+ */
+export type FileEffect = 'reload' | 'mark' | 'ignore'
+
+/**
+ * Whether an event means anything for one open tab, decided by comparing bytes.
+ *
+ * Kept out of the component so the rule that protects unsaved work can be
+ * asserted: there is no component test framework here, and this is the half
+ * that must never be wrong.
+ *
+ * Bytes rather than mod times, for two reasons. It drops the echo of this
+ * window's own save — the broadcaster has no addressing, so a writer hears
+ * itself — without which every save would remount the editor of whoever pressed
+ * ⌘S. And it is the second line of defence behind the daemon's own hash: the
+ * daemon compares digests so it does not broadcast noise, and this compares
+ * text so a false alarm never reaches a dirty buffer.
+ *
+ * Comparing `mod_time` would not survive the API anyway: the read route formats
+ * it with RFC3339 and the write route with RFC3339Nano, so a tab's cached value
+ * changes precision depending on how it was last filled.
+ */
+export function fileEffectFor(
+  tab: { dirty: boolean },
+  saved: string,
+  fetched: string | null,
+): FileEffect {
+  // A file that has gone leaves the buffer alone and says so. Closing the tab
+  // would discard work that saving could still put back on disk.
+  if (fetched === null) return 'mark'
+  if (fetched === saved) return 'ignore'
+  return tab.dirty ? 'mark' : 'reload'
 }

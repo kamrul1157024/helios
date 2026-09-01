@@ -50,6 +50,9 @@ func (s *PublicServer) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reading a repo's status is what subscribes to it. See filewatch.go.
+	s.files().Watch(root, WatchRepo)
+
 	// Branch name.
 	branch, err := gitCmd(root, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {

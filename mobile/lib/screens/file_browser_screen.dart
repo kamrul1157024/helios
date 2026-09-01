@@ -37,7 +37,8 @@ class FileBrowserScreen extends rp.ConsumerStatefulWidget {
   rp.ConsumerState<FileBrowserScreen> createState() => _FileBrowserScreenState();
 }
 
-class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
+class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
+    with WidgetsBindingObserver {
   late String _currentPath;
   late String _rootPath;
   final List<String> _history = [];
@@ -47,7 +48,34 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
     super.initState();
     _currentPath = widget.startPath ?? widget.rootPath;
     _rootPath = widget.rootPath;
+    WidgetsBinding.instance.addObserver(this);
+    _reread();
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Coming back to the app is a reason to look again.
+  ///
+  /// The daemon announces what it is asked to watch, and it was not being
+  /// watched while this was suspended. Covers the writer no hook can see, too:
+  /// somebody's own editor.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _reread();
+  }
+
+  /// Drops the held listing so the next build fetches.
+  ///
+  /// Before the first build on purpose. The provider is not autoDispose, so
+  /// returning to a directory otherwise serves what it held on the way out —
+  /// and the read is also what re-registers the path with the daemon after its
+  /// watch expired. A cold key has no entry to drop, so this costs one fetch
+  /// rather than two either way. See docs/specs/54-file-change-events.md.
+  void _reread() => ref.invalidate(listFilesProvider(_listingKey));
 
   /// The listing for wherever the browser currently is.
   ///
@@ -253,7 +281,12 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen> {
   Widget _buildBody(ThemeData theme) {
     final listing = ref.watch(listFilesProvider(_listingKey));
 
-    if (listing.isLoading) return const _FileListSkeleton();
+    // Not a bare isLoading: an invalidation keeps the previous value and still
+    // reports loading, so a file_changed event would blank the listing the
+    // reader is looking at and redraw it. The skeleton is a first-load
+    // affordance. Same guard as the transcript's (spec 52,
+    // session_detail_screen.dart:460).
+    if (listing.isLoading && !listing.hasValue) return const _FileListSkeleton();
 
     final failed = listing.hasError || listing.valueOrNull == null;
     if (failed) {
@@ -443,7 +476,8 @@ class FileViewerScreen extends rp.ConsumerStatefulWidget {
   rp.ConsumerState<FileViewerScreen> createState() => _FileViewerScreenState();
 }
 
-class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
+class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
+    with WidgetsBindingObserver {
   /// The last value `build` saw.
   ///
   /// Held in a field so the callbacks below — copy, ask-AI — read the same
@@ -462,9 +496,35 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen> {
   bool _runScripts = false;
 
   FileReadResult? get _result => _file.valueOrNull;
-  bool get _loading => _file.isLoading;
+  /// Whether there is nothing to show yet.
+  ///
+  /// Not a bare `isLoading`: an agent editing this file invalidates the entry,
+  /// which reports loading while still holding the previous value. Drawing the
+  /// skeleton then would replace the text the reader is part-way through with
+  /// grey bars, and put it back a moment later. Same guard as the transcript's
+  /// (spec 52, `session_detail_screen.dart:460`).
+  bool get _loading => _file.isLoading && !_file.hasValue;
 
   (String, String) get _fileKey => (widget.hostId, widget.path);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Same reasoning as the listing's: see _FileBrowserScreenState._reread.
+    ref.invalidate(readFileProvider(_fileKey));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) ref.invalidate(readFileProvider(_fileKey));
+  }
 
   /// What a preview may read from, and what "show in folder" browses.
   String get _root => widget.rootPath ?? _directory;

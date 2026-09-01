@@ -35,6 +35,9 @@ type Shared struct {
 	// HITL renders helios's own prompts over session terminals. See
 	// docs/specs/36-helios-owned-hitl.md.
 	HITL *hitl.Controller
+	// Files reports when a path a client has read changes underneath it. See
+	// docs/specs/54-file-change-events.md.
+	Files *FileWatcher
 }
 
 // overlayNotifier is implemented by backends that can report the keystrokes an
@@ -107,6 +110,7 @@ func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) 
 		// its own provider when that provider has a cheap model.
 		Reporter: reporter.New("claude", db),
 	}
+	sh.Files = NewFileWatcher(sh.SSE)
 	// The manager owns notification state, so it announces its own writes. No
 	// caller has to remember to, and none can resolve one silently.
 	mgr.SetBroadcaster(func(eventType string, data interface{}) {

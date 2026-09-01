@@ -18,8 +18,23 @@ export const BETA = 's-beta'
 
 export interface StubDaemon {
   url: string
+  /** Pushes one SSE frame to every connected client, as the daemon would. */
+  emit(type: string, data: unknown): void
+  /** Replaces what `/api/file` answers for a path, and its mod time with it. */
+  setFile(path: string, content: string): void
+  /**
+   * How many times `/api/file` has been asked for a path.
+   *
+   * The way to wait for the app to have *finished* thinking about an event when
+   * the right outcome is that nothing changes. Asserting an absence on its own
+   * passes before the event has even crossed the socket.
+   */
+  reads(path: string): number
   close(): Promise<void>
 }
+
+/** What `/api/file` answers before a test has said otherwise. */
+const DEFAULT_CONTENT = 'package main\n'
 
 function session(id: string, title: string): Session {
   return {
@@ -206,7 +221,25 @@ function grepMatches(root: string, query: string): GrepMatch[] {
 export async function startDaemon(): Promise<StubDaemon> {
   // Held open so the process can be shut down without waiting for the event
   // stream, which by design never ends on its own.
+  // The module's own set, so a test can push an event without holding the
+  // handle — `emit` below writes to the same one.
   const streams = openStreams
+  // What each path currently holds. A test writes here and then emits, which is
+  // the order the real daemon works in: the sweep reads the disk, then speaks.
+  const contents = new Map<string, string>()
+  // Bumped on every write so a changed file reports a changed mod time, as a
+  // real one would. The app must not need it — it compares bytes — and that is
+  // worth having true here so the test cannot pass for the wrong reason.
+  let revision = 0
+  const readCount = new Map<string, number>()
+
+  const held = (target: string): FileAnswer => {
+    readCount.set(target, (readCount.get(target) ?? 0) + 1)
+    return {
+      content: contents.get(target) ?? DEFAULT_CONTENT,
+      modTime: `2026-01-01T00:00:${String(revision).padStart(2, '0')}Z`,
+    }
+  }
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -222,7 +255,7 @@ export async function startDaemon(): Promise<StubDaemon> {
     }
 
     res.setHeader('Content-Type', 'application/json')
-    res.end(JSON.stringify(answer(path, q)))
+    res.end(JSON.stringify(answer(path, q, held)))
   })
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -230,6 +263,15 @@ export async function startDaemon(): Promise<StubDaemon> {
 
   return {
     url: `http://127.0.0.1:${port}`,
+    emit: (type, data) => {
+      const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
+      for (const stream of streams) stream.write(frame)
+    },
+    reads: (target) => readCount.get(target) ?? 0,
+    setFile: (target, content) => {
+      contents.set(target, content)
+      revision += 1
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const stream of streams) stream.end()
@@ -245,7 +287,16 @@ export async function startDaemon(): Promise<StubDaemon> {
  * about — settings, providers, notifications — and an empty answer is enough
  * for all of it. A 404 would put an error where a panel should be.
  */
-function answer(path: string, q: (name: string) => string): unknown {
+interface FileAnswer {
+  content: string
+  modTime: string
+}
+
+function answer(
+  path: string,
+  q: (name: string) => string,
+  held: (target: string) => FileAnswer,
+): unknown {
   switch (path) {
     case '/api/health':
       return { ok: true }
@@ -279,8 +330,10 @@ function answer(path: string, q: (name: string) => string): unknown {
       return { root: q('path'), branch: 'main', base: '', scope: 'all', commits: [], has_more: false }
     case '/api/files':
       return { path: q('path'), entries: TREES[q('path')] ?? [] }
-    case '/api/file':
-      return { path: q('path'), size: 12, mod_time: '2026-01-01T00:00:00Z', content: 'package main\n' }
+    case '/api/file': {
+      const { content, modTime } = held(q('path'))
+      return { path: q('path'), size: content.length, mod_time: modTime, content }
+    }
     case '/api/files/grep':
       return { root: q('path'), matches: grepMatches(q('path'), q('q')), scanned: 2, truncated: false }
     case '/api/files/search':

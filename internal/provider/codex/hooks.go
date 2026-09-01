@@ -324,6 +324,12 @@ func handleToolPost(ctx *provider.HookContext, w http.ResponseWriter, r *http.Re
 	key := sessionKey(ctx, r, in)
 	ctx.DB.UpdateSessionStatus(key, "active", "PostToolUse:"+in.ToolName)
 	updateTranscript(ctx, key, in)
+	// A tool ran, so the paths clients are watching may have moved. No path is
+	// passed: the daemon works out what changed from its own digests, which is
+	// why apply_patch needs no parsing here. See spec 54.
+	if ctx.FilesTouched != nil {
+		ctx.FilesTouched()
+	}
 	// The tool ran, so any permission card for it is settled whichever surface
 	// answered. Matched by tool name because PermissionRequest carries no
 	// tool_use_id to match on — measured, see spec 46.
