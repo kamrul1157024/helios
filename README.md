@@ -16,6 +16,10 @@
   <a href="https://github.com/kamrul1157024/v-claw"><img src="https://img.shields.io/badge/companion-v--claw-c9a227" alt="Companion app: v-claw" /></a>
 </p>
 
+```sh
+curl -fsSL https://raw.githubusercontent.com/kamrul1157024/helios/main/scripts/install.sh | sh
+```
+
 <p align="center">
   <img src="docs/assets/desktop/chat.png" width="700" alt="Helios desktop app — session transcript" />
 </p>
