@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
 import { keys } from '../keys.ts'
-import { scheduleLogQuery, scheduleRunsQuery, schedulesQuery } from '../queries.ts'
+import { providersQuery, scheduleLogQuery, scheduleRunsQuery, schedulesQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { sessionLabel, type CheckResult, type Schedule } from '../../shared/models.ts'
 import { schedulePrompt } from '../schedule-prompt.ts'
@@ -225,16 +225,25 @@ export function SchedulePanel(): JSX.Element {
  * call. The form is there for the times you want to be exact, and for when
  * there is no agent to ask.
  */
-function NewSchedule({ hostId }: { hostId: string }): JSX.Element {
+function NewSchedule({ hostId: initialHost }: { hostId: string }): JSX.Element {
+  const hosts = useStore((s) => s.hosts)
+  const [hostId, setHostId] = useState(initialHost)
   const [description, setDescription] = useState('')
   const [cwd, setCwd] = useState('')
+  const [provider, setProvider] = useState('')
   const [error, setError] = useState('')
+
+  // Which machine runs it is part of the schedule, not a detail to infer, and
+  // which agent writes it is the same choice the new-session dialog offers.
+  const { data: providers = [] } = useQuery(providersQuery(hostId))
+  const agent = provider || providers[0]?.id || 'claude'
 
   const describe = useMutation({
     mutationFn: async () => {
       const started = await api(hostId).createSession({
         prompt: schedulePrompt(description, cwd),
         cwd,
+        provider: agent,
       })
       // Straight to the session: what it does next is the answer, and it is
       // an ordinary transcript.
@@ -250,6 +259,25 @@ function NewSchedule({ hostId }: { hostId: string }): JSX.Element {
       </header>
 
       <div className="sched-detail-body sched-form">
+        {hosts.length > 1 && (
+          <label className="field">
+            <span>On</span>
+            <select
+              value={hostId}
+              onChange={(e) => {
+                setHostId(e.target.value)
+                setProvider('')
+              }}
+            >
+              {hosts.map((host) => (
+                <option key={host.id} value={host.id}>
+                  {host.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         <label className="field">
           <span>Describe it</span>
           <textarea
@@ -274,6 +302,17 @@ function NewSchedule({ hostId }: { hostId: string }): JSX.Element {
             onChange={(e) => setCwd(e.target.value)}
             placeholder="optional — a directory for the agent to work in"
           />
+        </label>
+
+        <label className="field">
+          <span>Agent</span>
+          <select value={agent} onChange={(e) => setProvider(e.target.value)}>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         {error && <p className="error">{error}</p>}
@@ -349,7 +388,8 @@ function ScheduleDetail({ hostId, scheduleId }: { hostId: string; scheduleId: st
         </button>
       </header>
 
-      <nav className="sched-tabs">
+      {/* The app's own tab strip, the one every session panel uses. */}
+      <nav className="panel-tabs focused">
         {(['overview', 'runs', 'log'] as DetailTab[]).map((name) => (
           <button key={name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>
             {name}
@@ -591,6 +631,7 @@ function ScheduleEditor({
   const [error, setError] = useState('')
   const [check, setCheck] = useState<CheckResult | null>(null)
   const [source, setSource] = useState<'command' | 'file'>(existing?.check_file ? 'file' : 'command')
+  const { data: providers = [] } = useQuery(providersQuery(hostId))
 
   // The list arrives after the first render, so a deep-linked edit fills in
   // once it does. Keyed on the id, never on the object, or every refetch would
@@ -781,6 +822,21 @@ function ScheduleEditor({
             onChange={(e) => set({ cwd: e.target.value })}
             placeholder="optional — leave empty for work that is not about a directory"
           />
+        </label>
+
+        <label className="field">
+          <span>Agent</span>
+          <select value={form.provider ?? ''} onChange={(e) => set({ provider: e.target.value })}>
+            {/* Empty is a real choice: it means whatever the daemon defaults
+                to, which is what a schedule written before a second provider
+                was installed should keep meaning. */}
+            <option value="">the default</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="field">

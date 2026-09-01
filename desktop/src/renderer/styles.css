@@ -5061,28 +5061,6 @@ hr {
   margin: 0 0 2px;
 }
 
-.sched-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 6px 12px 0;
-  border-bottom: 1px solid var(--outline-variant);
-}
-
-.sched-tabs button {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--on-surface-variant);
-  font-size: 12px;
-  padding: 6px 10px;
-  cursor: pointer;
-}
-
-.sched-tabs button.active {
-  color: var(--on-surface);
-  border-bottom-color: var(--primary);
-}
-
 .sched-detail-body {
   flex: 1;
   min-height: 0;

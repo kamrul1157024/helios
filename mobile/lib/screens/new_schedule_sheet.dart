@@ -9,6 +9,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 
+import '../models/provider.dart';
 import '../providers/daemon_providers.dart';
 import 'schedule_editor_screen.dart';
 
@@ -56,6 +57,8 @@ class _NewScheduleSheet extends rp.ConsumerStatefulWidget {
 class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
   final _description = TextEditingController();
   final _cwd = TextEditingController();
+  late String _hostId = widget.hostId;
+  String _provider = '';
   bool _starting = false;
 
   @override
@@ -67,12 +70,12 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
 
   Future<void> _askAnAgent() async {
     setState(() => _starting = true);
-    final service = ref.read(serviceProvider(widget.hostId));
+    final service = ref.read(serviceProvider(_hostId));
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
     final ok = await service?.createSession(
-          provider: 'claude',
+          provider: _provider.isEmpty ? 'claude' : _provider,
           cwd: _cwd.text.trim(),
           prompt: schedulePrompt(_description.text, _cwd.text.trim()),
         ) ??
@@ -93,6 +96,9 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hosts = ref.watch(hostManagerProvider).hosts;
+    final providers = ref.watch(readyProvidersProvider(_hostId)).valueOrNull ?? const <ProviderInfo>[];
+    final agent = _provider.isEmpty ? (providers.isEmpty ? '' : providers.first.id) : _provider;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -102,6 +108,23 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
         children: [
           Text('New schedule', style: theme.textTheme.titleMedium),
           const SizedBox(height: 12),
+          // Which machine runs it is part of the schedule, not a detail to
+          // infer, and which agent writes it is the same choice the new-session
+          // sheet offers.
+          if (hosts.length > 1)
+            DropdownButtonFormField<String>(
+              initialValue: _hostId,
+              decoration: const InputDecoration(labelText: 'On'),
+              items: [
+                for (final host in hosts)
+                  DropdownMenuItem(value: host.id, child: Text(host.label)),
+              ],
+              onChanged: (v) => setState(() {
+                _hostId = v ?? _hostId;
+                _provider = '';
+              }),
+            ),
+          if (hosts.length > 1) const SizedBox(height: 8),
           TextField(
             controller: _description,
             maxLines: 4,
@@ -121,6 +144,16 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
             ),
           ),
           const SizedBox(height: 8),
+          if (providers.isNotEmpty)
+            DropdownButtonFormField<String>(
+              initialValue: agent.isEmpty ? null : agent,
+              decoration: const InputDecoration(labelText: 'Agent'),
+              items: [
+                for (final p in providers) DropdownMenuItem(value: p.id, child: Text(p.name)),
+              ],
+              onChanged: (v) => setState(() => _provider = v ?? ''),
+            ),
+          const SizedBox(height: 8),
           Text(
             'An agent reads this, works out the schedule and creates it with the CLI. '
             'You see what it made before it ever fires.',
@@ -136,7 +169,7 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
                   Navigator.of(context).pop();
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => ScheduleEditorScreen(hostId: widget.hostId),
+                      builder: (_) => ScheduleEditorScreen(hostId: _hostId),
                     ),
                   );
                 },

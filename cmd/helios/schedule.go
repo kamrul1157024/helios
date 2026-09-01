@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/daemon"
+	"github.com/kamrul1157024/helios/internal/tui"
 )
 
 // `helios schedule` — the surface every other one is built on.
@@ -22,6 +23,7 @@ import (
 
 const scheduleUsage = `Usage: helios schedule <command>
 
+  (no argument)              the schedules view, which watches itself
   list                       every schedule, with what it does and when
   add "<prompt>" [flags]     create one
   edit <name> [flags]        change one
@@ -103,8 +105,14 @@ type wireSchedule struct {
 }
 
 func handleSchedule(args []string) {
+	// No argument opens the view, as `helios devices` does. A list of things
+	// that change on their own is worth watching rather than re-running.
 	if len(args) == 0 {
-		fmt.Print(scheduleUsage)
+		cfg, _ := daemon.LoadConfig()
+		if err := tui.RunSchedules(cfg.Server.InternalPort); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
