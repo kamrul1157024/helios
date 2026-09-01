@@ -7,6 +7,7 @@ import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../screens/file_browser_screen.dart';
+import 'mermaid_diagram.dart';
 
 class MessageCard extends StatelessWidget {
   final Message message;
@@ -596,12 +597,16 @@ class _SyntaxHighlightBuilder extends MarkdownElementBuilder {
     if (rawLang.isEmpty && !code.contains('\n')) return null;
 
     final lang = rawLang.replaceFirst('language-', '');
-    return HighlightView(
+    final block = HighlightView(
       code.trimRight(),
       language: lang.isNotEmpty ? lang : 'plaintext',
       theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
       padding: const EdgeInsets.all(10),
       textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace', height: 1.5),
     );
+    if (lang == 'mermaid') {
+      return MermaidDiagram(source: code.trimRight(), isDark: isDark, fallback: block);
+    }
+    return block;
   }
 }

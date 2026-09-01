@@ -117,6 +117,17 @@ const ALIASES: Record<string, string> = {
   txt: 'plaintext',
 }
 
+/**
+ * Whether a fence holds a diagram rather than code.
+ *
+ * Marked in the markup and drawn afterwards, by `mermaid.ts`, over the DOM the
+ * HTML was injected into — mermaid measures text to lay a diagram out, so it
+ * needs a document and cannot run here.
+ */
+export function isMermaidFence(tag?: string | null): boolean {
+  return (tag ?? '').trim().toLowerCase().split(/[\s:,]/)[0] === 'mermaid'
+}
+
 /** Resolves a fence tag to a registered language, or null to leave it plain. */
 export function normalizeLanguage(tag?: string | null): string | null {
   if (!tag) return null
@@ -174,6 +185,12 @@ function parser(breaks: boolean): Marked {
     breaks,
     renderer: {
       code({ text, lang }): string {
+        // A diagram keeps the code block it would have had. Drawing replaces
+        // it; a fence that will not parse is left exactly as it stands, which
+        // is the fallback and costs nothing to arrange.
+        if (isMermaidFence(lang)) {
+          return `<pre class="code-block mermaid-fence"><code class="hljs">${escapeHtml(text)}</code></pre>`
+        }
         const name = normalizeLanguage(lang)
         return (
           `<pre class="code-block"><code class="hljs${name ? ` language-${name}` : ''}">` +
