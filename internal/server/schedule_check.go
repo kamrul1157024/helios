@@ -99,24 +99,34 @@ func RunCheck(sc *store.Schedule) CheckResult {
 // that will not run before anything is started.
 func checkCommand(ctx context.Context, sc *store.Schedule) (*exec.Cmd, error) {
 	if sc.CheckFile != "" {
-		path := expandHome(sc.CheckFile)
-		info, err := os.Stat(path)
-		if err != nil {
-			return nil, fmt.Errorf("check file %s: %w", sc.CheckFile, err)
-		}
-		if info.IsDir() {
-			return nil, fmt.Errorf("check file %s is a directory", sc.CheckFile)
-		}
-		if info.Mode()&0o111 == 0 {
-			return nil, fmt.Errorf("check file %s is not executable — chmod +x it", sc.CheckFile)
+		if err := CheckFileRunnable(sc.CheckFile); err != nil {
+			return nil, err
 		}
 		// Run directly, by its own shebang, with no shell in between.
-		return exec.CommandContext(ctx, path, sc.CheckArgs...), nil
+		return exec.CommandContext(ctx, expandHome(sc.CheckFile), sc.CheckArgs...), nil
 	}
 	if strings.TrimSpace(sc.CheckCmd) == "" {
 		return nil, fmt.Errorf("this monitor has no check")
 	}
 	return exec.CommandContext(ctx, "sh", "-c", sc.CheckCmd), nil
+}
+
+// CheckFileRunnable is the same question asked twice: when the schedule is
+// saved, so "chmod +x" is not discovered at 3am, and again when it runs,
+// because a file can be deleted or edited in between.
+func CheckFileRunnable(path string) error {
+	full := expandHome(path)
+	info, err := os.Stat(full)
+	if err != nil {
+		return fmt.Errorf("check file %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("check file %s is a directory", path)
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("check file %s is not executable — chmod +x it", path)
+	}
+	return nil
 }
 
 func expandHome(path string) string {

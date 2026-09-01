@@ -314,6 +314,27 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
+	// Schedules: a saved prompt with something that decides when it runs. The
+	// first sweep is immediate, because a ticker yields nothing for its first
+	// period and a daemon that has just come back is exactly when the missed
+	// fires are waiting. See docs/specs/55-scheduled-runs.md.
+	server.ScheduleLogDir = filepath.Join(logsDir, "schedules")
+	sched := server.NewScheduler(shared)
+	server.RegisterScheduleActions(sched)
+	go func() {
+		sched.Tick(time.Now())
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				sched.Tick(time.Now())
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Start both servers
 	errCh := make(chan error, 2)
 

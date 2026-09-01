@@ -309,13 +309,29 @@ func enrichSession(sess *store.Session) {
 }
 
 func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	// Sessions a schedule started are left out of the ordinary list. Six agents
+	// you started and forty the clock started is a sidebar that has stopped
+	// being a list of your work; ?filter=jobs and ?schedule_id= put them back.
+	//
+	// The default lives here rather than in the store on purpose: the reaper,
+	// the memory evictor and the MCP tools all call the unfiltered
+	// ListSessions, and hiding scheduled sessions from them would mean agents
+	// that are never reaped and never evicted.
+	jobs := "exclude"
+	scheduleID := r.URL.Query().Get("schedule_id")
+	if r.URL.Query().Get("filter") == "jobs" || scheduleID != "" {
+		jobs = "only"
+	}
+
 	sessions, err := s.shared.DB.SearchSessions(store.SessionQuery{
-		Query:    r.URL.Query().Get("q"),
-		Status:   r.URL.Query().Get("status"),
-		Filter:   r.URL.Query().Get("filter"),
-		CWD:      r.URL.Query().Get("cwd"),
-		Grouped:  r.URL.Query().Get("grouped") == "1",
-		GroupKey: r.URL.Query().Get("group_key"),
+		Query:      r.URL.Query().Get("q"),
+		Status:     r.URL.Query().Get("status"),
+		Filter:     r.URL.Query().Get("filter"),
+		CWD:        r.URL.Query().Get("cwd"),
+		Grouped:    r.URL.Query().Get("grouped") == "1",
+		GroupKey:   r.URL.Query().Get("group_key"),
+		Jobs:       jobs,
+		ScheduleID: scheduleID,
 	})
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
