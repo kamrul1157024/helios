@@ -35,7 +35,7 @@ class SessionDetailScreen extends rp.ConsumerStatefulWidget {
 }
 
 class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // Persisted across session switches (static = app-lifetime)
   static final _worktreeSelections =
       <String, String>{}; // sessionId → worktreePath
@@ -96,6 +96,12 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     });
     final sse = context.read<HostManager>().serviceFor(widget.session.hostId);
     _eventSub = sse?.events.listen((event) {
+      // Addressed to every viewer rather than to a session: the socket came
+      // back and there is no telling what it missed while it was down.
+      if (event.type == 'stream_reconnected') {
+        _catchUp();
+        return;
+      }
       if (event.data is Map) {
         final data = event.data as Map;
         // Refresh on session status changes and notification events for this session
@@ -115,12 +121,44 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         }
       }
     });
+    WidgetsBinding.instance.addObserver(this);
+    // Coming back to a session the app already holds: the provider outlives the
+    // screen, so build() does not run again and nothing would be read.
+    _catchUp();
     // Restore last sub-route after first frame
     _restoreSubRoute();
   }
 
+  /// Reads whatever arrived while nobody could see this screen.
+  ///
+  /// The event stream is best-effort — the daemon discards a broadcast to a
+  /// client whose buffer is full, and keeps nothing across a disconnect — so an
+  /// event is a hint that there is more to read, never the only cue. These are
+  /// the moments a reader arrives at the transcript, and re-reading at each of
+  /// them is what makes a lost event survivable.
+  ///
+  /// Only when something is already held: on a cold open the provider is still
+  /// building and will fetch the first page itself.
+  void _catchUp() {
+    if (!mounted) return;
+    if (!ref.read(transcriptProvider(_transcriptKey)).hasValue) return;
+    _loadNewMessages();
+  }
+
+  /// Unlock, the app switcher, a notification tap — one edge covers them all.
+  ///
+  /// This also fires after a transient `inactive` that never reached `paused`,
+  /// so it will sometimes read when nothing changed. A delta that finds nothing
+  /// is one small request against a cursor already held, and telling a real
+  /// return from a spurious one would cost more than the reads it saves.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _catchUp();
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _breathController.dispose();
     _promptController.dispose();
     _scrollController.dispose();
@@ -457,7 +495,11 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         final sse = hm.serviceFor(widget.session.hostId);
         final transcript = ref.watch(transcriptProvider(_transcriptKey));
         _transcript = transcript.valueOrNull ?? const Transcript();
-        _loading = transcript.isLoading;
+        // Only a first load, never a refresh. A refreshing AsyncValue still
+        // reports isLoading while carrying the messages it already had, and
+        // reading that alone put the skeleton back over a conversation the
+        // reader was in the middle of.
+        _loading = transcript.isLoading && !transcript.hasValue;
         final held = ref
             .watch(sessionsProvider(allSessionsKey(widget.session.hostId)))
             .valueOrNull;

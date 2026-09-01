@@ -133,19 +133,27 @@ func (s *Store) Delta(parse LineParser, path, epoch string, afterSeq, limit int)
 		return e.messages[i].Seq > afterSeq
 	})
 	fresh := e.messages[start:]
+
+	// The oldest of what is left, not the newest. A caller appends a delta to a
+	// list ending at afterSeq, so only a run starting there can be appended
+	// without leaving a hole — and once it has been handed the newest instead,
+	// there is no cursor it could name to go back for what was skipped.
+	moreAfter := false
 	if limit > 0 && len(fresh) > limit {
-		fresh = fresh[len(fresh)-limit:]
+		fresh = fresh[:limit]
+		moreAfter = true
 	}
 	if fresh == nil {
 		fresh = []Message{}
 	}
 
 	return &TranscriptResult{
-		Messages: fresh,
-		Total:    len(e.messages),
-		Returned: len(fresh),
-		HasMore:  start > 0,
-		Epoch:    e.epoch,
+		Messages:  fresh,
+		Total:     len(e.messages),
+		Returned:  len(fresh),
+		HasMore:   start > 0,
+		MoreAfter: moreAfter,
+		Epoch:     e.epoch,
 	}, nil
 }
 

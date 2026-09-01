@@ -151,6 +151,14 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
     case 'session_deleted':
       return [InvalidateTarget(CacheTarget.sessions, hostId)];
 
+    case 'stream_reconnected':
+      // The socket was down and the daemon keeps no replay buffer, so anything
+      // that changed in the gap was announced to nobody.
+      return [
+        InvalidateTarget(CacheTarget.sessions, hostId),
+        InvalidateTarget(CacheTarget.notifications, hostId),
+      ];
+
     case 'notification':
     case 'notification_resolved':
       // Sessions too: a permission request writes waiting_permission to the

@@ -58,6 +58,18 @@ void main() {
     }
   });
 
+  // The socket was down and the daemon keeps no replay buffer, so anything that
+  // changed in the gap was announced to nobody.
+  test('a reconnect refetches what the stream could have missed', () {
+    expect(
+      effectsFor(host, 'stream_reconnected', const {}),
+      const [
+        InvalidateTarget(CacheTarget.sessions, host),
+        InvalidateTarget(CacheTarget.notifications, host),
+      ],
+    );
+  });
+
   // A permission request writes waiting_permission to the session and announces
   // only the notification, so the list is the one way the UI hears of it.
   test('a notification takes out the sessions as well as the notifications', () {

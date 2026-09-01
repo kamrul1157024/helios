@@ -278,6 +278,10 @@ class DaemonAPIService extends ChangeNotifier {
       // so re-sync the tray against the daemon before trusting the stream
       // again. Resuming the app already does this; a network flap does not.
       _markStale('notification_resolved');
+      // Whatever was broadcast while the socket was down is gone: the daemon
+      // keeps no replay buffer. Anything holding data has to re-read, and
+      // _markStale cannot say so — it reaches the cache and no screen.
+      _handleEvent('stream_reconnected', const {});
       notifyListeners();
 
       String buffer = '';

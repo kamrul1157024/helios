@@ -68,8 +68,23 @@ class TranscriptNotifier
   bool _loadingOlder = false;
   bool get loadingOlder => _loadingOlder;
 
+  /// The pull in flight, and whether a trigger arrived while it was running.
+  ///
+  /// A trigger that lands mid-flight is exactly the case this provider gets
+  /// wrong when it is dropped, so it schedules one more pull instead. What is
+  /// promised is that every trigger is followed by a pull that *started* after
+  /// it, which a single trailing flag is enough to give.
+  Future<void>? _pulling;
+  bool _pullAgain = false;
+
+  /// Set when the notifier is torn down or rebuilt. A pull is several awaits
+  /// long, and assigning `state` after that has happened throws.
+  bool _gone = false;
+
   @override
   Future<Transcript> build((String, String) arg) async {
+    _gone = false;
+    ref.onDispose(() => _gone = true);
     final (hostId, sessionId) = arg;
     if (sessionId.isEmpty) return const Transcript();
     final service = ref.watch(serviceProvider(hostId));
@@ -91,24 +106,57 @@ class TranscriptNotifier
   ///
   /// A status event fires several times a turn and the answer is usually one
   /// message, so asking for the page again would rebuild the list and lose the
-  /// reader's place.
-  Future<void> pullNew() async {
-    final held = state.valueOrNull;
+  /// reader's place. Nothing here touches the loading state: the whole
+  /// transition is `AsyncData` to `AsyncData`, so no caller can put the
+  /// skeleton back over a conversation the reader is looking at.
+  Future<void> pullNew() {
+    if (_pulling != null) {
+      _pullAgain = true;
+      return _pulling!;
+    }
+    return _pulling = _pull().whenComplete(() {
+      _pulling = null;
+      if (_pullAgain && !_gone) {
+        _pullAgain = false;
+        pullNew();
+      }
+    });
+  }
+
+  Future<void> _pull() async {
     final service = _service;
     if (service == null) return;
-    if (held == null || held.messages.isEmpty || held.epoch.isEmpty) {
-      ref.invalidateSelf();
-      return;
-    }
 
-    final result = await service.fetchTranscript(
-      arg.$2,
-      limit: pageSize,
-      afterSeq: held.messages.last.seq,
-      epoch: held.epoch,
-    );
-    if (result == null) return;
-    state = AsyncData(appendDelta(held, result));
+    // The daemon answers a delta up to a limit, so catching up after the app
+    // was away is several requests. Each one advances the cursor to the last
+    // seq it was given, which is only contiguous because the daemon hands back
+    // the oldest of what is new rather than the newest.
+    while (!_gone) {
+      final held = state.valueOrNull;
+      if (held == null || held.messages.isEmpty || held.epoch.isEmpty) {
+        // Nothing to quote an epoch from. This reads the first page again,
+        // which is a refresh rather than a delta — harmless, because there is
+        // nothing on screen to lose.
+        ref.invalidateSelf();
+        return;
+      }
+
+      final result = await service.fetchTranscript(
+        arg.$2,
+        limit: pageSize,
+        afterSeq: held.messages.last.seq,
+        epoch: held.epoch,
+      );
+      if (result == null || _gone) return;
+
+      // Read again rather than reusing `held`: the await is long enough for
+      // loadOlder to have prepended a page underneath.
+      state = AsyncData(appendDelta(state.valueOrNull ?? held, result));
+
+      // An empty answer cannot advance the cursor, so asking again would ask
+      // the same question forever.
+      if (!result.moreAfter || result.messages.isEmpty) return;
+    }
   }
 
   /// Reads the page before the oldest message held.
