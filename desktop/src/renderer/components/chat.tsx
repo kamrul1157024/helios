@@ -104,7 +104,14 @@ export function ChatPanel({
    */
   useEffect(() => {
     if (!active || !loaded || !epoch) return
-    const newest = messagesRef.current[messagesRef.current.length - 1]?.seq ?? -1
+    // Read the mark from what the cache holds for *this* session, not from the
+    // ref. The ref is written in an effect that runs after this one and it
+    // outlives a change of session, so on a switch it still holds the previous
+    // conversation: ask from its last seq and the daemon replies with messages
+    // this session already has, which then print twice.
+    const heldNow = client.getQueryData<TranscriptPages>(keys.transcript(hostId, session.session_id))
+    const currently = transcriptMessages(heldNow)
+    const newest = currently[currently.length - 1]?.seq ?? -1
     let cancelled = false
     const load = async (): Promise<void> => {
       try {

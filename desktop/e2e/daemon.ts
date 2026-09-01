@@ -46,7 +46,34 @@ export const TRANSCRIPT_TEXT: Record<string, string> = {
   [ALPHA]: 'this is the alpha transcript',
   [BETA]: 'this is the beta transcript',
 }
-const TRANSCRIPTS = TRANSCRIPT_TEXT
+
+/**
+ * What each session has written, and a way for a test to add to it.
+ *
+ * Growing behind the reader's back is the case that matters: the panel has to
+ * come back to a session and pick up what arrived while it was away, without
+ * printing what it already had.
+ */
+const EXTRA: Record<string, string[]> = {}
+
+export function appendTranscript(sessionId: string, text: string): void {
+  ;(EXTRA[sessionId] ??= []).push(text)
+}
+
+export function resetTranscripts(): void {
+  for (const key of Object.keys(EXTRA)) delete EXTRA[key]
+}
+
+function transcriptFor(id: string): { seq: number; role: string; content: string; timestamp: string }[] {
+  const first = TRANSCRIPT_TEXT[id]
+  if (!first) return []
+  return [first, ...(EXTRA[id] ?? [])].map((content, seq) => ({
+    seq,
+    role: 'assistant',
+    content,
+    timestamp: '2026-01-01T00:00:00Z',
+  }))
+}
 
 /** One schedule, so the schedules list has something in it to switch to. */
 const SCHEDULES = [
@@ -195,17 +222,21 @@ function answer(path: string, q: (name: string) => string): unknown {
     default:
       // A transcript that says which session it belongs to, which is the whole
       // point of the sync test: a panel showing the wrong one is only visible
-      // if the two differ.
+      // if the two differ. It also answers the delta the panel asks for on the
+      // live edge — after_seq — because appending what is already held is how
+      // a transcript came to print itself twice.
       if (path.endsWith('/transcript')) {
         const id = path.slice('/api/sessions/'.length, -'/transcript'.length)
-        const text = TRANSCRIPTS[id]
-        if (!text) return { messages: [], total: 0, returned: 0, offset: 0, has_more: false }
+        const all = transcriptFor(id)
+        const after = q('after_seq')
+        const messages = after === '' ? all : all.filter((m) => m.seq > Number(after))
         return {
-          messages: [{ seq: 1, role: 'assistant', content: text, timestamp: '2026-01-01T00:00:00Z' }],
-          total: 1,
-          returned: 1,
+          messages,
+          total: all.length,
+          returned: messages.length,
           offset: 0,
           has_more: false,
+          epoch: 'e2e-epoch',
         }
       }
       return {}

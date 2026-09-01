@@ -119,7 +119,15 @@ export function transcriptMessages(
   return [...data.pages].reverse().flatMap((page) => page.messages)
 }
 
-/** Appends a delta to the newest page, which is where the live edge lands. */
+/**
+ * Appends a delta to the newest page, which is where the live edge lands.
+ *
+ * Anything already held is dropped rather than added a second time. The caller
+ * asks for "everything after seq N" and is trusted about N — but N comes from
+ * what the panel currently holds, and a panel that has just switched sessions
+ * has held two different things in the same second. Getting that wrong printed
+ * the transcript twice, which reads as the old conversation coming back.
+ */
 export function appendDelta<T extends { pages: TranscriptPage[] }>(
   held: T | undefined,
   delta: TranscriptPage,
@@ -127,9 +135,16 @@ export function appendDelta<T extends { pages: TranscriptPage[] }>(
   if (!held) return held
   const [head, ...rest] = held.pages
   if (!head) return held
+
+  const last = head.messages[head.messages.length - 1]?.seq ?? -1
+  const fresh = delta.messages.filter((message) => message.seq > last)
+  if (fresh.length === 0) {
+    // Still worth the total: the count moved even when the tail did not.
+    return { ...held, pages: [{ ...head, total: delta.total }, ...rest] }
+  }
   return {
     ...held,
-    pages: [{ ...head, messages: [...head.messages, ...delta.messages], total: delta.total }, ...rest],
+    pages: [{ ...head, messages: [...head.messages, ...fresh], total: delta.total }, ...rest],
   }
 }
 

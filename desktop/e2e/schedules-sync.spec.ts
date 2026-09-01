@@ -10,7 +10,7 @@
 // schedules and back, checking what is on screen each time.
 import type { Page } from '@playwright/test'
 
-import { ALPHA, BETA, TRANSCRIPT_TEXT } from './daemon.ts'
+import { ALPHA, BETA, TRANSCRIPT_TEXT, appendTranscript, resetTranscripts } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 const ALPHA_TITLE = 'Alpha'
@@ -35,7 +35,39 @@ async function switchSidebar(window: Page, mode: 'sessions' | 'schedules'): Prom
 }
 
 test.beforeEach(async ({ window }) => {
+  resetTranscripts()
   await expect(window.locator('.session-row', { hasText: ALPHA_TITLE })).toBeVisible()
+})
+
+// Leaving a session and coming back asks the daemon for everything after the
+// last message the panel holds. It used to take that mark from a ref written
+// one effect too late and shared across sessions, so on a switch it asked from
+// the *other* conversation's position and appended what this one already had.
+// On screen that reads as the old transcript coming back.
+test('coming back to a session does not print its transcript twice', async ({ window }) => {
+  await open(window, ALPHA_TITLE)
+  await showPanel(window, 'agent')
+  await expect(transcript(window)).toHaveCount(1)
+
+  await open(window, BETA_TITLE)
+  await expect(transcript(window)).toHaveCount(1)
+
+  await open(window, ALPHA_TITLE)
+  await expect(transcript(window)).toHaveCount(1)
+  await expect(transcript(window)).toContainText(TRANSCRIPT_TEXT[ALPHA] as string)
+})
+
+test('what was written while you were away is there when you come back', async ({ window }) => {
+  await open(window, ALPHA_TITLE)
+  await showPanel(window, 'agent')
+  await expect(transcript(window)).toHaveCount(1)
+
+  await open(window, BETA_TITLE)
+  appendTranscript(ALPHA, 'written while you were elsewhere')
+
+  await open(window, ALPHA_TITLE)
+  await expect(transcript(window)).toHaveCount(2)
+  await expect(transcript(window).nth(1)).toContainText('written while you were elsewhere')
 })
 
 test('the transcript belongs to the session the sidebar has selected', async ({ window }) => {
