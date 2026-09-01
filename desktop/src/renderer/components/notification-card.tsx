@@ -78,6 +78,22 @@ export function NotificationCard({
   )
 }
 
+// readableInput lays a tool's input out as one field per block, with any
+// multi-line value — a file's contents, a patch — printed as the lines it is
+// rather than as one escaped string.
+function readableInput(fields: Record<string, unknown> | null): string | null {
+  if (!fields) return null
+  const entries = Object.entries(fields)
+  if (entries.length === 0) return null
+  return entries
+    .map(([key, value]) =>
+      typeof value === 'string' && value.includes('\n')
+        ? `${key}:\n${value}`
+        : `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+    )
+    .join('\n\n')
+}
+
 function PermissionCard({
   payload,
   busy,
@@ -88,7 +104,14 @@ function PermissionCard({
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
   const toolInput = payload.tool_input
-  const original = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput ?? {}, null, 2)
+  // The field the tool actually runs, when there is one. A command goes through
+  // JSON.stringify as a single line of \n escapes, which is unreadable exactly
+  // when it matters most: a heredoc writing a file is the thing you most want
+  // to read before approving it.
+  const fields = toolInput && typeof toolInput === 'object' ? (toolInput as Record<string, unknown>) : null
+  const command = typeof fields?.command === 'string' ? fields.command : null
+  const original =
+    typeof toolInput === 'string' ? toolInput : (command ?? readableInput(fields) ?? '{}')
   const suggestions = Array.isArray(payload.permission_suggestions) ? payload.permission_suggestions : []
 
   const [editing, setEditing] = useState(false)
@@ -98,12 +121,18 @@ function PermissionCard({
   const approve = (): void => {
     const body: Record<string, unknown> = { action: 'approve' }
     if (editing && edited !== original) {
-      try {
-        body.updated_input = JSON.parse(edited)
-      } catch {
-        // Not JSON: the common edit is a shell command, and that is the field
-        // the tool reads. Matches the mobile client's fallback.
-        body.updated_input = { command: edited }
+      if (command !== null) {
+        // Editing the command edits that one field: the rest of the input —
+        // a description, a timeout — is not the user's to lose.
+        body.updated_input = { ...fields, command: edited }
+      } else {
+        try {
+          body.updated_input = JSON.parse(edited)
+        } catch {
+          // Not JSON: the common edit is a shell command, and that is the field
+          // the tool reads. Matches the mobile client's fallback.
+          body.updated_input = { command: edited }
+        }
       }
     }
     if (rule !== null) body.apply_permission = rule

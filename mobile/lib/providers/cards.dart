@@ -48,10 +48,7 @@ class _PermissionCardState extends State<PermissionCard> {
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Colors.orange.withValues(alpha: 0.3),
-          width: 1,
-        ),
+        side: BorderSide(color: Colors.orange.withValues(alpha: 0.3), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -72,19 +69,30 @@ class _PermissionCardState extends State<PermissionCard> {
                   },
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.orange.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.orange.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: const Text('permission', style: TextStyle(fontSize: 11, color: Colors.orange)),
+                  child: const Text(
+                    'permission',
+                    style: TextStyle(fontSize: 11, color: Colors.orange),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     n.displayTitle,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -98,10 +106,10 @@ class _PermissionCardState extends State<PermissionCard> {
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(8),
               ),
-              constraints: const BoxConstraints(maxHeight: 100),
+              constraints: const BoxConstraints(maxHeight: 160),
               child: SingleChildScrollView(
                 child: Text(
-                  n.displayDetail,
+                  _displayInput(),
                   style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 12,
@@ -140,17 +148,22 @@ class _PermissionCardState extends State<PermissionCard> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Quick rules', style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    )),
+                    Text(
+                      'Quick rules',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     ...List.generate(suggestions.length, (i) {
                       final sug = suggestions[i];
@@ -167,13 +180,18 @@ class _PermissionCardState extends State<PermissionCard> {
                           child: Row(
                             children: [
                               Icon(
-                                selected ? Icons.check_box : Icons.check_box_outline_blank,
+                                selected
+                                    ? Icons.check_box
+                                    : Icons.check_box_outline_blank,
                                 size: 18,
                                 color: Theme.of(context).colorScheme.primary,
                               ),
                               const SizedBox(width: 6),
                               Expanded(
-                                child: Text(label, style: const TextStyle(fontSize: 12)),
+                                child: Text(
+                                  label,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ),
                             ],
                           ),
@@ -196,7 +214,9 @@ class _PermissionCardState extends State<PermissionCard> {
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                 decoration: InputDecoration(
                   labelText: 'Edit command',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   isDense: true,
                 ),
               ),
@@ -213,7 +233,8 @@ class _PermissionCardState extends State<PermissionCard> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: FilledButton(
-                    onPressed: () => widget.sse.sendAction(n.id, {'action': 'deny'}),
+                    onPressed: () =>
+                        widget.sse.sendAction(n.id, {'action': 'deny'}),
                     style: FilledButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.error,
                       foregroundColor: Theme.of(context).colorScheme.onError,
@@ -263,6 +284,32 @@ class _PermissionCardState extends State<PermissionCard> {
     }
 
     widget.sse.sendAction(n.id, body);
+  }
+
+  /// What the tool will actually do, laid out to be read.
+  ///
+  /// The notification's own detail is the command cut to 100 characters, which
+  /// hides the end of the very thing being approved. Encoding the input as JSON
+  /// instead is worse: a heredoc becomes one line of \n escapes. So the command
+  /// is shown as it is, and any other input as one field per block with its
+  /// multi-line values printed as the lines they are.
+  String _displayInput() {
+    final ti = n.payload?['tool_input'];
+    if (ti is String && ti.isNotEmpty) return ti;
+    if (ti is Map) {
+      final cmd = ti['command'];
+      if (cmd is String) return cmd;
+      if (ti.isNotEmpty) {
+        return ti.entries
+            .map((e) {
+              final v = e.value;
+              if (v is String && v.contains('\n')) return '${e.key}:\n$v';
+              return '${e.key}: ${v is String ? v : jsonEncode(v)}';
+            })
+            .join('\n\n');
+      }
+    }
+    return n.displayDetail;
   }
 
   String _getEditableInput() {
@@ -349,7 +396,9 @@ class _QuestionCardState extends State<QuestionCard> {
       if (text.isEmpty) continue;
       if (questions.length == 1) return text;
       final q = questions[i];
-      final header = (q is Map ? (q['header'] ?? q['question']) : null)?.toString() ?? 'Question ${i + 1}';
+      final header =
+          (q is Map ? (q['header'] ?? q['question']) : null)?.toString() ??
+          'Question ${i + 1}';
       lines.add('$header: $text');
     }
     return lines.join('\n');
@@ -360,11 +409,16 @@ class _QuestionCardState extends State<QuestionCard> {
     final selections = <Map<String, int>>[];
     for (final entry in _selections.entries) {
       for (final optionIndex in entry.value.toList()..sort()) {
-        selections.add({'question_index': entry.key, 'option_index': optionIndex});
+        selections.add({
+          'question_index': entry.key,
+          'option_index': optionIndex,
+        });
       }
     }
-    selections.sort((a, b) =>
-        (a['question_index'] as int).compareTo(b['question_index'] as int));
+    selections.sort(
+      (a, b) =>
+          (a['question_index'] as int).compareTo(b['question_index'] as int),
+    );
 
     final error = await widget.sse.sendActionError(n.id, {
       'action': 'answer',
@@ -374,9 +428,9 @@ class _QuestionCardState extends State<QuestionCard> {
     if (!mounted) return;
     setState(() => _submitting = false);
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't answer: $error")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't answer: $error")));
     }
   }
 
@@ -388,10 +442,7 @@ class _QuestionCardState extends State<QuestionCard> {
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Colors.blue.withValues(alpha: 0.3),
-          width: 1,
-        ),
+        side: BorderSide(color: Colors.blue.withValues(alpha: 0.3), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -401,19 +452,30 @@ class _QuestionCardState extends State<QuestionCard> {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.blue.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.blue.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: const Text('question', style: TextStyle(fontSize: 11, color: Colors.blue)),
+                  child: const Text(
+                    'question',
+                    style: TextStyle(fontSize: 11, color: Colors.blue),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     n.displayTitle,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -435,7 +497,13 @@ class _QuestionCardState extends State<QuestionCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (header != null) ...[
-                      Text(header, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                      Text(
+                        header,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
                       const SizedBox(height: 2),
                     ],
                     Text(question, style: const TextStyle(fontSize: 13)),
@@ -443,16 +511,21 @@ class _QuestionCardState extends State<QuestionCard> {
                     ...options.asMap().entries.map((oe) {
                       final optionIndex = oe.key;
                       final opt = oe.value;
-                      final label = (opt is Map ? opt['label'] : opt)?.toString() ?? '';
-                      final description = opt is Map ? opt['description']?.toString() : null;
+                      final label =
+                          (opt is Map ? opt['label'] : opt)?.toString() ?? '';
+                      final description = opt is Map
+                          ? opt['description']?.toString()
+                          : null;
                       final isSelected =
-                          _selections[questionIndex]?.contains(optionIndex) ?? false;
+                          _selections[questionIndex]?.contains(optionIndex) ??
+                          false;
                       return InkWell(
                         onTap: _submitting
                             ? null
                             : () {
                                 setState(() {
-                                  final held = _selections[questionIndex] ?? <int>{};
+                                  final held =
+                                      _selections[questionIndex] ?? <int>{};
                                   if (!multiSelect) {
                                     _selections[questionIndex] = {optionIndex};
                                   } else if (!held.remove(optionIndex)) {
@@ -470,10 +543,12 @@ class _QuestionCardState extends State<QuestionCard> {
                             children: [
                               Icon(
                                 multiSelect
-                                    ? (isSelected ? Icons.check_box : Icons.check_box_outline_blank)
+                                    ? (isSelected
+                                          ? Icons.check_box
+                                          : Icons.check_box_outline_blank)
                                     : (isSelected
-                                        ? Icons.radio_button_checked
-                                        : Icons.radio_button_unchecked),
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_unchecked),
                                 size: 20,
                                 color: Theme.of(context).colorScheme.primary,
                               ),
@@ -482,13 +557,19 @@ class _QuestionCardState extends State<QuestionCard> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(label, style: const TextStyle(fontSize: 13)),
-                                    if (description != null && description.isNotEmpty)
+                                    Text(
+                                      label,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                    if (description != null &&
+                                        description.isNotEmpty)
                                       Text(
                                         description,
                                         style: TextStyle(
                                           fontSize: 11.5,
-                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
                                         ),
                                       ),
                                   ],
@@ -542,11 +623,17 @@ class _QuestionCardState extends State<QuestionCard> {
               child: FilledButton(
                 // Every question, not just one: a gap comes back to Claude as
                 // a question nobody answered.
-                onPressed: _submitting ||
-                        !List.generate(questions.length, _answered).every((ok) => ok)
+                onPressed:
+                    _submitting ||
+                        !List.generate(
+                          questions.length,
+                          _answered,
+                        ).every((ok) => ok)
                     ? null
                     : () => _submit(questions),
-                child: Text(questions.length > 1 ? 'Submit Answers' : 'Submit Answer'),
+                child: Text(
+                  questions.length > 1 ? 'Submit Answers' : 'Submit Answer',
+                ),
               ),
             ),
           ],
@@ -575,10 +662,7 @@ class ElicitationFormCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Colors.purple.withValues(alpha: 0.3),
-          width: 1,
-        ),
+        side: BorderSide(color: Colors.purple.withValues(alpha: 0.3), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -588,19 +672,30 @@ class ElicitationFormCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.purple.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.purple.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: const Text('input', style: TextStyle(fontSize: 11, color: Colors.purple)),
+                  child: const Text(
+                    'input',
+                    style: TextStyle(fontSize: 11, color: Colors.purple),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     n.mcpServerName ?? 'MCP Server',
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -678,11 +773,7 @@ class TrustCard extends StatelessWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const TrustCard({
-    super.key,
-    required this.notification,
-    required this.sse,
-  });
+  const TrustCard({super.key, required this.notification, required this.sse});
 
   @override
   Widget build(BuildContext context) {
@@ -693,10 +784,7 @@ class TrustCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Colors.teal.withValues(alpha: 0.3),
-          width: 1,
-        ),
+        side: BorderSide(color: Colors.teal.withValues(alpha: 0.3), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -706,13 +794,21 @@ class TrustCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.teal.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.teal.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.teal.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: const Text('trust', style: TextStyle(fontSize: 11, color: Colors.teal)),
+                  child: const Text(
+                    'trust',
+                    style: TextStyle(fontSize: 11, color: Colors.teal),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 const Expanded(
@@ -807,10 +903,7 @@ class ElicitationUrlCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: Colors.purple.withValues(alpha: 0.3),
-          width: 1,
-        ),
+        side: BorderSide(color: Colors.purple.withValues(alpha: 0.3), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -820,19 +913,30 @@ class ElicitationUrlCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.purple.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.purple.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: const Text('auth', style: TextStyle(fontSize: 11, color: Colors.purple)),
+                  child: const Text(
+                    'auth',
+                    style: TextStyle(fontSize: 11, color: Colors.purple),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     n.mcpServerName ?? 'MCP Server',
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -898,7 +1002,8 @@ class ElicitationUrlCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: FilledButton(
-                    onPressed: () => sse.sendAction(n.id, {'action': 'decline'}),
+                    onPressed: () =>
+                        sse.sendAction(n.id, {'action': 'decline'}),
                     style: FilledButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.error,
                       foregroundColor: Theme.of(context).colorScheme.onError,
@@ -923,11 +1028,7 @@ class ErrorCard extends StatefulWidget {
   final HeliosNotification notification;
   final DaemonAPIService sse;
 
-  const ErrorCard({
-    super.key,
-    required this.notification,
-    required this.sse,
-  });
+  const ErrorCard({super.key, required this.notification, required this.sse});
 
   @override
   State<ErrorCard> createState() => _ErrorCardState();
@@ -971,7 +1072,9 @@ class _ErrorCardState extends State<ErrorCard> {
     final reset = widget.notification.rateLimitResetAt;
     if (reset == null) return '';
     final left = reset.difference(DateTime.now().toUtc());
-    if (left.inHours >= 1) return 'Retry in ${left.inHours}h ${left.inMinutes % 60}m';
+    if (left.inHours >= 1) {
+      return 'Retry in ${left.inHours}h ${left.inMinutes % 60}m';
+    }
     if (left.inMinutes >= 1) return 'Retry in ${left.inMinutes}m';
     return 'Retry in ${left.inSeconds}s';
   }
@@ -1013,7 +1116,10 @@ class _ErrorCardState extends State<ErrorCard> {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: accent.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
@@ -1028,7 +1134,10 @@ class _ErrorCardState extends State<ErrorCard> {
                 Expanded(
                   child: Text(
                     n.displayTitle,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -1043,7 +1152,9 @@ class _ErrorCardState extends State<ErrorCard> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                n.errorText?.isNotEmpty == true ? n.errorText! : n.displayDetail,
+                n.errorText?.isNotEmpty == true
+                    ? n.errorText!
+                    : n.displayDetail,
                 style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 12,
@@ -1078,8 +1189,9 @@ class _ErrorCardState extends State<ErrorCard> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed:
-                        _sending ? null : () => _send({'action': 'dismiss'}),
+                    onPressed: _sending
+                        ? null
+                        : () => _send({'action': 'dismiss'}),
                     child: const Text('Dismiss'),
                   ),
                 ),
