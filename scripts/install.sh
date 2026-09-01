@@ -259,11 +259,26 @@ fi
 
 # ─── A way in from your phone ───────────────────────────────────────────────
 
-if ! have tailscale && ! have cloudflared; then
+# Any one of these is enough, so the note is only worth printing when there is
+# none. The list mirrors the TUI's own hints (internal/tui/start.go).
+TUNNEL=''
+for t in tailscale cloudflared ngrok zrok lt loclx; do
+  have "$t" && TUNNEL="$t" && break
+done
+
+if [ -n "$TUNNEL" ]; then
+  step "Found $TUNNEL — helios start will offer it as your tunnel"
+else
   step "One thing left: a tunnel, so your phone can reach this daemon"
-  note "Tailscale is the recommendation — https://tailscale.com/download"
-  note "Or cloudflared for a public URL with no account — https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
-  note "helios start will check again once one is installed."
+  note "Tailscale is the recommendation. It keeps the daemon inside your tailnet and"
+  note "the hostname never changes:"
+  note "  tailscale     https://tailscale.com/download          (brew install tailscale)"
+  note "Or a public URL, if you would rather not run a VPN on the phone:"
+  note "  cloudflared   https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+  note "  ngrok         https://ngrok.com/download              (brew install ngrok)"
+  note "  zrok          https://zrok.io                         (brew install openziti/tap/zrok)"
+  note "  localtunnel   npm install -g localtunnel"
+  note "helios start checks again, and there are nine providers in the picker."
 fi
 
 # ─── Staying awake ──────────────────────────────────────────────────────────
