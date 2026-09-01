@@ -10,6 +10,17 @@ func TestDecodeKeys(t *testing.T) {
 	}{
 		{"down arrow", "\x1b[B", []event{{kind: keyNext}}},
 		{"up arrow", "\x1b[A", []event{{kind: keyPrev}}},
+		// SS3 cursor keys: what a full-screen app in application cursor keys
+		// mode (DECCKM) makes the terminal send. Before this was handled they
+		// decoded as a cancel, so arrows dismissed the prompt instead of moving.
+		{"ss3 down arrow", "\x1bOB", []event{{kind: keyNext}}},
+		{"ss3 up arrow", "\x1bOA", []event{{kind: keyPrev}}},
+		{"ss3 coalesced", "\x1bOB\x1bOB\r", []event{
+			{kind: keyNext}, {kind: keyNext}, {kind: keyConfirm},
+		}},
+		// An SS3 function key (F1 is "ESC O P") is not a cursor key: skip it
+		// whole rather than reading 'P' as anything.
+		{"ss3 function key is skipped", "\x1bOP", nil},
 		{"vi keys", "jk", []event{{kind: keyNext}, {kind: keyPrev}}},
 		{"enter", "\r", []event{{kind: keyConfirm}}},
 		{"newline", "\n", []event{{kind: keyConfirm}}},
