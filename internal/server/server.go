@@ -157,6 +157,14 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("PUT /internal/settings", s.handleInternalUpdateSettings)
 	mux.Handle("GET /internal/events", shared.SSE)
 	mux.HandleFunc("GET /internal/logs", s.handleInternalLogs)
+	// Schedules answer on both muxes: the apps reach them over the public API
+	// and the CLI over this one, and a schedule is the same thing to both.
+	mux.HandleFunc("/internal/schedules", func(w http.ResponseWriter, r *http.Request) {
+		shared.scheduleRoute(w, r, "/internal/schedules")
+	})
+	mux.HandleFunc("/internal/schedules/", func(w http.ResponseWriter, r *http.Request) {
+		shared.scheduleRoute(w, r, "/internal/schedules")
+	})
 
 	// MCP lives here rather than on the public server because this listener is
 	// already what it needs to be: loopback only, no auth. Agents reach it with
@@ -197,6 +205,12 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	// Registered before the /api/sessions/ catch-all below, which would take
 	// "order" for a session id.
 	protectedMux.HandleFunc("POST /api/sessions/order", s.handleSessionOrder)
+	protectedMux.HandleFunc("/api/schedules", func(w http.ResponseWriter, r *http.Request) {
+		s.shared.scheduleRoute(w, r, "/api/schedules")
+	})
+	protectedMux.HandleFunc("/api/schedules/", func(w http.ResponseWriter, r *http.Request) {
+		s.shared.scheduleRoute(w, r, "/api/schedules")
+	})
 	protectedMux.HandleFunc("GET /api/groups", s.handleListGroups)
 	protectedMux.HandleFunc("POST /api/groups", s.handleCreateGroup)
 	// Before the /api/groups/ catch-all, which would take "order" for a key.

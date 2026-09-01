@@ -14,6 +14,8 @@ import '../services/notification_service.dart';
 import '../services/update_service.dart';
 import '../providers/card_registry.dart' as registry;
 import 'setup_screen.dart';
+import 'new_schedule_sheet.dart';
+import 'schedules_screen.dart';
 import 'sessions_screen.dart';
 import 'new_session_sheet.dart';
 import 'dashboard_screen.dart';
@@ -535,6 +537,7 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
                   index: _currentIndex,
                   children: const [
                     SessionsScreen(),
+                    SchedulesScreen(),
                     DashboardScreen(),
                   ],
                 ),
@@ -542,13 +545,25 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
               ...offlineHosts.map((h) => _buildOfflineHostBanner(h)),
             ],
           ),
-          floatingActionButton: _currentIndex == 0
-              ? FloatingActionButton(
-                  onPressed: _showNewSessionSheet,
-                  tooltip: 'New Session',
-                  child: const Icon(Icons.add),
-                )
-              : null,
+          floatingActionButton: switch (_currentIndex) {
+            0 => FloatingActionButton(
+                onPressed: _showNewSessionSheet,
+                tooltip: 'New Session',
+                child: const Icon(Icons.add),
+              ),
+            1 => FloatingActionButton(
+                onPressed: () {
+                  final hosts = ref.read(hostManagerProvider).hosts;
+                  if (hosts.isEmpty) return;
+                  // The fork: describe it and let an agent build it, or fill in
+                  // the form. Most people want the first.
+                  showNewScheduleSheet(context, hosts.first.id);
+                },
+                tooltip: 'New schedule',
+                child: const Icon(Icons.add_alarm),
+              ),
+            _ => null,
+          },
           bottomNavigationBar: NavigationBar(
             selectedIndex: _currentIndex,
             onDestinationSelected: (index) => setState(() => _currentIndex = index),
@@ -565,6 +580,11 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
                   child: const Icon(Icons.terminal),
                 ),
                 label: 'Sessions',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.schedule_outlined),
+                selectedIcon: Icon(Icons.schedule),
+                label: 'Schedules',
               ),
               NavigationDestination(
                 icon: Badge(

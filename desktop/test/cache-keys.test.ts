@@ -115,7 +115,10 @@ test('keys carrying an argument object differ when the argument does', () => {
 
 // ─── The SSE to invalidation map ────────────────────────────────────────────
 
-test('session_status patches the row and invalidates the list', () => {
+// Every list that holds the session hears it, not only the ordinary one: the
+// automated section is a second list of the same records, and the detail panel
+// falls back to a single-session read for a run the first list leaves out.
+test('session_status patches the row and invalidates every list holding it', () => {
   const effects = effectsFor(HOST, {
     type: 'session_status',
     data: { session_id: 's1', status: 'active' },
@@ -123,6 +126,8 @@ test('session_status patches the row and invalidates the list', () => {
   assert.deepEqual(effects, [
     { kind: 'patchSession', sessionId: 's1', patch: { status: 'active' } },
     { kind: 'invalidate', queryKey: keys.allSessions(HOST) },
+    { kind: 'invalidate', queryKey: keys.jobSessions(HOST) },
+    { kind: 'invalidate', queryKey: keys.session(HOST, 's1') },
   ])
 })
 
@@ -151,10 +156,11 @@ test('a session_status naming nothing changes nothing', () => {
   assert.deepEqual(effectsFor(HOST, { type: 'session_status', data: { session_id: 's1' } }), [])
 })
 
-test('session_updated and session_deleted invalidate the list', () => {
+test('session_updated and session_deleted invalidate both session lists', () => {
   for (const type of ['session_updated', 'session_deleted']) {
     assert.deepEqual(effectsFor(HOST, { type, data: {} }), [
       { kind: 'invalidate', queryKey: keys.allSessions(HOST) },
+      { kind: 'invalidate', queryKey: keys.jobSessions(HOST) },
     ])
   }
 })

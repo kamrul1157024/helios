@@ -57,6 +57,11 @@ type Session struct {
 	// asked for grouping, so one that does not group is served what it always
 	// was.
 	GroupPath []SessionGroup `json:"group_path,omitempty"`
+	// ScheduleID names the schedule whose fire created this session, and is
+	// empty for one a person started. Nothing in a session's behaviour reads
+	// it: it exists so the sidebar can leave the clock's work out and the runs
+	// list can show only it.
+	ScheduleID string `json:"schedule_id,omitempty"`
 }
 
 // Label returns the session's display label: title, or truncated last user message, or "".
@@ -115,8 +120,8 @@ func (s *Store) UpsertSession(sess *Session) error {
 	}
 
 	_, err = s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, group_key)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1, ?)
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, group_key, schedule_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -128,6 +133,7 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   last_event_at = excluded.last_event_at`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
 		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now, inherited,
+		sess.ScheduleID,
 	)
 	return err
 }
@@ -221,12 +227,12 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 		        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-		        permission_mode, resume_id, created_at, ended_at
+		        permission_mode, resume_id, created_at, ended_at, COALESCE(schedule_id, '')
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 		&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
-		&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt)
+		&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt, &sess.ScheduleID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -251,6 +257,16 @@ type SessionQuery struct {
 	Grouped bool
 	// GroupKey narrows to sessions holding that group at any depth.
 	GroupKey string
+	// Jobs decides what to do with sessions a schedule started: "" leaves them
+	// in, "only" returns nothing else, "exclude" drops them.
+	//
+	// Neutral by default on purpose. The reaper, the memory evictor and the MCP
+	// tools all call ListSessions, and a store that hid scheduled sessions from
+	// them would mean forty agents that are never reaped and never evicted. The
+	// sidebar's opinion belongs to the handler that serves the sidebar.
+	Jobs string
+	// ScheduleID narrows to the runs of one schedule.
+	ScheduleID string
 }
 
 // ListSessions returns all sessions ordered by most recent activity.
@@ -288,6 +304,18 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 		where = append(where, `status = 'terminated'`)
 	}
 
+	// Sessions a schedule started, or everything but them.
+	switch sq.Jobs {
+	case "only":
+		where = append(where, `COALESCE(schedule_id, '') != ''`)
+	case "exclude":
+		where = append(where, `COALESCE(schedule_id, '') = ''`)
+	}
+	if sq.ScheduleID != "" {
+		where = append(where, `schedule_id = ?`)
+		args = append(args, sq.ScheduleID)
+	}
+
 	// CWD filter
 	if sq.CWD != "" {
 		where = append(where, `cwd = ?`)
@@ -309,7 +337,8 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-	        permission_mode, resume_id, created_at, ended_at, group_key
+	        permission_mode, resume_id, created_at, ended_at, group_key,
+	        COALESCE(schedule_id, '')
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -334,7 +363,7 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
 			&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt,
-			&held); err != nil {
+			&held, &sess.ScheduleID); err != nil {
 			return nil, err
 		}
 		result = append(result, sess)

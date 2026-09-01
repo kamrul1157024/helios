@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
@@ -309,13 +309,29 @@ func enrichSession(sess *store.Session) {
 }
 
 func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	// Sessions a schedule started are left out of the ordinary list. Six agents
+	// you started and forty the clock started is a sidebar that has stopped
+	// being a list of your work; ?filter=jobs and ?schedule_id= put them back.
+	//
+	// The default lives here rather than in the store on purpose: the reaper,
+	// the memory evictor and the MCP tools all call the unfiltered
+	// ListSessions, and hiding scheduled sessions from them would mean agents
+	// that are never reaped and never evicted.
+	jobs := "exclude"
+	scheduleID := r.URL.Query().Get("schedule_id")
+	if r.URL.Query().Get("filter") == "jobs" || scheduleID != "" {
+		jobs = "only"
+	}
+
 	sessions, err := s.shared.DB.SearchSessions(store.SessionQuery{
-		Query:    r.URL.Query().Get("q"),
-		Status:   r.URL.Query().Get("status"),
-		Filter:   r.URL.Query().Get("filter"),
-		CWD:      r.URL.Query().Get("cwd"),
-		Grouped:  r.URL.Query().Get("grouped") == "1",
-		GroupKey: r.URL.Query().Get("group_key"),
+		Query:      r.URL.Query().Get("q"),
+		Status:     r.URL.Query().Get("status"),
+		Filter:     r.URL.Query().Get("filter"),
+		CWD:        r.URL.Query().Get("cwd"),
+		Grouped:    r.URL.Query().Get("grouped") == "1",
+		GroupKey:   r.URL.Query().Get("group_key"),
+		Jobs:       jobs,
+		ScheduleID: scheduleID,
 	})
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
@@ -529,109 +545,21 @@ func (s *PublicServer) handleSessionSend(w http.ResponseWriter, r *http.Request)
 
 	log.Printf("session-send: session=%s message=%q", id, truncate(req.Message, 80))
 
-	session, err := s.shared.DB.GetSession(id)
-	if err != nil || session == nil {
-		log.Printf("session-send: session %s not found", id)
-		jsonError(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	live := s.shared.Backend.Alive(id)
-	log.Printf("session-send: session=%s status=%s live=%v", id, session.Status, live)
-
-	if session.Status == "active" || session.Status == "waiting_permission" {
-		// The provider owns how a prompt reaches a busy agent. A provider that
-		// does not implement Queuer has no way to hold one, so the session is
-		// reported busy rather than the prompt being dropped.
-		queuer := provider.QueuerFor(session.Source)
-		if queuer != nil && live {
-			resumeID := id
-			if session.ResumeID != nil && *session.ResumeID != "" {
-				resumeID = *session.ResumeID
-			}
-			if err := queuer.QueuePrompt(id, resumeID, req.Message); err != nil {
-				log.Printf("session-send: queue failed for %s: %v", id, err)
-				jsonError(w, fmt.Sprintf("failed to queue: %v", err), http.StatusInternalServerError)
-				return
-			}
-			s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-			log.Printf("session-send: queued prompt for session %s", id)
-			jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "queued": true})
-			return
-		}
+	result, err := s.shared.SendPrompt(id, req.Message)
+	switch {
+	case errors.Is(err, ErrSessionBusy), errors.Is(err, ErrSessionTerminated):
+		// The session's state, not a failure of the request: reported with the
+		// code the apps already switch on.
 		jsonResponse(w, http.StatusConflict, map[string]interface{}{
-			"success": false, "error": "session_busy",
+			"success": false, "error": err.Error(),
 		})
-		return
+	case err != nil:
+		jsonError(w, err.Error(), StatusOf(err))
+	case result.Queued:
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "queued": true})
+	default:
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "resumed": result.Resumed})
 	}
-
-	if session.Status == "terminated" {
-		jsonResponse(w, http.StatusConflict, map[string]interface{}{
-			"success": false, "error": "session_terminated",
-		})
-		return
-	}
-
-	// Idle with no terminal: wake the agent and type into it. Deliberately not
-	// `claude --resume -p`, which costs a fresh process per message and leaves
-	// nothing for the user to attach to afterwards.
-	resumed := false
-	if !live {
-		waker, ok := s.shared.Backend.(backend.Waker)
-		if !ok {
-			jsonError(w, "session has no terminal and this backend cannot resume", http.StatusConflict)
-			return
-		}
-
-		// Subscribed before the wake, never after: the agent can report in
-		// while Wake is still returning, and a signal fired with nobody
-		// listening is gone.
-		ready := s.shared.Signals.Await(SignalAgentReady, id)
-		defer ready.Release()
-
-		woken, err := waker.Wake(id, session.CWD)
-		if err != nil {
-			log.Printf("session-send: wake %s: %v", id, err)
-			jsonError(w, fmt.Sprintf("failed to resume: %v", err), http.StatusInternalServerError)
-			return
-		}
-		resumed = woken
-
-		// The wake only waits for the host's socket, which exists seconds
-		// before the agent is reading its terminal. Typing into that gap is
-		// how a prompt disappears with no trace.
-		if resumed && !ready.Wait(agentBootTimeout) {
-			log.Printf("session-send: session %s did not report ready within %s", id, agentBootTimeout)
-			jsonError(w, "the session is still starting up", http.StatusGatewayTimeout)
-			return
-		}
-	}
-
-	// Likewise subscribed before typing. The agent's own hook is the only
-	// proof the prompt landed; anything else is this end guessing.
-	ack := s.shared.Signals.Await(SignalPromptSubmitted, id)
-	defer ack.Release()
-
-	if err := s.shared.Backend.SendText(id, req.Message); err != nil {
-		log.Printf("session-send: send failed for %s: %v", id, err)
-		jsonError(w, fmt.Sprintf("failed to send: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if !ack.Wait(promptAckTimeout) {
-		// No retype: the prompt may yet be sitting in a dialog or a composer,
-		// and a second copy would be a second turn. The session stays idle,
-		// which is what it looks like from here, and the caller can retry.
-		log.Printf("session-send: session %s never acknowledged the prompt", id)
-		jsonError(w, "the session did not accept the message", http.StatusGatewayTimeout)
-		return
-	}
-
-	// Status is the prompt-submit hook's to write, and it has by now. Writing
-	// it here as well is how a lost prompt used to look like a working one.
-	s.shared.DB.UpdateSessionLastUserMessage(id, req.Message)
-	log.Printf("session-send: session %s accepted the prompt (resumed=%v)", id, resumed)
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "resumed": resumed})
 }
 
 // ── Shared session control (used by both InternalServer and PublicServer) ──
@@ -818,17 +746,7 @@ func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if err := sh.Backend.Kill(id); err != nil {
-		log.Printf("terminate: kill terminal for %s: %v", id, err)
-	}
-	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
-	sh.SSE.Broadcast(SSEEvent{
-		Type: "session_status",
-		Data: map[string]interface{}{
-			"session_id": id,
-			"status":     "terminated",
-		},
-	})
+	sh.EndSession(id)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true, "status": "terminated",
@@ -1119,7 +1037,17 @@ func truncate(s string, n int) string {
 // ==================== Internal Server API ====================
 
 func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.shared.DB.ListSessions()
+	// The same rule the apps get: what the clock started is its own list. The
+	// TUI's session view is a sidebar too.
+	jobs := "exclude"
+	scheduleID := r.URL.Query().Get("schedule_id")
+	if r.URL.Query().Get("filter") == "jobs" || scheduleID != "" {
+		jobs = "only"
+	}
+	sessions, err := s.shared.DB.SearchSessions(store.SessionQuery{
+		Jobs:       jobs,
+		ScheduleID: scheduleID,
+	})
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
 		return
@@ -1147,16 +1075,9 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		return
 	}
 
-	if req.Provider == "" {
-		req.Provider = "claude"
-	}
-
-	prov, known := provider.Get(req.Provider)
-	if !known {
-		jsonError(w, fmt.Sprintf("unknown provider: %s", req.Provider), http.StatusNotFound)
-		return
-	}
-
+	// The CLI's own directory is what an omitted cwd means here, because the
+	// caller is a person standing in one. The apps have no directory to stand
+	// in and default to home instead.
 	if req.CWD == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -1166,65 +1087,24 @@ func (s *InternalServer) handleInternalCreateSession(w http.ResponseWriter, r *h
 		req.CWD = cwd
 	}
 
-	resolved, err := resolveCWD(req.CWD)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	req.CWD = resolved
-
-	sessionID := uuid.New().String()
-	spec := provider.SessionSpec{
-		SessionID:       sessionID,
+	started, err := s.shared.StartSession(NewSession{
+		Provider:        req.Provider,
 		Prompt:          req.Prompt,
 		Model:           req.Model,
 		CWD:             req.CWD,
 		PermissionMode:  req.PermissionMode,
 		SkipPermissions: req.DangerouslySkipPermissions,
-	}
-	launch, err := prov.Launch(spec)
+	})
 	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to build launch: %v", err), http.StatusInternalServerError)
+		jsonError(w, err.Error(), StatusOf(err))
 		return
 	}
-
-	handle, err := startTerminal(s.shared.Backend, sessionID, req.CWD, launch)
-	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Register the session immediately so the API can report it before the
-	// agent's first hook arrives.
-	event := "Launch"
-	sess := &store.Session{
-		SessionID: sessionID,
-		Source:    req.Provider,
-		CWD:       req.CWD,
-		Status:    "starting",
-		LastEvent: &event,
-	}
-	if err := s.shared.DB.UpsertSession(sess); err != nil {
-		log.Printf("create-session: register session %s: %v", sessionID, err)
-	}
-	// Record the mode the agent launched under, now rather than on the first
-	// hook: a session evicted before it reports in would otherwise wake with an
-	// empty column, and an empty column means "whatever the CLI defaults to" —
-	// which is not what a Helios-launched session was started in.
-	if mode := launch.Mode; mode != "" {
-		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
-			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
-		}
-	}
-
-	// Watch for the workspace-trust dialog until the agent reports in.
-	s.shared.Pending.Add(sessionID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success":    true,
-		"session_id": sessionID,
-		"terminal":   handle,
-		"cwd":        req.CWD,
+		"session_id": started.SessionID,
+		"terminal":   started.Terminal,
+		"cwd":        started.CWD,
 	})
 }
 
@@ -1842,16 +1722,9 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Provider == "" {
-		req.Provider = "claude"
-	}
 
-	prov, known := provider.Get(req.Provider)
-	if !known {
-		jsonError(w, fmt.Sprintf("unknown provider: %s", req.Provider), http.StatusNotFound)
-		return
-	}
-
+	// An app has no working directory of its own, so an omitted cwd is home.
+	// The CLI, which does have one, uses that instead.
 	if req.CWD == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -1861,65 +1734,24 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		req.CWD = home
 	}
 
-	resolved, err := resolveCWD(req.CWD)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	req.CWD = resolved
-
-	sessionID := uuid.New().String()
-	spec := provider.SessionSpec{
-		SessionID:       sessionID,
+	started, err := s.shared.StartSession(NewSession{
+		Provider:        req.Provider,
 		Prompt:          req.Prompt,
 		Model:           req.Model,
 		CWD:             req.CWD,
 		PermissionMode:  req.PermissionMode,
 		SkipPermissions: req.DangerouslySkipPermissions,
-	}
-	launch, err := prov.Launch(spec)
+	})
 	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to build launch: %v", err), http.StatusInternalServerError)
+		jsonError(w, err.Error(), StatusOf(err))
 		return
 	}
-
-	handle, err := startTerminal(s.shared.Backend, sessionID, req.CWD, launch)
-	if err != nil {
-		jsonError(w, fmt.Sprintf("failed to start terminal: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Register the session immediately so the API can report it before the
-	// agent's first hook arrives.
-	event := "Launch"
-	sess := &store.Session{
-		SessionID: sessionID,
-		Source:    req.Provider,
-		CWD:       req.CWD,
-		Status:    "starting",
-		LastEvent: &event,
-	}
-	if err := s.shared.DB.UpsertSession(sess); err != nil {
-		log.Printf("create-session: register session %s: %v", sessionID, err)
-	}
-	// Record the mode the agent launched under, now rather than on the first
-	// hook: a session evicted before it reports in would otherwise wake with an
-	// empty column, and an empty column means "whatever the CLI defaults to" —
-	// which is not what a Helios-launched session was started in.
-	if mode := launch.Mode; mode != "" {
-		if err := s.shared.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
-			log.Printf("create-session: record permission mode for %s: %v", sessionID, err)
-		}
-	}
-
-	// Watch for the workspace-trust dialog until the agent reports in.
-	s.shared.Pending.Add(sessionID, req.CWD)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success":    true,
-		"session_id": sessionID,
-		"terminal":   handle,
-		"cwd":        req.CWD,
+		"session_id": started.SessionID,
+		"terminal":   started.Terminal,
+		"cwd":        started.CWD,
 	})
 }
 

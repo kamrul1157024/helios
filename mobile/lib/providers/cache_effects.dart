@@ -49,6 +49,10 @@ enum CacheTarget {
   /// of them together, and none of the events name a path.
   git,
   files,
+
+  /// A host's schedules. Host-wide: a fire changes one row and the list is
+  /// short, so there is nothing to gain from narrowing it.
+  schedules,
 }
 
 /// One thing to do to the cache.
@@ -177,6 +181,19 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
         InvalidateTarget(CacheTarget.notifications, hostId),
         InvalidateTarget(CacheTarget.files, hostId),
         InvalidateTarget(CacheTarget.git, hostId),
+      ];
+
+    case 'schedule_created':
+    case 'schedule_updated':
+    case 'schedule_deleted':
+      return [InvalidateTarget(CacheTarget.schedules, hostId)];
+
+    // A fire produces a session, so the runs list has a new row in it — and the
+    // schedule's own summary moved to "running".
+    case 'schedule_fired':
+      return [
+        InvalidateTarget(CacheTarget.schedules, hostId),
+        InvalidateTarget(CacheTarget.sessions, hostId),
       ];
 
     case 'notification':

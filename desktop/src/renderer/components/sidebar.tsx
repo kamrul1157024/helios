@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, bridge } from '../bridge.ts'
-import { useHostGroups, useHostNotifications, useHostSessions, useHostSortModes } from '../host-data.ts'
+import {
+  useHostGroups,
+  useHostJobSessions,
+  useHostNotifications,
+  useHostSessions,
+  useHostSortModes,
+} from '../host-data.ts'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -29,6 +35,7 @@ import {
   type GroupNode,
 } from './grouping.ts'
 import { GroupPicker } from './group-picker.tsx'
+import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
@@ -172,7 +179,13 @@ export function Sidebar({
   const hostStatus = useStore((s) => s.hostStatus)
   const { sessions, stats, pending: awaiting } = useHostSessions()
   const notifications = useHostNotifications()
+  const jobSessions = useHostJobSessions()
+  const autoRunsOpen = useStore((s) => s.autoRunsOpen)
   const selection = useStore((s) => s.selection)
+  const mode = useStore((s) => s.sidebarMode)
+  // Its own search, because the two lists hold different things and a query
+  // typed against one is meaningless against the other.
+  const scheduleQuery = useStore((s) => s.scheduleQuery)
   const query = useStore((s) => s.query)
   const sortMode = useHostSortModes()
   const groupMode = useStore((s) => s.grouping)
@@ -358,6 +371,76 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" ref={aside}>
+      {/* Above everything, because it decides what everything below is about:
+          the search, the arrange control and the + button all belong to one
+          list or the other. */}
+      <div className="sidebar-modes">
+        <button
+          className={mode === 'sessions' ? 'active' : ''}
+          onClick={() => store.setSidebarMode('sessions')}
+        >
+          sessions
+        </button>
+        <button
+          className={mode === 'schedules' ? 'active' : ''}
+          onClick={() => store.setSidebarMode('schedules')}
+        >
+          schedules
+        </button>
+      </div>
+
+      {mode === 'schedules' && (
+        <>
+          <header className="sidebar-head">
+            <div className="search-field">
+              <Search className="search-icon" />
+              <input
+                className="search"
+                placeholder="Search schedules"
+                value={scheduleQuery}
+                onChange={(event) => store.setScheduleQuery(event.target.value)}
+              />
+              {scheduleQuery !== '' && (
+                <button
+                  className="search-clear"
+                  aria-label="Clear the search"
+                  onClick={() => store.setScheduleQuery('')}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            <button
+              className="tool primary"
+              aria-label="New schedule"
+              title="New schedule"
+              onClick={() => store.newSchedule(selection?.hostId ?? hosts[0]?.id ?? '')}
+            >
+              <Plus />
+            </button>
+          </header>
+
+          {/* A host with nothing scheduled on it is not worth a heading and a
+              paragraph each — one machine's empty list is not news when
+              another has six. The empty state is shown once, by the last host,
+              only when nobody has any. */}
+          <div className="sidebar-list">
+            {hosts.map((host, index) => (
+              <ScheduleHost
+                key={host.id}
+                hostId={host.id}
+                name={host.name}
+                status={hostStatus[host.id]?.state ?? 'connecting'}
+                showName={hosts.length > 1}
+                query={scheduleQuery}
+                quiet={index < hosts.length - 1}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {mode === 'sessions' && (
       <header className="sidebar-head">
         <div className="search-field">
           <Search className="search-icon" />
@@ -409,8 +492,9 @@ export function Sidebar({
           <Plus />
         </button>
       </header>
+      )}
 
-      <div className="sidebar-list">
+      <div className="sidebar-list" hidden={mode === 'schedules'}>
         {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
@@ -421,6 +505,14 @@ export function Sidebar({
           // hides a level splitting nothing survives here, where it started.
           const showHost = hosts.length > 1
           const draggable = sortMode[host.id] === 'manual'
+          const needle = query.trim().toLowerCase()
+          const automated = (jobSessions[host.id] ?? []).filter((session) => {
+            if (!needle) return true
+            return `${session.title ?? ''} ${session.project} ${session.cwd} ${session.last_user_message ?? ''}`
+              .toLowerCase()
+              .includes(needle)
+          })
+          const autoOpen = autoRunsOpen[host.id] ?? false
 
           const renderRow = (session: Session, path: string): JSX.Element => (
             <SessionRow
@@ -735,6 +827,49 @@ export function Sidebar({
                   ? nodes.map((node) => renderNode(node))
                   : rows.map((row) => renderRow(row.session, '')))}
 
+              {/* What a schedule started, under what the user started. Folded
+                  until asked for, because a schedule that fires hourly would
+                  otherwise bury the sessions the sidebar is for. Opening a run
+                  from the schedules tab unfolds it, so the row it selects is on
+                  screen rather than behind a header. */}
+              {!isCollapsed && automated.length > 0 && (
+                <div className="auto-runs">
+                  <button
+                    className={autoOpen ? 'auto-head open' : 'auto-head'}
+                    aria-expanded={autoOpen}
+                    onClick={() => store.toggleAutoRuns(host.id)}
+                  >
+                    <Chevron className="chevron" open={autoOpen} />
+                    <span className="auto-name">Automated runs</span>
+                    <span className="host-count">{automated.length}</span>
+                  </button>
+                  {autoOpen &&
+                    automated.map((session) => (
+                      <SessionRow
+                        key={session.session_id}
+                        hostId={host.id}
+                        session={session}
+                        pending={0}
+                        selected={
+                          selection?.hostId === host.id &&
+                          selection.sessionId === session.session_id
+                        }
+                        // A run has no place in the host's hand-sorted order:
+                        // that order is one list, and this is not in it.
+                        draggable={false}
+                        dragging={false}
+                        accepts={false}
+                        onDragStart={() => {}}
+                        onDragEnd={() => {}}
+                        onContextMenu={(x, y) =>
+                          setMenu({ kind: 'session', hostId: host.id, session, x, y })
+                        }
+                        onDropBefore={() => {}}
+                      />
+                    ))}
+                </div>
+              )}
+
               {/* Skeletons rather than a spinner: the list is about to be a
                   list, and showing its shape keeps the sidebar from resizing
                   under the cursor when the rows arrive.
@@ -758,7 +893,7 @@ export function Sidebar({
                   </div>
                 ))}
 
-              {!isCollapsed && !loading && count === 0 && hidden === 0 && (
+              {!isCollapsed && !loading && count === 0 && hidden === 0 && automated.length === 0 && (
                 <p className="empty-note">{query ? 'Nothing matches' : 'No sessions'}</p>
               )}
             </section>

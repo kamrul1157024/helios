@@ -29,6 +29,17 @@ export const keys = {
    *  must not name a flag the sidebar may since have changed. */
   allSessions: (hostId: string) => ['host', hostId, 'sessions'] as const,
   groups: (hostId: string) => ['host', hostId, 'groups'] as const,
+  schedules: (hostId: string) => ['host', hostId, 'schedules'] as const,
+  /** Every session a schedule started, which the sessions list keeps folded. */
+  jobSessions: (hostId: string) => ['host', hostId, 'job-sessions'] as const,
+  /** One session on its own, for the ones the list does not carry. */
+  session: (hostId: string, sessionId: string) =>
+    ['host', hostId, 'session', sessionId] as const,
+  /** One schedule's runs: ordinary sessions, filtered by what started them. */
+  scheduleRuns: (hostId: string, scheduleId: string) =>
+    ['host', hostId, 'schedule-runs', scheduleId] as const,
+  scheduleLog: (hostId: string, scheduleId: string) =>
+    ['host', hostId, 'schedule-log', scheduleId] as const,
   notifications: (hostId: string) => ['host', hostId, 'notifications'] as const,
   settings: (hostId: string) => ['host', hostId, 'settings'] as const,
   directories: (hostId: string) => ['host', hostId, 'directories'] as const,
@@ -110,7 +121,15 @@ export function transcriptMessages(
   return [...data.pages].reverse().flatMap((page) => page.messages)
 }
 
-/** Appends a delta to the newest page, which is where the live edge lands. */
+/**
+ * Appends a delta to the newest page, which is where the live edge lands.
+ *
+ * Anything already held is dropped rather than added a second time. The caller
+ * asks for "everything after seq N" and is trusted about N — but N comes from
+ * what the panel currently holds, and a panel that has just switched sessions
+ * has held two different things in the same second. Getting that wrong printed
+ * the transcript twice, which reads as the old conversation coming back.
+ */
 export function appendDelta<T extends { pages: TranscriptPage[] }>(
   held: T | undefined,
   delta: TranscriptPage,
@@ -118,9 +137,16 @@ export function appendDelta<T extends { pages: TranscriptPage[] }>(
   if (!held) return held
   const [head, ...rest] = held.pages
   if (!head) return held
+
+  const last = head.messages[head.messages.length - 1]?.seq ?? -1
+  const fresh = delta.messages.filter((message) => message.seq > last)
+  if (fresh.length === 0) {
+    // Still worth the total: the count moved even when the tail did not.
+    return { ...held, pages: [{ ...head, total: delta.total }, ...rest] }
+  }
   return {
     ...held,
-    pages: [{ ...head, messages: [...head.messages, ...delta.messages], total: delta.total }, ...rest],
+    pages: [{ ...head, messages: [...head.messages, ...fresh], total: delta.total }, ...rest],
   }
 }
 
@@ -190,15 +216,27 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
       // The payload carries a status and little else, but the record behind it
       // moved with it — last_event_at above all, which is the only thing telling
       // the transcript there is more of it to read.
+      // Three lists hold a session and all three have to hear this: the
+      // ordinary one, the automated section — where every scheduled run lives,
+      // and where a run that has finished used to sit reading "Starting" for
+      // ever — and the single-session read the detail panel falls back to for a
+      // run the ordinary list does not carry.
       return [
         { kind: 'patchSession', sessionId, patch },
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.session(hostId, sessionId) },
       ]
     }
 
     case 'session_updated':
     case 'session_deleted':
-      return [{ kind: 'invalidate', queryKey: keys.allSessions(hostId) }]
+      // The automated section holds sessions too, and they change for the same
+      // reasons — a run going idle is a status the folded list still shows.
+      return [
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
+      ]
 
     case 'notification':
     case 'notification_resolved':
@@ -209,6 +247,20 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
       return [
         { kind: 'invalidate', queryKey: keys.notifications(hostId) },
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+      ]
+
+    case 'schedule_created':
+    case 'schedule_updated':
+    case 'schedule_deleted':
+      return [{ kind: 'invalidate', queryKey: keys.schedules(hostId) }]
+
+    // A fire produces a session, so the runs list has a new row in it — and the
+    // schedule's own summary moved to "running".
+    case 'schedule_fired':
+      return [
+        { kind: 'invalidate', queryKey: keys.schedules(hostId) },
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
       ]
 
     case 'session_evicted':

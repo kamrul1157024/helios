@@ -103,8 +103,26 @@ export function ChatPanel({
    * says there is more to read.
    */
   useEffect(() => {
-    if (!active || !loaded || !epoch) return
-    const newest = messagesRef.current[messagesRef.current.length - 1]?.seq ?? -1
+    if (!active || !loaded) return
+    // No epoch means what is held is the empty answer the daemon serves for a
+    // session whose agent has not written its log yet — which is every session
+    // for the first second of its life. There is no delta to ask from: the
+    // pages have to be asked again, and the session record moving is the sign
+    // that the file has since appeared. Without this the panel keeps that empty
+    // page for ever, because the transcript never goes stale and nothing
+    // invalidates it.
+    if (!epoch) {
+      void client.invalidateQueries({ queryKey: keys.transcript(hostId, session.session_id) })
+      return
+    }
+    // Read the mark from what the cache holds for *this* session, not from the
+    // ref. The ref is written in an effect that runs after this one and it
+    // outlives a change of session, so on a switch it still holds the previous
+    // conversation: ask from its last seq and the daemon replies with messages
+    // this session already has, which then print twice.
+    const heldNow = client.getQueryData<TranscriptPages>(keys.transcript(hostId, session.session_id))
+    const currently = transcriptMessages(heldNow)
+    const newest = currently[currently.length - 1]?.seq ?? -1
     let cancelled = false
     const load = async (): Promise<void> => {
       try {

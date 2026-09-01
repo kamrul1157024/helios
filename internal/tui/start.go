@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/skill"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -1083,6 +1085,13 @@ func installHooksCmd() tea.Cmd {
 		if err := cmd.Run(); err != nil {
 			return hooksInstallDone{err: err}
 		}
+		// The skill rides along with the hooks: both are "teach the agent about
+		// Helios", and an agent asked to write a schedule needs the manual for
+		// the CLI it will be calling. Failing to write it is not worth failing
+		// the setup over — hooks are what a session cannot work without.
+		if _, err := skill.Install(); err != nil {
+			log.Printf("setup: install helios skill: %v", err)
+		}
 		return hooksInstallDone{}
 	}
 }
@@ -1281,6 +1290,9 @@ func installHooksQuietly() {
 	}
 	cmd := exec.Command(exe, "hooks", "install")
 	cmd.Run()
+	if _, err := skill.Install(); err != nil {
+		log.Printf("setup: install helios skill: %v", err)
+	}
 }
 
 // providerUnavailable reports why a provider cannot be started right now, or ""

@@ -40,6 +40,8 @@ import type {
   ProviderInfo,
   SSEEvent,
   Session,
+  CheckResult,
+  Schedule,
   SessionGroup,
   Subagent,
   TabStatus,
@@ -185,10 +187,35 @@ export class HostApi {
       cwd?: string
       grouped?: string
       group_key?: string
+      schedule_id?: string
     } = {},
   ): Promise<{ sessions: Session[]; host?: HostStats }> {
     return this.call('listSessions', params)
   }
+  // ─── Schedules ─────────────────────────────────────────────────────────
+
+  listSchedules(): Promise<Schedule[]> {
+    return this.call('listSchedules')
+  }
+  createSchedule(fields: Partial<Schedule>): Promise<Schedule> {
+    return this.call('createSchedule', fields)
+  }
+  updateSchedule(id: string, fields: Partial<Schedule>): Promise<Schedule> {
+    return this.call('updateSchedule', id, fields)
+  }
+  deleteSchedule(id: string): Promise<void> {
+    return this.call('deleteSchedule', id)
+  }
+  runSchedule(id: string): Promise<void> {
+    return this.call('runSchedule', id)
+  }
+  checkSchedule(id: string): Promise<CheckResult> {
+    return this.call('checkSchedule', id)
+  }
+  scheduleLog(id: string, tail = 200): Promise<string[]> {
+    return this.call('scheduleLog', id, tail)
+  }
+
   listGroups(): Promise<SessionGroup[]> {
     return this.call('listGroups')
   }

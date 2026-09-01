@@ -71,6 +71,20 @@ function shellLabel(termId: string): string {
   return index ? `sh ${index}` : 'shell'
 }
 
+export type SidebarMode = 'sessions' | 'schedules'
+
+/** What the main panel is showing about a schedule. */
+export interface ScheduleSelection {
+  hostId: string
+  /** Empty while a new one is being written. */
+  scheduleId: string
+  editing: boolean
+  /** Set while the reader is being asked what a dropped link means. */
+  linkTo?: string
+  /** Set while the reader is choosing between describing one and writing one. */
+  choosing?: boolean
+}
+
 export interface Selection {
   hostId: string
   sessionId: string
@@ -169,6 +183,34 @@ export interface State {
   /** Open terminal connections, one per session, keyed by `terminalId`. */
   tabs: Tab[]
   selection: Selection | null
+  /**
+   * Which list the sidebar is showing.
+   *
+   * Sessions and schedules are two lists of the same shape — grouped by host,
+   * one row per thing, one detail in the main panel — so they share the sidebar
+   * rather than fighting for it. See docs/specs/55-scheduled-runs.md.
+   */
+  sidebarMode: SidebarMode
+  /**
+   * The schedules list's own search.
+   *
+   * Separate from `query`: the two lists hold different things, and a query
+   * typed against sessions is meaningless against schedules.
+   */
+  scheduleQuery: string
+  /**
+   * Which hosts have their automated runs unfolded, by host id.
+   *
+   * Folded by default: what the clock started is a different kind of thing from
+   * what you started, and forty of them would bury six. Opening a run from the
+   * schedules tab unfolds the section it lands in.
+   */
+  autoRunsOpen: Record<string, boolean>
+  /**
+   * The schedule the main panel is showing, if any. `scheduleId` is empty for
+   * one being created, which is a draft with nowhere to be selected from.
+   */
+  scheduleSelection: ScheduleSelection | null
   /**
    * How each session's panels are arranged, by `sessionKey`: which groups sit
    * beside each other, what is in each strip, and which item of each is in
@@ -319,6 +361,10 @@ const initial: State = {
   hostStatus: {},
   tabs: [],
   selection: null,
+  sidebarMode: 'sessions',
+  scheduleQuery: '',
+  autoRunsOpen: {},
+  scheduleSelection: null,
   layouts: {},
   detached: [],
   fileTarget: null,
@@ -823,6 +869,14 @@ class Store {
       queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) =>
         patchSessionInPage(page, effect.sessionId, effect.patch),
       )
+      // The automated section is a second list of the same records, and it is
+      // patched here for the same reason as the first: the refetch behind this
+      // is what makes it true, but the patch is what paints now.
+      queryClient.setQueryData<Session[]>(keys.jobSessions(hostId), (runs) =>
+        runs?.map((run) =>
+          run.session_id === effect.sessionId ? { ...run, ...effect.patch } : run,
+        ),
+      )
       if (effect.patch.status === 'terminated' && was && was.status !== 'terminated') {
         this.onTerminated(hostId, effect.sessionId)
       }
@@ -901,8 +955,92 @@ class Store {
     this.set((s) => ({
       selection: { hostId, sessionId },
       layouts: withLayout(s.layouts, hostId, sessionId),
+      // Selecting a session is what the sessions list is for, and a run opened
+      // from a schedule means the reader has moved on to the run itself.
+      sidebarMode: 'sessions' as SidebarMode,
+      scheduleSelection: null,
     }))
     this.touch(hostId, sessionId)
+    // Asked again on the way in. The transcript never goes stale on its own —
+    // it must not rebuild under a reader mid-scroll — so opening a session is
+    // the moment to check it against the daemon. Invalidation rather than a
+    // reset: what is held stays on screen and is replaced when the answer
+    // arrives, so there is no spinner and no jump.
+    void queryClient.invalidateQueries({ queryKey: keys.transcript(hostId, sessionId) })
+  }
+
+  // ─── Schedules ─────────────────────────────────────────────────────────
+
+  setSidebarMode(mode: SidebarMode): void {
+    this.set({ sidebarMode: mode })
+  }
+
+  setScheduleQuery(query: string): void {
+    this.set({ scheduleQuery: query })
+  }
+
+  /** Shows a schedule in the main panel. */
+  selectSchedule(hostId: string, scheduleId: string): void {
+    this.set({ sidebarMode: 'schedules', scheduleSelection: { hostId, scheduleId, editing: false } })
+  }
+
+  /**
+   * Opens one of a schedule's runs in the sessions list.
+   *
+   * A run is an ordinary session and gets the ordinary detail. It lives in the
+   * automated section, which is folded away until something needs it — and
+   * arriving from the schedules tab is exactly that, so the section opens with
+   * the run selected inside it.
+   */
+  openScheduleRun(hostId: string, sessionId: string): void {
+    this.set((s) => ({
+      sidebarMode: 'sessions',
+      scheduleSelection: null,
+      autoRunsOpen: { ...s.autoRunsOpen, [hostId]: true },
+      selection: { hostId, sessionId },
+      layouts: withLayout(s.layouts, hostId, sessionId),
+    }))
+    this.touch(hostId, sessionId)
+  }
+
+  /** Folds a host's automated runs away, or back out. */
+  toggleAutoRuns(hostId: string): void {
+    this.set((s) => ({ autoRunsOpen: { ...s.autoRunsOpen, [hostId]: !s.autoRunsOpen[hostId] } }))
+  }
+
+  /**
+   * Starts a new schedule, at the fork: describe it and let an agent build it,
+   * or fill in the form. Most people want the first, so it is what the button
+   * opens.
+   */
+  newSchedule(hostId: string): void {
+    this.set({
+      sidebarMode: 'schedules',
+      scheduleSelection: { hostId, scheduleId: '', editing: false, choosing: true },
+    })
+  }
+
+  /** Opens the editor for a new schedule, or for the one already selected. */
+  editSchedule(hostId: string, scheduleId = ''): void {
+    this.set({ sidebarMode: 'schedules', scheduleSelection: { hostId, scheduleId, editing: true } })
+  }
+
+  /**
+   * Asks what a new link means, in the main panel.
+   *
+   * Dropping one job onto another is only half the decision — whether a failed
+   * parent still releases the child is the other half, and guessing it is how a
+   * chain surprises someone at 3am.
+   */
+  linkSchedule(hostId: string, childId: string, parentId: string): void {
+    this.set({
+      sidebarMode: 'schedules',
+      scheduleSelection: { hostId, scheduleId: childId, editing: false, linkTo: parentId },
+    })
+  }
+
+  clearScheduleSelection(): void {
+    this.set({ scheduleSelection: null })
   }
 
   /**

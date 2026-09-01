@@ -311,6 +311,25 @@ func HookHandlerFor(key string) HookHandler {
 	return h.HookRoutes()[strings.ReplaceAll(route, ".", "/")]
 }
 
+// systemActors are notification types the daemon itself owns.
+//
+// Helios asks questions of its own — a scheduled run that was missed while the
+// machine slept is the first — and they need the same delivery every other
+// notification gets. Registering a fake provider to hold them would work and
+// would also put "helios" in the new-session provider picker, because a
+// Provider must implement Launch and Info has no way to say "not an agent". So
+// they live beside the providers instead, and the two lookups below consult
+// both.
+var systemActors = map[string]map[string]ActionRoute{}
+
+// RegisterSystemActor gives the daemon a namespace of its own for the
+// notifications it raises. Types must be prefixed with id, as a provider's are.
+func RegisterSystemActor(id string, routes map[string]ActionRoute) {
+	mu.Lock()
+	defer mu.Unlock()
+	systemActors[id] = routes
+}
+
 // ActionHandlerFor resolves a notification type to the handler that answers
 // it.
 func ActionHandlerFor(notifType string) ActionHandler {
@@ -318,6 +337,17 @@ func ActionHandlerFor(notifType string) ActionHandler {
 	if !ok {
 		return nil
 	}
+
+	mu.RLock()
+	routes, isSystem := systemActors[id]
+	mu.RUnlock()
+	if isSystem {
+		if route, found := routes[notifType]; found {
+			return route.Handler
+		}
+		return nil
+	}
+
 	a := ActorFor(id)
 	if a == nil {
 		return nil
@@ -366,6 +396,26 @@ func NotificationTypes() []NotificationType {
 			})
 		}
 	}
+
+	// The daemon's own types belong in the same catalogue: a client builds its
+	// alert settings from this list, and a type missing from it is a
+	// notification nobody can turn off.
+	mu.RLock()
+	for id, routes := range systemActors {
+		for notifType, route := range routes {
+			out = append(out, NotificationType{
+				Type:         notifType,
+				Provider:     id,
+				Label:        route.Label,
+				Detail:       route.Detail,
+				Blocking:     route.Blocking,
+				Group:        route.Group,
+				DefaultAlert: route.DefaultAlert,
+			})
+		}
+	}
+	mu.RUnlock()
+
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Provider != out[j].Provider {
 			return out[i].Provider < out[j].Provider

@@ -314,6 +314,37 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
+	// Runs whose schedule was deleted before the daemon learned to let them go
+	// are invisible in every client and unreachable from anywhere. Repaired
+	// once, at start, which is where a fix for something already on disk
+	// belongs.
+	if freed, err := db.ReleaseOrphanedRuns(); err != nil {
+		log.Printf("schedules: release orphaned runs: %v", err)
+	} else if freed > 0 {
+		log.Printf("schedules: released %d run(s) whose schedule was deleted", freed)
+	}
+
+	// Schedules: a saved prompt with something that decides when it runs. The
+	// first sweep is immediate, because a ticker yields nothing for its first
+	// period and a daemon that has just come back is exactly when the missed
+	// fires are waiting. See docs/specs/55-scheduled-runs.md.
+	server.ScheduleLogDir = filepath.Join(logsDir, "schedules")
+	sched := server.NewScheduler(shared)
+	server.RegisterScheduleActions(sched)
+	go func() {
+		sched.Tick(time.Now())
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				sched.Tick(time.Now())
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Reports files moving under the clients that are reading them. Its own
 	// loop rather than a tick here: most sweeps come from a tool hook poking
 	// it, and only the fallback is on a clock.

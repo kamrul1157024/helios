@@ -1,5 +1,6 @@
 import { signJWT, type DeviceKey } from './keys.ts'
 import type {
+  CheckResult,
   CommandInfo,
   DeviceInfo,
   DirectoryInfo,
@@ -15,6 +16,7 @@ import type {
   SessionGroup,
   Notification,
   ProviderInfo,
+  Schedule,
   Session,
   Subagent,
   TerminalInfo,
@@ -143,6 +145,8 @@ export class ApiClient {
       /** "1" asks the daemon to resolve each session's groups. */
       grouped?: string
       group_key?: string
+      /** One schedule's runs. The sidebar's list leaves them out by default. */
+      schedule_id?: string
     } = {},
   ): Promise<{ sessions: Session[]; host?: HostStats }> {
     const res = await this.request<{ sessions?: Session[]; host?: HostStats }>(
@@ -150,6 +154,48 @@ export class ApiClient {
       `/api/sessions${queryString(params)}`,
     )
     return { sessions: res.sessions ?? [], host: res.host }
+  }
+
+  // ─── Schedules ─────────────────────────────────────────────────────────
+
+  async listSchedules(): Promise<Schedule[]> {
+    const res = await this.request<{ schedules?: Schedule[] }>('GET', '/api/schedules')
+    return res.schedules ?? []
+  }
+
+  async createSchedule(fields: Partial<Schedule>): Promise<Schedule> {
+    const res = await this.request<{ schedule: Schedule }>('POST', '/api/schedules', fields)
+    return res.schedule
+  }
+
+  async updateSchedule(id: string, fields: Partial<Schedule>): Promise<Schedule> {
+    const res = await this.request<{ schedule: Schedule }>(
+      'PATCH',
+      `/api/schedules/${encodeURIComponent(id)}`,
+      fields,
+    )
+    return res.schedule
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    await this.request('DELETE', `/api/schedules/${encodeURIComponent(id)}`)
+  }
+
+  async runSchedule(id: string): Promise<void> {
+    await this.request('POST', `/api/schedules/${encodeURIComponent(id)}/run`)
+  }
+
+  /** Runs a monitor's check once and reports what it saw, without firing. */
+  async checkSchedule(id: string): Promise<CheckResult> {
+    return this.request('POST', `/api/schedules/${encodeURIComponent(id)}/check`)
+  }
+
+  async scheduleLog(id: string, tail = 200): Promise<string[]> {
+    const res = await this.request<{ lines?: string[] }>(
+      'GET',
+      `/api/schedules/${encodeURIComponent(id)}/log?tail=${tail}`,
+    )
+    return res.lines ?? []
   }
 
   // ─── Groups ────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/auth"
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/provider"
+	"github.com/kamrul1157024/helios/internal/skill"
 	"github.com/kamrul1157024/helios/internal/tailscale"
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tui"
@@ -65,6 +66,8 @@ func main() {
 		handleCleanup(os.Args[2:])
 	case "logs":
 		handleLogs(os.Args[2:])
+	case "schedule", "schedules":
+		handleSchedule(os.Args[2:])
 	case "version":
 		fmt.Printf("helios v%s\n", version)
 	case "help", "--help", "-h":
@@ -1088,7 +1091,7 @@ func handleHooks(args []string) {
 
 func handleSetup(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|tailscale>")
+		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|tailscale|skill>")
 		os.Exit(1)
 	}
 
@@ -1115,8 +1118,27 @@ func handleSetup(args []string) {
 		fmt.Printf("Shell wrapper installed in %s\n", info.RCPath)
 		fmt.Println("Restart your shell or run: source", info.RCPath)
 
+	// The manual an agent reads to drive this CLI. Installed rather than
+	// documented: the agent that needs it is one Helios itself starts, and it
+	// has to know `helios schedule add` before it is asked to write a schedule.
+	case "skill":
+		if len(args) > 1 && args[1] == "--remove" {
+			if err := skill.Remove(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Helios skill removed")
+			return
+		}
+		path, err := skill.Install()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Helios skill installed to %s\n", path)
+
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|tailscale>\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|tailscale|skill>\n", args[0])
 		os.Exit(1)
 	}
 }
@@ -1178,6 +1200,9 @@ Commands:
                         Example: helios wrap -- claude
   sessions              Interactive session manager (TUI)
                         --list  Plain table output
+  schedule              Run a prompt on a clock, or when a check matches
+                        list | add | edit | rm | enable | disable
+                        run | check | logs — see: helios schedule help
 
   daemon start [flags]  Start the helios daemon (with supervisor)
                         -d                Run in background (daemonize)
@@ -1190,6 +1215,7 @@ Commands:
   tunnel stop           Stop the tunnel (prompts for confirmation)
 
   setup shell           Install shell wrapper (agent commands → helios wrap)
+  setup skill           Install the Helios skill, so agents can drive this CLI
   setup tailscale       Check Tailscale readiness for Serve and Funnel
 
   auth init             Generate pairing QR (non-interactive)

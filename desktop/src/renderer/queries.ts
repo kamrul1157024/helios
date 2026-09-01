@@ -46,6 +46,74 @@ export function notificationsQuery(hostId: string) {
   })
 }
 
+/**
+ * One session, fetched by id.
+ *
+ * The list is not always enough to find it in: sessions a schedule started are
+ * kept out of the ordinary list, so opening a run from its schedule would
+ * otherwise select something the detail panel cannot see.
+ */
+export function sessionQuery(hostId: string, sessionId: string) {
+  return queryOptions({
+    queryKey: keys.session(hostId, sessionId),
+    queryFn: async () => (await api(hostId).getSession(sessionId)).session,
+    enabled: hostId !== '' && sessionId !== '',
+  })
+}
+
+/**
+ * The sessions a schedule started, on one host.
+ *
+ * A second list rather than a flag on the first: the ordinary list is what the
+ * sidebar is for, and mixing forty automated runs into it is what the fold
+ * exists to prevent. Asked for whether or not the section is open, because the
+ * header carries the count.
+ */
+export function jobSessionsQuery(hostId: string) {
+  return queryOptions({
+    queryKey: keys.jobSessions(hostId),
+    queryFn: async () => (await api(hostId).listSessions({ filter: 'jobs' })).sessions,
+  })
+}
+
+// ─── Schedules ──────────────────────────────────────────────────────────────
+
+export function schedulesQuery(hostId: string) {
+  return queryOptions({
+    queryKey: keys.schedules(hostId),
+    queryFn: () => api(hostId).listSchedules(),
+  })
+}
+
+/**
+ * One schedule's runs.
+ *
+ * Ordinary sessions, asked for by what started them — which is why there is no
+ * second list component anywhere: the runs list is the session list.
+ */
+export function scheduleRunsQuery(hostId: string, scheduleId: string) {
+  return queryOptions({
+    queryKey: keys.scheduleRuns(hostId, scheduleId),
+    queryFn: async () => (await api(hostId).listSessions({ schedule_id: scheduleId })).sessions,
+    enabled: scheduleId !== '',
+  })
+}
+
+/**
+ * The tail of a schedule's own log, refetched while the panel is open.
+ *
+ * Polled rather than streamed: there is no streaming log in the daemon, and a
+ * check that runs every five minutes does not need sub-second delivery.
+ */
+export function scheduleLogQuery(hostId: string, scheduleId: string) {
+  return queryOptions({
+    queryKey: keys.scheduleLog(hostId, scheduleId),
+    queryFn: () => api(hostId).scheduleLog(scheduleId),
+    enabled: scheduleId !== '',
+    refetchInterval: 2000,
+  })
+}
+
 // ─── Settings ───────────────────────────────────────────────────────────────
 
 /**

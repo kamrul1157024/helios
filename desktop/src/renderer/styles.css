@@ -4936,3 +4936,340 @@ hr {
 .picker-item:hover .picker-info {
   opacity: 1;
 }
+
+/* ─── Schedules ─────────────────────────────────────────────────────────── */
+
+/* Sessions or schedules, above everything: it decides what the search, the
+   arrange control and the + button below it are about. */
+.sidebar-modes {
+  display: flex;
+  gap: 2px;
+  padding: 10px 10px 6px;
+}
+
+.sidebar-modes button {
+  flex: 1;
+  background: var(--surface-low);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.sidebar-modes button.active {
+  background: var(--surface-high);
+  border-color: var(--outline-variant);
+  color: var(--on-surface);
+}
+
+.sched-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.sched-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.sched-row:hover {
+  background: var(--surface-low);
+}
+
+.sched-row.active {
+  background: var(--surface-high);
+  border-left-color: var(--primary);
+}
+
+/* A job dragged onto another runs after it, so the row under the pointer says
+   what dropping would mean. */
+.sched-row.drop {
+  background: var(--surface-high);
+  border-left-color: var(--primary);
+  outline: 1px dashed var(--primary);
+  outline-offset: -2px;
+}
+
+.sched-row.paused {
+  opacity: 0.55;
+}
+
+.sched-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.sched-row-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-row-state,
+.sched-row-sub {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.sched-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-row-state.bad {
+  color: var(--error);
+}
+.sched-row-state.warn {
+  color: var(--syn-type);
+}
+.sched-row-state.busy {
+  color: var(--primary);
+}
+
+.sched-kind {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.sched-drop-hint {
+  font-size: 11px;
+  color: var(--primary);
+}
+
+.sched-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+/* The main panel: a schedule's detail, its editor, and the link question all
+   share this frame. */
+.sched-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sched-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.sched-detail-head h2 {
+  font-size: 15px;
+  margin: 0 0 2px;
+}
+
+.sched-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.sched-detail-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--outline-variant);
+  font-size: 12px;
+}
+
+.sched-detail-foot .spacer {
+  flex: 1;
+}
+
+.sched-facts {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 10px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.sched-facts dt {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.sched-facts dd {
+  margin: 0;
+}
+
+.sched-prompt {
+  background: var(--surface-low);
+  border-radius: var(--r-md);
+  padding: 10px;
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.sched-toggle {
+  background: none;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-sm);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.sched-toggle.on {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.sched-form .field {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin-bottom: 12px;
+  border: none;
+  padding: 0;
+}
+
+.sched-form .field > span:first-child {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.sched-form .field em {
+  grid-column: 2;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.radio-set {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.sched-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sched-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--on-surface);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.sched-run:hover {
+  background: var(--surface-high);
+}
+
+.sched-run-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--outline);
+  flex: none;
+}
+.sched-run-dot.active,
+.sched-run-dot.starting {
+  background: var(--primary);
+}
+.sched-run-dot.error {
+  background: var(--error);
+}
+
+.sched-run-when {
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+.sched-run-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-run-status {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+/* The check log, which is the point of opening a monitor at all. */
+.sched-log {
+  background: var(--code-bg);
+  border-radius: var(--r-md);
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.sched-log.tall {
+  max-height: none;
+}
+
+/* The sessions a schedule started, under the ones the user started. */
+.auto-runs {
+  display: flex;
+  flex-direction: column;
+}
+
+.auto-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.auto-head:hover {
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+}
+
+.auto-head .auto-name {
+  flex: 1;
+  min-width: 0;
+}

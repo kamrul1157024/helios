@@ -3,13 +3,14 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
 import { useHostNotifications, useHostSessions } from '../host-data.ts'
-import { providersQuery } from '../queries.ts'
+import { providersQuery, sessionQuery } from '../queries.ts'
 import { currentLayout, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
+import { SchedulePanel } from './schedules.tsx'
 import {
   isVisible,
   panelItem,
@@ -88,15 +89,29 @@ function slotOf(tab: Tab): ItemId {
 
 export function Detail(): JSX.Element {
   const selection = useStore((s) => s.selection)
+  // Schedules borrow the same panel: the sidebar decides which list it is
+  // showing, and the main area shows whatever that list selected.
+  const sidebarMode = useStore((s) => s.sidebarMode)
   const { sessions } = useHostSessions()
   const notifications = useHostNotifications()
   const layout = useStore(currentLayout)
   const tabs = useStore((s) => s.tabs)
 
   const hostId = selection?.hostId ?? null
-  const session =
+  const listed =
     (selection && sessions[selection.hostId]?.find((s) => s.session_id === selection.sessionId)) ?? null
-  const pendingList = Boolean(selection) && sessions[selection?.hostId ?? ''] === undefined
+
+  // A session a schedule started is not in the list — the sidebar leaves those
+  // out — so opening a run from its schedule needs the session itself. Only
+  // asked for when the list does not have it.
+  const { data: fetched } = useQuery({
+    ...sessionQuery(selection?.hostId ?? '', selection?.sessionId ?? ''),
+    enabled: Boolean(selection) && listed === null,
+  })
+
+  const session = listed ?? fetched ?? null
+  const pendingList =
+    Boolean(selection) && session === null && sessions[selection?.hostId ?? ''] === undefined
 
   const pending = session
     ? (notifications[hostId ?? ''] ?? []).filter((n) => n.source_session === session.session_id).length
@@ -174,8 +189,28 @@ export function Detail(): JSX.Element {
       !(item === panelItem('terminal') && term),
   )
 
+  // The schedules panel covers the session detail; it does not replace it.
+  //
+  // Unmounting is what this file spends its effort avoiding: a terminal pane
+  // that leaves the tree disposes its xterm, while the connection behind it
+  // lives in the main process and keeps counting bytes — so the replacement
+  // asks the host to catch it up from a sequence it has already passed and gets
+  // an empty grid. Switching the sidebar between its two lists must not cost
+  // the reader the terminal they were watching, so the detail stays mounted
+  // with no layout, and TerminalPane's ResizeObserver refits it on the way
+  // back.
+  const showingSchedules = sidebarMode === 'schedules'
+
   return (
-    <div className="detail">
+    <>
+      {showingSchedules && (
+        <div className="detail">
+          <PanelBoundary resetKey="schedules">
+            <SchedulePanel />
+          </PanelBoundary>
+        </div>
+      )}
+      <div className="detail" style={showingSchedules ? { display: 'none' } : undefined}>
       {hostId && session && (
         <>
           {/* Keyed: the header holds a rename in progress, and switching
@@ -337,8 +372,9 @@ export function Detail(): JSX.Element {
               onReset={() => store.evenGroups({ hostId, sessionId: session.session_id })}
             />
           ))}
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 

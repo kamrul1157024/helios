@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
+import '../models/schedule.dart';
 import '../models/session.dart';
 import '../models/message.dart';
 import '../utils/file_types.dart';
@@ -490,6 +491,66 @@ class DaemonAPIService extends ChangeNotifier {
   /// The disk write is conditional because only the whole list is worth
   /// showing on a cold launch: seeding from a search result would open the
   /// dashboard on whatever the user last typed.
+  // ─── Schedules ─────────────────────────────────────────────────────────
+
+  Future<List<Schedule>> listSchedules() async {
+    final resp = await _api.get('/api/schedules');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('schedules', resp.statusCode);
+    }
+    final data = jsonDecode(resp.body);
+    final list = (data['schedules'] as List?) ?? [];
+    return list.map((s) => Schedule.fromJson(s as Map<String, dynamic>)).toList();
+  }
+
+  Future<Schedule> saveSchedule(String id, Map<String, dynamic> fields) async {
+    final resp = id.isEmpty
+        ? await _api.post('/api/schedules', body: fields)
+        : await _api.patch('/api/schedules/$id', body: fields);
+    final data = jsonDecode(resp.body);
+    if (resp.statusCode != 200) {
+      // The daemon refuses at save what would otherwise be found at 3am — a
+      // cron that can never fire, a link that would close a loop — and says
+      // which, so its message is worth more than the status.
+      throw Exception((data['message'] as String?) ?? 'could not save the schedule');
+    }
+    return Schedule.fromJson(data['schedule'] as Map<String, dynamic>);
+  }
+
+  Future<void> deleteSchedule(String id) async {
+    final resp = await _api.delete('/api/schedules/$id');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('schedules', resp.statusCode);
+    }
+  }
+
+  Future<void> runSchedule(String id) async {
+    final resp = await _api.post('/api/schedules/$id/run');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('schedules', resp.statusCode);
+    }
+  }
+
+  /// Runs a monitor's check once and reports what it saw, without firing.
+  Future<CheckResult> checkSchedule(String id) async {
+    final resp = await _api.post('/api/schedules/$id/check');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('schedules', resp.statusCode);
+    }
+    return CheckResult.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  /// The tail of a schedule's own log. Polled to follow it: there is no
+  /// streaming log in the daemon, and a five-minute check does not need one.
+  Future<List<String>> scheduleLog(String id, {int tail = 200}) async {
+    final resp = await _api.get('/api/schedules/$id/log?tail=$tail');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('schedules', resp.statusCode);
+    }
+    final data = jsonDecode(resp.body);
+    return ((data['lines'] as List?) ?? []).cast<String>();
+  }
+
   Future<List<Session>> listSessions(SessionQuery query) async {
     final params = <String, String>{};
     if (query.q != null && query.q!.isNotEmpty) params['q'] = query.q!;
@@ -500,6 +561,10 @@ class DaemonAPIService extends ChangeNotifier {
       params['filter'] = query.filter!;
     }
     if (query.cwd != null && query.cwd!.isNotEmpty) params['cwd'] = query.cwd!;
+    // One schedule's runs. The ordinary list leaves them out.
+    if (query.scheduleId != null && query.scheduleId!.isNotEmpty) {
+      params['schedule_id'] = query.scheduleId!;
+    }
 
     final queryString = params.entries
         .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
@@ -964,12 +1029,17 @@ class DaemonAPIService extends ChangeNotifier {
     required String provider,
     String? model,
     String? cwd,
+    String? prompt,
     bool dangerouslySkipPermissions = false,
   }) async {
     try {
       final body = <String, dynamic>{'provider': provider};
       if (model != null && model.isNotEmpty) body['model'] = model;
       if (cwd != null && cwd.isNotEmpty) body['cwd'] = cwd;
+      // A seeded session: the agent is started with something to do. The
+      // schedules screen uses this to hand a description to an agent that
+      // knows the CLI.
+      if (prompt != null && prompt.isNotEmpty) body['prompt'] = prompt;
       if (dangerouslySkipPermissions) {
         body['dangerously_skip_permissions'] = true;
       }
@@ -1192,7 +1262,10 @@ class SessionQuery {
   final String? filter;
   final String? cwd;
 
-  const SessionQuery({this.q, this.status, this.filter, this.cwd});
+  /// Narrows to the runs of one schedule, which is what the runs list is.
+  final String? scheduleId;
+
+  const SessionQuery({this.q, this.status, this.filter, this.cwd, this.scheduleId});
 
   static const all = SessionQuery();
 
@@ -1206,10 +1279,11 @@ class SessionQuery {
       other.q == q &&
       other.status == status &&
       other.filter == filter &&
-      other.cwd == cwd;
+      other.cwd == cwd &&
+      other.scheduleId == scheduleId;
 
   @override
-  int get hashCode => Object.hash(q, status, filter, cwd);
+  int get hashCode => Object.hash(q, status, filter, cwd, scheduleId);
 
   @override
   String toString() => 'SessionQuery(q: $q, status: $status, filter: $filter, cwd: $cwd)';
