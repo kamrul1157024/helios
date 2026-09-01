@@ -28,8 +28,9 @@ one-shot jobs, chain them, and go to bed.
 
 **Scope: the daemon and all four clients.** New: `internal/schedule` (a cron parser),
 `internal/store/schedules.go`, a firing loop in `internal/daemon`, REST routes, `helios
-schedule`, a TUI view, a desktop dialog, a mobile screen. No provider changes — a schedule
-launches through the same registry everything else does.
+schedule`, a TUI view, a desktop sidebar list with its panel, a mobile tab, and
+`skills/helios/SKILL.md` — the manual an agent reads to drive the CLI, installed during agent
+setup. No provider changes: a schedule launches through the same registry everything else does.
 
 ## Where we are
 
@@ -594,129 +595,82 @@ saw, which is the thing you came to look at:
 
 ### Desktop
 
-A dialog, not a session tab: schedules belong to a host, not to a session. Add `'schedules'` to
-the dialog union in `app.tsx:16`, a `components/schedules.tsx` in the shape of `settings.tsx`, a
-key in `keys.ts`, a query in `queries.ts`, the methods on `HostApi` in `bridge.ts`, and their
-names in the `API_METHODS` whitelist in `main/ipc.ts`.
+**No dialog anywhere.** The sidebar switches between two lists of the same shape — sessions and
+schedules, grouped by host, one row per thing — and whatever it selects fills the main panel.
+The switch sits above the search and the arrange control, because those belong to whichever
+list is showing: schedules have their own search, over the name, the prompt and the check.
+
+Touches `store.ts` (a sidebar mode, a schedule selection, a schedule query), `sidebar.tsx`,
+`detail.tsx`, a new `components/schedules.tsx`, a key in `keys.ts`, queries in `queries.ts`, the
+methods on `HostApi` in `bridge.ts`, and their names in the `API_METHODS` whitelist in
+`main/ipc.ts`.
 
 ```
-┌─ Schedules ─────────────────────────────────── mdkamrulhassan ─ × ┐
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ morning-triage                          in 2h 14m      [ ●] │  │
-│  │ weekdays at 09:00 · new session · ~/work/opal-app           │  │
-│  │ last run ✓ 14h ago → “triage the overnight PRs”      ▸ open │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ standup-note                            today 08:40    [ ●] │  │
-│  │ weekdays at 08:40 · into session a3f1c2e8                   │  │
-│  │ ! missed while the daemon was down       Run now    Dismiss │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ nightly-bench                           paused         [○ ] │  │
-│  │ every day at 02:00 · new session · ~/work/bench             │  │
-│  │ ✗ failed 3 nights running, since Tue — cwd does not exist   │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ ◉ build-watch                           checks in 4m   [ ●] │  │
-│  │ every 15 min · make test 2>&1 · fires on non-zero exit      │  │
-│  │ last check quiet · fired 0× today · ✓ 2h ago         ▸ open │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│                                              + New schedule       │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────────────────┬──────────────────────────────────────────┐
+│ ( sessions │SCHEDULES) │  build-watch                    ● on     │
+│ 🔍 Search schedules  + │  every 15 min · make test 2>&1           │
+├────────────────────────┼──────────────────────────────────────────┤
+│ ▾ mdkamrulhassan       │  Overview │ Runs │ Log                   │
+│   ⏰ morning-triage     ├──────────────────────────────────────────┤
+│      weekdays 09:00    │  Check   make test 2>&1                  │
+│   ◉ build-watch  in 4m │          fires when it exits non-zero    │
+│      every 15 min · …  │          last check 4m ago · exit 0      │
+│   ⧗ nightly-migrate    │  Runs    a new session in ~/work/helios  │
+│        done            │          claude                          │
+│     ⇢ test-one running │  Prompt  The tests are failing:          │
+│     ⇢ test-two waiting │          {{output}}                      │
+│        ⇢ write-up      │          Find the cause and fix it.      │
+│           waiting      │                                          │
+│                        │  ─────────────────────────────────────── │
+│                        │  next check in 4m · fired 0× today       │
+│                        │  [Run now] [Test check] [Edit] [Delete]  │
+└────────────────────────┴──────────────────────────────────────────┘
 ```
 
-The cron expression is written out in words — "weekdays at 09:00" — with the expression itself
-kept for the editor. Nobody reads `0 9 * * 1-5` at a glance, and a schedule list that cannot be
-skimmed is one where a wrong schedule hides in plain sight.
+The tabs are `.panel-tabs`, the strip every session panel already uses. The cron expression is
+written out in words — "weekdays at 09:00" — with the expression itself kept for the editor.
+Nobody reads `0 9 * * 1-5` at a glance, and a list that cannot be skimmed is one where a wrong
+schedule hides in plain sight.
+
+A host with nothing scheduled renders nothing at all, heading included. One machine's empty
+list is not news when another has six, so the empty state is shown once and only when nobody
+has any.
 
 ### Chains, by dragging
 
-A job dragged onto another becomes its child. The list is a tree, indented one level per link,
-and the drag order is the order they were added — though siblings all start together.
+A job dragged onto another becomes its child. The list is the tree, indented one level per link,
+and the drag is the edit. Dropping asks what the link means — in the main panel, not over the
+top of the list — because whether a failed parent still releases the child is half the decision
+and guessing it is how a chain surprises someone at 3am.
 
 ```
-┌─ Schedules ─────────────────────────────────── mdkamrulhassan ─ × ┐
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ ⧗ nightly-migrate                       tonight 22:00  [ ●] │  │
-│  │ once · new session · ~/work/opal-app                        │  │
-│  ├─╴after it finishes ╶────────────────────────────────────────┤  │
-│  │   ⇢ test-feature-one          on success · waiting     [ ●] │  │
-│  │   ⇢ test-feature-two          on success · waiting     [ ●] │  │
-│  │      ├─╴after it finishes ╶───────────────────────────────┐ │  │
-│  │      │  ⇢ write-up            either way · waiting  [ ●]  │ │  │
-│  │      └───────────────────────────────────────────────────┘ │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │
-│  ┌─╴dragging: test-feature-three ╶─────────────────────────────┐  │
-│  │ ▸ drop here to run it after test-feature-two                │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│                                              + New schedule       │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────────────────┬──────────────────────────────────────────┐
+│   ⧗ nightly-migrate    │  Link                                    │
+│     ⇢ test-one         ├──────────────────────────────────────────┤
+│  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  Run test-three after test-two…          │
+│  ▸ run it after        │                                          │
+│    test-two            │   (•) only if it succeeds                │
+│  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │   ( ) either way                         │
+│   ⏰ morning-triage     │                                          │
+│                        │  A job with a parent has no clock of its │
+│                        │  own: the parent finishing starts it.    │
+│                        │                       [Cancel]  [Link]   │
+└────────────────────────┴──────────────────────────────────────────┘
 ```
 
-Dropping opens one small choice, because the link needs a rule and guessing it is how a chain
-surprises someone at 3am:
+The dragged id rides on the drag event rather than in React state — state is a render behind,
+and a drop that lands fast would read the render from before the drag began.
+
+While a chain is running the same list is the progress view, because "where has it got to" is
+the question it already answers:
 
 ```
-        ┌─────────────────────────────────────────────┐
-        │ Run test-feature-three after test-feature-  │
-        │ two…                                        │
-        │                                             │
-        │   (•) only if it succeeds                   │
-        │   ( ) either way                            │
-        │                                             │
-        │                        Cancel      Link     │
-        └─────────────────────────────────────────────┘
+│   ⧗ nightly-migrate                                    done      │
+│     ⇢ test-one                                         running   │
+│     ⇢ test-two                                         waiting   │
+│   ⧗ nightly-bench                                      paused    │
+│     ⇢ report          ⊘ the job it follows failed                │
 ```
-
-While a chain is running the same tree is the progress view — no separate screen, because the
-question "where has it got to" is the question the list already answers:
-
-```
-│  │ ⧗ nightly-migrate                     ✓ done 22:14     [ ●] │  │
-│  ├─╴after it finishes ╶────────────────────────────────────────┤  │
-│  │   ⇢ test-feature-one        ✓ done 22:31 → session 8c1f…    │  │
-│  │   ⇢ test-feature-two        ● running since 22:31           │  │
-│  │      └ ⇢ write-up           waiting for test-feature-two    │  │
-```
-
-And a link that did not open:
-
-```
-│  │   ⇢ test-feature-one        ✗ failed 22:29 → session 8c1f…  │  │
-│  │      └ ⇢ write-up           ⊘ blocked — the job it follows  │  │
-│  │                               failed, and this link is      │  │
-│  │                               "only if it succeeds"         │  │
-```
-
-Blocked is a state to read, not an error to chase: it says the chain stopped and where. **Run
-now** on a blocked job runs it anyway, which is the manual override for a night that half worked.
-
-The CLI shows the same tree, and links are made with `--after`:
-
-```
-$ helios schedule add "run the feature-two integration tests" \
-    --name test-feature-two --after nightly-migrate --after-when success \
-    --cwd ~/work/opal-app
-
-test-feature-two — runs after nightly-migrate, only if it succeeds
-
-$ helios schedule list
-
-NAME                  WHEN               NEXT/CHECK        LAST      DOES
-nightly-migrate       once               tonight 22:00     —         new · ~/work/opal-app
-└─ test-feature-one   after ↑ ✓only      waiting           —         new · ~/work/opal-app
-└─ test-feature-two   after ↑ ✓only      waiting           —         new · ~/work/opal-app
-   └─ write-up        after ↑ either     waiting           —         new · ~/work/opal-app
-```
-
-**Mobile does not drag.** Nesting a tree by touch is a fight, and the phone is where a chain is
-watched rather than built: the list renders the same indented tree with live status, and the
-editor has a plain **Runs after** picker for making or changing a link.
 
 ### The runs are sessions, so the runs list is the session list
 
@@ -740,58 +694,56 @@ The sidebar, meanwhile, is unchanged and shorter than it would otherwise be: for
 clock started would have buried the six you started yourself, which is why the filter defaults
 the way it does.
 
-### Making one is a sentence, not a form
+### Making one: ask an agent, or write it yourself
 
-`+ New schedule` does not open the form. It opens a prompt box:
-
-```
-┌─ New schedule ────────────────────────────────────────────────  × ┐
-│                                                                   │
-│  Describe what you want to happen, and when.                      │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ every 15 minutes, run the go tests in ~/work/helios and if  │  │
-│  │ they fail, start an agent to fix them                       │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  in  [ ~/work/helios                                       ▾   ]  │
-│                                                                   │
-│                                          Cancel      Create       │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-**Create runs an agent, and the agent runs the CLI.** Helios launches a short session in the
-chosen directory with the sentence and a system instruction: work out what schedule this
-describes and create it with `helios schedule add`, then say what you made. The agent has the
-CLI on its PATH already — it is the same machine and the same daemon — so no new tool surface,
-no natural-language cron parser inside the daemon, and every schedule that exists was made by
-the one code path that validates crons.
-
-The dialog then watches for `schedule_created` and shows what was made, for approval:
+**+ New schedule** does not open the form. It opens a fork, because nobody wants to fill in a
+cron field and most people would rather say what they mean:
 
 ```
-┌─ New schedule ────────────────────────────────────────────────  × ┐
-│                                                                   │
-│  ✓ Created build-watch                                            │
-│                                                                   │
-│    ◉ every 15 minutes · make test 2>&1 · fires on non-zero exit   │
-│      new session in ~/work/helios                                 │
-│      “The tests are failing: {{output}} — find the cause and…”    │
-│                                                                   │
-│    first check in 4m                                              │
-│                                                                   │
-│                      Delete      Edit…      Test now      Done    │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────────────────┬──────────────────────────────────────────┐
+│ ( sessions │SCHEDULES) │  New schedule                            │
+│ 🔍 Search schedules  + ├──────────────────────────────────────────┤
+├────────────────────────┤                                          │
+│   ⏰ morning-triage     │  On          [ mdkamrulhassan        ▾ ] │
+│   ◉ build-watch        │                                          │
+│                        │  Describe it ┌────────────────────────┐  │
+│                        │              │ every 15 minutes, run  │  │
+│                        │              │ the go tests in ~/work │  │
+│                        │              │ /helios and if they    │  │
+│                        │              │ fail, start an agent   │  │
+│                        │              │ to fix them            │  │
+│                        │              └────────────────────────┘  │
+│                        │              An agent reads this, works  │
+│                        │              out the schedule, and       │
+│                        │              creates it with the CLI.    │
+│                        │                                          │
+│                        │  In          [ ~/work/helios           ] │
+│                        │  Agent       [ claude                ▾ ] │
+│                        │                                          │
+│                        │  [Set it up manually]  [Cancel] [Ask an  │
+│                        │                                 agent]   │
+└────────────────────────┴──────────────────────────────────────────┘
 ```
 
-Three things make this safe rather than magic. The schedule is **shown before it is trusted** —
-a wrong cron is visible here, not at 3am. **Edit… opens the form below**, which is still the
-truth of what a schedule is and is how anything the sentence got wrong gets fixed. And the
-agent's session is an ordinary one, so if it did something strange the transcript says what.
+**Ask an agent** starts an ordinary session with a short prompt. Short because the manual it
+needs is a skill rather than a wall of text: `skills/helios/SKILL.md`, embedded in the binary
+and installed to `~/.claude/skills/helios/` during agent setup, beside the hooks. It documents
+the four kinds, the two rules a monitor follows, chains, and what the daemon refuses at save.
+An agent asked to write a schedule has to know the CLI *before* it is asked, and a manual
+nobody installed is a manual nobody reads.
 
-If the agent is unavailable, or the sentence was too vague to act on, the dialog falls back to
-the form with whatever could be filled in. A creation path that depends on an agent must not be
-the only creation path.
+The prompt says only: here is what they asked for, work out which kind it is, create it with
+`helios schedule add`, then tell me what you made. Everything else is in the skill, so there is
+one manual rather than two that can disagree.
+
+Then the reader watches an ordinary session do it. There is nothing to invent for that — it is
+the transcript, and the schedule appears in the list when the agent creates it, ready to be
+read before it ever fires.
+
+**Which machine and which agent are asked, not inferred.** The host is part of what a schedule
+is, and the agent is the same choice the new-session dialog offers.
+
+**Set it up manually** is the form below, and it is also where an agent's work gets corrected.
 
 ### The form
 
@@ -862,35 +814,40 @@ that counts as a match, and the first lines of output. A monitor whose first rea
 
 ### Mobile
 
-`models/schedule.dart`, calls in `services/daemon_api_service.dart`, a provider in
-`providers/daemon_providers.dart`, a `CacheTarget.schedules` with its `schedule_*` cases in
-`providers/cache_effects.dart`, a `screens/schedules_screen.dart` list, and an editor sheet in
-the shape of `new_session_sheet.dart`. Reached from Settings.
+A third tab beside Sessions and Notifications, a list, and a full screen per schedule with the
+same three tabs the desktop has. `models/schedule.dart`, calls in `services/daemon_api_service.dart`,
+providers in `providers/daemon_providers.dart`, a `CacheTarget.schedules` with its `schedule_*`
+cases in `providers/cache_effects.dart`, and `screens/schedules_screen.dart`,
+`schedule_detail_screen.dart`, `schedule_editor_screen.dart`, `new_schedule_sheet.dart`.
 
 ```
-┌───────────────────────────────┐
-│ ←   Schedules             +   │
-├───────────────────────────────┤
-│                               │
-│  morning-triage        ●──    │
-│  weekdays 09:00               │
-│  in 2h 14m · ~/work/opal-app  │
-│  ✓ ran 14h ago                │
-│ ───────────────────────────── │
-│  standup-note          ●──    │
-│  weekdays 08:40               │
-│  ! missed — daemon was down   │
-│    [ Run now ]   [ Dismiss ]  │
-│ ───────────────────────────── │
-│  nightly-bench         ──○    │
-│  daily 02:00 · paused         │
-│  ✗ cwd no longer exists       │
-│                               │
-└───────────────────────────────┘
+┌───────────────────────────────┐   ┌───────────────────────────────┐
+│ ←  Schedules              +   │   │ ←  build-watch          ● on  │
+├───────────────────────────────┤   ├───────────────────────────────┤
+│  ⏰ morning-triage      in 2h  │   │ overview │ runs │ log         │
+│  weekdays 09:00 · ~/work/app  │   ├───────────────────────────────┤
+│ ───────────────────────────── │   │ Check                         │
+│  ◉ build-watch         in 4m  │   │ make test 2>&1                │
+│  every 15 min · make test     │   │ fires when it exits non-zero  │
+│ ───────────────────────────── │   │ last check 4m ago · exit 0    │
+│  ⧗ nightly-migrate     done   │   │                               │
+│  once · ~/work/app            │   │ Runs                          │
+│    ⇢ test-one       running   │   │ a new session in ~/work/app   │
+│    ⇢ test-two       waiting   │   │                               │
+│ ───────────────────────────── │   │ Prompt                        │
+│  ! standup-note      missed   │   │ The tests are failing:        │
+│    [ Run now ]                │   │ {{output}} — fix them.        │
+├───────────────────────────────┤   ├───────────────────────────────┤
+│  Sessions  Schedules  Notifs  │   │ [Run now] [Test] [Edit] [🗑]  │
+└───────────────────────────────┘   └───────────────────────────────┘
 ```
 
-A tap opens the run it produced — the phone's reason to keep this screen is reading what
-happened overnight, not editing cron. Editing is the same sheet as the desktop's, in one column.
+The **+** opens the same fork the desktop does — describe it and an agent builds it, or set it
+up manually — with the same host and agent pickers.
+
+**Mobile does not drag.** Nesting a tree by touch is a fight, and the phone is where a chain is
+watched rather than built: the list renders the same indented tree, and a link is made in the
+editor's "runs after" picker.
 
 ### The missed run, as it arrives
 
@@ -917,6 +874,8 @@ No new card: `helios.question` renders in the question card both apps already ha
   fire is the retry.
 - **No natural-language parsing in the daemon.** The sentence becomes a schedule because an
   agent reads it and runs `helios schedule add`. The daemon only ever sees a cron expression.
+- **No second tab pattern, and no dialog.** The detail uses `.panel-tabs`, the strip every
+  session panel already uses, and everything lives in the sidebar and the main panel.
 - **The daemon does not become an MCP client.** A check is a command or a script. Anything that
   needs MCP is work for the agent the fire starts, which already has it.
 - **No special session behaviour.** A scheduled run is the existing create-session flow with a
