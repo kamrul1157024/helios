@@ -32,10 +32,13 @@ export const SCHEDULE_DRAG = 'application/x-helios-schedule'
 export function ScheduleList({
   hostId,
   query = '',
+  quiet = false,
 }: {
   hostId: string
   query?: string
-}): JSX.Element {
+  /** A host with nothing on it says nothing, when another host has something. */
+  quiet?: boolean
+}): JSX.Element | null {
   const { data: all = [], error } = useQuery(schedulesQuery(hostId))
   const selected = useStore((s) => s.scheduleSelection)
   const [over, setOver] = useState('')
@@ -65,11 +68,12 @@ export function ScheduleList({
   }
 
   if (schedules.length === 0) {
+    if (quiet) return null
     return (
       <div className="sched-empty">
         {query.trim() === ''
-          ? 'Nothing scheduled here yet — a saved prompt with a clock, or a check that decides when there is something to do.'
-          : 'Nothing here matches that.'}
+          ? 'Nothing scheduled yet — a saved prompt with a clock, or a check that decides when there is something to do.'
+          : 'Nothing matches that.'}
       </div>
     )
   }
@@ -121,6 +125,47 @@ export function ScheduleList({
           {over === sc.id && <span className="sched-drop-hint">run it after {sc.name}</span>}
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * One host's section of the list: its name, and whatever it has scheduled.
+ *
+ * A host with nothing on it renders nothing at all — heading included —
+ * unless it is the last one and nobody else had any either, which is the only
+ * time an empty list is worth saying out loud.
+ */
+export function ScheduleHost({
+  hostId,
+  name,
+  status,
+  showName,
+  query,
+  quiet,
+}: {
+  hostId: string
+  name: string
+  status: string
+  showName: boolean
+  query: string
+  quiet: boolean
+}): JSX.Element | null {
+  const { data: schedules = [] } = useQuery(schedulesQuery(hostId))
+  const list = <ScheduleList hostId={hostId} query={query} quiet={quiet} />
+  if (list === null || (schedules.length === 0 && quiet)) return null
+
+  return (
+    <div className="host-group">
+      {showName && schedules.length > 0 && (
+        <div className="host-head">
+          <span className="host-title">
+            <span className={`host-dot ${status}`} />
+            <span className="host-name">{name}</span>
+          </span>
+        </div>
+      )}
+      {list}
     </div>
   )
 }

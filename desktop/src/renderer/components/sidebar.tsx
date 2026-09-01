@@ -29,7 +29,7 @@ import {
   type GroupNode,
 } from './grouping.ts'
 import { GroupPicker } from './group-picker.tsx'
-import { ScheduleList } from './schedules.tsx'
+import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
@@ -412,25 +412,28 @@ export function Sidebar({
             </button>
           </header>
 
+          {/* A host with nothing scheduled on it is not worth a heading and a
+              paragraph each — one machine's empty list is not news when
+              another has six. The empty state is shown once, by the last host,
+              only when nobody has any. */}
           <div className="sidebar-list">
-            {hosts.map((host) => (
-              <div className="host-group" key={host.id}>
-                {hosts.length > 1 && (
-                  <div className="host-head">
-                    <span className="host-title">
-                      <span className={`host-dot ${hostStatus[host.id]?.state ?? 'connecting'}`} />
-                      <span className="host-name">{host.name}</span>
-                    </span>
-                  </div>
-                )}
-                <ScheduleList hostId={host.id} query={scheduleQuery} />
-              </div>
+            {hosts.map((host, index) => (
+              <ScheduleHost
+                key={host.id}
+                hostId={host.id}
+                name={host.name}
+                status={hostStatus[host.id]?.state ?? 'connecting'}
+                showName={hosts.length > 1}
+                query={scheduleQuery}
+                quiet={index < hosts.length - 1}
+              />
             ))}
           </div>
         </>
       )}
 
-      <header className="sidebar-head" hidden={mode === 'schedules'}>
+      {mode === 'sessions' && (
+      <header className="sidebar-head">
         <div className="search-field">
           <Search className="search-icon" />
           <input
@@ -481,6 +484,7 @@ export function Sidebar({
           <Plus />
         </button>
       </header>
+      )}
 
       <div className="sidebar-list" hidden={mode === 'schedules'}>
         {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
