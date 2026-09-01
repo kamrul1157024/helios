@@ -29,8 +29,9 @@ one-shot jobs, chain them, and go to bed.
 **Scope: the daemon and all four clients.** New: `internal/schedule` (a cron parser),
 `internal/store/schedules.go`, a firing loop in `internal/daemon`, REST routes, `helios
 schedule`, a TUI view, a desktop sidebar list with its panel, a mobile tab, and
-`skills/helios/SKILL.md` — the manual an agent reads to drive the CLI, installed during agent
-setup. No provider changes: a schedule launches through the same registry everything else does.
+`internal/skill/SKILL.md` — the manual an agent reads to drive the CLI, embedded in the binary
+and installed during agent setup, with `skills/helios/SKILL.md` a symlink to it so the repo's
+own agents read the same file rather than a second copy of it. No provider changes: a schedule launches through the same registry everything else does.
 
 ## Where we are
 
@@ -775,7 +776,7 @@ rather than through the API, because the agent is the thing that creates the sch
 is what it will type.
 
 **Ask an agent** starts an ordinary session with a short prompt. Short because the manual it
-needs is a skill rather than a wall of text: `skills/helios/SKILL.md`, embedded in the binary
+needs is a skill rather than a wall of text: `internal/skill/SKILL.md`, embedded in the binary
 and installed to `~/.claude/skills/helios/` during agent setup, beside the hooks. It documents
 the four kinds, the two rules a monitor follows, chains, and what the daemon refuses at save.
 An agent asked to write a schedule has to know the CLI *before* it is asked, and a manual
