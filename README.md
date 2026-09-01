@@ -58,10 +58,20 @@ Everything runs on your machine. No cloud, no accounts, no subscription.
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/kamrul1157024/helios/main/scripts/install.sh | sh
+```
+
+That builds the daemon and the desktop app from source, installs them, and drops you into
+`helios start`. It needs Go 1.26+, and Node 22+ for the app — if either is missing it says
+where to get it, and it will install the daemon on its own if you would rather add Node later.
+
+Or do it by hand:
+
+```bash
 git clone https://github.com/kamrul1157024/helios.git && cd helios
 
 make install           # daemon + CLI  → /usr/local/bin/helios   (needs Go 1.26+)
-make desktop-install   # desktop app   → /Applications/Helios.app (macOS, needs Node 20+)
+make desktop-install   # desktop app   → /Applications/Helios.app (macOS, needs Node 22+)
 make apk-install       # Android app   → the device on adb        (needs Flutter 3.32+)
 
 helios start           # the TUI checks your setup and walks you through the rest
@@ -85,8 +95,11 @@ locally. See [docs/ios.md](docs/ios.md).
 
 ## Setup
 
-1. **Install a tunnel provider.** `brew install tailscale` is the recommendation, or
-   `brew install cloudflared` if you want a public URL with no account.
+1. **Install a tunnel provider.** Tailscale is the recommendation —
+   [tailscale.com/download](https://tailscale.com/download) has a build for every platform,
+   or `brew install tailscale` on a Mac. If you want a public URL with no account,
+   [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+   instead.
 2. **Run `helios start`.** The TUI checks the daemon, the harness hooks and the tunnel,
    and tells you what is missing.
 3. **Pick your tunnel.** Tailscale Serve keeps the daemon inside your tailnet and the
@@ -175,7 +188,7 @@ Diagrams, endpoints and the on-disk layout: [docs/architecture.md](docs/architec
 
 - Go 1.26+ (the version in `go.mod`)
 - A headless coding harness — Claude Code or OpenAI Codex today
-- Node 20+ (only to build the desktop app from source)
+- Node 22+ (only to build the desktop app from source)
 - Flutter 3.32+ (only to build the mobile app from source)
 - Xcode 15+ and a cabled iPhone (only to install the iOS app; it is never prebuilt)
 
