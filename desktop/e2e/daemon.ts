@@ -41,6 +41,31 @@ function session(id: string, title: string): Session {
 
 const SESSIONS = [session(ALPHA, 'Alpha'), session(BETA, 'Beta')]
 
+/** One line per session, each naming itself. */
+export const TRANSCRIPT_TEXT: Record<string, string> = {
+  [ALPHA]: 'this is the alpha transcript',
+  [BETA]: 'this is the beta transcript',
+}
+const TRANSCRIPTS = TRANSCRIPT_TEXT
+
+/** One schedule, so the schedules list has something in it to switch to. */
+const SCHEDULES = [
+  {
+    id: 'sched-1',
+    name: 'nightly-sweep',
+    kind: 'timer',
+    enabled: true,
+    cron: '0 2 * * *',
+    mode: 'new',
+    prompt: 'sweep the dependency updates',
+    cwd: REPO,
+    next_run_at: '2030-01-01T02:00:00Z',
+    fail_streak: 0,
+    fires_today: 0,
+    created_at: '2026-01-01T00:00:00Z',
+  },
+]
+
 const WORKTREES: Worktree[] = [
   {
     path: REPO,
@@ -165,8 +190,24 @@ function answer(path: string, q: (name: string) => string): unknown {
       return { root: q('path'), matches: grepMatches(q('path'), q('q')), scanned: 2, truncated: false }
     case '/api/files/search':
       return { root: q('path'), matches: [], scanned: 0, truncated: false }
+    case '/api/schedules':
+      return { schedules: SCHEDULES }
     default:
-      if (path.endsWith('/transcript')) return { messages: [], total: 0, returned: 0, offset: 0, has_more: false }
+      // A transcript that says which session it belongs to, which is the whole
+      // point of the sync test: a panel showing the wrong one is only visible
+      // if the two differ.
+      if (path.endsWith('/transcript')) {
+        const id = path.slice('/api/sessions/'.length, -'/transcript'.length)
+        const text = TRANSCRIPTS[id]
+        if (!text) return { messages: [], total: 0, returned: 0, offset: 0, has_more: false }
+        return {
+          messages: [{ seq: 1, role: 'assistant', content: text, timestamp: '2026-01-01T00:00:00Z' }],
+          total: 1,
+          returned: 1,
+          offset: 0,
+          has_more: false,
+        }
+      }
       return {}
   }
 }
