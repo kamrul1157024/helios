@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   appendDelta,
   effectsFor,
+  fileEffectFor,
   keys,
   mergeSettings,
   patchSessionInPage,
@@ -173,6 +174,71 @@ test('session_evicted takes out the whole host', () => {
   assert.deepEqual(effectsFor(HOST, { type: 'session_evicted', data: {} }), [
     { kind: 'invalidate', queryKey: keys.host(HOST) },
   ])
+})
+
+// ─── Files ──────────────────────────────────────────────────────────────────
+
+// Every path named has changed *content*: the daemon compares digests before it
+// says anything, so a formatter that rewrites a file with the bytes already in
+// it never reaches here. See docs/specs/54-file-change-events.md.
+test('file_changed takes out the files and the git reads', () => {
+  const named = { paths: [{ path: '/repo/a.go', kind: 'file', mod_time: '2026-09-01T04:03:11.204Z' }] }
+  assert.deepEqual(effectsFor(HOST, { type: 'file_changed', data: named }), [
+    { kind: 'invalidate', queryKey: keys.files(HOST) },
+    { kind: 'invalidate', queryKey: keys.git(HOST) },
+  ])
+})
+
+// A working-tree write moves `git status`, and a repo entry is a commit or a
+// checkout, so both kinds reach git the same way.
+test('a repo entry and a deletion take out the same keys', () => {
+  for (const entry of [{ path: '/repo', kind: 'repo' }, { path: '/repo/x.go', kind: 'file', gone: true }]) {
+    assert.equal(effectsFor(HOST, { type: 'file_changed', data: { paths: [entry] } }).length, 2)
+  }
+})
+
+test('a file_changed naming nothing does nothing', () => {
+  assert.deepEqual(effectsFor(HOST, { type: 'file_changed', data: {} }), [])
+  assert.deepEqual(effectsFor(HOST, { type: 'file_changed', data: { paths: [] } }), [])
+  assert.deepEqual(effectsFor(HOST, { type: 'file_changed', data: { paths: 'nonsense' } }), [])
+})
+
+// The socket was down and there is no replay buffer, so the gap was announced
+// to nobody. Files and git for a second reason: a watch that expired while a
+// tab sat open is not being swept, and re-reading registers it again.
+test('a reconnect refetches what the stream could have missed', () => {
+  assert.deepEqual(effectsFor(HOST, { type: 'stream_reconnected', data: {} }), [
+    { kind: 'invalidate', queryKey: keys.allSessions(HOST) },
+    { kind: 'invalidate', queryKey: keys.notifications(HOST) },
+    { kind: 'invalidate', queryKey: keys.files(HOST) },
+    { kind: 'invalidate', queryKey: keys.git(HOST) },
+  ])
+})
+
+// ─── What a file event does to one open tab ─────────────────────────────────
+//
+// The rule that protects unsaved work. It lives outside the component so it can
+// be asserted at all: there is no component test framework here.
+
+test('a clean tab whose file really moved is reloaded', () => {
+  assert.equal(fileEffectFor({ dirty: false }, 'old', 'new'), 'reload')
+})
+
+test('a dirty tab is marked and never reloaded', () => {
+  assert.equal(fileEffectFor({ dirty: true }, 'old', 'new'), 'mark')
+})
+
+// This window's own save comes back to it: the broadcaster has no addressing.
+// Without this the editor of whoever pressed the save key remounts under them.
+test('text equal to what is held is ignored, dirty or not', () => {
+  assert.equal(fileEffectFor({ dirty: false }, 'same', 'same'), 'ignore')
+  // The false-alarm case: no bar over a file that did not change.
+  assert.equal(fileEffectFor({ dirty: true }, 'same', 'same'), 'ignore')
+})
+
+test('a file that has gone is marked, never closed', () => {
+  assert.equal(fileEffectFor({ dirty: false }, 'old', null), 'mark')
+  assert.equal(fileEffectFor({ dirty: true }, 'old', null), 'mark')
 })
 
 test('events that are not about data touch no keys', () => {

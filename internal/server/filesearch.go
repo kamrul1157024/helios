@@ -220,6 +220,11 @@ func (s *PublicServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to stat file", http.StatusInternalServerError)
 		return
 	}
+	// The writer already has its answer, but the other clients do not. The
+	// broadcaster has no addressing, so this goes out to the writer as well;
+	// each client compares against what it holds and ignores its own echo.
+	s.files().Poke()
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"path":     clean,
 		"size":     written.Size(),

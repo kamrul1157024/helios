@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
@@ -670,4 +671,65 @@ func TestBothTrustDialogsAreRecognised(t *testing.T) {
 	if p.MatchScreen("just an ordinary prompt") != nil {
 		t.Error("matched a screen with no dialog on it")
 	}
+}
+
+// The poke carries no path and reads no tool input. apply_patch puts its patch
+// in a shell command string (see summarize), and parsing that back out is
+// exactly what the daemon's digest exists to avoid.
+// See docs/specs/54-file-change-events.md.
+func TestToolPostPokesTheFileWatcher(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	for _, tool := range []string{"apply_patch", "shell", "read"} {
+		t.Run(tool, func(t *testing.T) {
+			pokes := 0
+			ctx := &provider.HookContext{
+				DB:             db,
+				Mgr:            notifications.NewManager(db),
+				Notify:         func(string, interface{}) {},
+				Report:         func(provider.ReportEvent) {},
+				SessionStarted: func(string) {},
+				FilesTouched:   func() { pokes++ },
+			}
+			body, _ := json.Marshal(map[string]interface{}{
+				"session_id": "01a04dee-183a-7461-9bef-5f05c0aa510a",
+				"cwd":        "/tmp",
+				"tool_name":  tool,
+				"tool_input": map[string]string{"command": "anything"},
+			})
+			w := httptest.NewRecorder()
+			handleToolPost(ctx, w, httptest.NewRequest("POST", "/hooks/codex/tool/post", nil), body)
+
+			if pokes != 1 {
+				t.Errorf("poked %d times, want 1", pokes)
+			}
+		})
+	}
+}
+
+func TestToolPostWithoutAWatcher(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	ctx := &provider.HookContext{
+		DB:             db,
+		Mgr:            notifications.NewManager(db),
+		Notify:         func(string, interface{}) {},
+		Report:         func(provider.ReportEvent) {},
+		SessionStarted: func(string) {},
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"session_id": "01a04dee-183a-7461-9bef-5f05c0aa510a",
+		"cwd":        "/tmp",
+		"tool_name":  "shell",
+	})
+	w := httptest.NewRecorder()
+	handleToolPost(ctx, w, httptest.NewRequest("POST", "/hooks/codex/tool/post", nil), body)
 }

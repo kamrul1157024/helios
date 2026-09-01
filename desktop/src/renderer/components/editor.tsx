@@ -52,6 +52,14 @@ interface Props {
   onChange: (text: string) => void
   onSave: () => void
   cursor?: Cursor | null
+  /**
+   * Whether to take the keyboard when the buffer is built. Default true.
+   *
+   * False when the remount was not asked for by a person: a file event
+   * replacing the text of a tab that happens to be in front must not pull the
+   * caret out of whatever the user is typing into elsewhere.
+   */
+  autoFocus?: boolean
   /** Where the file was left last time. Applied once, as the buffer is built. */
   restore?: ReadingPosition | null
   onViewChange?: (at: ReadingPosition) => void
@@ -73,6 +81,7 @@ export function CodeEditor({
   onChange,
   onSave,
   cursor,
+  autoFocus = true,
   restore,
   onViewChange,
   onContextMenu,
@@ -86,6 +95,10 @@ export function CodeEditor({
   // every time the position it describes changed, which is every keystroke.
   const restoreRef = useRef(restore)
   restoreRef.current = restore
+  // Read at mount for the same reason as restore: as a dependency it would
+  // rebuild the editor whenever the panel changed its mind about focus.
+  const focusRef = useRef(autoFocus)
+  focusRef.current = autoFocus
 
   const report = (editor: EditorView): void => {
     const handle = handlers.current.onViewChange
@@ -146,7 +159,7 @@ export function CodeEditor({
     })
     const created = new EditorView({ state, parent: host.current })
     view.current = created
-    created.focus()
+    if (focusRef.current) created.focus()
 
     const start = restoreRef.current
     if (start) {

@@ -325,4 +325,9 @@ type HookContext struct {
 	PromptSubmitted func(sessionID string)
 	// Report pushes an event to the Reporter for narration.
 	Report func(event ReportEvent)
+	// FilesTouched says a tool just ran, so now is a good time to look at the
+	// paths clients are watching. It carries no path and reads no tool input:
+	// the daemon compares digests and works out what moved for itself. See
+	// docs/specs/54-file-change-events.md.
+	FilesTouched func()
 }
