@@ -46,6 +46,21 @@ export function notificationsQuery(hostId: string) {
   })
 }
 
+/**
+ * One session, fetched by id.
+ *
+ * The list is not always enough to find it in: sessions a schedule started are
+ * kept out of the ordinary list, so opening a run from its schedule would
+ * otherwise select something the detail panel cannot see.
+ */
+export function sessionQuery(hostId: string, sessionId: string) {
+  return queryOptions({
+    queryKey: keys.session(hostId, sessionId),
+    queryFn: async () => (await api(hostId).getSession(sessionId)).session,
+    enabled: hostId !== '' && sessionId !== '',
+  })
+}
+
 // ─── Schedules ──────────────────────────────────────────────────────────────
 
 export function schedulesQuery(hostId: string) {

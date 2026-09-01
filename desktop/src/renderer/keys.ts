@@ -30,6 +30,9 @@ export const keys = {
   allSessions: (hostId: string) => ['host', hostId, 'sessions'] as const,
   groups: (hostId: string) => ['host', hostId, 'groups'] as const,
   schedules: (hostId: string) => ['host', hostId, 'schedules'] as const,
+  /** One session on its own, for the ones the list does not carry. */
+  session: (hostId: string, sessionId: string) =>
+    ['host', hostId, 'session', sessionId] as const,
   /** One schedule's runs: ordinary sessions, filtered by what started them. */
   scheduleRuns: (hostId: string, scheduleId: string) =>
     ['host', hostId, 'schedule-runs', scheduleId] as const,
