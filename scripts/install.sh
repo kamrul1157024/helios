@@ -259,11 +259,63 @@ fi
 
 # ─── A way in from your phone ───────────────────────────────────────────────
 
-if ! have tailscale && ! have cloudflared; then
+# Any one of these is enough, so the note is only worth printing when there is
+# none. The list mirrors the TUI's own hints (internal/tui/start.go).
+TUNNEL=''
+for t in tailscale cloudflared ngrok zrok lt loclx; do
+  have "$t" && TUNNEL="$t" && break
+done
+
+if [ -n "$TUNNEL" ]; then
+  step "Found $TUNNEL — helios start will offer it as your tunnel"
+else
   step "One thing left: a tunnel, so your phone can reach this daemon"
-  note "Tailscale is the recommendation — https://tailscale.com/download"
-  note "Or cloudflared for a public URL with no account — https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
-  note "helios start will check again once one is installed."
+  note "Tailscale is the recommendation. It keeps the daemon inside your tailnet and"
+  note "the hostname never changes:"
+  note "  tailscale     https://tailscale.com/download          (brew install tailscale)"
+  note "Or a public URL, if you would rather not run a VPN on the phone:"
+  note "  cloudflared   https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+  note "  ngrok         https://ngrok.com/download              (brew install ngrok)"
+  note "  zrok          https://zrok.io                         (brew install openziti/tap/zrok)"
+  note "  localtunnel   npm install -g localtunnel"
+  note "helios start checks again, and there are nine providers in the picker."
+fi
+
+# ─── Staying awake ──────────────────────────────────────────────────────────
+
+# A sleeping Mac is a stopped session, which is a surprising way to lose an hour
+# of an agent's work. Raised only when this Mac actually sleeps on power and
+# nothing is already holding it open.
+if [ "$PLATFORM" = macos ] && ! have v-claw; then
+  AC_SLEEP=$(pmset -g custom 2> /dev/null | awk '/AC Power/ { ac = 1 } ac && $1 == "sleep" { print $2; exit }')
+  if [ -n "$AC_SLEEP" ] && [ "$AC_SLEEP" != 0 ]; then
+    step "This Mac sleeps after $AC_SLEEP minutes on power, and sessions stop when it does"
+    note "v-claw holds it awake while the adapter is in — lid shut included — and lets"
+    note "go the moment you unplug: https://github.com/kamrul1157024/v-claw"
+    if ask "Install v-claw? It builds from source and asks for your password once." n; then
+      if ! xcode-select -p > /dev/null 2>&1; then
+        warn "It needs the Xcode command line tools first:  xcode-select --install"
+      else
+        VCLAW="$(dirname "$SRC")/v-claw"
+        if [ -d "$VCLAW/.git" ]; then
+          # A checkout someone has been working in should not stop the install.
+          git -C "$VCLAW" pull --quiet --ff-only || warn "Could not update $VCLAW — building what is there."
+        else
+          git clone --quiet https://github.com/kamrul1157024/v-claw "$VCLAW"
+        fi
+        VLOG="${TMPDIR:-/tmp}/v-claw-install.log"
+        if (cd "$VCLAW" && make install) > "$VLOG" 2>&1; then
+          note "installed v-claw — the claw in your menu bar says when it is holding"
+        else
+          warn "v-claw did not install. The log is at $VLOG"
+        fi
+      fi
+    else
+      note "Or, without installing anything:"
+      note "  caffeinate -s helios start    awake for as long as that runs"
+      note "  sudo pmset -c sleep 0         never sleep on power, until you set it back"
+    fi
+  fi
 fi
 
 # ─── Over to you ────────────────────────────────────────────────────────────
