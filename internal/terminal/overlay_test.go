@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bytes"
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,9 @@ func TestOverlayFrameRoundTrip(t *testing.T) {
 		Title:    "Bash",
 		Body:     []string{"rm -rf build/", "Run this command?"},
 		Options:  []string{"Yes", "Yes, and don't ask again", "No"},
+		Details:  []string{"Once.", "And write the rule.", ""},
+		Checked:  []bool{false, false, true},
+		Input:    &OverlayInput{Label: "Other…", Value: "half typed", Active: true},
 		Selected: 2,
 		Footer:   "↑↓ select · enter confirm",
 	}
@@ -42,6 +46,15 @@ func TestOverlayFrameRoundTrip(t *testing.T) {
 	}
 	if strings.Join(got.Body, "|") != strings.Join(want.Body, "|") {
 		t.Errorf("body = %v, want %v", got.Body, want.Body)
+	}
+	if strings.Join(got.Details, "|") != strings.Join(want.Details, "|") {
+		t.Errorf("details = %v, want %v", got.Details, want.Details)
+	}
+	if len(got.Checked) != len(want.Checked) || !got.Checked[2] {
+		t.Errorf("checked = %v, want %v", got.Checked, want.Checked)
+	}
+	if got.Input == nil || *got.Input != *want.Input {
+		t.Errorf("input = %+v, want %+v", got.Input, want.Input)
 	}
 }
 
@@ -150,6 +163,9 @@ func TestOverlayBoxRowsAreUniformWidth(t *testing.T) {
 		Title:    "A rather long title that keeps going",
 		Body:     []string{"", "short", strings.Repeat("wrap me ", 12)},
 		Options:  []string{"yes", strings.Repeat("verbose-", 10), "no"},
+		Details:  []string{"a short reason", strings.Repeat("a long reason ", 8), ""},
+		Checked:  []bool{true, false, true},
+		Input:    &OverlayInput{Label: "Other…", Value: strings.Repeat("typed ", 12), Active: true},
 		Selected: 1,
 		Footer:   "↑↓ select · enter confirm · esc cancel",
 	}, width)
@@ -173,6 +189,119 @@ func TestWrapLineCutsAnOverlongWord(t *testing.T) {
 	for _, line := range wrapLine(strings.Repeat("x", 40), 10) {
 		if ansi.StringWidth(line) > 10 {
 			t.Errorf("wrapped line too wide: %q", line)
+		}
+	}
+}
+
+func TestRenderOverlayDrawsDescriptionsUnderTheirOptions(t *testing.T) {
+	out := string(RenderOverlay(Overlay{
+		Title:   "Next step",
+		Options: []string{"Live repro", "Code review"},
+		Details: []string{"Drive the real TUI.", "Read the whole diff."},
+	}, 80, 24))
+
+	first := strings.Index(out, "Live repro")
+	reason := strings.Index(out, "Drive the real TUI.")
+	second := strings.Index(out, "Code review")
+	if first < 0 || reason < 0 || second < 0 {
+		t.Fatalf("render is missing a label or a description:\n%s", out)
+	}
+	if !(first < reason && reason < second) {
+		t.Errorf("the description is not between its own label and the next:\n%s", out)
+	}
+	if !strings.Contains(out, sgrDim+"Drive the real TUI.") {
+		t.Errorf("the description is not dim:\n%s", out)
+	}
+}
+
+// A description is capped rather than wrapped forever: the box is anchored to
+// the bottom and clips from the top, so a long one would push the question off
+// the screen.
+func TestRenderOverlayCapsALongDescription(t *testing.T) {
+	lines := overlayBox(Overlay{
+		Options: []string{"only"},
+		Details: []string{strings.Repeat("reason ", 60)},
+	}, 40)
+
+	body := 0
+	for _, line := range lines {
+		if strings.Contains(line, "reason") {
+			body++
+		}
+	}
+	if body != detailMaxLines {
+		t.Errorf("description drew %d lines, want %d", body, detailMaxLines)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "…") {
+		t.Error("a cut description does not say it was cut")
+	}
+}
+
+func TestRenderOverlayDrawsCheckboxes(t *testing.T) {
+	out := string(RenderOverlay(Overlay{
+		Options: []string{"Unit tests", "Race detector"},
+		Checked: []bool{true, false},
+	}, 80, 24))
+
+	if !strings.Contains(out, "[x] Unit tests") {
+		t.Errorf("a ticked option is not drawn ticked:\n%s", out)
+	}
+	if !strings.Contains(out, "[ ] Race detector") {
+		t.Errorf("an unticked option is not drawn empty:\n%s", out)
+	}
+}
+
+func TestRenderOverlayDrawsTheAnswerField(t *testing.T) {
+	closed := string(RenderOverlay(Overlay{
+		Options: []string{"Live repro"},
+		Input:   &OverlayInput{Label: "Other…"},
+	}, 80, 24))
+	if !strings.Contains(closed, "Other…") {
+		t.Errorf("the row that opens the field is missing:\n%s", closed)
+	}
+	if strings.Contains(closed, "█") {
+		t.Errorf("a closed field drew a caret:\n%s", closed)
+	}
+
+	open := string(RenderOverlay(Overlay{
+		Options:  []string{"Live repro"},
+		Input:    &OverlayInput{Label: "Other…", Value: "rebase first", Active: true},
+		Selected: 1,
+	}, 80, 24))
+	if !strings.Contains(open, "rebase first█") {
+		t.Errorf("the open field does not show the value and caret:\n%s", open)
+	}
+}
+
+// A value longer than the field scrolls: the tail is where the typing is.
+func TestRenderOverlayScrollsALongValue(t *testing.T) {
+	lines := overlayBox(Overlay{
+		Options: []string{"only"},
+		Input:   &OverlayInput{Label: "Other…", Value: strings.Repeat("x", 200) + "tail", Active: true},
+	}, 40)
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "tail█") {
+		t.Errorf("the end of the value is not visible:\n%s", joined)
+	}
+	if !strings.Contains(joined, "…") {
+		t.Error("a scrolled value does not say it was scrolled")
+	}
+}
+
+// The promise to a host from an older build: an overlay that uses none of the
+// new fields marshals to the bytes it always did, so that host keeps painting.
+func TestAPlainOverlayMarshalsWithoutTheNewKeys(t *testing.T) {
+	b, err := json.Marshal(Overlay{
+		Title:   "Bash",
+		Options: []string{"Allow", "Deny"},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, key := range []string{"details", "checked", "input"} {
+		if bytes.Contains(b, []byte(key)) {
+			t.Errorf("plain overlay carries %q: %s", key, b)
 		}
 	}
 }

@@ -313,6 +313,11 @@ type Overlay struct {
 func RenderOverlay(o Overlay, cols, rows int) []byte
 ```
 
+[Spec 55](55-answering-a-question-from-the-terminal.md) adds three fields to this — the
+per-option descriptions, the checkboxes of a multi-select question, and the row that
+collects a typed answer — and with them the rule that a question with no options is
+answered in the terminal rather than left to the phone.
+
 `RenderOverlay` is bracketed by `\x1b7` / `\x1b8` and hides the cursor, so it can
 be re-stamped after any PTY output without disturbing the application
 underneath. It anchors to the bottom of the viewport — where a CLI puts its own

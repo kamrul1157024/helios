@@ -41,11 +41,59 @@ func TestDecodeKeys(t *testing.T) {
 		{"empty", "", nil},
 		// A truncated sequence must not run off the end of the buffer.
 		{"bare csi", "\x1b[", []event{{kind: keyCancel}}},
+		{"space toggles", " ", []event{{kind: keyToggle}}},
+		// Pasted text read as keystrokes would jump and confirm its way to an
+		// answer nobody chose.
+		{"paste is skipped whole", "\x1b[200~2 j\x1b[201~", nil},
+		{"paste then enter", "\x1b[200~x\x1b[201~\r", []event{{kind: keyConfirm}}},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := decodeKeys([]byte(c.in))
+			got := decodeKeys([]byte(c.in), false)
+			if len(got) != len(c.want) {
+				t.Fatalf("decodeKeys(%q) = %v, want %v", c.in, got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("key %d = %v, want %v", i, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestDecodeKeysWhileEditing pins the other vocabulary. The same bytes that
+// drive the list are characters once the answer field has the keyboard.
+func TestDecodeKeysWhileEditing(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []event
+	}{
+		{"letters are text", "hello", []event{{kind: keyText, s: "hello"}}},
+		{"digits are text", "13", []event{{kind: keyText, s: "13"}}},
+		{"vi keys are text", "jk", []event{{kind: keyText, s: "jk"}}},
+		{"space is text", "a b", []event{{kind: keyText, s: "a b"}}},
+		{"utf-8 survives", "héllo…", []event{{kind: keyText, s: "héllo…"}}},
+		{"backspace", "\x7f", []event{{kind: keyErase}}},
+		{"ctrl-u clears the line", "\x15", []event{{kind: keyEraseLine}}},
+		{"ctrl-w deletes a word", "\x17", []event{{kind: keyEraseWord}}},
+		// The first Escape closes the field. Only the second cancels, and the
+		// footer says so while the field is open.
+		{"escape leaves the field", "\x1b", []event{{kind: keyLeaveField}}},
+		{"ctrl-c still cancels", "\x03", []event{{kind: keyCancel}}},
+		{"enter sends", "\r", []event{{kind: keyConfirm}}},
+		{"arrows still move", "\x1b[B", []event{{kind: keyNext}}},
+		{"paste is inserted", "\x1b[200~2 j\x1b[201~", []event{{kind: keyText, s: "2 j"}}},
+		{"typing then enter", "ok\r", []event{{kind: keyText, s: "ok"}, {kind: keyConfirm}}},
+		// A paste whose end marker has not arrived yet still has to land as text.
+		{"unterminated paste", "\x1b[200~half", []event{{kind: keyText, s: "half"}}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := decodeKeys([]byte(c.in), true)
 			if len(got) != len(c.want) {
 				t.Fatalf("decodeKeys(%q) = %v, want %v", c.in, got, c.want)
 			}

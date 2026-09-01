@@ -36,7 +36,11 @@ func SidecarPath(heliosDir, sessionID string) string {
 // the host on the other end of the socket will do with it.
 //
 // 1 adds FramePaste.
-const HostProtocol = 1
+// 2 renders Overlay.Details, .Checked and .Input. A host below it ignores them,
+// which is right for a description and wrong for the other two: it would draw a
+// multi-select question as a single-select list, and hide the field the user is
+// typing into. So the daemon asks before it offers either.
+const HostProtocol = 2
 
 // Sidecar is the durable session→terminal mapping. It replaces the
 // @helios_session_id tmux pane option, so the mapping survives without a

@@ -12,10 +12,11 @@ import (
 // fakeOverlays records what a controller painted, standing in for the terminal
 // backend.
 type fakeOverlays struct {
-	mu      sync.Mutex
-	painted []terminal.Overlay
-	cleared []string
-	setErr  error
+	mu       sync.Mutex
+	painted  []terminal.Overlay
+	cleared  []string
+	setErr   error
+	protocol int
 }
 
 func (f *fakeOverlays) SetOverlay(sessionID string, o terminal.Overlay) error {
@@ -35,6 +36,17 @@ func (f *fakeOverlays) ClearOverlay(sessionID string) error {
 	return nil
 }
 
+// OverlayProtocol reports a current host unless a test says otherwise, so the
+// zero value of fakeOverlays is not an ancient terminal.
+func (f *fakeOverlays) OverlayProtocol(sessionID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.protocol == 0 {
+		return terminal.HostProtocol
+	}
+	return f.protocol
+}
+
 func (f *fakeOverlays) last() (terminal.Overlay, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -42,6 +54,12 @@ func (f *fakeOverlays) last() (terminal.Overlay, bool) {
 		return terminal.Overlay{}, false
 	}
 	return f.painted[len(f.painted)-1], true
+}
+
+func (f *fakeOverlays) paints() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.painted)
 }
 
 func (f *fakeOverlays) clears() int {
@@ -59,10 +77,15 @@ var testPrompt = Prompt{
 // ask wires a controller to a fake terminal and a channel of answers.
 func ask(t *testing.T) (*Controller, *fakeOverlays, chan Answer, func()) {
 	t.Helper()
+	return askPrompt(t, testPrompt)
+}
+
+func askPrompt(t *testing.T, p Prompt) (*Controller, *fakeOverlays, chan Answer, func()) {
+	t.Helper()
 	terms := &fakeOverlays{}
 	c := NewController(terms)
 	answers := make(chan Answer, 4)
-	release, err := c.Ask("s1", testPrompt, func(a Answer) { answers <- a })
+	release, err := c.Ask("s1", p, func(a Answer) { answers <- a })
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -249,5 +272,245 @@ func TestAPromptWithNoChoicesIsRejected(t *testing.T) {
 	c := NewController(&fakeOverlays{})
 	if _, err := c.Ask("s1", Prompt{Title: "empty"}, nil); err == nil {
 		t.Error("expected an error for a prompt with nothing to choose")
+	}
+}
+
+var multiPrompt = Prompt{
+	Title:   "Which checks to run",
+	Choices: []string{"Unit tests", "Race detector", "Flutter analyze"},
+	Multi:   true,
+}
+
+var typedPrompt = Prompt{
+	Title:     "Next step",
+	Choices:   []string{"Live repro", "Code review"},
+	AllowText: true,
+}
+
+func TestDescriptionsReachTheOverlay(t *testing.T) {
+	_, terms, _, _ := askPrompt(t, Prompt{
+		Title:   "Next step",
+		Choices: []string{"Live repro", "Code review"},
+		Details: []string{"Drive the real TUI.", "Read the diff."},
+	})
+
+	o, _ := terms.last()
+	if len(o.Details) != 2 || o.Details[0] != "Drive the real TUI." {
+		t.Errorf("details = %v, want both descriptions", o.Details)
+	}
+}
+
+// A permission prompt asks for none of this, and has to paint exactly what it
+// painted before the fields existed — an older host is reading the same bytes.
+func TestAPlainPromptCarriesNoneOfTheNewFields(t *testing.T) {
+	_, terms, _, _ := ask(t)
+
+	o, _ := terms.last()
+	if o.Details != nil || o.Checked != nil || o.Input != nil {
+		t.Errorf("overlay = %+v, want no details, checkboxes or field", o)
+	}
+}
+
+func TestSpaceTicksAChoice(t *testing.T) {
+	c, terms, _, _ := askPrompt(t, multiPrompt)
+
+	c.HandleInput("s1", []byte(" "))
+	o, _ := terms.last()
+	if len(o.Checked) != 3 || !o.Checked[0] {
+		t.Errorf("checked = %v, want the first choice ticked", o.Checked)
+	}
+
+	c.HandleInput("s1", []byte(" "))
+	o, _ = terms.last()
+	if o.Checked[0] {
+		t.Error("a second space did not untick the choice")
+	}
+}
+
+func TestSpaceDoesNothingOnASingleChoicePrompt(t *testing.T) {
+	c, terms, answers, _ := ask(t)
+
+	c.HandleInput("s1", []byte(" "))
+	o, _ := terms.last()
+	if o.Checked != nil {
+		t.Errorf("checked = %v, want none on a single-choice prompt", o.Checked)
+	}
+	select {
+	case a := <-answers:
+		t.Fatalf("space answered the prompt: %+v", a)
+	default:
+	}
+}
+
+func TestEnterAnswersWithEveryTickedChoice(t *testing.T) {
+	c, _, answers, _ := askPrompt(t, multiPrompt)
+
+	c.HandleInput("s1", []byte(" "))      // tick the first
+	c.HandleInput("s1", []byte("\x1b[B")) // move down
+	c.HandleInput("s1", []byte(" "))      // tick the second
+	c.HandleInput("s1", []byte("\r"))
+
+	a := awaitAnswer(t, answers)
+	if a.Cancelled() {
+		t.Fatalf("answer = %+v, want two choices", a)
+	}
+	if len(a.Indexes) != 2 || a.Indexes[0] != 0 || a.Indexes[1] != 1 {
+		t.Errorf("indexes = %v, want [0 1]", a.Indexes)
+	}
+}
+
+// Answering a multi-select question with nothing ticked is not an answer.
+func TestEnterWithNothingTickedIsACancel(t *testing.T) {
+	c, _, answers, _ := askPrompt(t, multiPrompt)
+
+	c.HandleInput("s1", []byte("\r"))
+	if a := awaitAnswer(t, answers); !a.Cancelled() {
+		t.Errorf("answer = %+v, want a cancel", a)
+	}
+}
+
+func TestTypingAnAnswer(t *testing.T) {
+	c, terms, answers, _ := askPrompt(t, typedPrompt)
+
+	// Down twice lands on the row past the two choices: the answer field.
+	c.HandleInput("s1", []byte("\x1b[B\x1b[B"))
+	c.HandleInput("s1", []byte("\r"))
+	o, _ := terms.last()
+	if o.Input == nil || !o.Input.Active {
+		t.Fatalf("input = %+v, want an open field", o.Input)
+	}
+	if o.Footer != footerTyping {
+		t.Errorf("footer = %q, want the typing hint", o.Footer)
+	}
+
+	c.HandleInput("s1", []byte("rebase first"))
+	o, _ = terms.last()
+	if o.Input.Value != "rebase first" {
+		t.Errorf("value = %q, want what was typed", o.Input.Value)
+	}
+
+	c.HandleInput("s1", []byte("\r"))
+	a := awaitAnswer(t, answers)
+	if a.Text != "rebase first" || a.Cancelled() {
+		t.Errorf("answer = %+v, want the typed text", a)
+	}
+}
+
+func TestBackspaceEditsTheAnswer(t *testing.T) {
+	c, terms, _, _ := askPrompt(t, typedPrompt)
+
+	c.HandleInput("s1", []byte("\x1b[B\x1b[B\r"))
+	c.HandleInput("s1", []byte("one two"))
+	c.HandleInput("s1", []byte("\x7f"))
+	if o, _ := terms.last(); o.Input.Value != "one tw" {
+		t.Errorf("value = %q, want one rune gone", o.Input.Value)
+	}
+	c.HandleInput("s1", []byte("\x17"))
+	if o, _ := terms.last(); o.Input.Value != "one " {
+		t.Errorf("value = %q, want the word gone", o.Input.Value)
+	}
+	c.HandleInput("s1", []byte("\x15"))
+	if o, _ := terms.last(); o.Input.Value != "" {
+		t.Errorf("value = %q, want the line cleared", o.Input.Value)
+	}
+}
+
+// The first Escape closes the field and leaves the question standing. Only the
+// second one throws it away.
+func TestEscapeLeavesTheFieldBeforeItCancels(t *testing.T) {
+	c, terms, answers, _ := askPrompt(t, typedPrompt)
+
+	c.HandleInput("s1", []byte("\x1b[B\x1b[B\r"))
+	c.HandleInput("s1", []byte("draft"))
+	c.HandleInput("s1", []byte("\x1b"))
+
+	o, _ := terms.last()
+	if o.Input.Active {
+		t.Error("the field is still open after Escape")
+	}
+	if o.Input.Value != "draft" {
+		t.Errorf("value = %q, want what was typed to survive", o.Input.Value)
+	}
+	select {
+	case a := <-answers:
+		t.Fatalf("the first Escape answered the prompt: %+v", a)
+	default:
+	}
+
+	c.HandleInput("s1", []byte("\x1b"))
+	if a := awaitAnswer(t, answers); !a.Cancelled() {
+		t.Errorf("answer = %+v, want a cancel", a)
+	}
+}
+
+func TestAnEmptyFieldIsNotAnAnswer(t *testing.T) {
+	c, terms, answers, _ := askPrompt(t, typedPrompt)
+
+	c.HandleInput("s1", []byte("\x1b[B\x1b[B\r"))
+	c.HandleInput("s1", []byte("\r"))
+
+	if o, _ := terms.last(); o.Input.Active {
+		t.Error("Enter on an empty field left it open")
+	}
+	select {
+	case a := <-answers:
+		t.Fatalf("an empty field answered the prompt: %+v", a)
+	default:
+	}
+}
+
+// An older host would draw a multi-select question as a single-select list,
+// which is an answer the user did not give. That one goes to the phone whole.
+func TestAnOldHostIsNotOfferedCheckboxes(t *testing.T) {
+	terms := &fakeOverlays{protocol: 1}
+	c := NewController(terms)
+
+	if _, err := c.Ask("s1", multiPrompt, nil); !errors.Is(err, ErrNoTerminal) {
+		t.Errorf("err = %v, want ErrNoTerminal", err)
+	}
+	if terms.paints() != 0 {
+		t.Error("painted a multi-select prompt on a host that cannot draw one")
+	}
+}
+
+// The answer field is the one that degrades: an older host still gets the
+// choices, and what the user wanted to write is still answerable on the phone.
+// Suppressing the whole prompt instead would leave that terminal with nothing.
+func TestAnOldHostStillGetsTheChoices(t *testing.T) {
+	terms := &fakeOverlays{protocol: 1}
+	c := NewController(terms)
+
+	if _, err := c.Ask("s1", typedPrompt, nil); err != nil {
+		t.Fatalf("err = %v, want the choices painted", err)
+	}
+	o, ok := terms.last()
+	if !ok {
+		t.Fatal("nothing was painted")
+	}
+	if o.Input != nil {
+		t.Errorf("input = %+v, want no field on a host that cannot draw one", o.Input)
+	}
+	if len(o.Options) != len(typedPrompt.Choices) {
+		t.Errorf("options = %v, want all the choices", o.Options)
+	}
+}
+
+// A question with no choices is nothing but the field, so there is no reduced
+// version of it to draw.
+func TestAnOldHostGetsNoFieldOnlyPrompt(t *testing.T) {
+	terms := &fakeOverlays{protocol: 1}
+	c := NewController(terms)
+
+	_, err := c.Ask("s1", Prompt{Title: "Name", AllowText: true}, nil)
+	if !errors.Is(err, ErrNoTerminal) {
+		t.Errorf("err = %v, want ErrNoTerminal", err)
+	}
+}
+
+// A prompt that asks for none of it is painted on any host.
+func TestAnOldHostStillGetsAPlainPrompt(t *testing.T) {
+	c := NewController(&fakeOverlays{protocol: 1})
+	if _, err := c.Ask("s1", testPrompt, nil); err != nil {
+		t.Errorf("err = %v, want it painted", err)
 	}
 }

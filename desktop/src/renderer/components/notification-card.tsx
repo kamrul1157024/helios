@@ -78,6 +78,22 @@ export function NotificationCard({
   )
 }
 
+// readableInput lays a tool's input out as one field per block, with any
+// multi-line value — a file's contents, a patch — printed as the lines it is
+// rather than as one escaped string.
+function readableInput(fields: Record<string, unknown> | null): string | null {
+  if (!fields) return null
+  const entries = Object.entries(fields)
+  if (entries.length === 0) return null
+  return entries
+    .map(([key, value]) =>
+      typeof value === 'string' && value.includes('\n')
+        ? `${key}:\n${value}`
+        : `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+    )
+    .join('\n\n')
+}
+
 function PermissionCard({
   payload,
   busy,
@@ -88,7 +104,14 @@ function PermissionCard({
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
   const toolInput = payload.tool_input
-  const original = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput ?? {}, null, 2)
+  // The field the tool actually runs, when there is one. A command goes through
+  // JSON.stringify as a single line of \n escapes, which is unreadable exactly
+  // when it matters most: a heredoc writing a file is the thing you most want
+  // to read before approving it.
+  const fields = toolInput && typeof toolInput === 'object' ? (toolInput as Record<string, unknown>) : null
+  const command = typeof fields?.command === 'string' ? fields.command : null
+  const original =
+    typeof toolInput === 'string' ? toolInput : (command ?? readableInput(fields) ?? '{}')
   const suggestions = Array.isArray(payload.permission_suggestions) ? payload.permission_suggestions : []
 
   const [editing, setEditing] = useState(false)
@@ -98,12 +121,18 @@ function PermissionCard({
   const approve = (): void => {
     const body: Record<string, unknown> = { action: 'approve' }
     if (editing && edited !== original) {
-      try {
-        body.updated_input = JSON.parse(edited)
-      } catch {
-        // Not JSON: the common edit is a shell command, and that is the field
-        // the tool reads. Matches the mobile client's fallback.
-        body.updated_input = { command: edited }
+      if (command !== null) {
+        // Editing the command edits that one field: the rest of the input —
+        // a description, a timeout — is not the user's to lose.
+        body.updated_input = { ...fields, command: edited }
+      } else {
+        try {
+          body.updated_input = JSON.parse(edited)
+        } catch {
+          // Not JSON: the common edit is a shell command, and that is the field
+          // the tool reads. Matches the mobile client's fallback.
+          body.updated_input = { command: edited }
+        }
       }
     }
     if (rule !== null) body.apply_permission = rule
@@ -164,18 +193,48 @@ function QuestionCard({
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
   const questions = (Array.isArray(payload.questions) ? payload.questions : []) as Question[]
-  // Question index → option index. Indices rather than labels: the daemon
+  // Question index → option indices. Indices rather than labels: the daemon
   // answers by moving the CLI's own highlight, so position is what it needs.
-  const [chosen, setChosen] = useState<Record<number, number>>({})
+  // A multi-select question keeps several; the rest replace the one they hold.
+  const [chosen, setChosen] = useState<Record<number, number[]>>({})
+  // Question index → what was typed instead of picking.
+  const [typed, setTyped] = useState<Record<number, string>>({})
+
+  const pick = (question: Question, questionIndex: number, optionIndex: number): void =>
+    setChosen((current) => {
+      const held = current[questionIndex] ?? []
+      if (!question.multiSelect) {
+        return { ...current, [questionIndex]: [optionIndex] }
+      }
+      const next = held.includes(optionIndex)
+        ? held.filter((i) => i !== optionIndex)
+        : [...held, optionIndex].sort((a, b) => a - b)
+      return { ...current, [questionIndex]: next }
+    })
+
+  const answered = (index: number): boolean =>
+    (chosen[index] ?? []).length > 0 || (typed[index] ?? '').trim() !== ''
 
   const submit = (): void => {
     const selections = Object.entries(chosen)
-      .map(([questionIndex, optionIndex]) => ({
-        question_index: Number(questionIndex),
-        option_index: optionIndex,
-      }))
+      .flatMap(([questionIndex, optionIndexes]) =>
+        optionIndexes.map((optionIndex) => ({
+          question_index: Number(questionIndex),
+          option_index: optionIndex,
+        })),
+      )
       .sort((a, b) => a.question_index - b.question_index)
-    void act({ action: 'answer', selections })
+
+    // One text field on the wire for the whole set, so an answer past the
+    // first says which question it belongs to.
+    const written = questions
+      .map((question, index) => [question, (typed[index] ?? '').trim()] as const)
+      .filter(([, text]) => text !== '')
+      .map(([question, text]) =>
+        questions.length === 1 ? text : `${question.header ?? question.question}: ${text}`,
+      )
+
+    void act({ action: 'answer', selections, text: written.join('\n') })
   }
 
   return (
@@ -187,25 +246,34 @@ function QuestionCard({
           {(question.options ?? []).map((option, optionIndex) => (
             <button
               key={optionIndex}
-              className={`option ${chosen[questionIndex] === optionIndex ? 'chosen' : ''}`}
-              onClick={() => setChosen((current) => ({ ...current, [questionIndex]: optionIndex }))}
+              className={`option ${(chosen[questionIndex] ?? []).includes(optionIndex) ? 'chosen' : ''}`}
+              onClick={() => pick(question, questionIndex, optionIndex)}
             >
-              <span className="option-label">{option.label}</span>
+              <span className="option-label">
+                {question.multiSelect &&
+                  ((chosen[questionIndex] ?? []).includes(optionIndex) ? '☑ ' : '☐ ')}
+                {option.label}
+              </span>
               {option.description && <span className="option-desc">{option.description}</span>}
             </button>
           ))}
-          {/* Answering drives the CLI's own list, which takes one highlighted
-              option per question. Picking several needs the terminal. */}
-          {question.multiSelect && (
-            <small className="option-desc">Pick one here, or answer in the terminal to choose several.</small>
-          )}
+          <label className="field">
+            <span>Other</span>
+            <input
+              value={typed[questionIndex] ?? ''}
+              placeholder="Answer in your own words"
+              onChange={(event) =>
+                setTyped((current) => ({ ...current, [questionIndex]: event.target.value }))
+              }
+            />
+          </label>
         </div>
       ))}
 
       <Actions busy={busy}>
         {/* Every question, not just one: the daemon walks the CLI through them
             in order and a gap would leave it stranded. */}
-        <button disabled={Object.keys(chosen).length !== questions.length} onClick={submit}>
+        <button disabled={!questions.every((_, index) => answered(index))} onClick={submit}>
           Submit
         </button>
         <button className="ghost" onClick={() => void act({ action: 'skip' })}>

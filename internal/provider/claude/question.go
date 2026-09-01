@@ -22,9 +22,10 @@ type questionOption struct {
 
 // questionSpec is one entry of the AskUserQuestion tool input.
 type questionSpec struct {
-	Question string           `json:"question"`
-	Header   string           `json:"header"`
-	Options  []questionOption `json:"options"`
+	Question    string           `json:"question"`
+	Header      string           `json:"header"`
+	Options     []questionOption `json:"options"`
+	MultiSelect bool             `json:"multiSelect"`
 }
 
 // questionPayload is the tool input as the notification stores it: the CLI's
@@ -65,14 +66,6 @@ func showQuestionPrompt(ctx *provider.HookContext, sessionID, notifID string, qu
 	if len(questions) == 0 {
 		return func() {}
 	}
-	for _, q := range questions {
-		// A question with no options wants free text, which a list of choices
-		// cannot collect. Leaving the whole set to the phone beats answering
-		// half of it from the terminal.
-		if len(q.Options) == 0 {
-			return func() {}
-		}
-	}
 
 	a := &questionAsker{ctx: ctx, sessionID: sessionID, notifID: notifID, questions: questions}
 	a.ask(0)
@@ -92,6 +85,7 @@ type questionAsker struct {
 	// this may be taking the prompt down.
 	mu      sync.Mutex
 	chosen  []selection
+	typed   map[int]string
 	release func()
 	stopped bool
 }
@@ -104,6 +98,11 @@ func (a *questionAsker) ask(i int) {
 		Title:   a.title(i),
 		Body:    nonEmpty([]string{q.Question}),
 		Choices: optionLabels(q),
+		Details: optionDescriptions(q),
+		Multi:   q.MultiSelect,
+		// The CLI always takes an answer none of its options carry, so the row
+		// that collects one is not conditional.
+		AllowText: true,
 	}, func(ans hitl.Answer) { a.answered(i, ans) }))
 }
 
@@ -129,8 +128,21 @@ func (a *questionAsker) answered(i int, ans hitl.Answer) {
 	}
 
 	a.mu.Lock()
-	a.chosen = append(a.chosen, selection{QuestionIndex: i, OptionIndex: ans.Index})
+	switch {
+	case ans.Text != "":
+		if a.typed == nil {
+			a.typed = make(map[int]string)
+		}
+		a.typed[i] = ans.Text
+	case len(ans.Indexes) > 0:
+		for _, idx := range ans.Indexes {
+			a.chosen = append(a.chosen, selection{QuestionIndex: i, OptionIndex: idx})
+		}
+	default:
+		a.chosen = append(a.chosen, selection{QuestionIndex: i, OptionIndex: ans.Index})
+	}
 	chosen := append([]selection(nil), a.chosen...)
+	text := a.typedText()
 	a.mu.Unlock()
 
 	if i+1 < len(a.questions) {
@@ -138,12 +150,31 @@ func (a *questionAsker) answered(i int, ans hitl.Answer) {
 		return
 	}
 
-	response, err := json.Marshal(questionAnswer{Selections: chosen})
+	response, err := json.Marshal(questionAnswer{Selections: chosen, Text: text})
 	if err != nil {
 		log.Printf("hook: encode question answer for %s: %v", a.notifID, err)
 		return
 	}
 	a.resolve(notifications.Decision{Status: "answered", Response: response})
+}
+
+// typedText renders the answers the user wrote rather than picked. A set of
+// questions shares one text field on the wire, so each answer past the first
+// says which question it belongs to. The caller holds mu.
+func (a *questionAsker) typedText() string {
+	if len(a.typed) == 0 {
+		return ""
+	}
+	if len(a.questions) == 1 {
+		return a.typed[0]
+	}
+	lines := make([]string, 0, len(a.typed))
+	for i := range a.questions {
+		if text, ok := a.typed[i]; ok {
+			lines = append(lines, fmt.Sprintf("%s: %s", a.title(i), text))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // resolve settles the one notification both surfaces share, so the first answer
@@ -190,6 +221,23 @@ func optionLabels(q questionSpec) []string {
 		labels = append(labels, o.Label)
 	}
 	return labels
+}
+
+// optionDescriptions returns the reasoning under each label, or nil when the
+// question carries none — the overlay leaves the field out entirely then, and
+// an older host sees the JSON it has always seen.
+func optionDescriptions(q questionSpec) []string {
+	found := false
+	details := make([]string, 0, len(q.Options))
+	for _, o := range q.Options {
+		d := strings.TrimSpace(o.Description)
+		found = found || d != ""
+		details = append(details, d)
+	}
+	if !found {
+		return nil
+	}
+	return details
 }
 
 func skipResponse() json.RawMessage {

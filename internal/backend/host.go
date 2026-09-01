@@ -133,6 +133,17 @@ func (h *Host) SetOverlay(sessionID string, o terminal.Overlay) error {
 	return m.SetOverlay(o)
 }
 
+// OverlayProtocol reports what the host behind a session can draw. A session
+// with no host reports 0, the oldest protocol: a prompt that needs more than
+// that belongs on the phone rather than half-painted here.
+func (h *Host) OverlayProtocol(sessionID string) int {
+	m, err := h.Mirror(sessionID)
+	if err != nil {
+		return 0
+	}
+	return m.Protocol()
+}
+
 // ClearOverlay takes the modal down and hands the keyboard back to the agent.
 func (h *Host) ClearOverlay(sessionID string) error {
 	m, err := h.Mirror(sessionID)

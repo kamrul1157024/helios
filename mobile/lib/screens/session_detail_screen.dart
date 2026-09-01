@@ -31,7 +31,8 @@ class SessionDetailScreen extends rp.ConsumerStatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
 
   @override
-  rp.ConsumerState<SessionDetailScreen> createState() => _SessionDetailScreenState();
+  rp.ConsumerState<SessionDetailScreen> createState() =>
+      _SessionDetailScreenState();
 }
 
 class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
@@ -44,6 +45,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
 
   final _promptController = TextEditingController();
   final List<UploadFile> _attachments = [];
+
   /// The block just pasted into the composer, while the offer to file it is up.
   String? _pastedBlock;
   String _lastPrompt = '';
@@ -225,26 +227,34 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     final hostId = widget.session.hostId;
     if (_sse == null) return;
 
-    final status = await ref.read(gitStatusProvider((hostId, _effectiveCwd)).future);
+    final status = await ref.read(
+      gitStatusProvider((hostId, _effectiveCwd)).future,
+    );
     if (!mounted) return;
     setState(() => _gitStatus = status);
 
     // The server resolves a git root from any subdirectory, so the worktree
     // listing uses the resolved root rather than the session's cwd.
     final gitRoot = status?.root ?? widget.session.cwd;
-    final worktrees = await ref.read(gitWorktreesProvider((hostId, gitRoot)).future);
+    final worktrees = await ref.read(
+      gitWorktreesProvider((hostId, gitRoot)).future,
+    );
     if (!mounted) return;
     setState(() => _worktrees = worktrees);
 
     if (worktrees.length <= 1) return;
     final statuses = await Future.wait(
-      worktrees.map((wt) => ref.read(gitStatusProvider((hostId, wt.path)).future)),
+      worktrees.map(
+        (wt) => ref.read(gitStatusProvider((hostId, wt.path)).future),
+      ),
     );
     if (!mounted) return;
-    setState(() => _worktreeStatuses = {
-          for (var i = 0; i < worktrees.length; i++)
-            if (statuses[i] != null) worktrees[i].path: statuses[i]!,
-        });
+    setState(
+      () => _worktreeStatuses = {
+        for (var i = 0; i < worktrees.length; i++)
+          if (statuses[i] != null) worktrees[i].path: statuses[i]!,
+      },
+    );
   }
 
   /// Picks attachments, from the gallery, the camera, or the file browser.
@@ -407,9 +417,11 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         timer.cancel();
       }
       _resendReads = [5, 10]
-          .map((seconds) => Timer(Duration(seconds: seconds), () {
-                if (mounted) _loadNewMessages();
-              }))
+          .map(
+            (seconds) => Timer(Duration(seconds: seconds), () {
+              if (mounted) _loadNewMessages();
+            }),
+          )
           .toList();
     } else if (mounted) {
       // The prompt stays in the box: it never reached the session, so the
@@ -441,7 +453,11 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
               Navigator.pop(ctx);
               final title = controller.text.trim();
               ref
-                  .read(sessionsProvider(allSessionsKey(widget.session.hostId)).notifier)
+                  .read(
+                    sessionsProvider(
+                      allSessionsKey(widget.session.hostId),
+                    ).notifier,
+                  )
                   .patch(widget.session.sessionId, title: title);
             },
           ),
@@ -455,8 +471,12 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
                 Navigator.pop(ctx);
                 final title = controller.text.trim();
                 ref
-                  .read(sessionsProvider(allSessionsKey(widget.session.hostId)).notifier)
-                  .patch(widget.session.sessionId, title: title);
+                    .read(
+                      sessionsProvider(
+                        allSessionsKey(widget.session.hostId),
+                      ).notifier,
+                    )
+                    .patch(widget.session.sessionId, title: title);
               },
               child: const Text('Save'),
             ),
@@ -480,11 +500,14 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
 
   /// Get pending notifications for this session.
   List<HeliosNotification> _pendingNotifications() {
-    final held =
-        ref.watch(notificationsProvider(widget.session.hostId)).valueOrNull;
+    final held = ref
+        .watch(notificationsProvider(widget.session.hostId))
+        .valueOrNull;
     if (held == null) return const [];
     return held
-        .where((n) => n.sourceSession == widget.session.sessionId && n.isPending)
+        .where(
+          (n) => n.sourceSession == widget.session.sessionId && n.isPending,
+        )
         .toList();
   }
 
@@ -503,7 +526,8 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         final held = ref
             .watch(sessionsProvider(allSessionsKey(widget.session.hostId)))
             .valueOrNull;
-        final session = held?.firstWhere(
+        final session =
+            held?.firstWhere(
               (s) => s.sessionId == widget.session.sessionId,
               orElse: () => widget.session,
             ) ??
@@ -573,32 +597,42 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
           top: BorderSide(color: Colors.orange.withValues(alpha: 0.5)),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Batch approve all button
-          if (notifs.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(left: 12, right: 12, top: 8),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.tonal(
-                  onPressed: () {
-                    final ids = notifs
-                        .where((n) => n.isPermission)
-                        .map((n) => n.id)
-                        .toList();
-                    if (ids.isNotEmpty) {
-                      sse.batchAction(ids, {'action': 'approve'});
-                    }
-                  },
-                  child: Text('Approve All (${notifs.length})'),
+      // A question with descriptions and an Other field is taller than the
+      // room under the transcript. Cap it and let it scroll, or the buttons at
+      // its foot are unreachable.
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.55,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Batch approve all button
+              if (notifs.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, right: 12, top: 8),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonal(
+                      onPressed: () {
+                        final ids = notifs
+                            .where((n) => n.isPermission)
+                            .map((n) => n.id)
+                            .toList();
+                        if (ids.isNotEmpty) {
+                          sse.batchAction(ids, {'action': 'approve'});
+                        }
+                      },
+                      child: Text('Approve All (${notifs.length})'),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          // Individual notification cards
-          ...notifs.map((n) => _buildInlineNotifCard(n, sse)),
-        ],
+              // Individual notification cards
+              ...notifs.map((n) => _buildInlineNotifCard(n, sse)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -938,8 +972,9 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
   /// then: a button that appears a moment later is better than one that opens
   /// an empty sheet.
   bool _providerHasModes(Session session) {
-    final providers =
-        ref.watch(readyProvidersProvider(widget.session.hostId)).valueOrNull;
+    final providers = ref
+        .watch(readyProvidersProvider(widget.session.hostId))
+        .valueOrNull;
     if (providers == null) return false;
     for (final p in providers) {
       if (p.id == session.source) return p.permissionModes.isNotEmpty;

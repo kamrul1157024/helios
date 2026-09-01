@@ -198,6 +198,11 @@ func (m *Mirror) SetOverlay(o Overlay) error { return m.client.SetOverlay(o) }
 // ClearOverlay takes the modal down and hands input back to the PTY.
 func (m *Mirror) ClearOverlay() error { return m.client.ClearOverlay() }
 
+// Protocol reports the frame vocabulary the host on the other end understands.
+// It is read from the sidecar when the mirror connects and never changes: the
+// host would have to restart to speak anything else.
+func (m *Mirror) Protocol() int { return m.protocol }
+
 // SessionID returns the session this mirror follows.
 func (m *Mirror) SessionID() string { return m.sessionID }
 
