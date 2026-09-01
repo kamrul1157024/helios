@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/kamrul1157024/helios/main/scripts/i
 ```
 
 <p align="center">
-  <img src="docs/assets/desktop/chat.png" width="700" alt="Helios desktop app — session transcript" />
+  <img src="docs/assets/desktop/chat-expanded.png" width="700" alt="Helios desktop app — session transcript with expanded tool calls" />
 </p>
 
 <p align="center">
@@ -158,7 +158,7 @@ Tool calls in the transcript collapse to one line and expand in place, so a long
 stays readable.
 
 <p align="center">
-  <img src="docs/assets/desktop/chat-expanded.png" width="700" alt="Desktop app — expanded tool calls in the transcript" />
+  <img src="docs/assets/desktop/chat.png" width="700" alt="Desktop app — the session transcript" />
 </p>
 
 <p align="center">
