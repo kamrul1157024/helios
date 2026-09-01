@@ -47,6 +47,63 @@ export interface SessionGroup {
   parent?: string
 }
 
+/**
+ * A saved prompt with something that decides when it runs.
+ *
+ * One of four things decides: a cron expression (timer), a single moment
+ * (once), a command checked on a cron (monitor), or another job finishing
+ * (after). `kind` says which, and the fields for the other three are empty.
+ */
+export interface Schedule {
+  id: string
+  name: string
+  kind: 'timer' | 'once' | 'monitor' | 'after'
+  enabled: boolean
+  cron?: string
+  tz?: string
+  run_at?: string
+  after_id?: string
+  after_when?: 'success' | 'any'
+  after_session?: string
+  mode: 'new' | 'resume'
+  prompt: string
+  cwd?: string
+  provider?: string
+  model?: string
+  permission_mode?: string
+  target_session?: string
+  check_cmd?: string
+  check_file?: string
+  check_args?: string[]
+  check_match?: string
+  next_run_at?: string
+  last_fired_at?: string
+  last_session_id?: string
+  /** running until the session it started goes idle, then ok. */
+  last_status?: 'running' | 'ok' | 'failed' | 'missed' | 'blocked'
+  last_error?: string
+  done_at?: string
+  last_check_at?: string
+  last_check_exit?: number
+  last_check_out?: string
+  /** Consecutive failures, so a list can say "failing for six nights". */
+  fail_streak: number
+  failing_since?: string
+  /** How often it has fired today, which is how a runaway monitor is noticed. */
+  fires_today: number
+  fires_day?: string
+  created_at: string
+}
+
+/** What a check saw, when it was run by hand from the editor. */
+export interface CheckResult {
+  exit: number
+  output: string
+  matched: boolean
+  failed: boolean
+  error?: string
+}
+
 export type SessionStatus =
   | 'starting'
   | 'active'

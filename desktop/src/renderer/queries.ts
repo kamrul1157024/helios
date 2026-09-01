@@ -46,6 +46,44 @@ export function notificationsQuery(hostId: string) {
   })
 }
 
+// ─── Schedules ──────────────────────────────────────────────────────────────
+
+export function schedulesQuery(hostId: string) {
+  return queryOptions({
+    queryKey: keys.schedules(hostId),
+    queryFn: () => api(hostId).listSchedules(),
+  })
+}
+
+/**
+ * One schedule's runs.
+ *
+ * Ordinary sessions, asked for by what started them — which is why there is no
+ * second list component anywhere: the runs list is the session list.
+ */
+export function scheduleRunsQuery(hostId: string, scheduleId: string) {
+  return queryOptions({
+    queryKey: keys.scheduleRuns(hostId, scheduleId),
+    queryFn: async () => (await api(hostId).listSessions({ schedule_id: scheduleId })).sessions,
+    enabled: scheduleId !== '',
+  })
+}
+
+/**
+ * The tail of a schedule's own log, refetched while the panel is open.
+ *
+ * Polled rather than streamed: there is no streaming log in the daemon, and a
+ * check that runs every five minutes does not need sub-second delivery.
+ */
+export function scheduleLogQuery(hostId: string, scheduleId: string) {
+  return queryOptions({
+    queryKey: keys.scheduleLog(hostId, scheduleId),
+    queryFn: () => api(hostId).scheduleLog(scheduleId),
+    enabled: scheduleId !== '',
+    refetchInterval: 2000,
+  })
+}
+
 // ─── Settings ───────────────────────────────────────────────────────────────
 
 /**

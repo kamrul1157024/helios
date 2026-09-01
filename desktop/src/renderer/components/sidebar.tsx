@@ -163,10 +163,12 @@ export function Sidebar({
   onNewSession,
   onAddHost,
   onSettings,
+  onSchedules,
 }: {
   onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
   onAddHost: () => void
   onSettings: () => void
+  onSchedules: () => void
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
@@ -780,7 +782,7 @@ export function Sidebar({
         <button className="link" onClick={onAddHost}>
           Add host
         </button>
-        <AppMenu onSettings={onSettings} />
+        <AppMenu onSettings={onSettings} onSchedules={onSchedules} />
       </footer>
 
       {menu && (
@@ -997,7 +999,13 @@ function NewGroupField({
  * neither of which is where the eye goes, and the app menu is not somewhere a
  * user looks on the platforms where the window is the whole of the app.
  */
-function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
+function AppMenu({
+  onSettings,
+  onSchedules,
+}: {
+  onSettings: () => void
+  onSchedules: () => void
+}): JSX.Element {
   const menu = useRef<HTMLDetailsElement | null>(null)
 
   // <details> only closes on its own summary, so a menu left open stays open
@@ -1029,6 +1037,7 @@ function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
           if (menu.current) menu.current.open = false
         }}
       >
+        <button onClick={onSchedules}>Schedules…</button>
         <button onClick={onSettings}>Settings…</button>
         {/* Closing the window leaves the app on the tray so approvals keep
             arriving; this is the one control that actually ends it. */}

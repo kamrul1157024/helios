@@ -29,6 +29,12 @@ export const keys = {
    *  must not name a flag the sidebar may since have changed. */
   allSessions: (hostId: string) => ['host', hostId, 'sessions'] as const,
   groups: (hostId: string) => ['host', hostId, 'groups'] as const,
+  schedules: (hostId: string) => ['host', hostId, 'schedules'] as const,
+  /** One schedule's runs: ordinary sessions, filtered by what started them. */
+  scheduleRuns: (hostId: string, scheduleId: string) =>
+    ['host', hostId, 'schedule-runs', scheduleId] as const,
+  scheduleLog: (hostId: string, scheduleId: string) =>
+    ['host', hostId, 'schedule-log', scheduleId] as const,
   notifications: (hostId: string) => ['host', hostId, 'notifications'] as const,
   settings: (hostId: string) => ['host', hostId, 'settings'] as const,
   directories: (hostId: string) => ['host', hostId, 'directories'] as const,
@@ -208,6 +214,19 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
       // the one way the sidebar hears about it.
       return [
         { kind: 'invalidate', queryKey: keys.notifications(hostId) },
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+      ]
+
+    case 'schedule_created':
+    case 'schedule_updated':
+    case 'schedule_deleted':
+      return [{ kind: 'invalidate', queryKey: keys.schedules(hostId) }]
+
+    // A fire produces a session, so the runs list has a new row in it — and the
+    // schedule's own summary moved to "running".
+    case 'schedule_fired':
+      return [
+        { kind: 'invalidate', queryKey: keys.schedules(hostId) },
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
       ]
 
