@@ -30,6 +30,8 @@ export const keys = {
   allSessions: (hostId: string) => ['host', hostId, 'sessions'] as const,
   groups: (hostId: string) => ['host', hostId, 'groups'] as const,
   schedules: (hostId: string) => ['host', hostId, 'schedules'] as const,
+  /** Every session a schedule started, which the sessions list keeps folded. */
+  jobSessions: (hostId: string) => ['host', hostId, 'job-sessions'] as const,
   /** One session on its own, for the ones the list does not carry. */
   session: (hostId: string, sessionId: string) =>
     ['host', hostId, 'session', sessionId] as const,
@@ -222,7 +224,12 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
 
     case 'session_updated':
     case 'session_deleted':
-      return [{ kind: 'invalidate', queryKey: keys.allSessions(hostId) }]
+      // The automated section holds sessions too, and they change for the same
+      // reasons — a run going idle is a status the folded list still shows.
+      return [
+        { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
+      ]
 
     case 'notification':
     case 'notification_resolved':
@@ -246,6 +253,7 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
       return [
         { kind: 'invalidate', queryKey: keys.schedules(hostId) },
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
+        { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
       ]
 
     case 'session_evicted':

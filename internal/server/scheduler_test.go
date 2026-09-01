@@ -354,6 +354,49 @@ func TestTick_RunningBecomesOkWhenTheSessionGoesIdle(t *testing.T) {
 	}
 }
 
+// A run is over when the agent stops, so the terminal goes with it. The chain
+// still has to see the parent as a success: the session it reads is terminated
+// by the time a child looks at it.
+func TestTick_FinishedRunIsTerminatedAndStillReleasesItsChain(t *testing.T) {
+	s, shared := newSchedulerTest(t)
+	now := time.Now()
+
+	seedSchedule(t, shared.DB, &store.Schedule{ID: "parent", Name: "parent", Kind: "once", RunAt: rfc(now)})
+	seedSchedule(t, shared.DB, &store.Schedule{ID: "child", Name: "child", Kind: "after",
+		AfterID: "parent", AfterWhen: "success"})
+	seedSessionWithStatus(t, shared.DB, "parent-session", "idle")
+	shared.DB.RecordFire("parent", "parent-session", "running", "", now)
+
+	s.Tick(now)
+
+	run, _ := shared.DB.GetSession("parent-session")
+	if run.Status != "terminated" {
+		t.Fatalf("a finished run should not stay warm, got %q", run.Status)
+	}
+	child, _ := shared.DB.GetSchedule("child")
+	if child.LastSessionID == "" {
+		t.Fatalf("the child should have started, got %q", child.LastStatus)
+	}
+}
+
+// A resume schedule keeps its session: the conversation is what it is for.
+func TestTick_ResumeRunKeepsItsSession(t *testing.T) {
+	s, shared := newSchedulerTest(t)
+	now := time.Now()
+
+	seedSchedule(t, shared.DB, &store.Schedule{ID: "a", Name: "standup", Kind: "timer",
+		Cron: "0 9 * * *", Mode: "resume", TargetSession: "kept", NextRunAt: rfc(now.Add(time.Hour))})
+	seedSessionWithStatus(t, shared.DB, "kept", "idle")
+	shared.DB.RecordFire("a", "kept", "running", "", now)
+
+	s.Tick(now)
+
+	sess, _ := shared.DB.GetSession("kept")
+	if sess.Status == "terminated" {
+		t.Fatal("a resume schedule's session should survive its run")
+	}
+}
+
 func TestFillPrompt(t *testing.T) {
 	if got := FillPrompt("before {{output}} after", "MIDDLE"); got != "before MIDDLE after" {
 		t.Fatalf("got %q", got)

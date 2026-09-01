@@ -61,6 +61,21 @@ export function sessionQuery(hostId: string, sessionId: string) {
   })
 }
 
+/**
+ * The sessions a schedule started, on one host.
+ *
+ * A second list rather than a flag on the first: the ordinary list is what the
+ * sidebar is for, and mixing forty automated runs into it is what the fold
+ * exists to prevent. Asked for whether or not the section is open, because the
+ * header carries the count.
+ */
+export function jobSessionsQuery(hostId: string) {
+  return queryOptions({
+    queryKey: keys.jobSessions(hostId),
+    queryFn: async () => (await api(hostId).listSessions({ filter: 'jobs' })).sessions,
+  })
+}
+
 // ─── Schedules ──────────────────────────────────────────────────────────────
 
 export function schedulesQuery(hostId: string) {

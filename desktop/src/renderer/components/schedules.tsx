@@ -129,12 +129,25 @@ export function ScheduleList({
   )
 }
 
+/** How deep in the after-chain each schedule sits, so a grandchild indents twice. */
+function depthOf(schedules: Schedule[]): Record<string, number> {
+  const parent: Record<string, string> = {}
+  for (const sc of schedules) parent[sc.id] = sc.after_id ?? ''
+  const depth: Record<string, number> = {}
+  for (const sc of schedules) {
+    let n = 0
+    for (let at = sc.after_id ?? ''; at && n < 16; at = parent[at] ?? '') n++
+    depth[sc.id] = n
+  }
+  return depth
+}
+
 /**
  * One host's section of the list: its name, and whatever it has scheduled.
  *
- * A host with nothing on it renders nothing at all — heading included —
- * unless it is the last one and nobody else had any either, which is the only
- * time an empty list is worth saying out loud.
+ * A host with nothing on it renders nothing at all — heading included — unless
+ * it is the last one and nobody else had any either, which is the only time an
+ * empty list is worth saying out loud.
  */
 export function ScheduleHost({
   hostId,
@@ -168,19 +181,6 @@ export function ScheduleHost({
       {list}
     </div>
   )
-}
-
-/** How deep in the after-chain each schedule sits, so a grandchild indents twice. */
-function depthOf(schedules: Schedule[]): Record<string, number> {
-  const parent: Record<string, string> = {}
-  for (const sc of schedules) parent[sc.id] = sc.after_id ?? ''
-  const depth: Record<string, number> = {}
-  for (const sc of schedules) {
-    let n = 0
-    for (let at = sc.after_id ?? ''; at && n < 16; at = parent[at] ?? '') n++
-    depth[sc.id] = n
-  }
-  return depth
 }
 
 // ─── The main panel ─────────────────────────────────────────────────────────
@@ -521,9 +521,10 @@ function Runs({ hostId, scheduleId }: { hostId: string; scheduleId: string }): J
         <button
           key={run.session_id}
           className="sched-run"
-          // Opening a run is moving on to the run: the sidebar goes back to
-          // sessions with it selected, which `select` does on its own.
-          onClick={() => store.select(hostId, run.session_id)}
+          // Opened in the sessions list, in its automated section, which this
+          // unfolds on the way: the panel that shows a session lives there, and
+          // a run is an ordinary session.
+          onClick={() => store.openScheduleRun(hostId, run.session_id)}
         >
           <span className={`sched-run-dot ${run.status}`} />
           <span className="sched-run-when">{shortTime(run.created_at)}</span>

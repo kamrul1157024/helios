@@ -746,17 +746,7 @@ func (sh *Shared) terminateSession(w http.ResponseWriter, id string) {
 		return
 	}
 
-	if err := sh.Backend.Kill(id); err != nil {
-		log.Printf("terminate: kill terminal for %s: %v", id, err)
-	}
-	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
-	sh.SSE.Broadcast(SSEEvent{
-		Type: "session_status",
-		Data: map[string]interface{}{
-			"session_id": id,
-			"status":     "terminated",
-		},
-	})
+	sh.EndSession(id)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true, "status": "terminated",

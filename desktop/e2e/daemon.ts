@@ -41,6 +41,20 @@ function session(id: string, title: string): Session {
 
 const SESSIONS = [session(ALPHA, 'Alpha'), session(BETA, 'Beta')]
 
+/**
+ * The sessions the schedule below started, kept out of the ordinary list.
+ *
+ * One of them has ended, which is what a past run looks like: the daemon
+ * terminates a run when its agent stops, so most of this list is terminated and
+ * the section has to show them anyway.
+ */
+export const RUN = 's-run'
+export const PAST_RUN = 's-run-past'
+const RUNS = [
+  session(RUN, 'Nightly run'),
+  { ...session(PAST_RUN, 'Last night'), status: 'terminated' as const, terminal: undefined },
+]
+
 /** One line per session, each naming itself. */
 export const TRANSCRIPT_TEXT: Record<string, string> = {
   [ALPHA]: 'this is the alpha transcript',
@@ -185,11 +199,15 @@ function answer(path: string, q: (name: string) => string): unknown {
   switch (path) {
     case '/api/health':
       return { ok: true }
-    case '/api/sessions':
+    case '/api/sessions': {
+      // Three lists off one route, as the daemon serves them: the ordinary one,
+      // everything a schedule started, and one schedule's runs.
+      const jobs = q('filter') === 'jobs' || q('schedule_id') !== ''
       return {
-        sessions: SESSIONS,
+        sessions: jobs ? RUNS : SESSIONS,
         host: { warm: 2, warm_rss: 0, budget: 8, load: 0.1, memory_used: 1, memory_total: 8 },
       }
+    }
     case '/api/sessions/directories':
       return { directories: [{ cwd: REPO, project: 'repo', session_count: 2, active_count: 2 }] }
     case '/api/git/worktrees':
@@ -225,6 +243,13 @@ function answer(path: string, q: (name: string) => string): unknown {
       // if the two differ. It also answers the delta the panel asks for on the
       // live edge — after_seq — because appending what is already held is how
       // a transcript came to print itself twice.
+      // One session by id. A run is not in the ordinary list, so this is the
+      // only way the detail panel can find the one the sidebar selected.
+      {
+        const id = path.slice('/api/sessions/'.length)
+        const one = [...SESSIONS, ...RUNS].find((s) => s.session_id === id)
+        if (path.startsWith('/api/sessions/') && one) return { session: one, pending_permissions: 0 }
+      }
       if (path.endsWith('/transcript')) {
         const id = path.slice('/api/sessions/'.length, -'/transcript'.length)
         const all = transcriptFor(id)

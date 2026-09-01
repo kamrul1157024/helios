@@ -199,6 +199,14 @@ export interface State {
    */
   scheduleQuery: string
   /**
+   * Which hosts have their automated runs unfolded, by host id.
+   *
+   * Folded by default: what the clock started is a different kind of thing from
+   * what you started, and forty of them would bury six. Opening a run from the
+   * schedules tab unfolds the section it lands in.
+   */
+  autoRunsOpen: Record<string, boolean>
+  /**
    * The schedule the main panel is showing, if any. `scheduleId` is empty for
    * one being created, which is a draft with nowhere to be selected from.
    */
@@ -355,6 +363,7 @@ const initial: State = {
   selection: null,
   sidebarMode: 'sessions',
   scheduleQuery: '',
+  autoRunsOpen: {},
   scheduleSelection: null,
   layouts: {},
   detached: [],
@@ -959,6 +968,30 @@ class Store {
   /** Shows a schedule in the main panel. */
   selectSchedule(hostId: string, scheduleId: string): void {
     this.set({ sidebarMode: 'schedules', scheduleSelection: { hostId, scheduleId, editing: false } })
+  }
+
+  /**
+   * Opens one of a schedule's runs in the sessions list.
+   *
+   * A run is an ordinary session and gets the ordinary detail. It lives in the
+   * automated section, which is folded away until something needs it — and
+   * arriving from the schedules tab is exactly that, so the section opens with
+   * the run selected inside it.
+   */
+  openScheduleRun(hostId: string, sessionId: string): void {
+    this.set((s) => ({
+      sidebarMode: 'sessions',
+      scheduleSelection: null,
+      autoRunsOpen: { ...s.autoRunsOpen, [hostId]: true },
+      selection: { hostId, sessionId },
+      layouts: withLayout(s.layouts, hostId, sessionId),
+    }))
+    this.touch(hostId, sessionId)
+  }
+
+  /** Folds a host's automated runs away, or back out. */
+  toggleAutoRuns(hostId: string): void {
+    this.set((s) => ({ autoRunsOpen: { ...s.autoRunsOpen, [hostId]: !s.autoRunsOpen[hostId] } }))
   }
 
   /**

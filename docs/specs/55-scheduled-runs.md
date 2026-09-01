@@ -310,6 +310,17 @@ session may not happen for hours. A chain waiting on `terminated` would mostly n
 | `error` (`StopFailure`, `hooks.go:630`) | **failure** |
 | `terminated` without ever reaching `idle` | **failure** — killed or died before finishing |
 
+**And then the run is closed.** A finished job holds a whole agent process for as long as it
+stays warm, and one that fires hourly holds a new one every hour — nobody is going to type into
+them, and the transcript stays readable either way. So the tick that settles a run also
+terminates its session (`Shared.EndSession`, shared with the terminate route). A **resume**
+schedule is the exception: the conversation it keeps going is the point of it.
+
+That is why a chain reads the parent's *recorded* outcome — `last_status`, written by
+`settleRunning` earlier in the same tick — rather than the parent session's status. The table
+above still decides what gets recorded; reading the session directly would now find every
+finished parent `terminated`, and call every one of them a failure.
+
 **Children are noticed on the same tick as everything else.** There is no central place where a
 session's status changes — `UpdateSessionStatus` is called from inside each provider's hooks
 (`claude/hooks.go:573`, `:630`, `:838`) — so an event hook would mean either a new observer on
@@ -690,9 +701,22 @@ transcript and the terminal:
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-The sidebar, meanwhile, is unchanged and shorter than it would otherwise be: forty sessions the
-clock started would have buried the six you started yourself, which is why the filter defaults
-the way it does.
+The sidebar, meanwhile, keeps them in a second section under the host, folded:
+
+```
+  ▾ mac-studio                                        6 sessions
+      ● refactor the store                     active   2m
+      ✓ mermaid in the renderer                idle    14m
+      …
+  ▸ Automated runs                                            9
+```
+
+Folded is the default, for the same reason the filter is: forty sessions the clock started
+would bury the six you started yourself. Open it and the runs are ordinary session rows —
+same status dots, same panel, same context menu — including the terminated ones, which is most
+of them, since a run is closed as soon as it finishes. Clicking a run in the **Runs** tab opens
+it here and unfolds the section on the way, rather than leaving it behind a header the reader
+would have to know to open.
 
 ### Making one: ask an agent, or write it yourself
 

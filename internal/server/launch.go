@@ -134,6 +134,24 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
 	return &StartedSession{SessionID: sessionID, Terminal: handle, CWD: req.CWD}, nil
 }
 
+// EndSession kills a session's terminal and records it as terminated.
+//
+// The handler used to be the only way to end one, so the scheduler — which ends
+// every run it starts — would have had to fake an HTTP response to reach it.
+func (sh *Shared) EndSession(id string) {
+	if err := sh.Backend.Kill(id); err != nil {
+		log.Printf("terminate: kill terminal for %s: %v", id, err)
+	}
+	sh.DB.UpdateSessionStatus(id, "terminated", "Terminate")
+	sh.SSE.Broadcast(SSEEvent{
+		Type: "session_status",
+		Data: map[string]interface{}{
+			"session_id": id,
+			"status":     "terminated",
+		},
+	})
+}
+
 // A prompt can fail in two ways that are the session's state rather than an
 // error in the request, and both APIs report them as such.
 var (

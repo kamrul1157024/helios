@@ -1,7 +1,13 @@
 import { useQueries } from '@tanstack/react-query'
 
 import { sortModeOf, type SessionListPage, type SettingsDocument, type SortMode } from './keys.ts'
-import { groupsQuery, notificationsQuery, sessionsQuery, settingsQuery } from './queries.ts'
+import {
+  groupsQuery,
+  jobSessionsQuery,
+  notificationsQuery,
+  sessionsQuery,
+  settingsQuery,
+} from './queries.ts'
 import { statusOf } from './errors.ts'
 import { useStore } from './store.ts'
 import type { HostStats, Notification, Session, SessionGroup } from '../shared/models.ts'
@@ -49,6 +55,24 @@ export function useHostSessions(): HostSessions {
     if (page.host) stats[host.id] = page.host
   })
   return { sessions, stats, pending }
+}
+
+/**
+ * The sessions a schedule started, per host.
+ *
+ * Kept out of `useHostSessions` rather than filtered from it: the daemon
+ * answers the two lists separately, and the sidebar draws them as two sections.
+ */
+export function useHostJobSessions(): Record<string, Session[]> {
+  const hosts = useStore((s) => s.hosts)
+  const results = useQueries({ queries: hosts.map((host) => jobSessionsQuery(host.id)) })
+
+  const byHost: Record<string, Session[]> = {}
+  hosts.forEach((host, index) => {
+    const data = results[index]?.data
+    if (data) byHost[host.id] = data
+  })
+  return byHost
 }
 
 export function useHostNotifications(): Record<string, Notification[]> {

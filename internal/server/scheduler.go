@@ -235,7 +235,10 @@ func (s *Scheduler) advanceChains(now time.Time) {
 			continue // never run, or this child has already acted on that run
 		}
 
-		outcome := s.outcomeOf(parent.LastSessionID)
+		// The parent's recorded outcome, not its session's current status: a
+		// finished run is terminated moments later, and a chain reading the
+		// session would call every parent a failure.
+		outcome := recordedOutcome(parent)
 		if outcome == "running" {
 			continue
 		}
@@ -257,6 +260,21 @@ func (s *Scheduler) advanceChains(now time.Time) {
 		}
 
 		s.fire(sc, now, sc.Prompt)
+	}
+}
+
+// recordedOutcome reads a run's fate off the schedule row, which settleRunning
+// wrote earlier in this same tick.
+func recordedOutcome(sc *store.Schedule) string {
+	switch sc.LastStatus {
+	case "ok":
+		return "ok"
+	case "running":
+		return "running"
+	default:
+		// failed, missed, blocked — and "" for a schedule that has never run,
+		// which the caller has already excluded by checking LastSessionID.
+		return "failed"
 	}
 }
 
@@ -293,11 +311,31 @@ func (s *Scheduler) settleRunning(now time.Time) {
 		case "ok":
 			s.shared.DB.RecordOutcome(sc.ID, "ok", "", now)
 			s.logf(sc, "done   session %s went idle", sc.LastSessionID)
+			s.endRun(sc)
 			s.broadcast("schedule_updated", sc.ID)
 		case "failed":
 			s.finishFailed(sc, now, "the run did not finish cleanly")
+			s.endRun(sc)
 		}
 	}
+}
+
+// endRun closes the terminal a finished run was using.
+//
+// A job holds a whole agent process for as long as it is warm, and one that
+// fires hourly would hold a new one every hour: nobody is going to type into
+// them, and the transcript stays readable either way. A resume schedule is the
+// exception — the session it keeps talking to is the point of it.
+func (s *Scheduler) endRun(sc *store.Schedule) {
+	if sc.Mode == "resume" || sc.LastSessionID == "" {
+		return
+	}
+	sess, err := s.shared.DB.GetSession(sc.LastSessionID)
+	if err != nil || sess == nil || sess.Status == "terminated" {
+		return
+	}
+	s.shared.EndSession(sc.LastSessionID)
+	s.logf(sc, "close  session %s terminated", sc.LastSessionID)
 }
 
 // ── Missed fires ────────────────────────────────────────────────────────────

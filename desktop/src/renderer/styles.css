@@ -5228,3 +5228,34 @@ hr {
 .sched-log.tall {
   max-height: none;
 }
+
+/* The sessions a schedule started, under the ones the user started. */
+.auto-runs {
+  display: flex;
+  flex-direction: column;
+}
+
+.auto-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.auto-head:hover {
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+}
+
+.auto-head .auto-name {
+  flex: 1;
+  min-width: 0;
+}

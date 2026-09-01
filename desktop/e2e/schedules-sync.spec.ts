@@ -110,6 +110,40 @@ test('switching the sidebar to schedules and back keeps the same terminal', asyn
   await expect(window.locator('[data-e2e-mark="kept"]')).toHaveCount(1)
 })
 
+// A schedule that fires hourly would bury the sessions the sidebar is for, so
+// its runs are a second section, folded. The fold is only worth having if it
+// opens by itself when a run is what the user asked for.
+test('automated runs are folded away until asked for', async ({ window }) => {
+  const header = window.locator('.auto-head')
+  await expect(header).toBeVisible()
+  await expect(header).toContainText('Automated runs')
+  await expect(window.locator('.session-row', { hasText: 'Nightly run' })).toHaveCount(0)
+
+  await header.click()
+  await expect(window.locator('.session-row', { hasText: 'Nightly run' })).toBeVisible()
+  // A finished run is terminated by the daemon, and the section is where its
+  // transcript is read from: no "show terminated" stands between the two.
+  await expect(window.locator('.session-row', { hasText: 'Last night' })).toBeVisible()
+
+  await header.click()
+  await expect(window.locator('.session-row', { hasText: 'Nightly run' })).toHaveCount(0)
+})
+
+test('opening a run from its schedule unfolds the section and selects it', async ({ window }) => {
+  await switchSidebar(window, 'schedules')
+  await window.locator('.sched-row', { hasText: 'nightly-sweep' }).click()
+  await window.locator('.panel-tabs button', { hasText: 'runs' }).first().click()
+
+  await window.locator('.sched-runs .sched-run').first().click()
+
+  // Back in the sessions list, with the section open and the run selected —
+  // not left behind a header the user would have to know to open.
+  await expect(window.locator('.sidebar-modes button.active', { hasText: 'sessions' })).toBeVisible()
+  const row = window.locator('.session-row', { hasText: 'Nightly run' })
+  await expect(row).toBeVisible()
+  await expect(row).toHaveClass(/selected/)
+})
+
 test('the schedules list does not carry the session panels away with it', async ({ window }) => {
   await open(window, ALPHA_TITLE)
   await showPanel(window, 'agent')

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api, bridge } from '../bridge.ts'
-import { useHostGroups, useHostNotifications, useHostSessions, useHostSortModes } from '../host-data.ts'
+import {
+  useHostGroups,
+  useHostJobSessions,
+  useHostNotifications,
+  useHostSessions,
+  useHostSortModes,
+} from '../host-data.ts'
 import { store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -173,6 +179,8 @@ export function Sidebar({
   const hostStatus = useStore((s) => s.hostStatus)
   const { sessions, stats, pending: awaiting } = useHostSessions()
   const notifications = useHostNotifications()
+  const jobSessions = useHostJobSessions()
+  const autoRunsOpen = useStore((s) => s.autoRunsOpen)
   const selection = useStore((s) => s.selection)
   const mode = useStore((s) => s.sidebarMode)
   // Its own search, because the two lists hold different things and a query
@@ -497,6 +505,14 @@ export function Sidebar({
           // hides a level splitting nothing survives here, where it started.
           const showHost = hosts.length > 1
           const draggable = sortMode[host.id] === 'manual'
+          const needle = query.trim().toLowerCase()
+          const automated = (jobSessions[host.id] ?? []).filter((session) => {
+            if (!needle) return true
+            return `${session.title ?? ''} ${session.project} ${session.cwd} ${session.last_user_message ?? ''}`
+              .toLowerCase()
+              .includes(needle)
+          })
+          const autoOpen = autoRunsOpen[host.id] ?? false
 
           const renderRow = (session: Session, path: string): JSX.Element => (
             <SessionRow
@@ -811,6 +827,49 @@ export function Sidebar({
                   ? nodes.map((node) => renderNode(node))
                   : rows.map((row) => renderRow(row.session, '')))}
 
+              {/* What a schedule started, under what the user started. Folded
+                  until asked for, because a schedule that fires hourly would
+                  otherwise bury the sessions the sidebar is for. Opening a run
+                  from the schedules tab unfolds it, so the row it selects is on
+                  screen rather than behind a header. */}
+              {!isCollapsed && automated.length > 0 && (
+                <div className="auto-runs">
+                  <button
+                    className={autoOpen ? 'auto-head open' : 'auto-head'}
+                    aria-expanded={autoOpen}
+                    onClick={() => store.toggleAutoRuns(host.id)}
+                  >
+                    <Chevron className="chevron" open={autoOpen} />
+                    <span className="auto-name">Automated runs</span>
+                    <span className="host-count">{automated.length}</span>
+                  </button>
+                  {autoOpen &&
+                    automated.map((session) => (
+                      <SessionRow
+                        key={session.session_id}
+                        hostId={host.id}
+                        session={session}
+                        pending={0}
+                        selected={
+                          selection?.hostId === host.id &&
+                          selection.sessionId === session.session_id
+                        }
+                        // A run has no place in the host's hand-sorted order:
+                        // that order is one list, and this is not in it.
+                        draggable={false}
+                        dragging={false}
+                        accepts={false}
+                        onDragStart={() => {}}
+                        onDragEnd={() => {}}
+                        onContextMenu={(x, y) =>
+                          setMenu({ kind: 'session', hostId: host.id, session, x, y })
+                        }
+                        onDropBefore={() => {}}
+                      />
+                    ))}
+                </div>
+              )}
+
               {/* Skeletons rather than a spinner: the list is about to be a
                   list, and showing its shape keeps the sidebar from resizing
                   under the cursor when the rows arrive.
@@ -834,7 +893,7 @@ export function Sidebar({
                   </div>
                 ))}
 
-              {!isCollapsed && !loading && count === 0 && hidden === 0 && (
+              {!isCollapsed && !loading && count === 0 && hidden === 0 && automated.length === 0 && (
                 <p className="empty-note">{query ? 'Nothing matches' : 'No sessions'}</p>
               )}
             </section>
