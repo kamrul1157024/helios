@@ -352,6 +352,24 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
     );
   }
 
+  /// Steps to the next or previous host. "All Hosts" is not a stop on the way:
+  /// a swipe from it lands on whichever end the swipe came from.
+  void _cycleHost(int delta) {
+    final hosts = _hm.hosts;
+    if (hosts.length < 2) return;
+    final current = hosts.indexWhere((h) => h.id == _hm.activeHostId);
+    final next = current < 0
+        ? (delta > 0 ? 0 : hosts.length - 1)
+        : (current + delta) % hosts.length;
+    _hm.setActiveHost(hosts[next].id);
+  }
+
+  void _onAppBarSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 100) return;
+    _cycleHost(velocity < 0 ? 1 : -1);
+  }
+
   Widget _buildHostFilterChip() {
     if (_hm.hosts.length <= 1) {
       return const Text('helios');
@@ -512,21 +530,28 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
         final activeSessionCount = allSessions.where((s) => s.isActive).length;
 
         return Scaffold(
-          appBar: AppBar(
-            title: _buildHostFilterChip(),
-            centerTitle: true,
-            actions: [
-              _buildConnectionDots(),
-              IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                tooltip: 'Settings',
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
-                },
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(kToolbarHeight),
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragEnd: _onAppBarSwipe,
+              child: AppBar(
+                title: _buildHostFilterChip(),
+                centerTitle: true,
+                actions: [
+                  _buildConnectionDots(),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    tooltip: 'Settings',
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                      );
+                    },
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
           body: Column(
             children: [
