@@ -119,6 +119,58 @@ func TestDeleteSchedulePausesItsChildren(t *testing.T) {
 	}
 }
 
+// Deleting a schedule must not take its runs out of the world with it: they
+// are hidden from the ordinary list only because the schedule is where to find
+// them, and the schedule is what has just gone.
+func TestDeleteScheduleReleasesItsRuns(t *testing.T) {
+	s := scheduleStore(t)
+	s.CreateSchedule(timer("sched", "nightly", "2026-03-02T09:00:00Z"))
+	run := &Session{SessionID: "run-1", Source: "claude", CWD: "/tmp", Status: "idle", ScheduleID: "sched"}
+	mine := &Session{SessionID: "mine", Source: "claude", CWD: "/tmp", Status: "idle"}
+	s.UpsertSession(run)
+	s.UpsertSession(mine)
+
+	if err := s.DeleteSchedule("sched"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	got, _ := s.GetSession("run-1")
+	if got.ScheduleID != "" {
+		t.Fatalf("the run is still tagged with a schedule that no longer exists: %q", got.ScheduleID)
+	}
+	// And it is back in the list a person actually looks at.
+	sidebar, _ := s.SearchSessions(SessionQuery{Jobs: "exclude"})
+	if len(sidebar) != 2 {
+		t.Fatalf("want both sessions listed, got %d", len(sidebar))
+	}
+}
+
+// The same, for runs orphaned before that rule existed.
+func TestReleaseOrphanedRuns(t *testing.T) {
+	s := scheduleStore(t)
+	s.CreateSchedule(timer("live", "still here", "2026-03-02T09:00:00Z"))
+	s.UpsertSession(&Session{SessionID: "kept", Source: "claude", CWD: "/tmp", Status: "idle", ScheduleID: "live"})
+	s.UpsertSession(&Session{SessionID: "orphan", Source: "claude", CWD: "/tmp", Status: "idle", ScheduleID: "gone"})
+
+	freed, err := s.ReleaseOrphanedRuns()
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if freed != 1 {
+		t.Fatalf("want one run released, got %d", freed)
+	}
+
+	orphan, _ := s.GetSession("orphan")
+	if orphan.ScheduleID != "" {
+		t.Fatal("the orphan is still hidden")
+	}
+	// The one whose schedule still exists stays where it belongs.
+	kept, _ := s.GetSession("kept")
+	if kept.ScheduleID != "live" {
+		t.Fatalf("a live schedule's run was released: %q", kept.ScheduleID)
+	}
+}
+
 func TestScheduleAncestorsFindsALoop(t *testing.T) {
 	s := scheduleStore(t)
 	s.CreateSchedule(timer("a", "a", "2026-03-02T09:00:00Z"))

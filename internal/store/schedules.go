@@ -319,11 +319,18 @@ func (s *Store) ClaimSchedule(id, expectedNext, newNext, firedAt string) (bool, 
 	return n == 1, nil
 }
 
-// DeleteSchedule removes a schedule and detaches whatever followed it.
+// DeleteSchedule removes a schedule, detaches whatever followed it, and
+// releases the sessions it produced.
 //
 // The children are paused rather than deleted or promoted: they have no clock
 // of their own, so a child left enabled with no parent would simply never run
 // again, silently. Paused with a reason is the same fact, visible.
+//
+// The runs are let go entirely. A session is hidden from the ordinary list only
+// because its schedule is the place to find it — delete the schedule and that
+// place is gone, so the tag would make real work invisible in every client at
+// once, with no way back and its memory still spent. Clearing it turns them
+// back into ordinary sessions, which is what they always were.
 func (s *Store) DeleteSchedule(id string) error {
 	if _, err := s.db.Exec(`
 		UPDATE schedules
@@ -331,10 +338,33 @@ func (s *Store) DeleteSchedule(id string) error {
 		WHERE after_id = ?`, id); err != nil {
 		return fmt.Errorf("detach children of %s: %w", id, err)
 	}
+	if _, err := s.db.Exec(`UPDATE sessions SET schedule_id = NULL WHERE schedule_id = ?`, id); err != nil {
+		return fmt.Errorf("release runs of %s: %w", id, err)
+	}
 	if _, err := s.db.Exec(`DELETE FROM schedules WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete schedule %s: %w", id, err)
 	}
 	return nil
+}
+
+// ReleaseOrphanedRuns unhides sessions whose schedule is already gone.
+//
+// Runs of a schedule deleted before this rule existed are invisible in every
+// client and cannot be reached from anywhere. Run once at startup, which is
+// where a fix for something already on disk belongs.
+func (s *Store) ReleaseOrphanedRuns() (int64, error) {
+	res, err := s.db.Exec(`
+		UPDATE sessions SET schedule_id = NULL
+		WHERE COALESCE(schedule_id, '') != ''
+		  AND schedule_id NOT IN (SELECT id FROM schedules)`)
+	if err != nil {
+		return 0, fmt.Errorf("release orphaned runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("release orphaned runs: %w", err)
+	}
+	return n, nil
 }
 
 // ScheduleAncestors walks the after-chain upwards, which is how a cycle is

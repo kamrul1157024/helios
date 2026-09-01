@@ -314,6 +314,16 @@ func startDaemon(cfg *Config) error {
 		}
 	}()
 
+	// Runs whose schedule was deleted before the daemon learned to let them go
+	// are invisible in every client and unreachable from anywhere. Repaired
+	// once, at start, which is where a fix for something already on disk
+	// belongs.
+	if freed, err := db.ReleaseOrphanedRuns(); err != nil {
+		log.Printf("schedules: release orphaned runs: %v", err)
+	} else if freed > 0 {
+		log.Printf("schedules: released %d run(s) whose schedule was deleted", freed)
+	}
+
 	// Schedules: a saved prompt with something that decides when it runs. The
 	// first sweep is immediate, because a ticker yields nothing for its first
 	// period and a daemon that has just come back is exactly when the missed
