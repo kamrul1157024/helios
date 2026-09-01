@@ -20,10 +20,18 @@ import (
 // A check is not an agent and gets a shorter leash: it is a health probe, and
 // one that hangs must read as a failure rather than as a reason to start an
 // agent at 3am.
-const (
-	checkTimeout   = 30 * time.Second
-	checkMaxOutput = 32 * 1024
-)
+const checkMaxOutput = 32 * 1024
+
+// A variable rather than a constant only so a test can shorten it: waiting 30
+// seconds to prove a timeout is a slow way to learn something.
+var checkTimeout = 30 * time.Second
+
+// checkTimeoutForTest shortens the leash and returns the undo.
+func checkTimeoutForTest(d time.Duration) func() {
+	old := checkTimeout
+	checkTimeout = d
+	return func() { checkTimeout = old }
+}
 
 // CheckResult is what a monitor's check saw.
 type CheckResult struct {

@@ -1047,7 +1047,17 @@ func truncate(s string, n int) string {
 // ==================== Internal Server API ====================
 
 func (s *InternalServer) handleInternalListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.shared.DB.ListSessions()
+	// The same rule the apps get: what the clock started is its own list. The
+	// TUI's session view is a sidebar too.
+	jobs := "exclude"
+	scheduleID := r.URL.Query().Get("schedule_id")
+	if r.URL.Query().Get("filter") == "jobs" || scheduleID != "" {
+		jobs = "only"
+	}
+	sessions, err := s.shared.DB.SearchSessions(store.SessionQuery{
+		Jobs:       jobs,
+		ScheduleID: scheduleID,
+	})
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
 		return

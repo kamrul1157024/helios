@@ -65,6 +65,8 @@ func main() {
 		handleCleanup(os.Args[2:])
 	case "logs":
 		handleLogs(os.Args[2:])
+	case "schedule", "schedules":
+		handleSchedule(os.Args[2:])
 	case "version":
 		fmt.Printf("helios v%s\n", version)
 	case "help", "--help", "-h":
@@ -1178,6 +1180,9 @@ Commands:
                         Example: helios wrap -- claude
   sessions              Interactive session manager (TUI)
                         --list  Plain table output
+  schedule              Run a prompt on a clock, or when a check matches
+                        list | add | edit | rm | enable | disable
+                        run | check | logs — see: helios schedule help
 
   daemon start [flags]  Start the helios daemon (with supervisor)
                         -d                Run in background (daemonize)

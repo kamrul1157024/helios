@@ -308,14 +308,14 @@ func (s *Scheduler) reportMissed(sc *store.Schedule, now time.Time, late time.Du
 	if err := s.shared.DB.RecordOutcome(sc.ID, "missed", "nobody was home when this was due", now); err != nil {
 		log.Printf("scheduler: record missed for %s: %v", sc.Name, err)
 	}
-	s.logf(sc, "missed by %s, asked", late.Round(time.Minute))
-	log.Printf("schedule %s (%s): missed by %s, asked", sc.Name, short(sc.ID), late.Round(time.Minute))
+	s.logf(sc, "missed by %s, asked", humanLate(late))
+	log.Printf("schedule %s (%s): missed by %s, asked", sc.Name, short(sc.ID), humanLate(late))
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"schedule_id": sc.ID,
 		"questions": []map[string]interface{}{{
 			"question": fmt.Sprintf("%s did not run — it was due %s ago. Run it now?",
-				sc.Name, late.Round(time.Minute)),
+				sc.Name, humanLate(late)),
 			"options": []map[string]string{
 				{"label": "Run now"},
 				{"label": "Skip"},
@@ -324,7 +324,7 @@ func (s *Scheduler) reportMissed(sc *store.Schedule, now time.Time, late time.Du
 	})
 
 	title := fmt.Sprintf("%s did not run", sc.Name)
-	detail := fmt.Sprintf("Due %s ago. Run it now?", late.Round(time.Minute))
+	detail := fmt.Sprintf("Due %s ago. Run it now?", humanLate(late))
 	body := string(payload)
 	notif := &store.Notification{
 		ID:     uuid.New().String(),
@@ -413,6 +413,24 @@ func parseTime(s string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// humanLate is how long ago something was due, in the shortest true words.
+// A Duration prints "7h0m0s", which nobody says out loud.
+func humanLate(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		if m := int(d.Minutes()) % 60; m > 0 {
+			return fmt.Sprintf("%dh %dm", int(d.Hours()), m)
+		}
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
 
 func short(id string) string {
