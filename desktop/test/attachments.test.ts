@@ -8,6 +8,7 @@ import {
   needingUpload,
   pastedTextAttachment,
   removeFirst,
+  terminalPaths,
   promptWithAttachments,
   withStoredPaths,
   type Attachment,
@@ -104,4 +105,33 @@ test('an earlier identical block survives', () => {
 
 test('a draft the paste is no longer in is untouched', () => {
   assert.equal(removeFirst('user deleted it', 'LOG'), 'user deleted it')
+})
+
+// What goes into a terminal is going to a command line, not a composer: a path
+// the shell would split or glob has to survive being typed.
+test('a plain path is typed into the terminal as it is', () => {
+  assert.equal(terminalPaths(['/uploads/s1/a.png']), '/uploads/s1/a.png ')
+})
+
+test('several paths are separated, and the last one still ends the word', () => {
+  assert.equal(terminalPaths(['/a.png', '/b.png']), '/a.png /b.png ')
+})
+
+test('a path with a space is quoted', () => {
+  assert.equal(terminalPaths(['/uploads/s1/Screen Shot.png']), "'/uploads/s1/Screen Shot.png' ")
+})
+
+test("a quote inside a path is closed, escaped and reopened", () => {
+  assert.equal(terminalPaths(["/uploads/s1/it's.png"]), "'/uploads/s1/it'\\''s.png' ")
+})
+
+test('a path the shell would glob or expand is quoted', () => {
+  for (const path of ['/a*.png', '/a$b.png', '/a`b`.png', '/a;rm -rf.png', '/a(1).png']) {
+    assert.equal(terminalPaths([path]).startsWith("'"), true, path)
+  }
+})
+
+test('nothing to attach types nothing', () => {
+  assert.equal(terminalPaths([]), '')
+  assert.equal(terminalPaths(['']), '')
 })

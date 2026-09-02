@@ -70,11 +70,12 @@ const MODES: { value: AppearancePrefs['mode']; label: string; detail: string }[]
  * theme pickers pushed the notification toggles out of sight — and the two have
  * nothing to do with each other.
  */
-type SectionId = 'appearance' | 'sessions' | 'notifications'
+type SectionId = 'appearance' | 'sessions' | 'terminal' | 'notifications'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'sessions', label: 'Sessions' },
+  { id: 'terminal', label: 'Terminal' },
   { id: 'notifications', label: 'Notifications' },
 ]
 
@@ -203,6 +204,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
 
           {section === 'sessions' && <SessionsPane />}
 
+          {section === 'terminal' && <TerminalPane />}
+
           {section === 'notifications' && !prefs && <Loading title="Notifications" />}
 
           {section === 'notifications' && prefs && (
@@ -267,6 +270,36 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
  * stacking all of them meant scrolling past three copies of the same four
  * toggles to reach the one machine you meant.
  */
+function TerminalPane(): JSX.Element {
+  const uploads = useStore((s) => s.terminalUploads)
+
+  return (
+    <section className="settings-group">
+      <h3>
+        Dropped and pasted files
+        <Info>
+          A file dropped on a terminal is on this machine, and the agent reading it is on the
+          daemon&apos;s. Uploading it and typing back the path it landed at is the only reading
+          that works when those are different machines.
+        </Info>
+      </h3>
+
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={uploads}
+          onChange={(event) => store.setTerminalUploads(event.target.checked)}
+        />
+        <span>Upload to the daemon and type the path</span>
+        <Info>
+          Off leaves the terminal to the CLI, which is what you want when the daemon runs on this
+          machine and the CLI can read the clipboard itself.
+        </Info>
+      </label>
+    </section>
+  )
+}
+
 function SessionsPane(): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const [hostId, setHostId] = useState<string | null>(null)

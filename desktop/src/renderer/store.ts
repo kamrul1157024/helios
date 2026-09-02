@@ -235,6 +235,8 @@ export interface State {
   pairingLink: string | null
   /** The palette xterm draws with; the CSS side is set on <html>, not here. */
   terminalTheme: XtermTheme
+  /** Whether a file dropped or pasted on a terminal is uploaded to its daemon. */
+  terminalUploads: boolean
   /**
    * How much of a session the sidebar shows. Kept here as well as on <html>
    * because the control that changes it lives in the sidebar and has to show
@@ -286,6 +288,31 @@ function readGroupMode(): GroupMode {
 function writeGroupMode(mode: GroupMode): void {
   try {
     localStorage.setItem(GROUPING_KEY, mode)
+  } catch {
+    // A full or unavailable store costs the preference, not the setting.
+  }
+}
+
+const TERMINAL_UPLOADS_KEY = 'helios.terminalUploads'
+
+/**
+ * On unless it has been turned off. A file dropped on the terminal is on this
+ * machine, and the agent reading it is on the daemon's — so uploading it and
+ * writing back the path it landed at is the only reading that works when the
+ * two are not the same box. Off leaves the terminal to the CLI, which is what
+ * someone running the daemon locally may prefer.
+ */
+function readTerminalUploads(): boolean {
+  try {
+    return localStorage.getItem(TERMINAL_UPLOADS_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function writeTerminalUploads(on: boolean): void {
+  try {
+    localStorage.setItem(TERMINAL_UPLOADS_KEY, on ? '1' : '0')
   } catch {
     // A full or unavailable store costs the preference, not the setting.
   }
@@ -374,6 +401,7 @@ const initial: State = {
   query: '',
   loading: true,
   terminalTheme: bridge.theme.boot().terminal,
+  terminalUploads: readTerminalUploads(),
   density: bridge.theme.boot().density,
   toast: null,
   pairingLink: null,
@@ -641,6 +669,12 @@ class Store {
       for (const [key, page] of before) queryClient.setQueryData(key, page)
       this.fail(err)
     }
+  }
+
+  /** Turns uploading a file dropped or pasted on a terminal on or off. */
+  setTerminalUploads(on: boolean): void {
+    this.set({ terminalUploads: on })
+    writeTerminalUploads(on)
   }
 
   /**

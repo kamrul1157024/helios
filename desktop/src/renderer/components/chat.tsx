@@ -8,6 +8,7 @@ import { appendDelta, transcriptMessages, transcriptQuery } from '../queries.ts'
 import {
   isLargePaste,
   needingUpload,
+  pastedName,
   pastedTextAttachment,
   promptWithAttachments,
   removeFirst,
@@ -507,13 +508,6 @@ export function ChatPanel({
       )}
     </div>
   )
-}
-
-/** A pasted image has no name of its own, and the name becomes the path. */
-function pastedName(type: string): string {
-  const ext = type.split('/')[1]?.split('+')[0] ?? 'bin'
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
-  return `pasted-${stamp}.${ext}`
 }
 
 function fileSize(bytes: number): string {
