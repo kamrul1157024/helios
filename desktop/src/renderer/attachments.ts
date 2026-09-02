@@ -103,3 +103,29 @@ export function promptWithAttachments(attachments: Attachment[], text: string): 
   if (lines.length === 0) return text
   return [...lines, '', text].join('\n').trim()
 }
+
+/** A pasted image has no name of its own, and the name becomes the path. */
+export function pastedName(type: string): string {
+  const ext = type.split('/')[1]?.split('+')[0] ?? 'bin'
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
+  return `pasted-${stamp}.${ext}`
+}
+
+/**
+ * The paths of files dropped on a terminal, as the shell should read them.
+ *
+ * Typed rather than pasted into a composer, so this is going to a command line:
+ * a path with a space in it is quoted, and a single quote inside one is closed,
+ * escaped and reopened the way a shell requires. Ends with a space so what the
+ * user types next is a separate word.
+ */
+export function terminalPaths(paths: string[]): string {
+  const kept = paths.filter((path) => path !== '')
+  if (kept.length === 0) return ''
+  return kept.map(shellQuote).join(' ') + ' '
+}
+
+function shellQuote(path: string): string {
+  if (!/[\s'"\\$`*?()[\]{}|&;<>#~!]/.test(path)) return path
+  return `'${path.replaceAll("'", `'\\''`)}'`
+}
