@@ -15,16 +15,6 @@ const NO_DIRECTORIES: DirectoryInfo[] = []
 /** Module scope so the cache memoises the filtered list. */
 const onlyReady = (all: ProviderInfo[]): ProviderInfo[] => all.filter((p) => p.ready !== false)
 
-/**
- * A composer, not a form.
- *
- * The one thing a new session needs is the first prompt, and a stack of
- * labelled selects buried it under five rows the user answers the same way
- * every time. So the prompt is the dialog — a single box that takes focus on
- * open — and everything else is a chip around it: where it runs across the
- * top, what runs it along the bottom. Each chip already says its own value, so
- * none of them needs a label.
- */
 export function NewSessionDialog({
   seed,
   onClose,
@@ -44,6 +34,7 @@ export function NewSessionDialog({
   const [prompt, setPrompt] = useState('')
   const [starting, setStarting] = useState(false)
   const shell = useRef<HTMLDivElement | null>(null)
+  const dismissing = useRef(false)
   // Spent on the first load and not again: switching hosts after that has to
   // reset the directory, because a path from one machine is not a path on the
   // next, and the seed was a path on the machine it came from.
@@ -120,11 +111,6 @@ export function NewSessionDialog({
     }
   }
 
-  // Escape closes the composer — unless a chip is open, which owns the key
-  // first and would otherwise take the whole dialog down with its own popover.
-  // Capture phase, because a chip's own dismissal listens on the window too
-  // and runs first: by the time it bubbled here, the chip would already have
-  // closed and this would see nothing open.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
@@ -135,17 +121,28 @@ export function NewSessionDialog({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
+  useEffect(() => {
+    const onDown = (): void => {
+      dismissing.current = shell.current?.querySelector('details.picker[open]') != null
+    }
+    window.addEventListener('mousedown', onDown, true)
+    return () => window.removeEventListener('mousedown', onDown, true)
+  }, [])
+
   const place = directories.find((dir) => dir.cwd === cwd)
   const where = place?.project || basename(cwd) || 'Home'
+  const tint = tintOf(tintKey(place, cwd))
   const host = hosts.find((h) => h.id === hostId)
   const modelName = models.find((m) => m.id === model)?.name ?? 'Default model'
 
   return (
     <div
       className="modal-backdrop"
-      // A stray click on the backdrop should not throw away a written prompt;
-      // Escape and Cancel are the deliberate ways out.
       onClick={() => {
+        if (dismissing.current) {
+          dismissing.current = false
+          return
+        }
         if (!prompt.trim()) onClose()
       }}
     >
@@ -155,7 +152,7 @@ export function NewSessionDialog({
             title="Working directory"
             trigger={
               <>
-                <span className="composer-dot" style={{ background: tintOf(where.toLowerCase()) }} />
+                <span className="composer-dot" style={{ background: tint }} />
                 <span className="composer-chip-name">{where}</span>
               </>
             }
@@ -173,9 +170,6 @@ export function NewSessionDialog({
             )}
           </Picker>
 
-          {/* Shown even on a single host. The dot is the machine's connection
-              state, and "which machine, and is it up" is worth answering before
-              a prompt is written rather than after the session fails to start. */}
           <Picker
             title="Host"
             align="right"
@@ -191,13 +185,13 @@ export function NewSessionDialog({
               hosts.map((option) => (
                 <button
                   key={option.id}
-                  className={`picker-item ${option.id === hostId ? 'is-on' : ''}`}
+                  className={`composer-option ${option.id === hostId ? 'is-on' : ''}`}
                   onClick={() => {
                     setHostId(option.id)
                     close()
                   }}
                 >
-                  <span className="picker-item-name">
+                  <span className="composer-option-name">
                     <span className={`dot ${hostStatus[option.id]?.state ?? 'offline'}`} />
                     {option.name}
                   </span>
@@ -215,8 +209,6 @@ export function NewSessionDialog({
           placeholder="What do you want to work on?"
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => {
-            // Enter starts the session, as the button's ↵ promises; a prompt
-            // that wants paragraphs gets them with Shift.
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
             event.preventDefault()
             void start()
@@ -238,13 +230,13 @@ export function NewSessionDialog({
                 providers.map((option) => (
                   <button
                     key={option.id}
-                    className={`picker-item ${option.id === provider ? 'is-on' : ''}`}
+                    className={`composer-option ${option.id === provider ? 'is-on' : ''}`}
                     onClick={() => {
                       setProvider(option.id)
                       close()
                     }}
                   >
-                    <span className="picker-item-name">{option.name}</span>
+                    <span className="composer-option-name">{option.name}</span>
                   </button>
                 ))
               }
@@ -262,26 +254,26 @@ export function NewSessionDialog({
               {(close) => (
                 <>
                   <button
-                    className={`picker-item ${model === '' ? 'is-on' : ''}`}
+                    className={`composer-option ${model === '' ? 'is-on' : ''}`}
                     onClick={() => {
                       setModel('')
                       close()
                     }}
                   >
-                    <span className="picker-item-name">Default model</span>
-                    <span className="picker-item-hint">Whatever the provider picks</span>
+                    <span className="composer-option-name">Default model</span>
+                    <span className="composer-option-hint">Whatever the provider picks</span>
                   </button>
                   {models.map((option) => (
                     <button
                       key={option.id}
-                      className={`picker-item ${option.id === model ? 'is-on' : ''}`}
+                      className={`composer-option ${option.id === model ? 'is-on' : ''}`}
                       onClick={() => {
                         setModel(option.id)
                         close()
                       }}
                     >
-                      <span className="picker-item-name">{option.name}</span>
-                      {option.description && <span className="picker-item-hint">{option.description}</span>}
+                      <span className="composer-option-name">{option.name}</span>
+                      {option.description && <span className="composer-option-hint">{option.description}</span>}
                     </button>
                   ))}
                 </>
@@ -301,24 +293,24 @@ export function NewSessionDialog({
                 {(close) => (
                   <>
                     <button
-                      className={`picker-item ${mode === '' ? 'is-on' : ''}`}
+                      className={`composer-option ${mode === '' ? 'is-on' : ''}`}
                       onClick={() => {
                         setMode('')
                         close()
                       }}
                     >
-                      <span className="picker-item-name">Default permissions</span>
+                      <span className="composer-option-name">Default permissions</span>
                     </button>
                     {modes.map((option) => (
                       <button
                         key={option}
-                        className={`picker-item ${option === mode ? 'is-on' : ''}`}
+                        className={`composer-option ${option === mode ? 'is-on' : ''}`}
                         onClick={() => {
                           setMode(option)
                           close()
                         }}
                       >
-                        <span className="picker-item-name">{option}</span>
+                        <span className="composer-option-name">{option}</span>
                       </button>
                     ))}
                   </>
@@ -343,15 +335,6 @@ export function NewSessionDialog({
   )
 }
 
-/**
- * The directories the daemon knows, and any path the user types.
- *
- * The old field was an `<input list>`: it completed known paths but showed
- * none of them until something had been typed, so the common case — start
- * where I started last time — was hidden behind guessing the first letter.
- * The list is open here, and the filter doubles as the place to type a path
- * the daemon has never seen.
- */
 function DirectoryList({
   directories,
   cwd,
@@ -401,28 +384,28 @@ function DirectoryList({
       />
       <div className="picker-list">
         {custom && !known && (
-          <button className="picker-item" onClick={() => onPick(typed)}>
-            <span className="picker-item-name">Use “{typed}”</span>
+          <button className="composer-option" onClick={() => onPick(typed)}>
+            <span className="composer-option-name">Use “{typed}”</span>
           </button>
         )}
         {!needle && (
-          <button className={`picker-item ${cwd === '' ? 'is-on' : ''}`} onClick={() => onPick('')}>
-            <span className="picker-item-name">Home</span>
-            <span className="picker-item-hint">~</span>
+          <button className={`composer-option ${cwd === '' ? 'is-on' : ''}`} onClick={() => onPick('')}>
+            <span className="composer-option-name">Home</span>
+            <span className="composer-option-hint">~</span>
           </button>
         )}
         {matches.map((dir) => (
           <button
             key={dir.cwd}
-            className={`picker-item ${dir.cwd === cwd ? 'is-on' : ''}`}
+            className={`composer-option ${dir.cwd === cwd ? 'is-on' : ''}`}
             onClick={() => onPick(dir.cwd)}
           >
-            <span className="picker-item-name">
-              <span className="composer-dot" style={{ background: tintOf((dir.project || dir.cwd).toLowerCase()) }} />
+            <span className="composer-option-name">
+              <span className="composer-dot" style={{ background: tintOf(tintKey(dir, dir.cwd)) }} />
               {dir.project || basename(dir.cwd)}
-              {dir.active_count > 0 && <span className="picker-item-count">{dir.active_count} active</span>}
+              {dir.active_count > 0 && <span className="composer-option-count">{dir.active_count} active</span>}
             </span>
-            <span className="picker-item-hint">{dir.cwd}</span>
+            <span className="composer-option-hint">{dir.cwd}</span>
           </button>
         ))}
         {matches.length === 0 && !custom && <p className="picker-empty">No matching directory. Type a path to use one.</p>}
@@ -431,13 +414,6 @@ function DirectoryList({
   )
 }
 
-/**
- * A chip that says its own value and opens the choices under it.
- *
- * `<details>` for the same reason the sidebar's menu uses one — the open state
- * is the element's, not a piece of React state per chip — and dismissed the
- * same way, because a `<details>` left open only closes on its own summary.
- */
 function Picker({
   title,
   trigger,
@@ -447,7 +423,6 @@ function Picker({
 }: {
   title: string
   trigger: React.ReactNode
-  /** Which edge the popover lines up with; 'right' for chips near the edge. */
   align?: 'left' | 'right'
   className?: string
   children: (close: () => void) => React.ReactNode
@@ -463,6 +438,7 @@ function Picker({
       if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
       element.open = false
       setOpen(false)
+      if (event.type === 'keydown') element.querySelector('summary')?.focus()
     }
     window.addEventListener('mousedown', dismiss)
     window.addEventListener('keydown', dismiss)
@@ -477,23 +453,56 @@ function Picker({
   const close = (): void => {
     if (box.current) box.current.open = false
     setOpen(false)
+    box.current?.querySelector('summary')?.focus()
+  }
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
+    if (!keys.includes(event.key)) return
+    const typing = document.activeElement instanceof HTMLInputElement
+    if (typing && (event.key === 'Home' || event.key === 'End')) return
+
+    const options = Array.from(
+      box.current?.querySelectorAll<HTMLElement>('.picker-body .composer-option') ?? [],
+    )
+    if (options.length === 0) return
+    event.preventDefault()
+
+    const at = options.indexOf(document.activeElement as HTMLElement)
+    const to =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? options.length - 1
+          : event.key === 'ArrowDown'
+            ? (at + 1) % options.length
+            : at <= 0
+              ? options.length - 1
+              : at - 1
+    options[to]?.focus()
   }
 
   return (
     <details
       className={`picker ${className}`.trim()}
       ref={box}
+      onKeyDown={onKeyDown}
       onToggle={() => setOpen(box.current?.open ?? false)}
     >
       <summary title={title}>
         {trigger}
         <Chevron dir="down" className="picker-caret" />
       </summary>
-      {/* Rendered only while open, so the filter field can take focus on the
-          way in rather than waiting for a click it has already missed. */}
-      {open && <div className={`picker-body ${align === 'right' ? 'to-right' : ''}`}>{children(close)}</div>}
+      {open && (
+        <div className={`picker-body ${align === 'right' ? 'to-right' : ''}`}>{children(close)}</div>
+      )}
     </details>
   )
+}
+
+function tintKey(dir: DirectoryInfo | undefined, cwd: string): string {
+  if (dir) return (dir.project || dir.cwd).toLowerCase()
+  return cwd.toLowerCase() || 'home'
 }
 
 function basename(path: string): string {
