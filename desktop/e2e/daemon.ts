@@ -23,6 +23,15 @@ export interface StubDaemon {
   /** Replaces what `/api/file` answers for a path, and its mod time with it. */
   setFile(path: string, content: string): void
   /**
+   * Changes a session's status in the list this daemon serves.
+   *
+   * A `session_status` event alone is not enough: the client patches the cache
+   * from the payload and then refetches behind it, so a list still answering
+   * "idle" puts the old status straight back. The event says it moved; this is
+   * what makes it stay moved.
+   */
+  setStatus(sessionId: string, status: string): void
+  /**
    * How many times `/api/file` has been asked for a path.
    *
    * The way to wait for the app to have *finished* thinking about an event when
@@ -246,6 +255,14 @@ export async function startDaemon(): Promise<StubDaemon> {
   let revision = 0
   const readCount = new Map<string, number>()
   let grepCount = 0
+  // Per daemon, not on the fixtures: SESSIONS is a module constant shared by
+  // every test in the worker, and one test leaving a session busy would be the
+  // next test's starting state.
+  const statuses = new Map<string, string>()
+  const statusOf = (one: Session): Session => {
+    const status = statuses.get(one.session_id)
+    return status === undefined ? one : { ...one, status: status as Session['status'] }
+  }
 
   const held = (target: string): FileAnswer => {
     readCount.set(target, (readCount.get(target) ?? 0) + 1)
@@ -270,7 +287,7 @@ export async function startDaemon(): Promise<StubDaemon> {
 
     if (path === '/api/files/grep') grepCount += 1
     res.setHeader('Content-Type', 'application/json')
-    res.end(JSON.stringify(answer(path, q, held)))
+    res.end(JSON.stringify(answer(path, q, held, statusOf)))
   })
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -288,6 +305,7 @@ export async function startDaemon(): Promise<StubDaemon> {
       contents.set(target, content)
       revision += 1
     },
+    setStatus: (sessionId, status) => statuses.set(sessionId, status),
     close: () =>
       new Promise<void>((resolve) => {
         for (const stream of streams) stream.end()
@@ -312,6 +330,7 @@ function answer(
   path: string,
   q: (name: string) => string,
   held: (target: string) => FileAnswer,
+  statusOf: (session: Session) => Session,
 ): unknown {
   switch (path) {
     case '/api/health':
@@ -321,7 +340,7 @@ function answer(
       // everything a schedule started, and one schedule's runs.
       const jobs = q('filter') === 'jobs' || q('schedule_id') !== ''
       return {
-        sessions: jobs ? RUNS : SESSIONS,
+        sessions: (jobs ? RUNS : SESSIONS).map(statusOf),
         host: { warm: 2, warm_rss: 0, budget: 8, load: 0.1, memory_used: 1, memory_total: 8 },
       }
     }
@@ -377,7 +396,7 @@ function answer(
       {
         const id = path.slice('/api/sessions/'.length)
         const one = [...SESSIONS, ...RUNS].find((s) => s.session_id === id)
-        if (path.startsWith('/api/sessions/') && one) return { session: one, pending_permissions: 0 }
+        if (path.startsWith('/api/sessions/') && one) return { session: statusOf(one), pending_permissions: 0 }
       }
       if (path.endsWith('/transcript')) {
         const id = path.slice('/api/sessions/'.length, -'/transcript'.length)
