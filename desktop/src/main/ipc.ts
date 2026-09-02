@@ -8,6 +8,7 @@ import type { PrefsStore } from './prefs.ts'
 import type { TerminalManager } from './terminals.ts'
 import type { ThemeRegistry } from './themes.ts'
 import type { UpdateChecker } from './updates.ts'
+import type { SegmentId } from '../shared/status-line.ts'
 import { DEFAULT_INTENSITY } from '../shared/theme/backdrop.ts'
 import type { BackdropSpec } from '../shared/theme/vscode.ts'
 import type { AppearancePrefs, BackdropState, Density } from '../shared/models.ts'
@@ -198,11 +199,13 @@ export function registerIpc(deps: IpcDeps): void {
     glassSupported: boolean
     proseSize: number
     density: Density
+    statusLine: SegmentId[]
   } => ({
     theme: themes.active(),
     terminal: themes.activeTerminal(),
     proseSize: themes.getPrefs().proseSize,
     density: themes.getPrefs().density,
+    statusLine: themes.getPrefs().statusLine,
     // A property of the chosen theme, not a setting of its own: picking a
     // glass theme is the whole of the request. A theme with no backdrop of its
     // own is gated on the platform, because a preference to show a backdrop

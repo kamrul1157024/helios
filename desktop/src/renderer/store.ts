@@ -31,6 +31,7 @@ import {
   type ItemId,
   type Layout,
 } from './components/layout.ts'
+import type { SegmentId } from '../shared/status-line.ts'
 import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type {
@@ -243,6 +244,8 @@ export interface State {
    * which way it is set.
    */
   density: Density
+  /** Which segments the session status line draws, in the order it draws them. */
+  statusLine: SegmentId[]
   /**
    * How the sidebar splits the list: not at all, by the user's group tree, or
    * by each session's directory.
@@ -403,6 +406,7 @@ const initial: State = {
   terminalTheme: bridge.theme.boot().terminal,
   terminalUploads: readTerminalUploads(),
   density: bridge.theme.boot().density,
+  statusLine: bridge.theme.boot().statusLine,
   toast: null,
   pairingLink: null,
   grouping: readGroupMode(),
@@ -488,11 +492,11 @@ class Store {
     // The preload painted the boot theme already; this keeps up with changes
     // made afterwards, whether from the settings dialog or the OS switching
     // between light and dark underneath us.
-    bridge.theme.onChanged(({ theme, terminal, glass, proseSize, density }) => {
+    bridge.theme.onChanged(({ theme, terminal, glass, proseSize, density, statusLine }) => {
       applyTheme(document.documentElement, theme, glass)
       applyProseSize(document.documentElement, proseSize)
       applyDensity(document.documentElement, density)
-      this.set({ terminalTheme: terminal, density })
+      this.set({ terminalTheme: terminal, density, statusLine })
     })
 
     bridge.hosts.onChanged((hosts) => {

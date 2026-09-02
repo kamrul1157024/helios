@@ -221,15 +221,6 @@ button.link {
   padding: 4px 8px;
 }
 
-/* Cold, not broken: amber rather than red, as on the mobile app bar. */
-button.cold {
-  color: var(--s-waiting);
-}
-
-button.cold:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--s-waiting) 14%, transparent);
-}
-
 button.danger {
   color: var(--error);
 }
@@ -1258,7 +1249,7 @@ small {
   font-size: 11.5px;
 }
 
-/* What a session's terminal is holding. Also the detail header's, which is why
+/* What a session's terminal is holding. Also the status line's, which is why
    it outlives the card it was named for. */
 .card-ram {
   font-size: 11px;
@@ -1389,57 +1380,80 @@ small {
   color: var(--on-surface-variant);
 }
 
-.detail-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
-}
-
-.detail-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.detail-title h1 {
-  margin: 0;
-  font-family: 'Helios Glyphs', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-title input {
-  width: 100%;
-  font-size: 16px;
-}
-
-.detail-cwd {
-  display: block;
-  margin-top: 3px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--on-surface-variant);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-actions {
+/* One line at the foot of the pane, in place of the header that used to sit
+   above it. A fixed height with line-height 1 rather than padding, so the bar
+   is exactly as tall as it claims; a tint rather than a border-top, because a
+   hairline costs a pixel and reads heavier than the surfaces it divides. */
+.status-line {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  height: 18px;
+  padding: 0 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--on-surface-variant);
+  background: color-mix(in srgb, var(--on-surface) 4%, transparent);
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.mode-select {
-  max-width: 160px;
-  font-size: 12px;
-  padding: 6px 26px 6px 10px;
-  background-color: var(--surface-high);
-  border-radius: 999px;
+/* The directory is the one segment worth losing characters over: everything
+   else is short, and a truncated model name says less than none.
+
+   gap: 0 because PathLabel splits the path into two spans so the directory can
+   truncate without taking the leaf with it. They are one word, and the gap
+   between segments must not open up inside it. */
+.status-line .status-cwd {
+  min-width: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* The branch keeps its colour from .branch, but not the 12px that would set the
+   height of an 18px bar. */
+.status-line .branch {
+  font-size: inherit;
+}
+
+.status-line > span {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The status chip, with the pill taken off it: the colours are worth reusing,
+   the 22px pill would set the height of a bar built to be 18. */
+.status-line .chip {
+  height: auto;
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
+/* A control, but it may not make the bar any taller than the text beside it. */
+.status-mode {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-mode:hover {
+  color: var(--on-surface);
+}
+
+[data-density='compact'] .status-line {
+  height: 15px;
+  font-size: 10px;
 }
 
 .menu {
@@ -2835,6 +2849,52 @@ figure.mermaid svg {
 
 .line-menu button.danger {
   color: var(--error);
+}
+
+.line-menu button:disabled {
+  color: var(--on-surface-variant);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.line-menu button:disabled:hover {
+  background: none;
+}
+
+/* The row a child menu hangs off. Relative, so the child is placed against its
+   own edge rather than measured against the window. */
+.line-sub {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.line-sub > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.line-sub-mark {
+  color: var(--on-surface-variant);
+}
+
+/* Overlapping the parent's 4px padding rather than clearing it: a gap between
+   the two is somewhere the pointer falls through and shuts the menu it was
+   travelling towards. */
+.line-sub-menu {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  margin-left: -4px;
+}
+
+.line-sub-menu.flip {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: -4px;
 }
 
 .git-diff pre,
@@ -4269,6 +4329,75 @@ hr {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* Every other control is one line tall, so the shared row centres them. This
+   one is a list, and a label floating beside its middle reads as unrelated. */
+.setting-row:has(.seg-list) {
+  align-items: start;
+}
+
+/* The status line's segments. A list rather than a row of chips, because the
+   order is the setting and a list is the shape an order is dragged in. */
+.seg-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--surface-high);
+}
+
+.seg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: grab;
+}
+
+.seg-row:hover {
+  background: var(--surface-highest);
+}
+
+/* Off, so there is no order to drag it into: the grip keeps its width to hold
+   the labels in one column, but the row does not offer to move. */
+.seg-row.off {
+  cursor: default;
+  color: var(--on-surface-variant);
+}
+
+.seg-row.over {
+  border-top-color: var(--primary);
+}
+
+.seg-row.over-last {
+  border-bottom-color: var(--primary);
+}
+
+.seg-grip {
+  width: 10px;
+  color: var(--on-surface-variant);
+  cursor: grab;
+}
+
+.seg-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seg-divider {
+  padding: 6px 4px 2px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
 }
 
 /* The control takes the row; a swatch or a unit beside it does not. */

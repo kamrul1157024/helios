@@ -3,6 +3,7 @@
 // Go names, and optional fields are optional here for the same reason they are
 // pointers there.
 
+import type { SegmentId } from './status-line.ts'
 import type { BackdropStyle } from './theme/vscode.ts'
 
 export interface Session {
@@ -627,6 +628,8 @@ export interface AppearancePrefs {
   proseSize: number
   /** How much of a session the sidebar shows: everything, or one line each. */
   density: Density
+  /** Which segments the session status line draws, in the order it draws them. */
+  statusLine: SegmentId[]
 }
 
 export type Density = 'comfortable' | 'compact'

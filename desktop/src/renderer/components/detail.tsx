@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
 import { useHostNotifications, useHostSessions } from '../host-data.ts'
-import { providersQuery, sessionQuery } from '../queries.ts'
+import { sessionQuery } from '../queries.ts'
 import { currentLayout, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
@@ -11,6 +11,7 @@ import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
 import { SchedulePanel } from './schedules.tsx'
+import { StatusLine } from './status-line.tsx'
 import {
   isVisible,
   panelItem,
@@ -25,14 +26,7 @@ import {
   type Layout,
 } from './layout.ts'
 import { TerminalPane, TerminalPlaceholder } from './terminal.tsx'
-import {
-  BUSY_STATUSES,
-  canResume,
-  needsRecovery,
-  sessionLabel,
-  statusLabel,
-  type Session,
-} from '../../shared/models.ts'
+import { canResume, type Session } from '../../shared/models.ts'
 
 const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'git', 'files']
 
@@ -211,18 +205,7 @@ export function Detail(): JSX.Element {
         </div>
       )}
       <div className="detail" style={showingSchedules ? { display: 'none' } : undefined}>
-      {hostId && session && (
-        <>
-          {/* Keyed: the header holds a rename in progress, and switching
-              sessions has to end it rather than carry it across. */}
-          <SessionHeader
-            key={`${hostId}:${session.session_id}`}
-            hostId={hostId}
-            session={session}
-          />
-          <ShowNoteStrip hostId={hostId} sessionId={session.session_id} />
-        </>
-      )}
+      {hostId && session && <ShowNoteStrip hostId={hostId} sessionId={session.session_id} />}
 
       <div
         className={`panel-body ${axis}`}
@@ -373,6 +356,8 @@ export function Detail(): JSX.Element {
             />
           ))}
         </div>
+
+      {hostId && session && <StatusLine hostId={hostId} session={session} />}
       </div>
     </>
   )
@@ -858,179 +843,6 @@ function ShellTab({
       </span>
     </button>
   )
-}
-
-function SessionHeader({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
-  const [renaming, setRenaming] = useState(false)
-  const [title, setTitle] = useState(session.title ?? '')
-  const busy = BUSY_STATUSES.has(session.status)
-  const terminated = canResume(session)
-  const cold = needsRecovery(session)
-
-  const run = async (fn: () => Promise<unknown>): Promise<void> => {
-    try {
-      await fn()
-      await store.invalidateSessionsFor(hostId)
-    } catch (err) {
-      store.fail(err)
-    }
-  }
-
-  return (
-    <header className="detail-head">
-      <div className="detail-title">
-        {renaming ? (
-          <input
-            autoFocus
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onBlur={() => {
-              setRenaming(false)
-              if (title !== (session.title ?? '')) {
-                void store.patchSessionField(hostId, session.session_id, { title })
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur()
-              if (event.key === 'Escape') {
-                setTitle(session.title ?? '')
-                setRenaming(false)
-              }
-            }}
-          />
-        ) : (
-          /* Seeded on open rather than kept in step with the session: the
-             draft only means anything while the field is up, and the title can
-             have moved under it since — the daemon names a session itself
-             after the first exchange. */
-          <h1
-            onDoubleClick={() => {
-              setTitle(session.title ?? '')
-              setRenaming(true)
-            }}
-          >
-            {sessionLabel(session)}
-          </h1>
-        )}
-        <span className="detail-cwd" title={session.cwd}>
-          {session.cwd}
-        </span>
-      </div>
-
-      <div className="detail-actions">
-        <span className={`chip ${session.status}`}>
-          <span className={busy ? 'dot pulse' : 'dot'} />
-          {statusLabel(session.status)}
-        </span>
-
-        {session.memory_bytes !== undefined && (
-          <span className="card-ram" title="Memory this session's terminal holds">
-            {formatBytes(session.memory_bytes)}
-          </span>
-        )}
-
-        {cold && (
-          <button
-            className="ghost cold"
-            title="Cold — no live terminal. Resume brings the agent back."
-            onClick={() => void store.resumeSession(hostId, session.session_id)}
-          >
-            ⚯ Cold
-          </button>
-        )}
-
-        <PermissionMode hostId={hostId} session={session} />
-
-        {/* Resume has no equivalent anywhere else, so it stays. Terminated is
-            the one state the daemon refuses prompts for outright, and this is
-            the only control that clears it.
-
-            Waking is not like that. A cold session wakes itself the moment it
-            is given something to do: the daemon starts a host on send, and the
-            composer already says so. The terminal pane offers its own button
-            for the case where a terminal is what you want. A header button as
-            well was a third way to say the same thing. */}
-        {terminated && (
-          <button className="filled" onClick={() => void store.resumeSession(hostId, session.session_id)}>
-            Resume
-          </button>
-        )}
-
-        {busy && <button className="ghost" onClick={() => void run(() => api(hostId).stop(session.session_id))}>Stop</button>}
-
-        {/* Terminate, Pin, Delete and Regenerate title are on the row's own
-            right-click menu. They were here as a button and an overflow beside
-            it, which put the actions for one session at the far corner from
-            the list of them — and made acting on any other session a matter of
-            selecting it first and re-reading the header to be sure it had
-            changed. See sessionActions in sidebar.tsx. */}
-      </div>
-    </header>
-  )
-}
-
-/**
- * Switching mode restarts the agent, because the CLI takes it as a launch flag.
- * The daemon refuses while a session is mid-turn; the control is disabled to
- * match, but the server check is the one that counts.
- */
-function PermissionMode({ hostId, session }: { hostId: string; session: Session }): JSX.Element | null {
-  const [pending, setPending] = useState(false)
-  // The list is asked for when the select is focused rather than on mount: the
-  // same answer serves the new-session dialog, so this is usually a cache hit,
-  // but a session panel that has never been touched should not pay for it.
-  const [wanted, setWanted] = useState(false)
-  const { data: providers, error } = useQuery({ ...providersQuery(hostId), enabled: wanted })
-  const modes = providers
-    ? (providers.find((p) => p.id === session.source)?.permission_modes ?? [])
-    : error
-      ? []
-      : null
-
-  // Nothing to show for a provider with no modes. The list arrives only after
-  // the select is focused, so before that this renders for every provider —
-  // an empty control on a provider that has none, which is why the check is
-  // here rather than in a comment claiming it happens.
-  if (modes !== null && modes.length === 0) return null
-
-  const load = (): void => setWanted(true)
-
-  const switchable = session.status === 'idle'
-
-  const change = async (mode: string): Promise<void> => {
-    if (!mode || mode === session.permission_mode) return
-    setPending(true)
-    try {
-      await store.setPermissionMode(hostId, session.session_id, mode)
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <select
-      className="mode-select"
-      value={session.permission_mode ?? ''}
-      disabled={!switchable || pending}
-      title={switchable ? 'Restarts the agent' : 'Only while the session is idle'}
-      onFocus={() => load()}
-      onChange={(event) => void change(event.target.value)}
-    >
-      {/* The modes list loads on focus, so the current value needs an option of
-          its own until it arrives. */}
-      {!session.permission_mode && <option value="">default</option>}
-      {(modes ?? [session.permission_mode].filter((m): m is string => Boolean(m))).map((mode) => (
-        <option key={mode} value={mode}>
-          {mode}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
-  return `${Math.round(bytes / 1024 ** 2)} MB`
 }
 
 /**

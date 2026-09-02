@@ -53,6 +53,11 @@ function session(id: string, title: string): Session {
     title,
     status: 'idle',
     pinned: false,
+    // Both are optional on the wire and absent on a session the daemon has not
+    // heard from yet. Set here because the status line draws them, and a bar
+    // with two empty slots proves nothing.
+    model: 'opus',
+    permission_mode: 'default',
     created_at: '2026-01-01T00:00:00Z',
     last_event_at: '2026-01-01T00:00:00Z',
     supports_prompt_queue: true,

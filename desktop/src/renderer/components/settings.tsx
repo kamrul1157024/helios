@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 
@@ -9,6 +9,14 @@ import { settingsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { Modal } from './newsession.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
+import {
+  DEFAULT_STATUS_LINE,
+  SEGMENTS,
+  hiddenSegments,
+  moveSegment,
+  toggleSegment,
+  type SegmentId,
+} from '../../shared/status-line.ts'
 import { BACKDROP_STYLES, MAX_BLUR, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
 import { parseColor, type BackdropSpec, type BackdropStyle, type Rgb } from '../../shared/theme/vscode.ts'
 import type { HeliosTheme } from '../../shared/theme/resolve.ts'
@@ -192,6 +200,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         />
 
         <ProseSize size={appearance?.proseSize} onPick={(size) => void setTheme({ proseSize: size })} />
+
+        <StatusLineRows
+          order={appearance?.statusLine ?? DEFAULT_STATUS_LINE}
+          onChange={(statusLine) => void setTheme({ statusLine })}
+        />
 
         <Backdrop />
 
@@ -789,6 +802,87 @@ function Row({
       </span>
       <div className="setting-row-control">{children}</div>
     </div>
+  )
+}
+
+/** Where a dragged segment would land, drawn as a line between two rows. */
+const DRAG_TYPE = 'application/x-helios-segment'
+
+/**
+ * Which segments the session status line draws, and in what order.
+ *
+ * Shown as one list rather than two: the enabled ones on top in the order they
+ * appear in the bar, then the rest under a divider. A segment turned off drops
+ * below it and loses its place, which is the honest reading — the stored value
+ * is the enabled order, and there is nowhere to remember where an absent
+ * segment used to be.
+ */
+function StatusLineRows({
+  order,
+  onChange,
+}: {
+  order: SegmentId[]
+  onChange: (order: SegmentId[]) => void
+}): JSX.Element {
+  const [over, setOver] = useState<number | null>(null)
+  const hidden = hiddenSegments(order)
+  const labels = new Map(SEGMENTS.map((segment) => [segment.id, segment.label]))
+
+  const drop = (index: number) => (event: DragEvent) => {
+    event.preventDefault()
+    const id = event.dataTransfer.getData(DRAG_TYPE) as SegmentId
+    setOver(null)
+    if (id) onChange(moveSegment(order, id, index))
+  }
+
+  // Above the midpoint means before this row, below means after it. The same
+  // rule the session list uses when a row is dragged onto another.
+  const hover = (index: number) => (event: DragEvent) => {
+    if (!event.dataTransfer.types.includes(DRAG_TYPE)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const box = event.currentTarget.getBoundingClientRect()
+    setOver(event.clientY < box.top + box.height / 2 ? index : index + 1)
+  }
+
+  return (
+    <Row
+      label="Status line"
+      info="The bar at the foot of a session. Drag to reorder; untick to hide. Turning everything off hides the bar."
+    >
+      <div className="seg-list" onDragLeave={() => setOver(null)}>
+        {order.map((id, index) => (
+          <label
+            key={id}
+            className={`seg-row${over === index ? ' over' : ''}${over === index + 1 && index === order.length - 1 ? ' over-last' : ''}`}
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData(DRAG_TYPE, id)
+            }}
+            onDragEnd={() => setOver(null)}
+            onDragOver={hover(index)}
+            onDrop={drop(index)}
+          >
+            <span className="seg-grip" aria-hidden>
+              ⠿
+            </span>
+            <input type="checkbox" checked onChange={() => onChange(toggleSegment(order, id))} />
+            <span className="seg-label">{labels.get(id)}</span>
+          </label>
+        ))}
+
+        {hidden.length > 0 && <span className="seg-divider">Not shown</span>}
+
+        {hidden.map((id) => (
+          <label key={id} className="seg-row off">
+            <span className="seg-grip" aria-hidden />
+            <input type="checkbox" checked={false} onChange={() => onChange(toggleSegment(order, id))} />
+            <span className="seg-label">{labels.get(id)}</span>
+          </label>
+        ))}
+      </div>
+    </Row>
   )
 }
 
