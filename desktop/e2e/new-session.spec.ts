@@ -279,3 +279,17 @@ test('a file dropped anywhere on the dialog lands on it', async ({ window }) => 
 
   await expect(window.locator('.attachment-name')).toHaveText('trace.txt')
 })
+
+test('⌘U reaches for a file without touching the paperclip', async ({ window }) => {
+  await openComposer(window)
+
+  const chooser = window.waitForEvent('filechooser')
+  await window.keyboard.press('Meta+u')
+  await (await chooser).setFiles({
+    name: 'note.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('a note'),
+  })
+
+  await expect(window.locator('.attachment-name')).toHaveText('note.txt')
+})

@@ -396,10 +396,17 @@ export function NewSessionDialog({
               </Picker>
             )}
 
-            <AttachButton onFiles={(chosen) => void files.attach(chosen)} disabled={starting} />
           </div>
 
           <div className="composer-actions">
+            {/* With the actions rather than with the chips: the chips say what
+                the session will be, and the paperclip is something done to the
+                prompt, next to the button that sends it. */}
+            <AttachButton
+              onFiles={(chosen) => void files.attach(chosen)}
+              disabled={starting}
+              shortcut
+            />
             <button className="ghost" onClick={onClose}>
               Cancel
             </button>

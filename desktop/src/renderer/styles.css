@@ -3786,13 +3786,17 @@ figure.mermaid svg {
   flex: none;
 }
 
-/* The ⊕ is a chip among the chips here, not the corner button it is in the
-   chat composer: there is no box for it to sit inside. */
-.composer-chips .attach-btn {
+/* Sized to the buttons it stands beside, not to the 36px an icon button is
+   elsewhere: the foot of the dialog is a 30px row. */
+.composer-actions .attach-btn {
   width: 30px;
   height: 30px;
   border-radius: 999px;
-  font-size: 15px;
+}
+
+.composer-actions .attach-btn .ui-icon {
+  width: 17px;
+  height: 17px;
 }
 
 /* The dialog has no inner box to outline, so the whole of it lights up. */

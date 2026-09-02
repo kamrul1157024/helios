@@ -7,9 +7,10 @@
 // time because a dropped File does not stay valid, and the upload happens
 // before the send because a prompt naming a path the daemon never stored sends
 // the agent looking for a file that is not there.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../bridge.ts'
+import { Paperclip } from './icons.tsx'
 import {
   isLargePaste,
   needingUpload,
@@ -160,15 +161,36 @@ export function useDropTarget(onFiles: (files: FileList) => void): {
   }
 }
 
-/** The ⊕, and the file input hiding behind it. */
+/** The paperclip, and the file input hiding behind it. */
 export function AttachButton({
   onFiles,
   disabled = false,
+  shortcut = false,
 }: {
   onFiles: (files: FileList | null) => void
   disabled?: boolean
+  /**
+   * Whether ⌘U opens the picker as well as the click.
+   *
+   * Off by default because the listener is on the window: a panel that is
+   * mounted per tab has several of itself alive at once, and every one of them
+   * would answer the keystroke with a dialog of its own.
+   */
+  shortcut?: boolean
 }): JSX.Element {
   const picker = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (!shortcut || disabled) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== 'u') return
+      event.preventDefault()
+      picker.current?.click()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [shortcut, disabled])
+
   return (
     <>
       <input
@@ -184,12 +206,12 @@ export function AttachButton({
       />
       <button
         className="icon-btn attach-btn"
-        title="Attach files — or paste and drop them here"
-        aria-label="Attach files"
+        title={shortcut ? 'Add attachment (⌘U) — or paste and drop them here' : 'Add attachment — or paste and drop them here'}
+        aria-label="Add attachment"
         disabled={disabled}
         onClick={() => picker.current?.click()}
       >
-        ⊕
+        <Paperclip />
       </button>
     </>
   )
