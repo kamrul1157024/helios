@@ -134,6 +134,27 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
 	return &StartedSession{SessionID: sessionID, Terminal: handle, CWD: req.CWD}, nil
 }
 
+// awaitAgent waits for a spawned agent to report in before anything is typed
+// at it.
+//
+// The status is read again after subscribing, and that order is the point: the
+// hook fires the signal and writes the status, and nothing is remembered by a
+// signal nobody was waiting on. Checking only before would wait out the full
+// timeout for an agent that reported in a moment earlier.
+func (sh *Shared) awaitAgent(id string) error {
+	ready := sh.Signals.Await(SignalAgentReady, id)
+	defer ready.Release()
+
+	if session, err := sh.DB.GetSession(id); err == nil && session != nil && session.Status != "starting" {
+		return nil
+	}
+	if !ready.Wait(agentBootTimeout) {
+		log.Printf("session-send: session %s never reported in within %s", id, agentBootTimeout)
+		return statusError(http.StatusGatewayTimeout, "the session is still starting up")
+	}
+	return nil
+}
+
 // EndSession kills a session's terminal and records it as terminated.
 //
 // The handler used to be the only way to end one, so the scheduler — which ends
@@ -233,6 +254,17 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 			log.Printf("session-send: session %s did not report ready within %s", id, agentBootTimeout)
 			return PromptResult{Resumed: true}, statusError(http.StatusGatewayTimeout,
 				"the session is still starting up")
+		}
+	} else if session.Status == "starting" {
+		// A launched session has the same gap as a woken one: StartSession
+		// returns as soon as the terminal is up, and "starting" means no
+		// SessionStart hook has arrived, so the agent is spawned but not yet
+		// reading. The gap is only reachable through the API — the app creates
+		// a session and prompts it a moment later, which is what attaching a
+		// file to a new session has to do, because the upload needs an id that
+		// only the create returns.
+		if err := sh.awaitAgent(id); err != nil {
+			return PromptResult{}, err
 		}
 	}
 
