@@ -58,6 +58,12 @@ func (b *sendBackend) sentTexts() []string {
 	return append([]string(nil), b.sent...)
 }
 
+func (b *sendBackend) wokenNone() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.woken) == 0
+}
+
 func (b *sendBackend) wakeCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -296,4 +302,85 @@ func (q *queueingProvider) Launch(provider.SessionSpec) (provider.Launch, error)
 func (q *queueingProvider) QueuePrompt(sessionID, resumeID, text string) error {
 	q.sent = append(q.sent, text)
 	return nil
+}
+
+// A session created a moment ago is live but not yet listening: StartSession
+// returns when the terminal is up, and the agent reads from it some time after
+// that. Typing into that gap loses the prompt exactly as typing into a waking
+// session does — and the app reaches it whenever a new session is given files,
+// because the upload needs an id only the create can hand back.
+func TestSend_NewSessionTypesOnlyAfterTheAgentIsUp(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "starting")
+	be.handles["sess-1"] = "sock-sess-1"
+
+	var mu sync.Mutex
+	agentUp, typedTooEarly := false, false
+
+	// What handleSessionStart does when the agent finally reports in.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		agentUp = true
+		mu.Unlock()
+		shared.Signals.Fire(SignalAgentReady, "sess-1")
+		shared.DB.UpdateSessionStatus("sess-1", "idle", "SessionStart")
+	}()
+	be.onSend = func() {
+		mu.Lock()
+		if !agentUp {
+			typedTooEarly = true
+		}
+		mu.Unlock()
+		shared.Signals.Fire(SignalPromptSubmitted, "sess-1")
+	}
+
+	rec, _ := sendPrompt(t, s, "sess-1", "look at ~/.helios/uploads/sess-1/shot.png")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if typedTooEarly {
+		t.Error("prompt was typed before the agent reported in")
+	}
+	if !be.wokenNone() {
+		t.Error("a live session was woken, and waking one kills the terminal it already has")
+	}
+}
+
+// The signal is not remembered, so an agent that reported in between the read
+// and the subscribe would leave the caller waiting out the whole boot timeout
+// for something that has already happened.
+func TestSend_NewSessionThatIsAlreadyUpDoesNotWait(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	be.handles["sess-1"] = "sock-sess-1"
+	be.onSend = func() { shared.Signals.Fire(SignalPromptSubmitted, "sess-1") }
+
+	start := time.Now()
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if waited := time.Since(start); waited >= agentBootTimeout {
+		t.Errorf("waited %s for an agent that was already up", waited)
+	}
+}
+
+// A session that never reports in is not typed into, however live its terminal.
+func TestSend_NewSessionThatNeverReportsIsRefused(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "starting")
+	be.handles["sess-1"] = "sock-sess-1"
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("status = %d, want 504", rec.Code)
+	}
+	if got := be.sentTexts(); len(got) != 0 {
+		t.Errorf("typed %q into a session that was not up", got)
+	}
 }
