@@ -4138,6 +4138,12 @@ figure.mermaid svg {
   white-space: nowrap;
 }
 
+/* A path is spelled the way the disk spells it, small caps or not. */
+.picker-section-path {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* The escape hatch, and it reads as one: a path nothing has offered. */
 .composer-option.use-typed .composer-option-name {
   color: var(--primary);
