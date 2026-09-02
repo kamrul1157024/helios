@@ -477,15 +477,15 @@ small {
   background: transparent;
 }
 
-/* No inset at the top: the titlebar above is painted the same as the panes, so
-   they continue it rather than sitting below it. The room the strips need is
-   inside them — see --strip-h. */
+/* No margin and no channel between the panes. The window used to hold two
+   rounded cards on a field of bare --surface; on a theme whose surface is a
+   strong colour that field was a stripe down the middle of the screen and a
+   border around the outside, and it carried nothing. The panes meet on a
+   hairline instead. */
 .body {
   flex: 1;
   display: flex;
   min-height: 0;
-  gap: 8px;
-  padding: 0 8px 8px;
 }
 
 .main {
@@ -532,7 +532,10 @@ small {
   display: flex;
   flex-direction: column;
   background: var(--surface-low);
-  border-radius: var(--r-lg);
+  /* The only thing dividing it from the pane, now that they are the same
+     colour and touching. A shadow rather than a border so it costs no width
+     and the grip above it still lands on the edge. */
+  box-shadow: 1px 0 0 var(--outline-variant);
   overflow: hidden;
 }
 
@@ -1364,7 +1367,6 @@ small {
   flex-direction: column;
   min-height: 0;
   background: var(--surface-low);
-  border-radius: var(--r-lg);
   overflow: hidden;
 }
 
