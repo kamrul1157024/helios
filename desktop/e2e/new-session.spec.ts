@@ -14,6 +14,11 @@ async function openChip(window: Page, name: RegExp): Promise<void> {
   await expect(window.locator('.picker[open] .picker-body')).toBeVisible()
 }
 
+async function openPlace(window: Page): Promise<void> {
+  await window.locator('.composer-place > summary').click()
+  await expect(window.locator('.composer-place .picker-body')).toBeVisible()
+}
+
 async function backdrop(window: Page): Promise<{ x: number; y: number }> {
   const box = await window.locator('.composer').boundingBox()
   if (!box) throw new Error('composer has no box')
@@ -116,7 +121,7 @@ test('escape hands focus back to the chip', async ({ window }) => {
 
 test('the directory filter narrows the list and takes a typed path', async ({ window }) => {
   await openComposer(window)
-  await window.locator('.composer-place > summary').click()
+  await openPlace(window)
 
   const search = window.locator('.picker-search')
   await expect(search).toBeFocused()
@@ -128,4 +133,85 @@ test('the directory filter narrows the list and takes a typed path', async ({ wi
   await window.locator('.composer-option', { hasText: 'Use' }).click()
 
   await expect(window.locator('.composer-place')).toContainText('elsewhere')
+})
+
+// The picker's whole job, and the reason #154 was reverted: a directory that
+// has never had a session in it is not in the recents, so the only way to it is
+// the one the list cannot offer.
+test('a relative path is committable, which the recents cannot offer', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  await window.locator('.picker-search').fill('workspace/acme-mobile')
+  await window.locator('.composer-option', { hasText: 'Use' }).click()
+
+  await expect(window.locator('.composer-place')).toContainText('acme-mobile')
+})
+
+test('enter commits what is typed, with nothing under it agreeing', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  await window.locator('.picker-search').fill('srv/deploys/tonight')
+  await window.keyboard.press('Enter')
+
+  await expect(window.locator('.picker[open]')).toHaveCount(0)
+  await expect(window.locator('.composer-place')).toContainText('tonight')
+})
+
+test('typing completes against the filesystem, not against the recents', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  // `work` is in no recent — the stub daemon has one session directory, /repo —
+  // so every row here came from a directory listing.
+  await window.locator('.picker-search').fill('work')
+  const completions = window.locator('.picker-list .composer-option', { hasText: /workspace|worktrees/ })
+  await expect(completions).toHaveCount(2)
+  await expect(window.locator('.picker-section', { hasText: 'In /home/dev' })).toBeVisible()
+
+  await completions.first().click()
+  await expect(window.locator('.composer-place')).toContainText('workspace')
+})
+
+test('completion walks down into a directory it just offered', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  await window.locator('.picker-search').fill('/home/dev/workspace/acme-')
+  await expect(window.locator('.picker-list .composer-option', { hasText: 'acme-api' })).toBeVisible()
+  await expect(window.locator('.picker-list .composer-option', { hasText: 'acme-web' })).toBeVisible()
+})
+
+test('tab fills in the top completion', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  const search = window.locator('.picker-search')
+  await search.fill('worksp')
+  await expect(window.locator('.picker-list .composer-option', { hasText: 'workspace' })).toBeVisible()
+  await search.press('Tab')
+
+  await expect(search).toHaveValue('/home/dev/workspace/')
+  await expect(window.locator('.picker-list .composer-option', { hasText: 'acme-api' })).toBeVisible()
+})
+
+test('a half-typed path is still there when the chip is reopened', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  await window.locator('.picker-search').fill('/home/dev/works')
+  await window.keyboard.press('Escape')
+  await expect(window.locator('.picker[open]')).toHaveCount(0)
+
+  await openPlace(window)
+  await expect(window.locator('.picker-search')).toHaveValue('/home/dev/works')
+})
+
+test('home does not disappear while it is being typed', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  await window.locator('.picker-search').fill('hom')
+  await expect(window.locator('.composer-option', { hasText: 'Home' })).toBeVisible()
 })

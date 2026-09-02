@@ -182,6 +182,15 @@ export function Shield({ className = '' }: { className?: string }): JSX.Element 
   )
 }
 
+/** A folder, for a directory the composer offers rather than one it remembers. */
+export function Folder({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3.5 6.5A1.5 1.5 0 015 5h4l2 2.5h8A1.5 1.5 0 0120.5 9v8.5A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-11z" />
+    </svg>
+  )
+}
+
 /** A terminal, for the one action a row offers under the pointer. */
 export function Console({ className = '' }: { className?: string }): JSX.Element {
   return (
