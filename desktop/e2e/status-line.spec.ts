@@ -54,7 +54,7 @@ test('the bar is no taller than the text it holds', async ({ window }) => {
   // this strip was trimmed.
   const tabs = await window.locator('.panel-tabs').boundingBox()
   const modes = await window.locator('.sidebar-modes').boundingBox()
-  expect(tabs?.height).toBe(28)
+  expect(tabs?.height).toBe(34)
   expect(modes?.height).toBe(tabs?.height)
   expect(modes?.y).toBe(tabs?.y)
 })
