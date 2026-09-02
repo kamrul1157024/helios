@@ -6,6 +6,7 @@
 // components, and there is no component test framework here.
 import type { Page } from '@playwright/test'
 
+import { ALPHA as ALPHA_ID } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 const ALPHA = 'Alpha'
@@ -105,6 +106,26 @@ async function openSettings(window: Page): Promise<void> {
 function segment(window: Page, label: string) {
   return window.locator('.seg-row', { has: window.getByText(label, { exact: true }) })
 }
+
+// The modes grey out mid-turn, and a disabled button fires no pointer events —
+// so a tooltip on them is unreadable by construction. The way out has to be a
+// row of its own.
+test('a busy session says what to do before the modes will take', async ({ window, daemon }) => {
+  await open(window, ALPHA)
+
+  // Both halves: the event is what the client hears, and the list behind it has
+  // to agree or the refetch puts "idle" straight back.
+  daemon.setStatus(ALPHA_ID, 'active')
+  daemon.emit('session_status', { session_id: ALPHA_ID, status: 'active' })
+  await expect(bar(window)).toContainText('Active')
+
+  await window.locator('.tab-menu').click()
+  await window.locator('.line-menu').first().getByText('Permission mode').hover()
+
+  const submenu = window.locator('.line-sub-menu')
+  await expect(submenu.getByText('Stop the agent to change this')).toBeVisible()
+  await expect(submenu.getByRole('button', { name: 'bypassPermissions' })).toBeDisabled()
+})
 
 // Two ways into one list. They are built from the same function, and this is
 // what would catch a second list being grown beside it.

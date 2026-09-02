@@ -24,14 +24,30 @@ export function modeActions(
   if (modes.length === 0) return [{ label: 'This provider has no modes', disabled: true }]
 
   const switchable = session.status === 'idle'
-  return modes.map((mode) => ({
+  const entries: MenuAction[] = modes.map((mode) => ({
     // The tick convention the group entries in this menu already use.
     label: `${mode === session.permission_mode ? '✓ ' : ' '}${mode}`,
     disabled: !switchable,
-    title: switchable ? 'Switching restarts the agent' : 'Only while the session is idle',
+    title: switchable ? 'Switching restarts the agent' : undefined,
     run: () => void store.setPermissionMode(hostId, session.session_id, mode),
   }))
+
+  if (switchable) return entries
+
+  // A row of its own rather than a tooltip on the greyed-out modes. A disabled
+  // button fires no pointer events, so its `title` never opens — the one place
+  // the explanation cannot be read is the control it explains.
+  //
+  // Which way out depends on why it is refused: a session mid-turn has to be
+  // stopped, and a terminated one has nothing left running to restart.
+  return [{ label: canResume(session) ? RESUME_FIRST : STOP_FIRST, disabled: true }, ...entries]
 }
+
+/* Named after the control that clears it rather than the state it wants: Stop
+   is the ■ beside the prompt, Resume is on the session's own row. Kept short
+   because the widest entry sets the width of the whole menu. */
+const STOP_FIRST = 'Stop the agent to change this'
+const RESUME_FIRST = 'Resume the session to change this'
 
 /**
  * What can be done to a session, as the right-click on its row offers it.
