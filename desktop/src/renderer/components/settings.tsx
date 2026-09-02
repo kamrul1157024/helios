@@ -208,25 +208,36 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           onPick={(proseSize) => void setTheme({ proseSize })}
         />
 
+        <Backdrop />
+
+        <button className="ghost" onClick={() => void reloadThemes()}>
+          Reload themes
+        </button>
+      </section>
+
+      {/* Its own group rather than another row among the themes. The segment
+          list is many rows tall, and in the middle of a form of single-line
+          controls it broke the theme pickers into two halves that looked
+          unrelated. */}
+      <section className="settings-group">
+        <h3>
+          Status line
+          <Info>The bar along the foot of a session, in place of a header above it.</Info>
+        </h3>
+
         <StatusLineRows
           order={appearance?.statusLine ?? DEFAULT_STATUS_LINE}
           onChange={(statusLine) => void setTheme({ statusLine })}
         />
 
         <PixelSize
-          label="Status line size"
+          label="Text size"
           info="In pixels, between 9 and 16. The bar's height follows the text, so a larger size is a taller bar."
           size={appearance?.statusLineSize}
           min={9}
           max={16}
           onPick={(statusLineSize) => void setTheme({ statusLineSize })}
         />
-
-        <Backdrop />
-
-        <button className="ghost" onClick={() => void reloadThemes()}>
-          Reload themes
-        </button>
       </section>
             </>
           )}
@@ -863,8 +874,8 @@ function StatusLineRows({
 
   return (
     <Row
-      label="Status line"
-      info="The bar at the foot of a session. Drag to reorder; untick to hide. Turning everything off hides the bar."
+      label="Segments"
+      info="Drag to reorder; untick to hide. Turning everything off hides the bar."
     >
       <div className="seg-list" onDragLeave={() => setOver(null)}>
         {order.map((id, index) => (
