@@ -68,10 +68,13 @@
   --s-error: #ffb4ab;
   --s-off: #8e9099;
 
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
-  --r-xl: 28px;
+  /* Closer to AppKit than to the web. macOS rounds a window at about 10px, a
+     sheet at 12 and a push button at 5 — the scale here was roughly double
+     that at every step, which reads as a web app wearing a Mac's chrome. */
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
   --sidebar: 360px;
   /* The strip across the top of both panes: the sidebar's sessions/schedules
      switch, and the detail's tabs. One variable because they sit side by side
@@ -2859,7 +2862,7 @@ figure.mermaid svg {
   flex-direction: column;
   min-width: 180px;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--surface-high);
   box-shadow: 0 8px 24px var(--shadow-soft);
 }

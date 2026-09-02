@@ -63,7 +63,12 @@ test('the bar grows with the text size rather than clipping it', async ({ window
   expect((await bar(window).boundingBox())?.height).toBe(18)
 
   await openSettings(window)
-  const field = window.locator('.setting-row', { hasText: 'Status line size' }).locator('input')
+  // Scoped to the group: "Text size" is also the label of the markdown size in
+  // the theme group above it.
+  const field = window
+    .locator('.settings-group', { hasText: 'Status line' })
+    .locator('.setting-row', { hasText: 'Text size' })
+    .locator('input')
   await field.fill('16')
   await field.blur()
   await window.keyboard.press('Escape')
