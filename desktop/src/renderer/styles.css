@@ -73,6 +73,11 @@
   --r-lg: 16px;
   --r-xl: 28px;
   --sidebar: 360px;
+  /* The strip across the top of both panes: the sidebar's sessions/schedules
+     switch, and the detail's tabs. One variable because they sit side by side
+     at the same y, and a reader sees them as one row — two numbers that agreed
+     by coincidence is how they came to be 10px apart. */
+  --strip-h: 28px;
   /* Reading width for the transcript and its composer. It exists to stop a
      reply and the prompt above it drifting to opposite edges of the window,
      not to hold prose to a paragraph width — code blocks and diffs want the
@@ -1529,7 +1534,7 @@ small {
 .panel-tabs {
   display: flex;
   flex: none;
-  height: 28px;
+  height: var(--strip-h);
   gap: 4px;
   padding: 0 12px;
   box-shadow: inset 0 -1px 0 var(--outline-variant);
@@ -5118,20 +5123,26 @@ hr {
 
 /* Sessions or schedules, above everything: it decides what the search, the
    arrange control and the + button below it are about. */
+/* The same height as the detail pane's tab strip, which sits beside it at the
+   same y. See --strip-h. */
 .sidebar-modes {
   display: flex;
+  align-items: center;
+  flex: none;
+  height: var(--strip-h);
   gap: 2px;
-  padding: 10px 10px 6px;
+  padding: 0 10px;
 }
 
 .sidebar-modes button {
   flex: 1;
+  height: 22px;
   background: var(--surface-low);
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   color: var(--on-surface-variant);
   font-size: 11px;
-  padding: 4px 0;
+  padding: 0;
   cursor: pointer;
 }
 
