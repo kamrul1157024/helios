@@ -80,7 +80,7 @@
      switch, and the detail's tabs. One variable because they sit side by side
      at the same y, and a reader sees them as one row — two numbers that agreed
      by coincidence is how they came to be 10px apart. */
-  --strip-h: 28px;
+  --strip-h: 34px;
   /* Reading width for the transcript and its composer. It exists to stop a
      reply and the prompt above it drifting to opposite edges of the window,
      not to hold prose to a paragraph width — code blocks and diffs want the
