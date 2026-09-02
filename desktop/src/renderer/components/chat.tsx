@@ -5,16 +5,8 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { api, statusOf } from '../bridge.ts'
 import { keys } from '../keys.ts'
 import { appendDelta, transcriptMessages, transcriptQuery } from '../queries.ts'
-import {
-  isLargePaste,
-  needingUpload,
-  pastedName,
-  pastedTextAttachment,
-  promptWithAttachments,
-  removeFirst,
-  withStoredPaths,
-  type Attachment,
-} from '../attachments.ts'
+import { removeFirst } from '../attachments.ts'
+import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarget } from './attach.tsx'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
 import { Chevron } from './icons.tsx'
@@ -68,13 +60,9 @@ export function ChatPanel({
   const loaded = transcript.isSuccess
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  // The block the user just pasted, while the offer to file it instead is up.
-  const [pasted, setPasted] = useState<string | null>(null)
-  const [dropping, setDropping] = useState(false)
-  const picker = useRef<HTMLInputElement | null>(null)
+  const files = useAttachments()
+  const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
   const retries = useRef<ReturnType<typeof setTimeout>[]>([])
-  const nextAttachment = useRef(0)
   const scroller = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
   const pinnedToBottom = useRef(true)
@@ -193,68 +181,25 @@ export function ChatPanel({
     }
   }
 
-  /** Reads the files into memory now: a dropped File is not valid for long. */
-  const attach = async (files: FileList | File[] | null): Promise<void> => {
-    const chosen = [...(files ?? [])]
-    if (chosen.length === 0) return
-    const read = await Promise.all(
-      chosen.map(async (file) => ({
-        id: ++nextAttachment.current,
-        // A pasted screenshot arrives unnamed, and the name becomes the
-        // filename on disk and the path in the prompt.
-        name: file.name || pastedName(file.type),
-        type: file.type,
-        size: file.size,
-        bytes: new Uint8Array(await file.arrayBuffer()),
-        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
-        path: null,
-      })),
-    )
-    setAttachments((current) => [...current, ...read])
-  }
-
-  const drop = (attachment: Attachment): void => {
-    if (attachment.preview) URL.revokeObjectURL(attachment.preview)
-    setAttachments((current) => current.filter((a) => a.id !== attachment.id))
-  }
-
   /** Moves the block the user just pasted out of the composer and into a file. */
   const fileThePaste = (): void => {
-    if (!pasted) return
-    setAttachments((current) => [...current, pastedTextAttachment(++nextAttachment.current, pasted)])
-    setDraft((current) => removeFirst(current, pasted))
-    setPasted(null)
+    const text = files.fileThePaste()
+    if (text === null) return
+    setDraft((current) => removeFirst(current, text))
   }
 
   const send = async (): Promise<void> => {
     const text = draft.trim()
-    if ((!text && attachments.length === 0) || sending) return
+    if ((!text && files.files.length === 0) || sending) return
     setSending(true)
     try {
       // Upload first: a prompt naming a path the daemon never stored is worse
-      // than no prompt, and the agent would go looking for it. Only what has
-      // not been stored yet — the send below may have failed once already, and
-      // uploading the same bytes again would leave a numbered copy per try.
-      let ready = attachments
-      const pending = needingUpload(attachments)
-      if (pending.length > 0) {
-        const stored = await api(hostId).uploadFiles(
-          session.session_id,
-          pending.map(({ name, type, bytes }) => ({ name, type, bytes })),
-        )
-        ready = withStoredPaths(attachments, pending, stored.map((file) => file.path))
-        // Recorded before the send, which is the call that fails.
-        setAttachments(ready)
-      }
-      const message = promptWithAttachments(ready, text)
+      // than no prompt, and the agent would go looking for it.
+      const message = await files.store(hostId, session.session_id, text)
 
       const result = await api(hostId).sendPrompt(session.session_id, message)
       setDraft('')
-      setPasted(null)
-      for (const attachment of attachments) {
-        if (attachment.preview) URL.revokeObjectURL(attachment.preview)
-      }
-      setAttachments([])
+      files.clear()
       if (result.queued) store.notify('Queued — the agent is mid-turn')
       void store.invalidateSessionsFor(hostId)
       // The agent writes the prompt to its transcript a moment after accepting
@@ -364,81 +309,14 @@ export function ChatPanel({
           </button>
         </div>
       ) : (
-        <div
-          className={dropping ? 'composer dropping' : 'composer'}
-          onDragOver={(event) => {
-            if (!event.dataTransfer.types.includes('Files')) return
-            event.preventDefault()
-            setDropping(true)
-          }}
-          onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
-            setDropping(false)
-          }}
-          onDrop={(event) => {
-            if (!event.dataTransfer.types.includes('Files')) return
-            event.preventDefault()
-            setDropping(false)
-            void attach(event.dataTransfer.files)
-          }}
-        >
-          {pasted !== null && draft.includes(pasted) && (
-            <div className="paste-offer">
-              <span className="paste-offer-text">
-                Pasted {fileSize(new Blob([pasted]).size)} of text
-              </span>
-              <button className="ghost" onClick={fileThePaste}>
-                Attach as file
-              </button>
-              <button
-                className="attachment-drop"
-                aria-label="Keep the paste in the prompt"
-                title="Keep it in the prompt"
-                onClick={() => setPasted(null)}
-              >
-                ✕
-              </button>
-            </div>
+        <div className={dropping ? 'composer dropping' : 'composer'} {...dropHandlers}>
+          {files.pasted !== null && draft.includes(files.pasted) && (
+            <PasteOffer text={files.pasted} onFile={fileThePaste} onKeep={files.keepThePaste} />
           )}
 
-          {attachments.length > 0 && (
-            <div className="attachments">
-              {attachments.map((attachment) => (
-                <span key={attachment.id} className="attachment">
-                  {attachment.preview ? (
-                    <img className="attachment-thumb" src={attachment.preview} alt="" />
-                  ) : (
-                    <span className="attachment-icon">◫</span>
-                  )}
-                  <span className="attachment-name" title={attachment.name}>
-                    {attachment.name}
-                  </span>
-                  <span className="attachment-size">{fileSize(attachment.size)}</span>
-                  <button
-                    className="attachment-drop"
-                    aria-label={`Remove ${attachment.name}`}
-                    title="Remove"
-                    onClick={() => drop(attachment)}
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+          <AttachmentChips files={files.files} onRemove={files.remove} />
 
           <div className="composer-input">
-            <input
-              ref={picker}
-              type="file"
-              multiple
-              hidden
-              onChange={(event) => {
-                void attach(event.target.files)
-                // Cleared so picking the same file twice fires onChange twice.
-                event.target.value = ''
-              }}
-            />
             <textarea
               ref={composer}
               value={draft}
@@ -454,14 +332,10 @@ export function ChatPanel({
                 // the default run when there is none, or pasted text is lost.
                 if (event.clipboardData.files.length > 0) {
                   event.preventDefault()
-                  void attach(event.clipboardData.files)
+                  void files.attach(event.clipboardData.files)
                   return
                 }
-                // A large block is only offered, never intercepted: the paste
-                // lands in the composer as it always has, and ignoring the
-                // offer leaves the prompt exactly as the user typed it.
-                const text = event.clipboardData.getData('text')
-                setPasted(isLargePaste(text) ? text : null)
+                files.noticePaste(event.clipboardData.getData('text'))
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') return
@@ -474,15 +348,7 @@ export function ChatPanel({
               }}
             />
             <div className="composer-bar">
-              <button
-                className="icon-btn attach-btn"
-                title="Attach files — or paste and drop them here"
-                aria-label="Attach files"
-                disabled={sending}
-                onClick={() => picker.current?.click()}
-              >
-                ⊕
-              </button>
+              <AttachButton onFiles={(chosen) => void files.attach(chosen)} disabled={sending} />
               {busy && (
                 <button
                   className="icon-btn stop-btn"
@@ -495,7 +361,7 @@ export function ChatPanel({
               )}
               <button
                 className="filled send-btn"
-                disabled={(!draft.trim() && attachments.length === 0) || sending}
+                disabled={(!draft.trim() && files.files.length === 0) || sending}
                 title={cold ? 'Wake and send' : 'Send (↵)'}
                 aria-label={cold ? 'Wake and send' : 'Send'}
                 onClick={() => void send()}
@@ -508,12 +374,6 @@ export function ChatPanel({
       )}
     </div>
   )
-}
-
-function fileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 /** Quoted, so the composer keeps the lines apart from what is typed about them. */

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { CREATED } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 async function openComposer(window: Page): Promise<void> {
@@ -214,4 +215,67 @@ test('home does not disappear while it is being typed', async ({ window }) => {
 
   await window.locator('.picker-search').fill('hom')
   await expect(window.locator('.composer-option', { hasText: 'Home' })).toBeVisible()
+})
+
+// The one part of the composer that is not the chat composer with different
+// chips. An upload needs a session to belong to, and the session does not
+// exist until Create is pressed — so the first turn cannot be the one the
+// agent launches with, and the order below is the whole of the feature.
+test('files go up once the session exists, and the first prompt names them', async ({ window, daemon }) => {
+  await openComposer(window)
+
+  await window.locator('.composer input[type="file"]').setInputFiles({
+    name: 'shot.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('not really a png'),
+  })
+  await expect(window.locator('.attachment-name')).toHaveText('shot.png')
+
+  await window.locator('.composer-prompt').fill('what is wrong with this')
+  await window.locator('.composer .filled').click()
+  await expect(window.locator('.composer')).toHaveCount(0)
+
+  await expect
+    .poll(() => daemon.writes().map((write) => write.kind))
+    .toEqual(['create', 'upload', 'send'])
+
+  const [created, uploaded, sent] = daemon.writes()
+  if (created?.kind !== 'create' || uploaded?.kind !== 'upload' || sent?.kind !== 'send') {
+    throw new Error('the daemon recorded something other than a create, an upload and a send')
+  }
+  // Silent on purpose: launching with the prompt would send the agent looking
+  // for paths that are only decided by the upload below it.
+  expect(created.spec.prompt).toBeUndefined()
+  expect(uploaded.names).toEqual(['shot.png'])
+  expect(uploaded.sessionId).toBe(CREATED)
+  expect(sent.message).toContain(`/home/dev/.helios/uploads/${CREATED}/shot.png`)
+  expect(sent.message).toContain('what is wrong with this')
+})
+
+test('a session with nothing attached still launches with its prompt', async ({ window, daemon }) => {
+  await openComposer(window)
+
+  await window.locator('.composer-prompt').fill('just get on with it')
+  await window.locator('.composer .filled').click()
+  await expect(window.locator('.composer')).toHaveCount(0)
+
+  await expect.poll(() => daemon.writes().map((write) => write.kind)).toEqual(['create'])
+  const [created] = daemon.writes()
+  if (created?.kind !== 'create') throw new Error('the daemon recorded something other than a create')
+  expect(created.spec.prompt).toBe('just get on with it')
+})
+
+test('a file dropped anywhere on the dialog lands on it', async ({ window }) => {
+  await openComposer(window)
+
+  await window.evaluate(() => {
+    const carried = new DataTransfer()
+    carried.items.add(new File(['a stack trace'], 'trace.txt', { type: 'text/plain' }))
+    const composer = document.querySelector('.composer')
+    if (!composer) throw new Error('no composer to drop on')
+    composer.dispatchEvent(new DragEvent('dragover', { dataTransfer: carried, bubbles: true }))
+    composer.dispatchEvent(new DragEvent('drop', { dataTransfer: carried, bubbles: true }))
+  })
+
+  await expect(window.locator('.attachment-name')).toHaveText('trace.txt')
 })
