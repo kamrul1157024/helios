@@ -219,14 +219,36 @@ const WORKTREES: Worktree[] = [
   },
 ]
 
+/**
+ * Home, and the one directory under it with anything in it.
+ *
+ * The new-session picker completes a typed path against the disk, and a bare
+ * segment completes under home — so `~/` has to answer with directories, not
+ * with the flat list of files the other roots serve.
+ */
+export const HOME = '/home/dev'
+export const WORKSPACE = `${HOME}/workspace`
+
 /** One file per worktree, named after it, so a wrong root is visible on sight. */
 const TREES: Record<string, FileEntry[]> = {
   [REPO]: [file(REPO, 'main.go'), file(REPO, 'README.md')],
   [OTHER_WORKTREE]: [file(OTHER_WORKTREE, 'hotfix.go')],
+  [HOME]: [dir(HOME, 'workspace'), dir(HOME, 'worktrees'), dir(HOME, '.config'), file(HOME, 'notes.md')],
+  [WORKSPACE]: [dir(WORKSPACE, 'acme-api'), dir(WORKSPACE, 'acme-web')],
 }
 
 function file(root: string, name: string): FileEntry {
   return { name, path: `${root}/${name}`, is_dir: false, size: 12, mod_time: '2026-01-01T00:00:00Z' }
+}
+
+function dir(root: string, name: string): FileEntry {
+  return { ...file(root, name), is_dir: true, size: 0 }
+}
+
+/** What the daemon's resolveSafePath does to a path before it reads it. */
+function resolveStubPath(asked: string): string {
+  const expanded = asked.startsWith('~/') ? `${HOME}/${asked.slice(2)}` : asked
+  return expanded.length > 1 ? expanded.replace(/\/+$/, '') : expanded
 }
 
 function grepMatches(root: string, query: string): GrepMatch[] {
@@ -365,8 +387,12 @@ function answer(
       // No base branch and no commits: the git panel then opens on the working
       // tree, which is the view these tests drive.
       return { root: q('path'), branch: 'main', base: '', scope: 'all', commits: [], has_more: false }
-    case '/api/files':
-      return { path: q('path'), entries: TREES[q('path')] ?? [] }
+    case '/api/files': {
+      // `~/` is expanded before the listing is read, and the answer says which
+      // directory it turned out to be (internal/server/files.go).
+      const root = resolveStubPath(q('path'))
+      return { path: root, entries: TREES[root] ?? [] }
+    }
     case '/api/file': {
       const { content, modTime } = held(q('path'))
       return { path: q('path'), size: content.length, mod_time: modTime, content }
