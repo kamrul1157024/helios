@@ -47,8 +47,15 @@ test('the bar is no taller than the text it holds', async ({ window }) => {
 
   // The strip above it is the other half of the saving, and the buttons a
   // terminal tab brings with it used to be what set its height.
+  //
+  // Level with the sidebar's switch, not merely short: the two sit side by side
+  // at the same y and read as one row, and they drifted apart the first time
+  // this strip was trimmed.
   const tabs = await window.locator('.panel-tabs').boundingBox()
+  const modes = await window.locator('.sidebar-modes').boundingBox()
   expect(tabs?.height).toBe(28)
+  expect(modes?.height).toBe(tabs?.height)
+  expect(modes?.y).toBe(tabs?.y)
 })
 
 test('the bar grows with the text size rather than clipping it', async ({ window }) => {
