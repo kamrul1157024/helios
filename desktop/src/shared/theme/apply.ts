@@ -18,6 +18,16 @@ export function applyProseSize(root: HTMLElement, size: number): void {
 }
 
 /**
+ * The status line's text size, which the bar's own height is derived from.
+ *
+ * One variable rather than a size and a height: a bar measured independently of
+ * its text clips at one setting and pads at another.
+ */
+export function applyStatusSize(root: HTMLElement, size: number): void {
+  root.style.setProperty('--status-size', `${size}px`)
+}
+
+/**
  * How much of a session the sidebar shows.
  *
  * An attribute rather than variables, for the same reason as glass: density

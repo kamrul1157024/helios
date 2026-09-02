@@ -16,12 +16,18 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   proseSize: 14,
   density: 'comfortable',
   statusLine: DEFAULT_STATUS_LINE,
+  statusLineSize: 11,
 }
 
 /* Clamped rather than trusted: the file is hand-editable, and a zero or a
    thousand there is a window with no readable way back to the setting. */
 const MIN_PROSE = 10
 const MAX_PROSE = 28
+
+/* The bar's height is derived from this, so the ceiling is what keeps a status
+   line from becoming a second header — the thing it was built to replace. */
+const MIN_STATUS = 9
+const MAX_STATUS = 16
 
 /** What a backdrop image may be, and therefore what the media scheme serves. */
 const IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.webp'])
@@ -36,6 +42,12 @@ function proseSize(value: unknown): number {
   const size = Math.round(Number(value))
   if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.proseSize
   return Math.min(Math.max(size, MIN_PROSE), MAX_PROSE)
+}
+
+function statusLineSize(value: unknown): number {
+  const size = Math.round(Number(value))
+  if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.statusLineSize
+  return Math.min(Math.max(size, MIN_STATUS), MAX_STATUS)
 }
 
 /**
@@ -73,6 +85,7 @@ export class ThemeRegistry {
         proseSize: proseSize(parsed.proseSize ?? DEFAULT_APPEARANCE.proseSize),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
         statusLine: parseStatusLine(parsed.statusLine),
+        statusLineSize: statusLineSize(parsed.statusLineSize),
       }
     } catch {
       this.prefs = { ...DEFAULT_APPEARANCE }
@@ -214,6 +227,7 @@ export class ThemeRegistry {
     this.prefs.proseSize = proseSize(this.prefs.proseSize)
     this.prefs.density = density(this.prefs.density)
     this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)
+    this.prefs.statusLineSize = statusLineSize(this.prefs.statusLineSize)
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
     fs.writeFileSync(this.file, JSON.stringify(this.prefs, null, 2))
     return this.getPrefs()

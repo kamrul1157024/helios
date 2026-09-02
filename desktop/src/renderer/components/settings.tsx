@@ -199,11 +199,27 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
           onPick={(id) => void setTheme({ terminalTheme: id })}
         />
 
-        <ProseSize size={appearance?.proseSize} onPick={(size) => void setTheme({ proseSize: size })} />
+        <PixelSize
+          label="Text size"
+          info="In pixels, between 10 and 28. Sets the size of rendered markdown — the transcript and the file previews both. It does not touch the terminal."
+          size={appearance?.proseSize}
+          min={10}
+          max={28}
+          onPick={(proseSize) => void setTheme({ proseSize })}
+        />
 
         <StatusLineRows
           order={appearance?.statusLine ?? DEFAULT_STATUS_LINE}
           onChange={(statusLine) => void setTheme({ statusLine })}
+        />
+
+        <PixelSize
+          label="Status line size"
+          info="In pixels, between 9 and 16. The bar's height follows the text, so a larger size is a taller bar."
+          size={appearance?.statusLineSize}
+          min={9}
+          max={16}
+          onPick={(statusLineSize) => void setTheme({ statusLineSize })}
         />
 
         <Backdrop />
@@ -1231,23 +1247,44 @@ function previewOf(
   return backdropValue({ style, intensity, ...(image ? { image } : {}) }, base, stops)
 }
 
-function ProseSize({ size, onPick }: { size: number | undefined; onPick: (size: number) => void }): JSX.Element {
+/**
+ * A size in pixels, typed rather than dragged.
+ *
+ * The draft is held while the field is focused and only clamped on the way out,
+ * so typing "1" on the way to "12" is not answered by the field correcting
+ * itself to the minimum under the cursor.
+ */
+function PixelSize({
+  label,
+  info,
+  size,
+  min,
+  max,
+  onPick,
+}: {
+  label: string
+  info: string
+  size: number | undefined
+  min: number
+  max: number
+  onPick: (size: number) => void
+}): JSX.Element {
   const [draft, setDraft] = useState('')
   const shown = draft || String(size ?? '')
 
   const commit = (): void => {
     setDraft('')
     const next = Number(shown)
-    if (Number.isFinite(next) && next !== size) onPick(Math.min(Math.max(Math.round(next), 10), 28))
+    if (Number.isFinite(next) && next !== size) onPick(Math.min(Math.max(Math.round(next), min), max))
   }
 
   return (
-    <Row label="Text size" info="In pixels, between 10 and 28. Sets the size of rendered markdown — the transcript and the file previews both. It does not touch the terminal.">
+    <Row label={label} info={info}>
       <input
         className="prose-size"
         type="number"
-        min={10}
-        max={28}
+        min={min}
+        max={max}
         step={1}
         value={shown}
         disabled={size === undefined}

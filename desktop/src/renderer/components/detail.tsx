@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
-import { useHostNotifications, useHostSessions } from '../host-data.ts'
-import { sessionQuery } from '../queries.ts'
+import { useHostGroups, useHostNotifications, useHostSessions } from '../host-data.ts'
+import { providersQuery, sessionQuery } from '../queries.ts'
 import { currentLayout, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { ChatPanel } from './chat.tsx'
@@ -11,6 +11,8 @@ import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
 import { SchedulePanel } from './schedules.tsx'
+import { SelectionMenu } from './selection-menu.tsx'
+import { sessionActions } from './session-menu.ts'
 import { StatusLine } from './status-line.tsx'
 import {
   isVisible,
@@ -565,7 +567,54 @@ function GroupTabs({
           +
         </button>
       )}
+
+      {showAdd && <SessionMenuButton hostId={hostId} session={session} />}
     </nav>
+  )
+}
+
+/**
+ * The session's own menu, at the right-hand end of the strip.
+ *
+ * The same actions the row offers on a right-click, and built from the same
+ * function: a second list that drifted from the first would be worse than no
+ * second way in at all. It is here because the sidebar can be scrolled away
+ * from the session being read, or dragged narrow enough to hide it.
+ */
+function SessionMenuButton({ hostId, session }: { hostId: string; session: Session }): JSX.Element {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+  const { groups, unsupported } = useHostGroups()
+  // Only once the menu is open, for the same reason the sidebar's copy waits:
+  // the answer never goes stale, but a strip nobody has opened a menu on should
+  // not fetch it.
+  const { data: providers } = useQuery({ ...providersQuery(hostId), enabled: at !== null })
+
+  return (
+    <>
+      <button
+        className="tab-menu"
+        title="Session actions"
+        aria-label="Session actions"
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect()
+          // Below the button rather than at the pointer: this one has a fixed
+          // place on screen, unlike a right-click, and a menu that lands
+          // wherever the click did reads as unmoored from it.
+          setAt({ x: box.left, y: box.bottom + 4 })
+        }}
+      >
+        ⋯
+      </button>
+
+      {at && (
+        <SelectionMenu
+          x={at.x}
+          y={at.y}
+          actions={sessionActions(hostId, session, unsupported[hostId] ? [] : (groups[hostId] ?? []), providers)}
+          onClose={() => setAt(null)}
+        />
+      )}
+    </>
   )
 }
 
