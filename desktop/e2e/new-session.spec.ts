@@ -5,6 +5,8 @@ import { expect, test } from './fixtures.ts'
 async function openComposer(window: Page): Promise<void> {
   await window.locator('button[aria-label="New session"]').first().click()
   await expect(window.locator('.composer')).toBeVisible()
+  await expect(window.locator('.composer-place')).toContainText('repo')
+  await expect(window.locator('.composer-foot')).toContainText('Default permissions')
 }
 
 async function openChip(window: Page, name: RegExp): Promise<void> {
