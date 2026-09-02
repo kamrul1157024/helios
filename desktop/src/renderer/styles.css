@@ -3724,6 +3724,294 @@ figure.mermaid svg {
   color: var(--on-surface-variant);
 }
 
+/* ─── The new-session composer ──────────────────────────────────────────── */
+
+/* Wider and shallower than a form dialog: the prompt is the content, and the
+   settings are a line above it and a line below rather than rows it has to
+   scroll past. */
+.composer {
+  width: 680px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-high);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 64px var(--shadow-strong);
+}
+
+.composer-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 10px 2px;
+}
+
+/* The machine belongs at the far edge, opposite the directory on it. */
+.composer-host {
+  margin-left: auto;
+}
+
+.composer-prompt {
+  min-height: 132px;
+  max-height: 40vh;
+  margin: 0 12px;
+  padding: 8px 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.composer-prompt:focus {
+  border: none;
+  outline: none;
+}
+
+/* Dimmer than the shared placeholder colour, which is also what the chips'
+   labels are painted in. At 15px, alone in a box this big, a prompt at chip
+   brightness reads as something already typed rather than as the invitation to
+   type — there is no other text near it to be lighter than. */
+.composer-prompt::placeholder {
+  color: color-mix(in srgb, var(--on-surface-variant) 55%, transparent);
+}
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 10px;
+}
+
+/* Wraps rather than squeezes. Each chip is a value read at a glance, and a row
+   that shrinks them all to fit says "C", "D", "D…" — three chips that have
+   stopped saying anything. A second line costs the dialog 34px. */
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 2px;
+  min-width: 0;
+}
+
+.composer-chips > * {
+  flex: none;
+}
+
+.composer-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The ↵ the button promises, dimmed so it reads as a hint and not a word. */
+.composer-key {
+  margin-left: 6px;
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.composer-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.composer .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--s-off);
+}
+
+.composer .dot.online {
+  background: var(--s-active);
+}
+
+.composer .dot.connecting {
+  background: var(--s-waiting);
+}
+
+.composer .dot.offline,
+.composer .dot.unpaired {
+  background: var(--error);
+}
+
+/* A chip that says its own value. Unlabelled on purpose: the value is the
+   label, which is what buys the space the prompt is given. */
+.picker {
+  position: relative;
+  min-width: 0;
+}
+
+.picker > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+
+.picker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.picker > summary:hover,
+.picker[open] > summary {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+}
+
+.picker .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.picker-caret {
+  width: 0.8em;
+  height: 0.8em;
+  opacity: 0.7;
+}
+
+/* The directory is the one chip that names the work, so it carries the weight
+   a title would have if the dialog still had one. */
+.composer-place > summary {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.composer-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.picker-body {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 300px;
+  max-height: 320px;
+  padding: 8px;
+  background: var(--surface-highest);
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px var(--shadow-soft);
+  /* The chips that list models hang their items straight off the body, with no
+     inner list to do the scrolling. Without this the max-height clamps the box
+     and the items carry on drawing past it, outside the modal. */
+  overflow-y: auto;
+}
+
+.picker-body.to-right {
+  left: auto;
+  right: 0;
+}
+
+/* Chips on the bottom row have no room under them. */
+.composer-foot .picker-body {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 6px;
+}
+
+.composer-place .picker-body {
+  width: 380px;
+}
+
+.picker-search {
+  flex: none;
+  font-size: 13px;
+  padding: 7px 10px;
+  background: var(--surface-high);
+}
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+/* Scoped to the composer: `.picker-item` is also the settings menus' row, and
+   theirs is a centred single line declared further down the file. Unscoped,
+   whichever came last won — which was theirs, and it centred a two-line entry
+   whose name and path both want the same left edge. */
+.composer .picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  /* A row is its two lines and no less: left to shrink, a long list squashes
+     every item instead of scrolling. */
+  flex: none;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--on-surface);
+  text-align: left;
+}
+
+.composer .picker-item:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.composer .picker-item.is-on {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.picker-item-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.picker-item-hint {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.picker-item-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--s-active);
+}
+
+.picker-empty {
+  margin: 4px 10px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
 .host-row {
   display: flex;
   align-items: center;
