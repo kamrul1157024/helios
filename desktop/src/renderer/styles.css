@@ -3724,6 +3724,266 @@ figure.mermaid svg {
   color: var(--on-surface-variant);
 }
 
+.composer {
+  width: 680px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-high);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 64px var(--shadow-strong);
+}
+
+.composer-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 10px 2px;
+}
+
+.composer-host {
+  margin-left: auto;
+}
+
+.composer-prompt {
+  min-height: 132px;
+  max-height: 40vh;
+  margin: 0 12px;
+  padding: 8px 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.composer-prompt:focus {
+  border: none;
+  outline: none;
+}
+
+.composer-prompt::placeholder {
+  color: color-mix(in srgb, var(--on-surface-variant) 55%, transparent);
+}
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 10px;
+}
+
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 2px;
+  min-width: 0;
+}
+
+.composer-chips > * {
+  flex: none;
+}
+
+.composer-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-key {
+  margin-left: 6px;
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.composer-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.composer .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--s-off);
+}
+
+.composer .dot.online {
+  background: var(--s-active);
+}
+
+.composer .dot.connecting {
+  background: var(--s-waiting);
+}
+
+.composer .dot.offline,
+.composer .dot.unpaired {
+  background: var(--error);
+}
+
+.picker {
+  position: relative;
+  min-width: 0;
+}
+
+.picker > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+
+.picker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.picker > summary:hover,
+.picker[open] > summary {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+}
+
+.picker .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.picker-caret {
+  width: 0.8em;
+  height: 0.8em;
+  opacity: 0.7;
+}
+
+.composer-place > summary {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.composer-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.picker-body {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 300px;
+  max-height: 320px;
+  padding: 8px;
+  background: var(--surface-highest);
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px var(--shadow-soft);
+  overflow-y: auto;
+}
+
+.picker-body.to-right {
+  left: auto;
+  right: 0;
+}
+
+.composer-foot .picker-body {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 6px;
+}
+
+.composer-place .picker-body {
+  width: 380px;
+}
+
+.picker-search {
+  flex: none;
+  font-size: 13px;
+  padding: 7px 10px;
+  background: var(--surface-high);
+}
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.composer-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex: none;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--on-surface);
+  text-align: left;
+}
+
+.composer-option:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.composer-option.is-on {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.composer-option-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.composer-option-hint {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.composer-option-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--s-active);
+}
+
+.picker-empty {
+  margin: 4px 10px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
 .host-row {
   display: flex;
   align-items: center;

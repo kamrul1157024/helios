@@ -117,6 +117,24 @@ export function Plus({ className = '' }: { className?: string }): JSX.Element {
   )
 }
 
+/** A four-pointed spark: the model a session runs on. */
+export function Spark({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3.5c0 4.7 3.8 8.5 8.5 8.5-4.7 0-8.5 3.8-8.5 8.5 0-4.7-3.8-8.5-8.5-8.5 4.7 0 8.5-3.8 8.5-8.5z" />
+    </svg>
+  )
+}
+
+/** A shield, for how much the agent may do without asking. */
+export function Shield({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3.5l7 2.5v6c0 4-3 7.3-7 8.5-4-1.2-7-4.5-7-8.5V6l7-2.5z" />
+    </svg>
+  )
+}
+
 /** A terminal, for the one action a row offers under the pointer. */
 export function Console({ className = '' }: { className?: string }): JSX.Element {
   return (
