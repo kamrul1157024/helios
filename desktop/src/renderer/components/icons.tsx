@@ -182,6 +182,15 @@ export function Shield({ className = '' }: { className?: string }): JSX.Element 
   )
 }
 
+/** A paperclip: files going with the prompt. */
+export function Paperclip({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M18.5 11.5l-6.8 6.8a4 4 0 01-5.7-5.7l7.5-7.5a2.7 2.7 0 013.8 3.8l-7.5 7.5a1.4 1.4 0 01-1.9-1.9l6.6-6.6" />
+    </svg>
+  )
+}
+
 /** A folder, for a directory the composer offers rather than one it remembers. */
 export function Folder({ className = '' }: { className?: string }): JSX.Element {
   return (
