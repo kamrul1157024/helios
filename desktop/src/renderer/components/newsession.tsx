@@ -546,7 +546,11 @@ function DirectoryList({
           </button>
         ))}
 
-        {children.length > 0 && <p className="picker-section">In {listing?.path ?? parent}</p>}
+        {children.length > 0 && (
+          <p className="picker-section">
+            In <span className="picker-section-path">{listing?.path ?? parent}</span>
+          </p>
+        )}
         {children.map((entry) => (
           <button
             key={entry.path}
