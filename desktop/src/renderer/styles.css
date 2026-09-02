@@ -463,12 +463,16 @@ small {
   -webkit-app-region: drag;
 }
 
+/* Inset on all four sides, the same 8px as the gap between the panes. The top
+   was 0 while the strips inside carried their own padding; now that both are a
+   fixed 28px with their contents centred, nothing else supplies the gap and
+   the panes' rounded corners meet the titlebar square on. */
 .body {
   flex: 1;
   display: flex;
   min-height: 0;
   gap: 8px;
-  padding: 0 8px 8px;
+  padding: 8px;
 }
 
 .main {
