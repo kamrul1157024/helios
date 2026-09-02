@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { api, bridge } from '../bridge.ts'
+import { providersQuery } from '../queries.ts'
 import {
   useHostGroups,
   useHostJobSessions,
@@ -21,6 +23,7 @@ import {
   statusLabel,
   timeAgo,
   type HostRecord,
+  type ProviderInfo,
   type Session,
   type SessionGroup,
   type HostStats,
@@ -37,6 +40,7 @@ import {
 import { GroupPicker } from './group-picker.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
+import { modeActions } from './session-menu.ts'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
  *  session list taking half the window from the session itself. */
@@ -217,6 +221,14 @@ export function Sidebar({
   // instead of opening another beside it — and one piece of state, so a header
   // menu and a row menu can never be open at once.
   const [menu, setMenu] = useState<RowMenu | HeadMenu | null>(null)
+  // Only once a row menu is open, and never for a header one. The list is
+  // shared with the new-session dialog and never goes stale, so this is usually
+  // a cache hit — but a sidebar nobody has right-clicked should not pay for one
+  // request per host on mount.
+  const { data: providers } = useQuery({
+    ...providersQuery(menu?.kind === 'session' ? menu.hostId : ''),
+    enabled: menu?.kind === 'session',
+  })
   // Which group is having a child named, keyed by host and group. Empty string
   // is the root of that host, so one piece of state covers both.
   const [creatingIn, setCreatingIn] = useState<string | null>(null)
@@ -928,6 +940,7 @@ export function Sidebar({
                   menu.hostId,
                   menu.session,
                   groupsUnsupported[menu.hostId] ? [] : (groupsByHost[menu.hostId] ?? []),
+                  providers,
                 )
               : groupActions(menu.hostId, menu.key, () =>
                   setRenaming(`${menu.hostId}:${menu.key}`),
@@ -962,7 +975,12 @@ export function Sidebar({
  * first and reading the header to check it had changed. On the row they name
  * the session under the pointer, which is the one being pointed at.
  */
-function sessionActions(hostId: string, session: Session, groups: SessionGroup[]): MenuAction[] {
+function sessionActions(
+  hostId: string,
+  session: Session,
+  groups: SessionGroup[],
+  providers: ProviderInfo[] | undefined,
+): MenuAction[] {
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       await fn()
@@ -997,6 +1015,17 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
 
   actions.push(
     {
+      // Prompted rather than edited in place, as New group above is. The title
+      // used to be an input in the detail header; with the header gone this is
+      // the only way to set one by hand.
+      label: 'Rename…',
+      run: () => {
+        const title = window.prompt('Name the session', session.title ?? '')?.trim()
+        if (title === undefined || title === (session.title ?? '')) return
+        void store.patchSessionField(hostId, session.session_id, { title })
+      },
+    },
+    {
       label: 'Regenerate title',
       // The daemon waits for the model before answering, so this can sit for
       // several seconds. Saying what came back is the difference between a
@@ -1014,6 +1043,15 @@ function sessionActions(hostId: string, session: Session, groups: SessionGroup[]
       run: () => void store.patchSessionField(hostId, session.session_id, { pinned: !session.pinned }),
     },
   )
+
+  // A child menu rather than entries of its own: the list comes from the daemon
+  // when the menu opens, and a parent row keeps its one-row height whether or
+  // not it has arrived — entries appearing here would grow the menu under the
+  // pointer, on top of the actions below.
+  actions.push({
+    label: 'Permission mode',
+    children: modeActions(hostId, session, providers),
+  })
 
   // Nothing to end when it has already ended, and the row itself carries the
   // Resume that a terminated session is waiting for.

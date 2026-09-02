@@ -3,12 +3,23 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObje
 /** One entry of a popover: what it says, and what it does. */
 export interface MenuAction {
   label: string
-  run: () => void
+  /** Absent on a row that only opens `children`. */
+  run?: () => void
   /** Destructive, and coloured to say so before it is clicked. */
   danger?: boolean
   /** Hovered explanation, for an action whose reach is wider than its label —
    *  and for one that does not stop to ask before it acts. */
   title?: string
+  /** Shown, but refusing. The title is where the reason goes. */
+  disabled?: boolean
+  /**
+   * A second menu, opened from this row.
+   *
+   * The row keeps its height whether or not the children have arrived, which is
+   * the point: a list fetched when the menu opens would otherwise grow it under
+   * the pointer.
+   */
+  children?: MenuAction[]
 }
 
 /**
@@ -73,19 +84,100 @@ export function SelectionMenu({
       style={shifted ?? { left, top: y }}
       onMouseDown={(event) => event.preventDefault()}
     >
-      {actions.map((action) => (
-        <button
-          key={action.label}
-          className={action.danger ? 'danger' : undefined}
-          title={action.title}
-          onClick={() => {
-            action.run()
-            onClose()
-          }}
+      {actions.map((action) =>
+        action.children ? (
+          <SubMenu key={action.label} action={action} onClose={onClose} />
+        ) : (
+          <button
+            key={action.label}
+            className={action.danger ? 'danger' : undefined}
+            title={action.title}
+            disabled={action.disabled}
+            onClick={() => {
+              action.run?.()
+              onClose()
+            }}
+          >
+            {action.label}
+          </button>
+        ),
+      )}
+    </div>
+  )
+}
+
+/** How long the pointer may be off both the row and its children before it shuts. */
+const SUBMENU_GRACE = 120
+
+/**
+ * A row that opens a second menu beside itself.
+ *
+ * The child is a descendant of the parent's box rather than a portal, so the
+ * dismiss handler above — which ignores mousedown inside that box — needs no
+ * case for it.
+ */
+function SubMenu({ action, onClose }: { action: MenuAction; onClose: () => void }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [flip, setFlip] = useState(false)
+  const row = useRef<HTMLDivElement | null>(null)
+  const child = useRef<HTMLDivElement | null>(null)
+  const closing = useRef<number | undefined>(undefined)
+
+  // Delayed, so the pointer can cross the gap between the row and the child.
+  const hold = (): void => window.clearTimeout(closing.current)
+  const release = (): void => {
+    closing.current = window.setTimeout(() => setOpen(false), SUBMENU_GRACE)
+  }
+
+  useEffect(() => () => window.clearTimeout(closing.current), [])
+
+  // Opens to the left instead when there is no room on the right. Measured
+  // before paint for the same reason the parent menu measures itself: a menu
+  // that jumps has already been read in the wrong place.
+  useLayoutEffect(() => {
+    if (!open) return
+    const at = row.current?.getBoundingClientRect()
+    const box = child.current?.getBoundingClientRect()
+    if (!at || !box) return
+    setFlip(at.right + box.width > window.innerWidth - 8)
+  }, [open, action.children?.length])
+
+  return (
+    <div className="line-sub" ref={row} onMouseEnter={() => { hold(); setOpen(true) }} onMouseLeave={release}>
+      <button
+        className={action.danger ? 'danger' : undefined}
+        title={action.title}
+        disabled={action.disabled}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        {action.label}
+        <span className="line-sub-mark">›</span>
+      </button>
+
+      {open && (
+        <div
+          className={`line-menu line-sub-menu${flip ? ' flip' : ''}`}
+          ref={child}
+          onMouseEnter={hold}
+          onMouseLeave={release}
         >
-          {action.label}
-        </button>
-      ))}
+          {action.children?.map((entry) => (
+            <button
+              key={entry.label}
+              className={entry.danger ? 'danger' : undefined}
+              title={entry.title}
+              disabled={entry.disabled}
+              onClick={() => {
+                entry.run?.()
+                onClose()
+              }}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

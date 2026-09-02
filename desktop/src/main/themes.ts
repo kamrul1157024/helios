@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { DEFAULT_STATUS_LINE, parseStatusLine } from '../shared/status-line.ts'
 import { mergeThemes, resolveTheme, type HeliosTheme, type ThemeMode } from '../shared/theme/resolve.ts'
 import { parseJsonc, type BackdropSpec, type VSCodeTheme } from '../shared/theme/vscode.ts'
 import type { AppearancePrefs, Density, ThemeSummary } from '../shared/models.ts'
@@ -14,6 +15,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   terminalTheme: 'match',
   proseSize: 14,
   density: 'comfortable',
+  statusLine: DEFAULT_STATUS_LINE,
 }
 
 /* Clamped rather than trusted: the file is hand-editable, and a zero or a
@@ -70,6 +72,7 @@ export class ThemeRegistry {
         terminalTheme: parsed.terminalTheme ?? DEFAULT_APPEARANCE.terminalTheme,
         proseSize: proseSize(parsed.proseSize ?? DEFAULT_APPEARANCE.proseSize),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
+        statusLine: parseStatusLine(parsed.statusLine),
       }
     } catch {
       this.prefs = { ...DEFAULT_APPEARANCE }
@@ -210,6 +213,7 @@ export class ThemeRegistry {
     this.prefs = { ...this.prefs, ...next }
     this.prefs.proseSize = proseSize(this.prefs.proseSize)
     this.prefs.density = density(this.prefs.density)
+    this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
     fs.writeFileSync(this.file, JSON.stringify(this.prefs, null, 2))
     return this.getPrefs()

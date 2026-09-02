@@ -1,3 +1,4 @@
+import type { SegmentId } from '../shared/status-line.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 import type { BackdropSpec } from '../shared/theme/vscode.ts'
 
@@ -12,6 +13,8 @@ export interface ThemePayload {
   /** Reading size for rendered markdown, in px. */
   proseSize: number
   density: Density
+  /** Which segments the session status line draws, in the order it draws them. */
+  statusLine: SegmentId[]
 }
 import type {
   AppearancePrefs,
