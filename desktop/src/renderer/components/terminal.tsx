@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -6,7 +6,8 @@ import { WebglAddon } from '@xterm/addon-webgl'
 
 import { silenceDeviceReports } from './deviceReports.ts'
 import { linkHandler, webLinkActivate } from './links.ts'
-import { bridge } from '../bridge.ts'
+import { isLargePaste, pastedName, pastedTextAttachment, terminalPaths } from '../attachments.ts'
+import { api, bridge } from '../bridge.ts'
 import { store, terminalId, useStore, type Tab } from '../store.ts'
 import { canResume, hasTerminal, needsRecovery, type Session } from '../../shared/models.ts'
 
@@ -117,6 +118,83 @@ export function TerminalPane({
   /** Whether the terminal has met the DOM yet; see `apply` below. */
   const opened = useRef(false)
   const theme = useStore((s) => s.terminalTheme)
+  const uploads = useStore((s) => s.terminalUploads)
+  /** A pasted block big enough to ask about, held until the reader chooses. */
+  const [pasted, setPasted] = useState<string | null>(null)
+
+  /**
+   * Puts dropped or pasted files where the agent can reach them, and types the
+   * paths in.
+   *
+   * The file is on this machine and the agent is on the daemon's, so the local
+   * path names nothing it can open. Uploading the bytes and writing back the
+   * path they landed at is what makes this work against a remote host — and
+   * against a local one it is the same path either way.
+   *
+   * The text is typed, not run: the reader decides what to do with it.
+   */
+  const insertUploads = async (files: File[]): Promise<void> => {
+    if (files.length === 0) return
+    try {
+      const parts = await Promise.all(
+        files.map(async (file) => ({
+          // A pasted screenshot arrives unnamed, and the name becomes the path.
+          name: file.name || pastedName(file.type),
+          type: file.type,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        })),
+      )
+      const stored = await api(tab.hostId).uploadFiles(tab.sessionId, parts)
+      const text = terminalPaths(stored.map((file) => file.path))
+      if (text) await bridge.term.input(tab.id, encoder.encode(text))
+    } catch (err) {
+      store.notify(`Could not attach to the terminal: ${String(err)}`, 'error')
+    }
+  }
+
+  /** Types a held block into the terminal after all, bracketing as xterm does. */
+  const pasteAnyway = (text: string): void => {
+    setPasted(null)
+    termRef.current?.paste(text)
+    termRef.current?.focus()
+  }
+
+  /** Puts a held block in a file and types its path instead. */
+  const pasteAsFile = async (text: string): Promise<void> => {
+    setPasted(null)
+    const { name, type, bytes } = pastedTextAttachment(0, text)
+    await insertUploads([new File([bytes as BlobPart], name, { type })])
+    termRef.current?.focus()
+  }
+
+  // xterm takes paste on a hidden textarea of its own, so this listens in the
+  // capture phase to see the paste first.
+  //
+  // A big block is held rather than offered the way the composer offers it: a
+  // composer can take its text back, and a terminal cannot — the bytes are with
+  // the agent the moment they are sent. So the choice is made before anything
+  // is forwarded. Everything else pastes as it always did.
+  useEffect(() => {
+    const container = hostRef.current
+    if (!container || !uploads) return
+
+    const onPaste = (event: ClipboardEvent): void => {
+      const files = [...(event.clipboardData?.files ?? [])]
+      if (files.length > 0) {
+        event.preventDefault()
+        event.stopPropagation()
+        void insertUploads(files)
+        return
+      }
+      const text = event.clipboardData?.getData('text') ?? ''
+      if (!isLargePaste(text)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setPasted(text)
+    }
+    container.addEventListener('paste', onPaste, true)
+    return () => container.removeEventListener('paste', onPaste, true)
+  }, [uploads, tab.id, tab.hostId, tab.sessionId])
 
   // Assigned rather than passed on construction: rebuilding the terminal to
   // recolour it would throw away the scrollback, which the host cannot replay
@@ -290,7 +368,38 @@ export function TerminalPane({
   // wrapper carries `hidden`, and a pane that is up fills the cell it is in.
   return (
     <div className="pane">
-      <div className="pane-term" ref={hostRef} />
+      <div
+        className="pane-term"
+        ref={hostRef}
+        // Always swallowed, uploads on or off: a file dropped on a window
+        // Electron has not claimed navigates it to that file, replacing the app.
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault()
+          if (!uploads) return
+          void insertUploads([...event.dataTransfer.files])
+        }}
+      />
+      {pasted !== null && (
+        <div
+          className="paste-offer paste-offer-term"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') pasteAnyway(pasted)
+          }}
+        >
+          <span className="paste-offer-text">
+            Pasted {new Blob([pasted]).size.toLocaleString()} bytes of text
+          </span>
+          <button className="ghost" onClick={() => void pasteAsFile(pasted)}>
+            Paste as file
+          </button>
+          {/* The default, and what Escape does: a paste nobody chose about is
+              still a paste the reader asked for. */}
+          <button className="ghost" onClick={() => pasteAnyway(pasted)} autoFocus>
+            Paste text
+          </button>
+        </div>
+      )}
       {tab.status.state !== 'live' && (
         <div className="pane-overlay">
           {/* No spinner once it is closed: nothing is being waited for, and a
