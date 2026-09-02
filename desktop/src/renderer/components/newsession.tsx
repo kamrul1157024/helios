@@ -50,7 +50,7 @@ export function NewSessionDialog({
     enabled: !!hostId,
     select: onlyReady,
   })
-  const { data: directories = NO_DIRECTORIES, isPending: findingDirectories } = useQuery({
+  const { data: directories = NO_DIRECTORIES } = useQuery({
     ...directoriesQuery(hostId ?? ''),
     enabled: !!hostId,
   })
@@ -65,7 +65,7 @@ export function NewSessionDialog({
    */
   const settled = useRef<string | null>(null)
   useEffect(() => {
-    if (!hostId || providers.length === 0 || findingDirectories || settled.current === hostId) return
+    if (!hostId || providers.length === 0 || settled.current === hostId) return
     settled.current = hostId
     const first = providers[0]
     if (first && !providers.some((p) => p.id === provider)) setProvider(first.id)
@@ -73,7 +73,7 @@ export function NewSessionDialog({
     seeded.current = ''
     // provider and cwd are deliberately not dependencies: this settles them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostId, providers, directories, findingDirectories])
+  }, [hostId, providers, directories])
 
   const { data: models = NO_MODELS } = useQuery({
     ...modelsQuery(hostId ?? '', provider),
