@@ -1589,8 +1589,9 @@ small {
 
 /* Held at the right-hand end while the tabs scroll under it. `margin-left:auto`
    would only push it past the last tab, which in a strip wide enough to scroll
-   is somewhere off screen. Sticky keeps it in view, and the background stops
-   the tabs showing through as they pass beneath. */
+   is somewhere off screen. Sticky keeps it in view, and the fill stops the tabs
+   showing through as they pass beneath — the panel's own colour, so it is not
+   a block sitting on the strip. */
 .tab-menu {
   position: sticky;
   right: 0;
@@ -1605,6 +1606,14 @@ small {
 
 .tab-menu:hover {
   color: var(--on-surface);
+}
+
+/* Under a backdrop the panel is translucent, and a fill matching its *colour*
+   matches nothing — it reads as a dark block pasted into the corner. Gives way
+   like the panes below it do, at the cost of tabs showing through on a strip
+   long enough to scroll. */
+[data-glass='on'] .tab-menu {
+  background: transparent;
 }
 
 /* Renaming happens in place, at the size of the tab it replaces, so the strip
