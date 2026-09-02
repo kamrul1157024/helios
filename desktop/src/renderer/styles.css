@@ -3786,6 +3786,39 @@ figure.mermaid svg {
   flex: none;
 }
 
+/* The ⊕ is a chip among the chips here, not the corner button it is in the
+   chat composer: there is no box for it to sit inside. */
+.composer-chips .attach-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  font-size: 15px;
+}
+
+/* The dialog has no inner box to outline, so the whole of it lights up. */
+.modal-backdrop .composer {
+  position: relative;
+}
+
+.modal-backdrop .composer.dropping::after {
+  content: 'Drop to attach';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--primary);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  font-size: 13px;
+  color: var(--primary);
+  pointer-events: none;
+}
+
+.modal-backdrop .attachments,
+.modal-backdrop .paste-offer {
+  margin: 2px 12px 0;
+}
+
 .composer-actions {
   margin-left: auto;
   display: flex;

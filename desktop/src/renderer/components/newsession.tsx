@@ -2,8 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
+import { removeFirst } from '../attachments.ts'
 import { directoriesQuery, dirQuery, modelsQuery, providersQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
+import {
+  AttachButton,
+  AttachmentChips,
+  PasteOffer,
+  useAttachments,
+  useDropTarget,
+} from './attach.tsx'
 import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
 import { completionTarget, completionsIn } from './dirpath.ts'
 import { tintOf } from './grouping.ts'
@@ -36,6 +44,8 @@ export function NewSessionDialog({
   // Held out here rather than in the picker, which unmounts with its popover: a
   // half-typed path must still be there when the chip is opened again.
   const [typed, setTyped] = useState('')
+  const files = useAttachments()
+  const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
   const [starting, setStarting] = useState(false)
   const shell = useRef<HTMLDivElement | null>(null)
   const dismissing = useRef(false)
@@ -87,17 +97,50 @@ export function NewSessionDialog({
   const selected = providers.find((p) => p.id === provider)
   const modes = selected?.permission_modes ?? []
 
+  /**
+   * The first turn, when there are files on it.
+   *
+   * An upload needs a session to belong to — it lands in
+   * ~/.helios/uploads/{id} and the handler 404s without the record
+   * (internal/server/uploads.go) — and the id is what the create call is there
+   * to return. So an attached prompt cannot be the one the agent launches
+   * with: the session is started silent, the files go up against the id it
+   * came back with, and the prompt naming them is sent after.
+   *
+   * Nothing here undoes the session. It is running by the time any of this can
+   * fail, and killing an agent over an upload is a worse answer than a prompt
+   * that arrives without its attachments.
+   */
+  const firstTurn = async (sessionId: string, text: string): Promise<void> => {
+    let message = text
+    try {
+      message = await files.store(hostId, sessionId, text)
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err)
+      store.notify(`Session started, but the files did not upload: ${why}`, 'error')
+    }
+    if (!message) return
+    try {
+      await api(hostId).sendPrompt(sessionId, message)
+    } catch (err) {
+      store.fail(err)
+    }
+  }
+
   const start = async (): Promise<void> => {
     if (!hostId || starting) return
     setStarting(true)
     try {
+      const text = prompt.trim()
+      const attached = files.files.length > 0
       const result = await api(hostId).createSession({
         provider,
         cwd: cwd || undefined,
         model: model || undefined,
-        prompt: prompt || undefined,
+        prompt: attached ? undefined : text || undefined,
         permission_mode: mode || undefined,
       })
+      if (attached) await firstTurn(result.session_id, text)
       // Filed before the refresh, so the list arrives with it already in the
       // group the + was pressed on. The directory only seeded the dialog; the
       // group is what the button actually promised.
@@ -147,10 +190,15 @@ export function NewSessionDialog({
           dismissing.current = false
           return
         }
-        if (!prompt.trim()) onClose()
+        if (!prompt.trim() && files.files.length === 0) onClose()
       }}
     >
-      <div className="composer" ref={shell} onClick={(event) => event.stopPropagation()}>
+      <div
+        className={dropping ? 'composer dropping' : 'composer'}
+        ref={shell}
+        onClick={(event) => event.stopPropagation()}
+        {...dropHandlers}
+      >
         <header className="composer-head">
           <Picker
             title="Working directory"
@@ -208,6 +256,19 @@ export function NewSessionDialog({
           </Picker>
         </header>
 
+        {files.pasted !== null && prompt.includes(files.pasted) && (
+          <PasteOffer
+            text={files.pasted}
+            onFile={() => {
+              const text = files.fileThePaste()
+              if (text !== null) setPrompt((current) => removeFirst(current, text))
+            }}
+            onKeep={files.keepThePaste}
+          />
+        )}
+
+        <AttachmentChips files={files.files} onRemove={files.remove} />
+
         <textarea
           className="composer-prompt"
           autoFocus
@@ -215,6 +276,16 @@ export function NewSessionDialog({
           value={prompt}
           placeholder="What do you want to work on?"
           onChange={(event) => setPrompt(event.target.value)}
+          onPaste={(event) => {
+            // A screenshot on the clipboard comes through as a file. Let the
+            // default run when there is none, or pasted text is lost.
+            if (event.clipboardData.files.length > 0) {
+              event.preventDefault()
+              void files.attach(event.clipboardData.files)
+              return
+            }
+            files.noticePaste(event.clipboardData.getData('text'))
+          }}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
             event.preventDefault()
@@ -325,6 +396,7 @@ export function NewSessionDialog({
               </Picker>
             )}
 
+            <AttachButton onFiles={(chosen) => void files.attach(chosen)} disabled={starting} />
           </div>
 
           <div className="composer-actions">

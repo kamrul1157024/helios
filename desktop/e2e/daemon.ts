@@ -47,8 +47,26 @@ export interface StubDaemon {
    * how a test knows the refetch it provoked has happened at all.
    */
   greps(): number
+  /**
+   * What the app asked the daemon to do, in the order it asked.
+   *
+   * A session with files on its first prompt is three calls that have to
+   * happen in one order — create, upload, send — because the upload needs an
+   * id that only the create can give it. Nothing on screen shows the order, so
+   * the record of what arrived is the only thing that can.
+   */
+  writes(): DaemonWrite[]
   close(): Promise<void>
 }
+
+/** One thing the app asked of the daemon. */
+export type DaemonWrite =
+  | { kind: 'create'; spec: Record<string, unknown> }
+  | { kind: 'upload'; sessionId: string; names: string[] }
+  | { kind: 'send'; sessionId: string; message: string }
+
+/** The session every create in these tests hands back. */
+export const CREATED = 's-created'
 
 /** What `/api/file` answers before a test has said otherwise. */
 const DEFAULT_CONTENT = 'package main\n'
@@ -294,6 +312,8 @@ export async function startDaemon(): Promise<StubDaemon> {
     }
   }
 
+  const writes: DaemonWrite[] = []
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
@@ -304,6 +324,16 @@ export async function startDaemon(): Promise<StubDaemon> {
       res.write(': open\n\n')
       streams.add(res)
       req.on('close', () => streams.delete(res))
+      return
+    }
+
+    if (req.method === 'POST' && written(path)) {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify(record(writes, path, Buffer.concat(chunks))))
+      })
       return
     }
 
@@ -323,6 +353,7 @@ export async function startDaemon(): Promise<StubDaemon> {
     },
     reads: (target) => readCount.get(target) ?? 0,
     greps: () => grepCount,
+    writes: () => [...writes],
     setFile: (target, content) => {
       contents.set(target, content)
       revision += 1
@@ -333,6 +364,37 @@ export async function startDaemon(): Promise<StubDaemon> {
         for (const stream of streams) stream.end()
         server.close(() => resolve())
       }),
+  }
+}
+
+/** The three calls that start a session and give it its first turn. */
+function written(path: string): boolean {
+  return path === '/api/sessions' || path.endsWith('/files') || path.endsWith('/send')
+}
+
+/**
+ * Takes down what the app asked for, and answers as the daemon would.
+ *
+ * The upload is multipart, and a stub has no business parsing it properly: the
+ * filenames are what a test asserts on, and they are in the part headers.
+ */
+function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
+  if (path === '/api/sessions') {
+    writes.push({ kind: 'create', spec: JSON.parse(body.toString() || '{}') })
+    return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
+  }
+
+  const id = path.slice('/api/sessions/'.length, path.lastIndexOf('/'))
+  if (path.endsWith('/send')) {
+    const { message } = JSON.parse(body.toString() || '{}')
+    writes.push({ kind: 'send', sessionId: id, message: String(message ?? '') })
+    return { success: true }
+  }
+
+  const names = [...body.toString('latin1').matchAll(/filename="([^"]*)"/g)].map((m) => m[1] ?? '')
+  writes.push({ kind: 'upload', sessionId: id, names })
+  return {
+    files: names.map((name) => ({ name, path: `${HOME}/.helios/uploads/${id}/${name}`, size: 1 })),
   }
 }
 
