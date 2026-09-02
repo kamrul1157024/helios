@@ -1389,10 +1389,12 @@ small {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 18px;
+  /* Derived from the text rather than set beside it, so a bar sized up in
+     settings gains room instead of clipping. 11px, the default, gives 18. */
+  height: calc(var(--status-size, 11px) + 7px);
   padding: 0 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--status-size, 11px);
   line-height: 1;
   color: var(--on-surface-variant);
   background: color-mix(in srgb, var(--on-surface) 4%, transparent);
@@ -1451,9 +1453,10 @@ small {
   color: var(--on-surface);
 }
 
+/* Compact keeps the chosen text size and takes the breathing room instead —
+   the size is a legibility setting, and density should not overrule it. */
 [data-density='compact'] .status-line {
-  height: 15px;
-  font-size: 10px;
+  height: calc(var(--status-size, 11px) + 4px);
 }
 
 .menu {
@@ -1519,8 +1522,14 @@ small {
 }
 
 /* M3 primary tabs. */
+/* A fixed height with the tabs filling it, rather than each tab's padding
+   adding up to one. The strip holds a 22px close button and an 18px plus as
+   well as its labels, and letting the tallest of them decide is how it came to
+   be 37px — a third of which was air above and below the words. */
 .panel-tabs {
   display: flex;
+  flex: none;
+  height: 28px;
   gap: 4px;
   padding: 0 12px;
   box-shadow: inset 0 -1px 0 var(--outline-variant);
@@ -1533,35 +1542,61 @@ small {
   display: none;
 }
 
-.panel-tabs button {
+/* Direct children only. The session menu renders inside this strip so that its
+   button can stick to the right edge, and a descendant selector would give the
+   popover the tabs' capitalisation and underline — "New group…" came out as
+   "New Group…". Every button in the strip is a child of it; the close and
+   reload controls inside a tab are spans, since a button cannot hold one.
+
+   Full height rather than vertical padding, so the underline lands on the
+   strip's own bottom edge whatever the tab holds. */
+.panel-tabs > button {
   display: flex;
   align-items: center;
+  flex: none;
+  height: 100%;
   gap: 6px;
   border-radius: 0;
-  padding: 10px 14px 9px;
+  padding: 0 12px;
   color: var(--on-surface-variant);
   border-bottom: 2px solid transparent;
   text-transform: capitalize;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
-.panel-tabs button:hover {
+.panel-tabs > button:hover {
   background: color-mix(in srgb, var(--on-surface) 6%, transparent);
 }
 
-.panel-tabs button.active {
+.panel-tabs > button.active {
   color: var(--primary);
   border-bottom-color: var(--primary);
 }
 
-.panel-tabs button {
-  flex: none;
+.tab-add {
+  font-size: 16px;
+  padding: 0 10px;
+  color: var(--on-surface-variant);
 }
 
-.tab-add {
-  font-size: 18px;
-  padding: 8px 12px;
+/* Held at the right-hand end while the tabs scroll under it. `margin-left:auto`
+   would only push it past the last tab, which in a strip wide enough to scroll
+   is somewhere off screen. Sticky keeps it in view, and the background stops
+   the tabs showing through as they pass beneath. */
+.tab-menu {
+  position: sticky;
+  right: 0;
+  margin-left: auto;
+  flex: none;
+  padding: 0 10px;
+  font-size: 15px;
+  line-height: 1;
   color: var(--on-surface-variant);
+  background: var(--surface-low);
+}
+
+.tab-menu:hover {
+  color: var(--on-surface);
 }
 
 /* Renaming happens in place, at the size of the tab it replaces, so the strip
@@ -1601,13 +1636,13 @@ small {
 
 /* A group that is not the focused one still reads its tabs, but the underline
    marking the one in front belongs to the group with the keyboard. */
-.panel-tabs:not(.focused) button.active {
+.panel-tabs:not(.focused) > button.active {
   color: var(--on-surface-variant);
   border-bottom-color: var(--outline-variant);
 }
 
 /* Where a dragged tab would land in this strip. */
-.panel-tabs button.insert {
+.panel-tabs > button.insert {
   box-shadow: inset 2px 0 0 var(--primary);
 }
 
@@ -3527,8 +3562,9 @@ figure.mermaid svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  flex: none;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border-radius: 50%;
   font-size: 15px;
@@ -3544,9 +3580,9 @@ figure.mermaid svg {
 
 /* ⟳ draws smaller than the power glyph beside it at the same point size. */
 .tab-close.reload {
-  width: 26px;
-  height: 26px;
-  font-size: 22px;
+  width: 22px;
+  height: 22px;
+  font-size: 18px;
 }
 
 .pane-empty {

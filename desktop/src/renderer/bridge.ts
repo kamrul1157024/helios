@@ -15,6 +15,8 @@ export interface ThemePayload {
   density: Density
   /** Which segments the session status line draws, in the order it draws them. */
   statusLine: SegmentId[]
+  /** Text size of the status line, in px. The bar's height follows it. */
+  statusLineSize: number
 }
 import type {
   AppearancePrefs,

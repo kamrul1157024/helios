@@ -32,7 +32,7 @@ import {
   type Layout,
 } from './components/layout.ts'
 import type { SegmentId } from '../shared/status-line.ts'
-import { applyDensity, applyProseSize, applyTheme } from '../shared/theme/apply.ts'
+import { applyDensity, applyProseSize, applyStatusSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type {
   Density,
@@ -492,9 +492,10 @@ class Store {
     // The preload painted the boot theme already; this keeps up with changes
     // made afterwards, whether from the settings dialog or the OS switching
     // between light and dark underneath us.
-    bridge.theme.onChanged(({ theme, terminal, glass, proseSize, density, statusLine }) => {
+    bridge.theme.onChanged(({ theme, terminal, glass, proseSize, density, statusLine, statusLineSize }) => {
       applyTheme(document.documentElement, theme, glass)
       applyProseSize(document.documentElement, proseSize)
+      applyStatusSize(document.documentElement, statusLineSize)
       applyDensity(document.documentElement, density)
       this.set({ terminalTheme: terminal, density, statusLine })
     })

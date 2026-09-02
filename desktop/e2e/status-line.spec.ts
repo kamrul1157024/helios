@@ -44,6 +44,27 @@ test('the bar is no taller than the text it holds', async ({ window }) => {
   await open(window, ALPHA)
   const box = await bar(window).boundingBox()
   expect(box?.height).toBe(18)
+
+  // The strip above it is the other half of the saving, and the buttons a
+  // terminal tab brings with it used to be what set its height.
+  const tabs = await window.locator('.panel-tabs').boundingBox()
+  expect(tabs?.height).toBe(28)
+})
+
+test('the bar grows with the text size rather than clipping it', async ({ window }) => {
+  await open(window, ALPHA)
+  expect((await bar(window).boundingBox())?.height).toBe(18)
+
+  await openSettings(window)
+  const field = window.locator('.setting-row', { hasText: 'Status line size' }).locator('input')
+  await field.fill('16')
+  await field.blur()
+  await window.keyboard.press('Escape')
+
+  // Height is derived from the size, not set beside it: 16 + 7.
+  await expect
+    .poll(async () => (await bar(window).boundingBox())?.height)
+    .toBe(23)
 })
 
 test('the permission mode is on the row menu, ticked on the one in force', async ({ window }) => {
@@ -72,6 +93,22 @@ async function openSettings(window: Page): Promise<void> {
 function segment(window: Page, label: string) {
   return window.locator('.seg-row', { has: window.getByText(label, { exact: true }) })
 }
+
+// Two ways into one list. They are built from the same function, and this is
+// what would catch a second list being grown beside it.
+test('the tab strip menu offers exactly what the row does', async ({ window }) => {
+  await open(window, ALPHA)
+
+  await window.locator('.session-row', { hasText: ALPHA }).click({ button: 'right' })
+  const fromRow = await window.locator('.line-menu').first().locator('> button, > .line-sub > button').allInnerTexts()
+  await window.keyboard.press('Escape')
+
+  await window.locator('.tab-menu').click()
+  const fromTabs = await window.locator('.line-menu').first().locator('> button, > .line-sub > button').allInnerTexts()
+
+  expect(fromTabs).toEqual(fromRow)
+  expect(fromRow).toContain('Delete')
+})
 
 test('a segment dragged up the list moves left along the bar', async ({ window }) => {
   await open(window, ALPHA)
