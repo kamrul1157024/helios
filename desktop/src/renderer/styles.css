@@ -3724,11 +3724,6 @@ figure.mermaid svg {
   color: var(--on-surface-variant);
 }
 
-/* ─── The new-session composer ──────────────────────────────────────────── */
-
-/* Wider and shallower than a form dialog: the prompt is the content, and the
-   settings are a line above it and a line below rather than rows it has to
-   scroll past. */
 .composer {
   width: 680px;
   max-width: 92vw;
@@ -3746,7 +3741,6 @@ figure.mermaid svg {
   padding: 10px 10px 2px;
 }
 
-/* The machine belongs at the far edge, opposite the directory on it. */
 .composer-host {
   margin-left: auto;
 }
@@ -3769,10 +3763,6 @@ figure.mermaid svg {
   outline: none;
 }
 
-/* Dimmer than the shared placeholder colour, which is also what the chips'
-   labels are painted in. At 15px, alone in a box this big, a prompt at chip
-   brightness reads as something already typed rather than as the invitation to
-   type — there is no other text near it to be lighter than. */
 .composer-prompt::placeholder {
   color: color-mix(in srgb, var(--on-surface-variant) 55%, transparent);
 }
@@ -3784,9 +3774,6 @@ figure.mermaid svg {
   padding: 2px 10px 10px;
 }
 
-/* Wraps rather than squeezes. Each chip is a value read at a glance, and a row
-   that shrinks them all to fit says "C", "D", "D…" — three chips that have
-   stopped saying anything. A second line costs the dialog 34px. */
 .composer-chips {
   display: flex;
   flex-wrap: wrap;
@@ -3806,7 +3793,6 @@ figure.mermaid svg {
   gap: 4px;
 }
 
-/* The ↵ the button promises, dimmed so it reads as a hint and not a word. */
 .composer-key {
   margin-left: 6px;
   font: inherit;
@@ -3842,8 +3828,6 @@ figure.mermaid svg {
   background: var(--error);
 }
 
-/* A chip that says its own value. Unlabelled on purpose: the value is the
-   label, which is what buys the space the prompt is given. */
 .picker {
   position: relative;
   min-width: 0;
@@ -3884,8 +3868,6 @@ figure.mermaid svg {
   opacity: 0.7;
 }
 
-/* The directory is the one chip that names the work, so it carries the weight
-   a title would have if the dialog still had one. */
 .composer-place > summary {
   font-size: 14px;
   font-weight: 500;
@@ -3914,9 +3896,6 @@ figure.mermaid svg {
   background: var(--surface-highest);
   border-radius: var(--r-md);
   box-shadow: 0 8px 24px var(--shadow-soft);
-  /* The chips that list models hang their items straight off the body, with no
-     inner list to do the scrolling. Without this the max-height clamps the box
-     and the items carry on drawing past it, outside the modal. */
   overflow-y: auto;
 }
 
@@ -3925,7 +3904,6 @@ figure.mermaid svg {
   right: 0;
 }
 
-/* Chips on the bottom row have no room under them. */
 .composer-foot .picker-body {
   top: auto;
   bottom: 100%;
@@ -3950,17 +3928,11 @@ figure.mermaid svg {
   overflow-y: auto;
 }
 
-/* Scoped to the composer: `.picker-item` is also the settings menus' row, and
-   theirs is a centred single line declared further down the file. Unscoped,
-   whichever came last won — which was theirs, and it centred a two-line entry
-   whose name and path both want the same left edge. */
-.composer .picker-item {
+.composer-option {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  /* A row is its two lines and no less: left to shrink, a long list squashes
-     every item instead of scrolling. */
   flex: none;
   gap: 2px;
   width: 100%;
@@ -3972,15 +3944,15 @@ figure.mermaid svg {
   text-align: left;
 }
 
-.composer .picker-item:hover {
+.composer-option:hover {
   background: color-mix(in srgb, var(--on-surface) 8%, transparent);
 }
 
-.composer .picker-item.is-on {
+.composer-option.is-on {
   background: color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
-.picker-item-name {
+.composer-option-name {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3991,7 +3963,7 @@ figure.mermaid svg {
   font-weight: 500;
 }
 
-.picker-item-hint {
+.composer-option-hint {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4000,7 +3972,7 @@ figure.mermaid svg {
   color: var(--on-surface-variant);
 }
 
-.picker-item-count {
+.composer-option-count {
   font-size: 11px;
   font-weight: 400;
   color: var(--s-active);
