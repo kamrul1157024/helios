@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
-import { directoriesQuery, modelsQuery, providersQuery } from '../queries.ts'
+import { directoriesQuery, dirQuery, modelsQuery, providersQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
-import { Chevron, Console, Shield, Spark } from './icons.tsx'
+import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
+import { completionTarget, completionsIn } from './dirpath.ts'
 import { tintOf } from './grouping.ts'
 import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
 
@@ -32,6 +33,9 @@ export function NewSessionDialog({
   const [cwd, setCwd] = useState('')
   const [mode, setMode] = useState('')
   const [prompt, setPrompt] = useState('')
+  // Held out here rather than in the picker, which unmounts with its popover: a
+  // half-typed path must still be there when the chip is opened again.
+  const [typed, setTyped] = useState('')
   const [starting, setStarting] = useState(false)
   const shell = useRef<HTMLDivElement | null>(null)
   const dismissing = useRef(false)
@@ -160,8 +164,11 @@ export function NewSessionDialog({
           >
             {(close) => (
               <DirectoryList
+                hostId={hostId}
                 directories={directories}
                 cwd={cwd}
+                typed={typed}
+                onType={setTyped}
                 onPick={(next) => {
                   setCwd(next)
                   close()
@@ -335,19 +342,43 @@ export function NewSessionDialog({
   )
 }
 
+/**
+ * Where to start the session: the directories in use, and the filesystem.
+ *
+ * Two jobs that read as one control. The recents answer "back to where I was
+ * working" and are what an untouched picker shows — they are the only rows that
+ * can carry a project name and a count of what is running there. Typing is the
+ * other job, "somewhere new", and that is completion against the disk: the
+ * recents cannot answer it, because a directory only joins them once a session
+ * has already been started in it.
+ *
+ * Whatever is typed stays committable as it stands, absolute or not. It is the
+ * one thing the free-text input this replaced did better than any list, and no
+ * amount of completion is worth losing it: a path the daemon knows about and
+ * this end does not — a mount, a symlink, a directory made a second ago — has
+ * to be reachable by typing it.
+ */
 function DirectoryList({
+  hostId,
   directories,
   cwd,
+  typed,
+  onType,
   onPick,
 }: {
+  hostId: string
   directories: DirectoryInfo[]
   cwd: string
+  typed: string
+  onType: (typed: string) => void
   onPick: (cwd: string) => void
 }): JSX.Element {
-  const [query, setQuery] = useState('')
-  const needle = query.trim().toLowerCase()
+  const search = useRef<HTMLInputElement | null>(null)
+  const wanted = typed.trim()
+  const needle = wanted.toLowerCase()
+  const { parent, prefix } = completionTarget(wanted)
 
-  const matches = useMemo(
+  const recents = useMemo(
     () =>
       directories.filter(
         (dir) =>
@@ -358,43 +389,77 @@ function DirectoryList({
     [directories, needle],
   )
 
-  const typed = query.trim()
-  const custom = typed.startsWith('/') || typed.startsWith('~')
-  const known = directories.some((dir) => dir.cwd === typed)
+  // Keyed on the parent, so walking along one path re-reads a directory only
+  // when the typing crosses a separator. An unreadable parent — a path that
+  // does not exist yet, which is every path halfway through being typed — is
+  // not an error worth reporting: there is simply nothing to complete with.
+  const { data: listing, isFetching } = useQuery({
+    ...dirQuery(hostId, wanted === '' ? '' : parent),
+    retry: false,
+  })
 
-  const first = (): void => {
-    if (custom && !known) onPick(typed)
-    else if (matches[0]) onPick(matches[0].cwd)
+  const children = useMemo(
+    () => completionsIn(listing?.entries ?? [], prefix, new Set(recents.map((dir) => dir.cwd))),
+    [listing, prefix, recents],
+  )
+
+  const exact = directories.some((dir) => dir.cwd === wanted)
+  // Home stays reachable while it is being spelled: it is a row like any other,
+  // and hiding it the moment a key is pressed hides what was being reached for.
+  const showHome = needle === '' || 'home'.startsWith(needle) || needle === '~'
+  const nothing = children.length === 0 && recents.length === 0 && !showHome
+
+  /** Fills in the top completion, as a shell does, and leaves the cursor going. */
+  const complete = (): void => {
+    const first = children[0]
+    if (!first) return
+    // The daemon's own absolute path, not the typed prefix with a name stuck on
+    // the end: completing `wor` under home has to leave behind something that
+    // still means the same directory when it is completed again.
+    onType(`${first.path}/`)
+    search.current?.focus()
   }
 
   return (
     <>
       <input
         className="picker-search"
+        ref={search}
         autoFocus
         spellCheck={false}
-        value={query}
-        placeholder="Filter, or type a path…"
-        onChange={(event) => setQuery(event.target.value)}
+        autoComplete="off"
+        value={typed}
+        placeholder="Type a path, or search…"
+        onChange={(event) => onType(event.target.value)}
         onKeyDown={(event) => {
+          if (event.key === 'Tab' && children.length > 0) {
+            event.preventDefault()
+            complete()
+            return
+          }
           if (event.key !== 'Enter') return
           event.preventDefault()
-          first()
+          // What is in the box wins over what is under it. Anything else makes
+          // the escape hatch conditional on the list agreeing.
+          if (wanted !== '') onPick(wanted)
         }}
       />
       <div className="picker-list">
-        {custom && !known && (
-          <button className="composer-option" onClick={() => onPick(typed)}>
-            <span className="composer-option-name">Use “{typed}”</span>
+        {wanted !== '' && !exact && (
+          <button className="composer-option use-typed" onClick={() => onPick(wanted)}>
+            <span className="composer-option-name">Use “{wanted}”</span>
+            <span className="composer-option-hint">Start here whether or not it is listed</span>
           </button>
         )}
-        {!needle && (
+        {showHome && (
           <button className={`composer-option ${cwd === '' ? 'is-on' : ''}`} onClick={() => onPick('')}>
             <span className="composer-option-name">Home</span>
             <span className="composer-option-hint">~</span>
           </button>
         )}
-        {matches.map((dir) => (
+
+        {recents.length > 0 && <p className="picker-section">Recent</p>}
+        {recents.map((dir) => (
           <button
             key={dir.cwd}
             className={`composer-option ${dir.cwd === cwd ? 'is-on' : ''}`}
@@ -408,7 +473,26 @@ function DirectoryList({
             <span className="composer-option-hint">{dir.cwd}</span>
           </button>
         ))}
-        {matches.length === 0 && !custom && <p className="picker-empty">No matching directory. Type a path to use one.</p>}
+
+        {children.length > 0 && <p className="picker-section">In {listing?.path ?? parent}</p>}
+        {children.map((entry) => (
+          <button
+            key={entry.path}
+            className={`composer-option ${entry.path === cwd ? 'is-on' : ''}`}
+            onClick={() => onPick(entry.path)}
+          >
+            <span className="composer-option-name">
+              <Folder />
+              {entry.name}
+            </span>
+            <span className="composer-option-hint">{entry.path}</span>
+          </button>
+        ))}
+
+        {nothing && isFetching && <p className="picker-empty">Looking…</p>}
+        {nothing && !isFetching && (
+          <p className="picker-empty">Nothing here by that name — the path above is still yours to use.</p>
+        )}
       </div>
     </>
   )
