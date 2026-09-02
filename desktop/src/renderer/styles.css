@@ -456,23 +456,36 @@ small {
   height: 100%;
 }
 
-/* Room for the traffic lights under titleBarStyle: hiddenInset. */
+/* Room for the traffic lights under titleBarStyle: hiddenInset. The height is
+   the OS's to choose, not ours — nothing sets trafficLightPosition, so the
+   lights land where a 32px bar puts them.
+
+   Painted as the panes are, and with no gap under it, so the top of the window
+   is one field rather than a band of bare --surface above two cards. On a
+   theme whose surface is a strong colour that band was the loudest thing on
+   the screen, and it held nothing. */
 .titlebar {
   height: 32px;
   flex: none;
+  background: var(--surface-low);
   -webkit-app-region: drag;
 }
 
-/* Inset on all four sides, the same 8px as the gap between the panes. The top
-   was 0 while the strips inside carried their own padding; now that both are a
-   fixed 28px with their contents centred, nothing else supplies the gap and
-   the panes' rounded corners meet the titlebar square on. */
+/* Except where the backdrop is the point: an opaque strip here would be a bar
+   of paint across the top of an otherwise translucent window. */
+[data-glass='on'] .titlebar {
+  background: transparent;
+}
+
+/* No inset at the top: the titlebar above is painted the same as the panes, so
+   they continue it rather than sitting below it. The room the strips need is
+   inside them — see --strip-h. */
 .body {
   flex: 1;
   display: flex;
   min-height: 0;
   gap: 8px;
-  padding: 8px;
+  padding: 0 8px 8px;
 }
 
 .main {
