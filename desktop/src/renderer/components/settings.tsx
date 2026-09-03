@@ -7,7 +7,7 @@ import { keys, mergeSettings, settingValues, type SettingsDocument } from '../ke
 import { useHostSessions } from '../host-data.ts'
 import { settingsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
-import { Modal } from './newsession.tsx'
+import { HostsPane } from './hosts.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
 import {
   DEFAULT_STATUS_LINE,
@@ -20,7 +20,13 @@ import {
 import { BACKDROP_STYLES, MAX_BLUR, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
 import { parseColor, type BackdropSpec, type BackdropStyle, type Rgb } from '../../shared/theme/vscode.ts'
 import type { HeliosTheme } from '../../shared/theme/resolve.ts'
-import type { AppearancePrefs, BackdropState, NotificationPrefs, ThemeSummary } from '../../shared/models.ts'
+import type {
+  AppearancePrefs,
+  BackdropState,
+  NotificationPrefs,
+  SettingsSection,
+  ThemeSummary,
+} from '../../shared/models.ts'
 
 /**
  * Which types can be silenced, in the order the phone lists them. Keeping the
@@ -78,17 +84,20 @@ const MODES: { value: AppearancePrefs['mode']; label: string; detail: string }[]
  * theme pickers pushed the notification toggles out of sight — and the two have
  * nothing to do with each other.
  */
-type SectionId = 'appearance' | 'sessions' | 'terminal' | 'notifications'
-
-const SECTIONS: { id: SectionId; label: string }[] = [
+export const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'terminal', label: 'Terminal' },
   { id: 'notifications', label: 'Notifications' },
+  // Last, and part of this list rather than a dialog of its own: which daemons
+  // the app talks to is a setting like the others.
+  { id: 'hosts', label: 'Hosts' },
 ]
 
-export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
-  const [section, setSection] = useState<SectionId>('appearance')
+export function SettingsPane(): JSX.Element {
+  // In the store, not here: the list that chooses the pane is drawn by the
+  // sidebar, which is not this component's parent.
+  const section = useStore((s) => s.settingsSection)
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null)
   const [appearance, setAppearance] = useState<AppearancePrefs | null>(null)
   const [themes, setThemes] = useState<ThemeSummary[]>([])
@@ -130,20 +139,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
   }
 
   return (
-    <Modal title="Settings" onClose={onClose}>
-      <div className="settings-shell">
-        <nav className="settings-nav">
-          {SECTIONS.map((entry) => (
-            <button
-              key={entry.id}
-              className={section === entry.id ? 'active' : ''}
-              onClick={() => setSection(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </nav>
-
+    <div className="settings-page">
         <div className="settings-panel">
           {section === 'appearance' && !appearance && <Loading title="Appearance" />}
 
@@ -289,18 +285,19 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         </section>
       ))}
 
-      {MISSING.length > 0 && <p className="modal-note">Not listed: {MISSING.join(', ')}</p>}
+      {MISSING.length > 0 && <p className="pane-note">Not listed: {MISSING.join(', ')}</p>}
 
-      <div className="modal-actions">
+      <div className="pane-actions">
         <button className="ghost" onClick={() => void apply(bridge.prefs.reset())}>
           Reset to defaults
         </button>
       </div>
             </>
           )}
+
+          {section === 'hosts' && <HostsPane />}
         </div>
-      </div>
-    </Modal>
+    </div>
   )
 }
 
@@ -345,7 +342,7 @@ function SessionsPane(): JSX.Element {
   const [hostId, setHostId] = useState<string | null>(null)
   const selected = hosts.find((host) => host.id === hostId) ?? hosts[0]
 
-  if (!selected) return <p className="modal-note">No host paired.</p>
+  if (!selected) return <p className="pane-note">No host paired.</p>
 
   return (
     <>
@@ -604,7 +601,7 @@ function MemoryBudget({ hostId }: { hostId: string }): JSX.Element {
     return (
       <section className="settings-group">
         <h3>Memory</h3>
-        <p className="modal-note">This host is not reachable.</p>
+        <p className="pane-note">This host is not reachable.</p>
       </section>
     )
   }
@@ -708,7 +705,7 @@ function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
     return (
       <section className="settings-group">
         <h3>Session titles</h3>
-        <p className="modal-note">This host is not reachable.</p>
+        <p className="pane-note">This host is not reachable.</p>
       </section>
     )
   }

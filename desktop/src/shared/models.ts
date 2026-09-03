@@ -637,6 +637,15 @@ export interface AppearancePrefs {
 export type Density = 'comfortable' | 'compact'
 
 /**
+ * Which settings pane is open.
+ *
+ * Here rather than beside the panes themselves: the section list is drawn by
+ * the sidebar and the pane by the main panel, so the state that joins them
+ * lives in the store, which cannot import a component.
+ */
+export type SettingsSection = 'appearance' | 'sessions' | 'terminal' | 'notifications' | 'hosts'
+
+/**
  * What the backdrop picker shows, for whichever theme is active.
  *
  * Not part of AppearancePrefs: the backdrop is saved into the theme file, since

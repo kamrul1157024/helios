@@ -523,6 +523,53 @@ small {
   color: var(--on-surface-variant);
 }
 
+/* ─── Rail ──────────────────────────────────────────────────────────────── */
+
+/* What the window is showing, chosen from the left edge. Inside .body rather
+   than beside the titlebar, so it starts below the traffic lights and takes
+   nothing away from the drag region. */
+.rail {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--surface-low);
+  /* The same hairline the sidebar draws, for the same reason: no width. */
+  box-shadow: 1px 0 0 var(--outline-variant);
+}
+
+.rail-item {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-lg);
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.rail-item:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+}
+
+/* The same lit pill the settings nav uses for the pane it is on: one mode is
+   in force at a time, and both lists say so the same way. */
+.rail-item.on {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.rail-item .ui-icon {
+  width: 19px;
+  height: 19px;
+}
+
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
 .sidebar {
@@ -4330,30 +4377,35 @@ hr {
 
 /* ─── Settings ──────────────────────────────────────────────────────────── */
 
-/* Wider than the other modals, since it carries a nav as well as a panel.
-   Selected on the content rather than through a prop, so the Modal shell stays
-   the same shell every other dialog uses. */
-.modal:has(.settings-shell) {
-  width: 760px;
-}
-
-.settings-shell {
+/* The panes, in the main area. Settings is a mode now: the sidebar holds the
+   nav, this holds whichever pane it points at, and the reading width keeps a
+   row of controls from stretching across a wide window. */
+.settings-page {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 20px;
-  align-items: flex-start;
-  /* Tall enough that switching panes does not resize the dialog under the
-     pointer, short enough to sit on a laptop screen. */
-  height: min(60vh, 520px);
+  padding: 12px 16px 16px;
+  overflow: hidden;
 }
 
+/* In the sidebar rather than beside the panel it drives — the mode owns both
+   columns, so the list of panes is what its sidebar is for. It takes the whole
+   column, not the height of five buttons: the list below it is hidden in this
+   mode, and without something to fill the space the footer rides up under the
+   last section. */
 .settings-nav {
-  flex: none;
-  width: 150px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  align-content: flex-start;
   gap: 2px;
-  position: sticky;
-  top: 0;
+  padding: 8px 8px 0;
+  overflow-y: auto;
+}
+
+.settings-nav button {
+  flex: none;
 }
 
 .settings-nav button {
@@ -4375,17 +4427,19 @@ hr {
   font-weight: 600;
 }
 
-/* The pane scrolls, not the dialog: the nav stays put while a long theme list
-   moves past it. */
+/* The pane scrolls, not the window: the nav is in the sidebar and stays put
+   while a long theme list moves past it. Held to a reading width, so a setting
+   and its control do not end up at opposite edges of a wide window. */
 .settings-panel {
   flex: 1;
   min-width: 0;
+  max-width: 720px;
   height: 100%;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 8px;
 }
 
-/* The first heading in a pane has the dialog title right above it. */
+/* The first heading in a pane has nothing above it to space away from. */
 .settings-panel > .settings-group:first-child,
 .settings-panel > h3:first-child {
   margin-top: 0;
@@ -4786,6 +4840,22 @@ hr {
   color: var(--on-surface-variant);
 }
 
+/* The same two, for a pane that is not in a dialog. Named apart rather than
+   shared, so a change made for the modals cannot quietly move a settings
+   pane. */
+.pane-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.pane-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 /* Said once, above everything, and gone for good when dismissed: a release
    nobody has to act on today should not cost the layout permanently. */
 .update-banner {
@@ -5173,33 +5243,6 @@ hr {
    arrange control and the + button below it are about. */
 /* The same height as the detail pane's tab strip, which sits beside it at the
    same y. See --strip-h. */
-.sidebar-modes {
-  display: flex;
-  align-items: center;
-  flex: none;
-  height: var(--strip-h);
-  gap: 2px;
-  padding: 0 10px;
-}
-
-.sidebar-modes button {
-  flex: 1;
-  height: 22px;
-  background: var(--surface-low);
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  color: var(--on-surface-variant);
-  font-size: 11px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.sidebar-modes button.active {
-  background: var(--surface-high);
-  border-color: var(--outline-variant);
-  color: var(--on-surface);
-}
-
 .sched-rows {
   display: flex;
   flex-direction: column;

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 
 import { bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
-import { Modal } from './newsession.tsx'
 
 /**
  * Adding a daemon.
@@ -11,8 +10,11 @@ import { Modal } from './newsession.tsx'
  * admin port, which is the same trust the CLI assumes. A remote one needs the
  * `helios://pair` link that `helios setup` prints as a QR, since a desktop has
  * no camera to point at it.
+ *
+ * A settings pane rather than the dialog it was: which machines the app talks
+ * to is a setting, and pairing one was the last thing left behind a modal.
  */
-export function HostsDialog({ onClose }: { onClose: () => void }): JSX.Element {
+export function HostsPane(): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
   const pairingLink = useStore((s) => s.pairingLink)
@@ -54,7 +56,8 @@ export function HostsDialog({ onClose }: { onClose: () => void }): JSX.Element {
   }
 
   return (
-    <Modal title="Hosts" onClose={onClose}>
+    <>
+      <h3>Hosts</h3>
       <div className="host-rows">
         {hosts.map((host) => (
           <div key={host.id} className="host-row">
@@ -112,14 +115,11 @@ export function HostsDialog({ onClose }: { onClose: () => void }): JSX.Element {
         </small>
       </label>
 
-      <div className="modal-actions">
-        <button className="ghost" onClick={onClose}>
-          Close
-        </button>
+      <div className="pane-actions">
         <button disabled={busy || !link.trim()} onClick={() => void pairRemote()}>
           {busy ? 'Pairing…' : 'Add host'}
         </button>
       </div>
-    </Modal>
+    </>
   )
 }

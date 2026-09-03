@@ -39,6 +39,7 @@ import { GroupPicker } from './group-picker.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import { sessionActions } from './session-menu.ts'
+import { SECTIONS } from './settings.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
  *  session list taking half the window from the session itself. */
@@ -170,12 +171,8 @@ function dropModeFor(event: React.DragEvent, el: HTMLElement): DropMode {
 
 export function Sidebar({
   onNewSession,
-  onAddHost,
-  onSettings,
 }: {
   onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
-  onAddHost: () => void
-  onSettings: () => void
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
@@ -186,6 +183,7 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const renamingSession = useStore((s) => s.renamingSession)
   const mode = useStore((s) => s.sidebarMode)
+  const settingsSection = useStore((s) => s.settingsSection)
   // Its own search, because the two lists hold different things and a query
   // typed against one is meaningless against the other.
   const scheduleQuery = useStore((s) => s.scheduleQuery)
@@ -382,23 +380,21 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" ref={aside}>
-      {/* Above everything, because it decides what everything below is about:
-          the search, the arrange control and the + button all belong to one
-          list or the other. */}
-      <div className="sidebar-modes">
-        <button
-          className={mode === 'sessions' ? 'active' : ''}
-          onClick={() => store.setSidebarMode('sessions')}
-        >
-          sessions
-        </button>
-        <button
-          className={mode === 'schedules' ? 'active' : ''}
-          onClick={() => store.setSidebarMode('schedules')}
-        >
-          schedules
-        </button>
-      </div>
+      {/* Which mode this is comes from the rail, so the list starts at its own
+          search rather than at a switch it is not part of. */}
+      {mode === 'settings' && (
+        <nav className="settings-nav">
+          {SECTIONS.map((entry) => (
+            <button
+              key={entry.id}
+              className={settingsSection === entry.id ? 'active' : ''}
+              onClick={() => store.setSettingsSection(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
       {mode === 'schedules' && (
         <>
@@ -505,7 +501,7 @@ export function Sidebar({
       </header>
       )}
 
-      <div className="sidebar-list" hidden={mode === 'schedules'}>
+      <div className="sidebar-list" hidden={mode !== 'sessions'}>
         {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
@@ -925,16 +921,20 @@ export function Sidebar({
             <p className="muted">
               Start one with <code>helios daemon</code>, or pair a remote machine.
             </p>
-            <button onClick={onAddHost}>Add host</button>
+            <button onClick={() => store.openSettings('hosts')}>Add host</button>
           </div>
         )}
       </div>
 
       <footer className="sidebar-foot">
-        <button className="link" onClick={onAddHost}>
-          Add host
-        </button>
-        <AppMenu onSettings={onSettings} />
+        {/* Not in the settings mode, where it would sit an inch under the
+            Hosts pane it opens. */}
+        {mode !== 'settings' && (
+          <button className="link" onClick={() => store.openSettings('hosts')}>
+            Add host
+          </button>
+        )}
+        <AppMenu />
       </footer>
 
       {menu && (
@@ -1063,11 +1063,12 @@ function InlineNameField({
 }
 
 /**
- * Settings and Quit, which otherwise live only on the tray and the app menu —
- * neither of which is where the eye goes, and the app menu is not somewhere a
- * user looks on the platforms where the window is the whole of the app.
+ * Quit, which otherwise lives only on the tray and the app menu — neither of
+ * which is where the eye goes, and the app menu is not somewhere a user looks
+ * on the platforms where the window is the whole of the app. Settings left
+ * here for the rail, which says what it is with an icon rather than an ⋯.
  */
-function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
+function AppMenu(): JSX.Element {
   const menu = useRef<HTMLDetailsElement | null>(null)
 
   // <details> only closes on its own summary, so a menu left open stays open
@@ -1099,7 +1100,6 @@ function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
           if (menu.current) menu.current.open = false
         }}
       >
-        <button onClick={onSettings}>Settings…</button>
         {/* Closing the window leaves the app on the tray so approvals keep
             arriving; this is the one control that actually ends it. */}
         <button className="danger" onClick={() => void bridge.app.quit()}>

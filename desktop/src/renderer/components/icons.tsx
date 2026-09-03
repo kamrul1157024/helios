@@ -117,6 +117,36 @@ export function Plus({ className = '' }: { className?: string }): JSX.Element {
   )
 }
 
+/** A list of sessions, for the rail. Bulleted, so it is not the sort icon. */
+export function ListRows({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01" strokeLinecap="round" strokeWidth="2.4" />
+      <path d="M9 6.5h10.5M9 12h10.5M9 17.5h10.5" />
+    </svg>
+  )
+}
+
+/** A clock, for what runs on one. */
+export function Clock({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </svg>
+  )
+}
+
+/** A gear, for the settings mode. */
+export function Gear({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 3.2l1.6 2.5 2.9-.6.5 2.9 2.6 1.5-1.6 2.5 1.6 2.5-2.6 1.5-.5 2.9-2.9-.6L12 20.8l-1.6-2.5-2.9.6-.5-2.9L4.4 14.5 6 12 4.4 9.5 7 8l.5-2.9 2.9.6z" />
+    </svg>
+  )
+}
+
 /** A pencil, for the title a row lets you type over. */
 export function Pencil({ className = '' }: { className?: string }): JSX.Element {
   return (
