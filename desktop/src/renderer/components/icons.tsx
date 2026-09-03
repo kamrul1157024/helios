@@ -117,6 +117,15 @@ export function Plus({ className = '' }: { className?: string }): JSX.Element {
   )
 }
 
+/** A pencil, for the title a row lets you type over. */
+export function Pencil({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 20h4l10-10-4-4L4 16v4zM14.5 5.5l4 4" />
+    </svg>
+  )
+}
+
 /** A terminal, for the one action a row offers under the pointer. */
 export function Console({ className = '' }: { className?: string }): JSX.Element {
   return (
