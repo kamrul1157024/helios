@@ -175,13 +175,37 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 	if decision.Status == "approved" {
 		resp.HookSpecificOutput.Decision.Behavior = "allow"
-		applyApproval(ctx, &input, payloadJSON, decision, &resp)
+		applyApproval(&input, payloadJSON, decision, &resp)
 	} else {
 		resp.HookSpecificOutput.Decision.Behavior = "deny"
 		resp.HookSpecificOutput.Decision.Message = denyMessage(&input, decision)
 	}
 
+	// An approved plan is not settled by this reply; see answerPlanDialog. The
+	// keystroke has to follow the reply rather than accompany it, because the
+	// CLI draws the dialog it lands on only once the hook has answered.
+	if choice := approvedPlanChoice(&input, decision); choice != "" {
+		resp.HookSpecificOutput.Decision.Behavior = "ask"
+		recordPlanMode(ctx, input.SessionID, choice)
+		go answerPlanDialog(ctx.Terminal, input.SessionID, choice)
+	}
+
 	writePermResponse(w, resp)
+}
+
+// approvedPlanChoice returns the plan row a surface picked, or "" when this
+// decision is not an approved plan.
+func approvedPlanChoice(input *hookInput, decision *notifications.Decision) string {
+	if input.ToolName != exitPlanModeTool || decision.Status != "approved" ||
+		len(decision.Response) == 0 {
+		return ""
+	}
+	var answer permissionAnswer
+	if err := json.Unmarshal(decision.Response, &answer); err != nil {
+		log.Printf("hook: read plan answer for %s: %v", input.SessionID, err)
+		return ""
+	}
+	return answer.PlanChoice
 }
 
 // permissionAnswer is what a surface sends back for an approval, whichever
@@ -192,19 +216,19 @@ type permissionAnswer struct {
 	// ApplyPermission indexes the CLI's own permission_suggestions, and means
 	// "don't ask again".
 	ApplyPermission *int `json:"apply_permission,omitempty"`
-	// PermissionUpdates are permission changes helios composed itself rather
-	// than picked from a suggestion — a plan's setMode, for one.
-	PermissionUpdates json.RawMessage `json:"permission_updates,omitempty"`
+	// PlanChoice is the way a plan was approved: which mode the session
+	// continues in. Empty for every tool but ExitPlanMode.
+	PlanChoice string `json:"plan_choice,omitempty"`
 	// Feedback is what the user wrote when they refused. Claude reads it in
 	// place of the tool's result.
 	Feedback string `json:"feedback,omitempty"`
 }
 
 // empty reports whether the answer says nothing beyond yes or no. Written out
-// because the struct holds a map and a slice, so == does not apply.
+// because the struct holds a map, so == does not apply.
 func (a permissionAnswer) empty() bool {
 	return a.UpdatedInput == nil && a.ApplyPermission == nil &&
-		len(a.PermissionUpdates) == 0 && a.Feedback == ""
+		a.PlanChoice == "" && a.Feedback == ""
 }
 
 // answerJSON encodes an answer helios composed itself. The value is built from
@@ -220,8 +244,8 @@ func answerJSON(a permissionAnswer) json.RawMessage {
 }
 
 // applyApproval folds whatever the answering surface sent into the reply the
-// CLI gets: an edited input, a rule to remember, or the mode to continue in.
-func applyApproval(ctx *provider.HookContext, input *hookInput, payloadJSON []byte,
+// CLI gets: an edited input, or a rule to remember.
+func applyApproval(input *hookInput, payloadJSON []byte,
 	decision *notifications.Decision, resp *permResponse) {
 	if len(decision.Response) == 0 {
 		return
@@ -239,12 +263,6 @@ func applyApproval(ctx *provider.HookContext, input *hookInput, payloadJSON []by
 		if rule := suggestedRule(payloadJSON, *answer.ApplyPermission); rule != nil {
 			resp.HookSpecificOutput.Decision.UpdatedPermissions = rule
 		}
-	}
-	// Composed updates win over a suggestion index: only one of the two is ever
-	// sent, and this one names the change outright rather than pointing at it.
-	if len(answer.PermissionUpdates) > 0 {
-		resp.HookSpecificOutput.Decision.UpdatedPermissions = answer.PermissionUpdates
-		recordSessionMode(ctx, input.SessionID, answer.PermissionUpdates)
 	}
 }
 
@@ -400,10 +418,8 @@ func terminalDecision(choices []string, a hitl.Answer) notifications.Decision {
 			Status:   "approved",
 			Response: json.RawMessage(`{"apply_permission":0}`),
 		}
-	case planAcceptEdits:
-		return approvedWithMode(modeAcceptEdits)
-	case planManualEdits:
-		return approvedWithMode(modeDefault)
+	case planAutoMode, planManualEdits:
+		return approvedWithPlanChoice(planChoiceOf(choices[a.Index]))
 	}
 	return notifications.Decision{Status: "denied"}
 }

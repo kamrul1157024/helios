@@ -23,7 +23,7 @@ func SetBackend(b backend.Backend) {
 // handlePermissionAction turns a remote surface's answer into a decision.
 //
 // The body is a permissionAnswer plus the action, so a phone can send anything
-// the terminal can: the mode to continue a plan in, or the words to send it
+// the terminal can: which way to say yes to a plan, or the words to send it
 // back with.
 func handlePermissionAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
