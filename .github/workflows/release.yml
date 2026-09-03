@@ -1,11 +1,10 @@
 name: Release
 
+# No version input: the number was decided in the PR that earned it and lives in
+# VERSION. Typing it again here is where the tag, the APK's build name and the
+# app's own number end up as three different numbers.
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. 0.2.0)"
-        required: true
 
 permissions:
   contents: write
@@ -39,7 +38,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEYSTORE_PATH: helios-release.jks
-        run: make apk-release VERSION=${{ inputs.version }}
+        run: make apk-release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -52,6 +51,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # electron-builder stamps this into the app, which reports it to the
+      # update check; a checkout past a tag would otherwise describe itself as
+      # the release it sits above.
+      - name: Read the version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -88,6 +93,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read the version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           # Must match .nvmrc: `make desktop` refuses to build on anything
@@ -122,6 +130,9 @@ jobs:
           # tags and the history behind them have to be here.
           fetch-depth: 0
 
+      - name: Read the version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -147,4 +158,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make release-publish VERSION=${{ inputs.version }}
+        run: make release-publish

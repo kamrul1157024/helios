@@ -1,12 +1,16 @@
-.PHONY: build clean install uninstall test
+.PHONY: build clean install install-dev uninstall test
 .PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
 .PHONY: dmg dmg-dev changelog release release-publish
-.PHONY: desktop desktop-dev desktop-test desktop-app desktop-install desktop-clean
+.PHONY: desktop desktop-dev desktop-test desktop-app desktop-install desktop-install-dev desktop-clean
 
-# Release version. The workflow passes it in; a local build falls back to the
-# last tag, so an APK built by hand is not stamped with a number from an
-# unrelated release.
-VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+# What this build is, which is not what was released last: exactly the tag on a
+# release checkout, and tag-commits-sha anywhere past one. The daemon reports
+# this over /api/health and the clients compare it with the newest release, so
+# a build carrying unreleased work must not answer with the release's number.
+VERSION ?= $(shell git describe --tags 2>/dev/null | sed 's/^v//')
+# What the next release will be called, decided in the PR that earns it. Only
+# the release path reads it; see AGENTS.md.
+NEXT_VERSION = $(shell cat VERSION 2>/dev/null)
 REPO = kamrul1157024/helios
 UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
@@ -20,7 +24,36 @@ DIST = dist
 # can say which machines are behind, and a number edited by hand goes stale the
 # first release nobody remembers to edit it. An untagged checkout keeps the
 # "dev" default, which is not something the clients nag about.
-LDFLAGS = -X github.com/kamrul1157024/helios/internal/version.Current=$(VERSION)
+LDFLAGS = -X github.com/kamrul1157024/helios/internal/version.Current=$(if $(VERSION),$(VERSION),dev)
+
+# The newest published release, and where its source goes to be built. The
+# newest tag is not the same question: a tag can be a prerelease, or one pushed
+# by mistake, and neither is what people are running.
+RELEASE_TAG = $(shell gh release view --repo $(REPO) --json tagName -q .tagName 2>/dev/null)
+RELEASE_TREE = $(HOME)/.helios/release-tree
+
+# Build the release's source instead of the desk's, disturbing neither: a
+# detached worktree parked on the tag, driven by *this* Makefile rather than the
+# one the tag carries, and removed whether the build worked or not. Inside it
+# `git describe` answers the tag exactly, so the build stamps itself right with
+# no version passed down.
+define build_release
+	@tag="$(RELEASE_TAG)"; \
+	if [ -z "$$tag" ]; then \
+		echo "Could not ask GitHub for the newest release — run 'make $(1)-dev' to install this checkout instead." >&2; \
+		exit 1; \
+	fi; \
+	echo "Building $$tag"; \
+	git fetch --tags --quiet 2>/dev/null || true; \
+	git worktree remove --force $(RELEASE_TREE) 2>/dev/null || true; \
+	rm -rf $(RELEASE_TREE); \
+	mkdir -p $(dir $(RELEASE_TREE)); \
+	git worktree add --detach --quiet $(RELEASE_TREE) "$$tag" || exit 1; \
+	status=0; \
+	$(MAKE) -C $(RELEASE_TREE) -f $(CURDIR)/Makefile $(1)-dev || status=$$?; \
+	git worktree remove --force $(RELEASE_TREE); \
+	exit $$status
+endef
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o helios ./cmd/helios/
@@ -28,7 +61,12 @@ ifeq ($(UNAME_S),Darwin)
 	codesign -s - -f ./helios
 endif
 
-install: build
+## Install the newest published release (install-dev installs this checkout)
+install:
+	$(call build_release,install)
+
+## Build this checkout and install it to /usr/local/bin
+install-dev: build
 ifeq ($(UNAME_S),Linux)
 	# Linux returns ETXTBSY when overwriting a mapped binary; rename over it instead
 	sudo cp helios /usr/local/bin/helios.new
@@ -79,8 +117,11 @@ apk-rebuild:
 	@echo "Copied to ~/.helios/helios.apk"
 
 ## Build release APK
+# The declared number rather than $(VERSION): this APK is what a release ships,
+# and --build-name takes a plain x.y.z, not the tag-commits-sha a build off a
+# tag describes itself as.
 apk-release:
-	cd mobile && flutter build apk --release --build-name=$(VERSION) --build-number=$(shell git rev-list --count HEAD)
+	cd mobile && flutter build apk --release --build-name=$(NEXT_VERSION) --build-number=$(shell git rev-list --count HEAD)
 	mkdir -p ~/.helios
 	cp $(APK_RELEASE) ~/.helios/helios.apk
 	@echo "APK: $(APK_RELEASE)"
@@ -141,9 +182,11 @@ dmg-dev:
 
 # ─── Desktop (Electron) ─────────────────────────────────────────
 
-# electron-builder names the DMG after the arch it was built for, and the
-# default is the host's.
-DESKTOP_VERSION = $(shell sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/package.json | head -1)
+# electron-builder names the DMG after the version and the arch it was built
+# for, and the arch default is the host's. The version it uses is the one passed
+# below, not package.json's — the app reports it to the update check, and a
+# packaged build that names a number it is not is a build that nags forever.
+DESKTOP_VERSION = $(VERSION)
 DESKTOP_ARCH = $(if $(filter arm64,$(shell uname -m)),arm64,x64)
 DESKTOP_DMG = desktop/release/helios-desktop-$(DESKTOP_VERSION)-$(DESKTOP_ARCH).dmg
 # electron-builder suffixes the staging directory with the arch, except on the
@@ -193,7 +236,7 @@ DESKTOP_DIST_FLAGS =
 
 ## Package the desktop app (macOS: DMG; Linux: AppImage + deb; in desktop/release)
 desktop-app: desktop
-	cd desktop && $(NODE_ENV_PATH) npm run dist -- $(DESKTOP_DIST_FLAGS)
+	cd desktop && $(NODE_ENV_PATH) npm run dist -- --config.extraMetadata.version=$(VERSION) $(DESKTOP_DIST_FLAGS)
 ifeq ($(UNAME_S),Darwin)
 	@if [ -f "$(DESKTOP_DMG)" ]; then \
 		mkdir -p ~/.helios; \
@@ -207,8 +250,12 @@ else
 	@echo "Desktop packages: desktop/release"
 endif
 
-## Build the desktop app and install it into /Applications (macOS)
-desktop-install: desktop-app
+## Install the newest published release of the desktop app (macOS)
+desktop-install:
+	$(call build_release,desktop-install)
+
+## Package this checkout's desktop app and install it into /Applications (macOS)
+desktop-install-dev: desktop-app
 ifneq ($(UNAME_S),Darwin)
 	@echo "make desktop-install is macOS-only; on Linux install the AppImage or .deb from desktop/release" >&2
 	@exit 1
@@ -241,6 +288,11 @@ changelog:
 release-publish:
 	@test -n "$(VERSION)" || \
 		(echo "Error: VERSION is empty and this checkout has no tags — pass VERSION=x.y.z." >&2 && exit 1)
+	# The number was decided in the PR that earned it. Releasing a different one
+	# leaves the file claiming a release that never happened, and the clients
+	# shipping a number nothing was tagged with.
+	@test "$(VERSION)" = "$(NEXT_VERSION)" || \
+		(echo "Error: releasing $(VERSION) but VERSION says $(NEXT_VERSION) — bump the file, or pass the number it holds." >&2 && exit 1)
 	@ls $(DIST)/* > /dev/null 2>&1 || \
 		(echo "Error: nothing staged in $(DIST)/ — build the artifacts first." >&2 && exit 1)
 	@echo "Creating GitHub release v$(VERSION)..."
@@ -274,4 +326,4 @@ release: apk-release
 	else \
 		echo "$(DMG_PATH) not found — releasing without it (run 'make dmg' first to include it)"; \
 	fi
-	@$(MAKE) release-publish VERSION=$(VERSION)
+	@$(MAKE) release-publish VERSION=$(NEXT_VERSION)

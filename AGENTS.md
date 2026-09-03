@@ -13,12 +13,29 @@ Full picture: [docs/architecture.md](docs/architecture.md). Design intent lives 
 ## Build & Test
 
 ```bash
-make build        # Build Go binary (includes codesign)
-make test         # Run Go tests: go test ./...
-make install      # Build + install to /usr/local/bin
-make apk          # Build debug APK
-make dmg          # Build macOS DMG
+make build               # Build Go binary (includes codesign)
+make test                # Run Go tests: go test ./...
+make install             # Install the newest published release
+make install-dev         # Install this checkout to /usr/local/bin
+make desktop-install     # Install the newest released desktop app (macOS)
+make desktop-install-dev # Install this checkout's desktop app (macOS)
+make apk                 # Build debug APK
+make dmg                 # Build macOS DMG
 ```
+
+## Versioning
+
+One number lives in `VERSION`, and it is the number the next release will carry.
+`desktop/package.json` and `mobile/pubspec.yaml` carry the same one. Bump it in
+the PR when you know what the change is worth — a `feat` takes the minor — but
+you do not have to: CI runs `./scripts/check-version.sh --fix` on every PR, and
+if the number is not past the newest release it takes the release's patch plus
+one, pushes that to the branch, and says so in a comment. Run the script without
+`--fix` to see where things stand before pushing.
+
+The daemon is never edited by hand: `internal/version.Current` is stamped at
+build time from `git describe`, so a release build says `3.9.0` and a build
+above one says `3.9.0-13-g0a6231c` rather than claiming a release it is not.
 
 ## Procedures
 

@@ -83,10 +83,16 @@ helios start           # the TUI checks your setup and walks you through the res
 
 Only `make install` is required. The daemon is the product; the apps are clients for it.
 
+The two install targets build the newest published release, whatever your
+checkout is sitting on. The `-dev` pair builds the checkout itself, which is
+what you want while working on it.
+
 | Command | Builds | Installs to |
 | --- | --- | --- |
-| `make install` | Go binary | `/usr/local/bin/helios` |
-| `make desktop-install` | Electron app | `/Applications/Helios.app` |
+| `make install` | the newest release, from source | `/usr/local/bin/helios` |
+| `make install-dev` | this checkout | `/usr/local/bin/helios` |
+| `make desktop-install` | the newest release's Electron app | `/Applications/Helios.app` |
+| `make desktop-install-dev` | this checkout's Electron app | `/Applications/Helios.app` |
 | `make desktop-app` | Electron app | `desktop/release/*.dmg` (no install) |
 | `make apk-install` | Debug APK | the connected Android device |
 | `make apk-release` | Release APK | `~/.helios/helios.apk` |

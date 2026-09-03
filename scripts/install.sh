@@ -13,7 +13,7 @@
 #   HELIOS_PREFIX   where the binary goes         (default /usr/local/bin)
 #   HELIOS_APP_DIR  where the macOS app goes      (default /Applications)
 #   HELIOS_SRC      where the checkout lives      (default ~/.helios/src)
-#   HELIOS_REF      what to build                 (default the latest tag)
+#   HELIOS_REF      what to build                 (default the newest release)
 
 set -eu
 
@@ -151,14 +151,28 @@ else
   git clone --quiet "$REPO_URL" "$SRC"
 fi
 
-REF="${HELIOS_REF:-$(git -C "$SRC" describe --tags --abbrev=0 origin/main 2>/dev/null || echo main)}"
+# The newest published release, which is not the newest tag: a tag can be a
+# prerelease or one pushed by mistake, and this endpoint skips both. A clone
+# that cannot reach GitHub still has its tags, and falls back to them.
+latest_release() {
+  have curl || return 1
+  curl -fsSL "https://api.github.com/repos/kamrul1157024/helios/releases/latest" 2> /dev/null |
+    sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1 | grep . || return 1
+}
+
+REF="${HELIOS_REF:-$(latest_release || git -C "$SRC" describe --tags --abbrev=0 origin/main 2> /dev/null || echo main)}"
 git -C "$SRC" checkout --quiet --detach "$REF"
 note "building $REF"
 
 # ─── The daemon ─────────────────────────────────────────────────────────────
 
 step "Building the daemon"
-(cd "$SRC" && go build -o helios ./cmd/helios/)
+# Stamped, or the daemon reports "dev" and every client reads that as a build
+# nobody should be nagged about — including one that is genuinely years behind.
+# On a release it is the tag; on main it is tag-commits-sha, which is honest.
+STAMP=$(git -C "$SRC" describe --tags 2> /dev/null | sed 's/^v//')
+[ -n "$STAMP" ] || STAMP=dev
+(cd "$SRC" && go build -ldflags "-X github.com/kamrul1157024/helios/internal/version.Current=$STAMP" -o helios ./cmd/helios/)
 [ "$PLATFORM" = macos ] && codesign -s - -f "$SRC/helios" > /dev/null 2>&1
 
 install_daemon() {
