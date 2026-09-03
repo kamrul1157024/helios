@@ -671,8 +671,19 @@ small {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 9%, transparent);
 }
 
-[data-glass='on'] .sidebar {
+/* The rail is the sidebar's own edge, so it takes the sidebar's glass. Left
+   opaque it was a black strip down the side of a translucent window — the one
+   surface that had not been told the backdrop exists. */
+[data-glass='on'] .sidebar,
+[data-glass='on'] .rail {
   background: var(--glass-sidebar);
+}
+
+/* A seam rather than the ring the two panels get: the rail and the sidebar are
+   adjacent sheets of the same tint, and without one they read as a single
+   panel with icons floating in it. */
+[data-glass='on'] .rail {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--on-surface) 9%, transparent);
 }
 
 [data-glass='on'] .detail {

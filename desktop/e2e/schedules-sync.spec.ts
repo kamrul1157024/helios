@@ -43,7 +43,13 @@ function transcript(window: Page): ReturnType<Page['locator']> {
 }
 
 async function switchSidebar(window: Page, mode: 'sessions' | 'schedules'): Promise<void> {
-  await window.locator('.sidebar-modes button', { hasText: mode }).click()
+  // The rail on the window's edge, not the words that used to sit above the
+  // list: a mode owns both columns now, so the switch is outside them.
+  await window.locator(`.rail-item[aria-label="${railLabel(mode)}"]`).click()
+}
+
+function railLabel(mode: 'sessions' | 'schedules'): string {
+  return mode === 'sessions' ? 'Sessions' : 'Schedules'
 }
 
 test.beforeEach(async ({ window }) => {
@@ -58,7 +64,7 @@ test.beforeEach(async ({ window }) => {
 // On screen that reads as the old transcript coming back.
 test('coming back to a session does not print its transcript twice', async ({ window }) => {
   await open(window, ALPHA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(transcript(window)).toHaveCount(1)
 
   await open(window, BETA_TITLE)
@@ -71,7 +77,7 @@ test('coming back to a session does not print its transcript twice', async ({ wi
 
 test('what was written while you were away is there when you come back', async ({ window }) => {
   await open(window, ALPHA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(transcript(window)).toHaveCount(1)
 
   await open(window, BETA_TITLE)
@@ -84,11 +90,11 @@ test('what was written while you were away is there when you come back', async (
 
 test('the transcript belongs to the session the sidebar has selected', async ({ window }) => {
   await open(window, ALPHA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(transcript(window)).toContainText(TRANSCRIPT_TEXT[ALPHA] as string)
 
   await open(window, BETA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(transcript(window)).toContainText(TRANSCRIPT_TEXT[BETA] as string)
   // The one that matters: no trace of the session that was on screen before.
   await expect(transcript(window)).not.toContainText(TRANSCRIPT_TEXT[ALPHA] as string)
@@ -104,7 +110,7 @@ test('the transcript belongs to the session the sidebar has selected', async ({ 
 // terminal, and "No transcript yet." beside it.
 test('a transcript that was empty when first asked for is asked again', async ({ window }) => {
   await open(window, GAMMA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(window.locator('.panel-keep:not([hidden])')).toContainText('No transcript yet')
 
   appendTranscript(GAMMA, 'the agent finally wrote something')
@@ -117,7 +123,7 @@ test('a transcript that was empty when first asked for is asked again', async ({
 
 test('coming back to a session picks up what the daemon has, without a spinner', async ({ window }) => {
   await open(window, GAMMA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(window.locator('.panel-keep:not([hidden])')).toContainText('No transcript yet')
 
   appendTranscript(GAMMA, 'written while nobody asked')
@@ -194,7 +200,7 @@ test('opening a run from its schedule unfolds the section and selects it', async
 
   // Back in the sessions list, with the section open and the run selected —
   // not left behind a header the user would have to know to open.
-  await expect(window.locator('.sidebar-modes button.active', { hasText: 'sessions' })).toBeVisible()
+  await expect(window.locator('.rail-item.on[aria-label="Sessions"]')).toBeVisible()
   const row = window.locator('.session-row', { hasText: 'Nightly run' })
   await expect(row).toBeVisible()
   await expect(row).toHaveClass(/selected/)
@@ -240,7 +246,7 @@ test('the new schedule form asks for the model, the mode and where it runs', asy
 
 test('the schedules list does not carry the session panels away with it', async ({ window }) => {
   await open(window, ALPHA_TITLE)
-  await showPanel(window, 'agent')
+  await showPanel(window, 'transcript')
   await expect(transcript(window)).toContainText(TRANSCRIPT_TEXT[ALPHA] as string)
 
   await switchSidebar(window, 'schedules')
