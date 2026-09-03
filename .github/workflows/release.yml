@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 0.2.0)"
-        required: true
+        description: "Release version (e.g. 3.10.0). Empty takes the number in VERSION, which is where it was decided."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -20,6 +21,17 @@ jobs:
           # `make apk-release` derives the Android build number from
           # `git rev-list --count HEAD`, which a shallow clone reports as 1.
           fetch-depth: 0
+
+      - name: Resolve the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        # The number was decided in the PR that earned it. An input overrides it
+        # and is written back, so the APK's build name, the DMG's, and the tag
+        # cannot end up as three different numbers.
+        run: |
+          v="${INPUT_VERSION:-$(cat VERSION)}"
+          echo "$v" > VERSION
+          echo "VERSION=$v" >> "$GITHUB_ENV"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -39,7 +51,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEYSTORE_PATH: helios-release.jks
-        run: make apk-release VERSION=${{ inputs.version }}
+        run: make apk-release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -52,6 +64,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # electron-builder stamps this into the app, which reports it to the
+      # update check; a checkout past a tag would otherwise describe itself as
+      # the release it sits above.
+      - name: Resolve the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: echo "VERSION=${INPUT_VERSION:-$(cat VERSION)}" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -88,6 +108,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: echo "VERSION=${INPUT_VERSION:-$(cat VERSION)}" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           # Must match .nvmrc: `make desktop` refuses to build on anything
@@ -122,6 +147,14 @@ jobs:
           # tags and the history behind them have to be here.
           fetch-depth: 0
 
+      - name: Resolve the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="${INPUT_VERSION:-$(cat VERSION)}"
+          echo "$v" > VERSION
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -147,4 +180,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make release-publish VERSION=${{ inputs.version }}
+        run: make release-publish

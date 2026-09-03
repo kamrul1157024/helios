@@ -63,6 +63,7 @@ what is merged. Some are superseded and stay here for the history.
 | [53-mermaid-diagrams.md](53-mermaid-diagrams.md) | Mermaid Diagrams: Draw the Fence Instead of Printing It |
 | [54-file-change-events.md](54-file-change-events.md) | File Change Events: Watch What Someone Is Looking At |
 | [55-answering-a-question-from-the-terminal.md](55-answering-a-question-from-the-terminal.md) | Answering a Question From the Terminal |
+| [56-one-version-number.md](56-one-version-number.md) | One Version Number, and Builds That Do Not Lie About It |
 | [ai-narration.md](ai-narration.md) | AI Narration for Voice Mode |
 | [desktop-notification-handoff.md](desktop-notification-handoff.md) | Hand desktop notifications to the desktop app |
 | [desktop-notification-service.md](desktop-notification-service.md) | Desktop Notification Service |
