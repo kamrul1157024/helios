@@ -530,7 +530,9 @@ small {
    nothing away from the drag region. */
 .rail {
   flex: none;
-  width: 48px;
+  /* Three buttons wide is all it will ever be, so it is sized to the target
+     rather than to the 48px a toolbar would take. */
+  width: 44px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -571,21 +573,21 @@ small {
   color: var(--primary);
 }
 
-/* Flush with the window's edge: the item is centred in a 48px rail, so -7px is
+/* Flush with the window's edge: the item is centred in a 44px rail, so -5px is
    the rail's own left edge. A pixel further and the bar is off screen. */
 .rail-item.on::before {
   content: '';
   position: absolute;
-  left: -7px;
+  left: -5px;
   width: 2px;
-  height: 18px;
+  height: 17px;
   border-radius: 0 1px 1px 0;
   background: var(--primary);
 }
 
 .rail-item .ui-icon {
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
 }
 
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
