@@ -152,6 +152,9 @@ interface RawBridge {
   updates: {
     /** The release worth mentioning, or null when there is nothing new. */
     check(): Promise<UpdateInfo | null>
+    /** The newest release, dismissed or not: what each daemon is compared
+     *  against, which waving the dialog away does not change. */
+    latest(): Promise<UpdateInfo | null>
     /** Stops this version being mentioned again on this machine. */
     dismiss(version: string): Promise<void>
   }

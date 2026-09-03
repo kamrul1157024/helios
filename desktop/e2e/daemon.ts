@@ -334,7 +334,9 @@ function answer(
 ): unknown {
   switch (path) {
     case '/api/health':
-      return { ok: true }
+      // The version the Hosts pane reads. Older than nothing in particular:
+      // the suite pins the release list to empty, so nothing is behind.
+      return { ok: true, version: '9.9.9' }
     case '/api/sessions': {
       // Three lists off one route, as the daemon serves them: the ordinary one,
       // everything a schedule started, and one schedule's runs.

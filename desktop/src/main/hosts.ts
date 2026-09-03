@@ -7,7 +7,7 @@ import path from 'node:path'
 import { ApiClient } from './api.ts'
 import { EventStream } from './sse.ts'
 import { generateDeviceKey, publicKeyBase64, type DeviceKey } from './keys.ts'
-import type { HostConnectionState, HostRecord } from '../shared/models.ts'
+import type { HostConnectionState, HostRecord, HostStatus } from '../shared/models.ts'
 
 /** The daemon's no-auth admin API, which only ever listens on loopback. */
 const INTERNAL_URL = 'http://127.0.0.1:7654'
@@ -26,6 +26,9 @@ export interface HostHandle {
   key: DeviceKey
   state: HostConnectionState
   error?: string
+  /** What the daemon last said it was running. Absent until it answers, and on
+   *  a daemon old enough not to report one at all. */
+  version?: string
 }
 
 /**
@@ -59,8 +62,13 @@ export class HostRegistry extends EventEmitter {
     return [...this.hosts.values()].map((h) => h.record)
   }
 
-  statuses(): { id: string; state: HostConnectionState; error?: string }[] {
-    return [...this.hosts.values()].map((h) => ({ id: h.record.id, state: h.state, error: h.error }))
+  statuses(): HostStatus[] {
+    return [...this.hosts.values()].map((h) => ({
+      id: h.record.id,
+      state: h.state,
+      error: h.error,
+      version: h.version,
+    }))
   }
 
   get(id: string): HostHandle | undefined {
@@ -82,6 +90,10 @@ export class HostRegistry extends EventEmitter {
     events.on('event', (event) => this.emit('event', { hostId: record.id, event }))
     events.on('state', (state: string) => {
       this.setState(record.id, state === 'open' ? 'online' : 'offline')
+      // Asked on the way up rather than on a timer: the version changes when
+      // the daemon restarts, and a restart is what closed and reopened this
+      // stream. Unauthenticated, so it answers even for a host mid-pairing.
+      if (state === 'open') void this.readVersion(record.id)
     })
     // An SSE failure is normal when a laptop sleeps; it reconnects itself and
     // the state change is the only thing worth surfacing.
@@ -97,7 +109,19 @@ export class HostRegistry extends EventEmitter {
     if (!host || (host.state === state && host.error === error)) return
     host.state = state
     host.error = error
-    this.emit('status', { id, state, error })
+    this.emit('status', { id, state, error, version: host.version })
+  }
+
+  /** The daemon's own version, for the Hosts pane to compare against the
+   *  newest release. A failure leaves the last answer alone: it means the
+   *  health call did not land, not that the daemon forgot its version. */
+  private async readVersion(id: string): Promise<void> {
+    const host = this.hosts.get(id)
+    if (!host) return
+    const { ok, version } = await host.api.health()
+    if (!ok || host.version === version) return
+    host.version = version
+    this.emit('status', { id, state: host.state, error: host.error, version })
   }
 
   // ─── Pairing ───────────────────────────────────────────────────────────

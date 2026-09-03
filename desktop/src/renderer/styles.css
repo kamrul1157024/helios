@@ -4900,6 +4900,18 @@ hr {
   margin-top: 20px;
 }
 
+/* A daemon older than the newest release. Amber rather than red: it still
+   works, it is merely behind. */
+.host-behind {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--s-waiting) 20%, transparent);
+  color: var(--s-waiting);
+  font-size: 11px;
+}
+
 /* What arrived, said once. Scrolls on its own so the dialog keeps its height
    whether the reader skipped one release or ten. */
 .release-notes {

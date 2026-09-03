@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isNewer, releasesSince } from '../src/shared/version.ts'
+import { isBehind, isNewer, releasesSince } from '../src/shared/version.ts'
 
 // The whole feature rests on this comparison: get it wrong in one direction
 // and nobody hears about a release, wrong in the other and everyone is told
@@ -71,4 +71,29 @@ test('the order comes from the versions, not the input', () => {
     '2.9.5',
     '2.9.0',
   ])
+})
+
+// A daemon is updated on its own machine, so the Hosts pane says which ones
+// are behind. Two answers have to be "no" whatever the newest release is:
+// a daemon too old to report a version at all, and a checkout built by hand.
+test('a daemon older than the newest release is behind', () => {
+  assert.equal(isBehind('3.8.0', '3.9.0'), true)
+})
+
+test('a daemon on the newest release is not', () => {
+  assert.equal(isBehind('3.9.0', '3.9.0'), false)
+  assert.equal(isBehind('3.10.0', '3.9.0'), false)
+})
+
+test('a version nobody reported is not behind', () => {
+  assert.equal(isBehind(undefined, '3.9.0'), false)
+  assert.equal(isBehind('', '3.9.0'), false)
+})
+
+test('a build somebody made themselves is not nagged', () => {
+  assert.equal(isBehind('dev', '3.9.0'), false)
+})
+
+test('nothing is behind when the newest release is unknown', () => {
+  assert.equal(isBehind('3.8.0', ''), false)
 })

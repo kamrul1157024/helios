@@ -18,6 +18,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/reporter"
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/transcript"
+	"github.com/kamrul1157024/helios/internal/version"
 )
 
 // ==================== Public Server API ====================
@@ -177,7 +178,13 @@ func (s *PublicServer) handleBatchNotifications(w http.ResponseWriter, r *http.R
 
 func (s *PublicServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":      "ok",
+		"status": "ok",
+		// Here rather than behind a route of its own: this one is
+		// unauthenticated and already the first thing a client calls, so a
+		// version it can read before pairing costs no extra request. A client
+		// updating itself is only half the job — the daemon is what runs the
+		// sessions, and until now nothing said which machines were behind.
+		"version":     version.Current,
 		"sse_clients": s.shared.SSE.ClientCount(),
 		"pending":     s.shared.Mgr.PendingCount(),
 		"terminal":    s.shared.Backend.Status(),

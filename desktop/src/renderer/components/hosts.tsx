@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { bridge } from '../bridge.ts'
 import { store, useStore } from '../store.ts'
+import { isBehind } from '../../shared/version.ts'
 
 /**
  * Adding a daemon.
@@ -20,6 +21,14 @@ export function HostsPane(): JSX.Element {
   const pairingLink = useStore((s) => s.pairingLink)
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState(false)
+  // Dismissed or not: waving the dialog away does not make a daemon current.
+  const [latest, setLatest] = useState('')
+
+  useEffect(() => {
+    void bridge.updates.latest().then((info) => setLatest(info?.version ?? ''))
+  }, [])
+
+  const version = (id: string): string | undefined => hostStatus[id]?.version
 
   // A helios:// link handed to the app by the OS lands straight in the field.
   useEffect(() => {
@@ -74,7 +83,15 @@ export function HostsPane(): JSX.Element {
               <span className="muted">
                 {host.url}
                 {host.local ? ' · local' : ''}
+                {version(host.id) && ` · v${version(host.id)}`}
               </span>
+              {/* Updating this app is half the job: the daemon is what runs the
+                  sessions, and it is updated on its own machine. */}
+              {isBehind(version(host.id), latest) && (
+                <span className="host-behind" title={`Newest release is ${latest}`}>
+                  Update this daemon to {latest}
+                </span>
+              )}
               {hostStatus[host.id]?.error && (
                 <span className="error-text">{hostStatus[host.id]?.error}</span>
               )}

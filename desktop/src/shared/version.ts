@@ -17,6 +17,19 @@ export function isNewer(candidate: string, current: string): boolean {
 }
 
 /**
+ * Whether a daemon is older than the newest release.
+ *
+ * A daemon that reports nothing is one from before the version was in
+ * /api/health, and "dev" is a checkout somebody built themselves. Neither is
+ * something to nag about: the first cannot be compared and the second is
+ * deliberate.
+ */
+export function isBehind(daemon: string | undefined, latest: string): boolean {
+  if (!daemon || daemon === 'dev' || !latest) return false
+  return isNewer(latest, daemon)
+}
+
+/**
  * Every release the reader has not got yet, newest first.
  *
  * A reader three releases behind is owed all three sets of notes, not the

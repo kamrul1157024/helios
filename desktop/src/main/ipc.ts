@@ -186,6 +186,7 @@ export function registerIpc(deps: IpcDeps): void {
   // ─── Updates ───────────────────────────────────────────────────────────
 
   handle('updates:check', async () => updates.check())
+  handle('updates:latest', async () => updates.latest())
   handle('updates:dismiss', async (_e, version: string) => updates.dismiss(version))
 
   // ─── Appearance ────────────────────────────────────────────────────────

@@ -25,9 +25,8 @@ import (
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tui"
 	"github.com/kamrul1157024/helios/internal/tunnel"
+	"github.com/kamrul1157024/helios/internal/version"
 )
-
-const version = "0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -69,7 +68,7 @@ func main() {
 	case "schedule", "schedules":
 		handleSchedule(os.Args[2:])
 	case "version":
-		fmt.Printf("helios v%s\n", version)
+		fmt.Printf("helios v%s\n", version.Current)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
