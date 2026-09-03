@@ -37,6 +37,11 @@ The daemon is never edited by hand: `internal/version.Current` is stamped at
 build time from `git describe`, so a release build says `3.9.0` and a build
 above one says `3.9.0-13-g0a6231c` rather than claiming a release it is not.
 
+Releases cut themselves. Once `Test` passes on main, `Release` checks whether
+`VERSION` names a number that is not out yet, and publishes it if so — tag,
+changelog, APK, DMGs, AppImage and deb. Nothing to trigger by hand; a merge that
+does not move the number does not release.
+
 ## Procedures
 
 - [Install the iOS app on a cabled iPhone](docs/agents/ios-install.md) — no make target exists; read this before trying
