@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
@@ -19,32 +20,38 @@ func SetBackend(b backend.Backend) {
 	terminalBackend = b
 }
 
+// handlePermissionAction turns a remote surface's answer into a decision.
+//
+// The body is a permissionAnswer plus the action, so a phone can send anything
+// the terminal can: the mode to continue a plan in, or the words to send it
+// back with.
 func handlePermissionAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
-		Action          string                 `json:"action"`
-		UpdatedInput    map[string]interface{} `json:"updated_input,omitempty"`
-		ApplyPermission *int                   `json:"apply_permission,omitempty"`
+		Action string `json:"action"`
+		permissionAnswer
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return notifications.Decision{}, fmt.Errorf("invalid body: %w", err)
 	}
 
 	if req.Action == "deny" {
+		if text := strings.TrimSpace(req.Feedback); text != "" {
+			return deniedWithFeedback(text), nil
+		}
 		return notifications.Decision{Status: "denied"}, nil
 	}
 
-	respData := map[string]interface{}{}
-	if req.UpdatedInput != nil {
-		respData["updated_input"] = req.UpdatedInput
+	// Feedback is a refusal's payload; an approval carrying it would send Claude
+	// a complaint about work it was just cleared to do.
+	answer := req.permissionAnswer
+	answer.Feedback = ""
+	if answer.empty() {
+		return notifications.Decision{Status: "approved"}, nil
 	}
-	if req.ApplyPermission != nil {
-		respData["apply_permission"] = *req.ApplyPermission
+	response, err := json.Marshal(answer)
+	if err != nil {
+		return notifications.Decision{}, fmt.Errorf("encode response: %w", err)
 	}
-	var response json.RawMessage
-	if len(respData) > 0 {
-		response, _ = json.Marshal(respData)
-	}
-
 	return notifications.Decision{Status: "approved", Response: response}, nil
 }
 

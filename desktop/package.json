@@ -1,6 +1,6 @@
 {
   "name": "helios-desktop",
-  "version": "3.11.0",
+  "version": "3.12.0",
   "private": true,
   "description": "Helios desktop client — session sidebar and live terminal tabs",
   "homepage": "https://github.com/kamrul1157024/helios",
