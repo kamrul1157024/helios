@@ -39,8 +39,9 @@ export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props):
   const list = useRef<HTMLDivElement | null>(null)
 
   // An absolute query is a path being typed: list its parent so the folders
-  // under it complete. Anything else filters what is already in view.
-  const typedPath = query.startsWith('/')
+  // under it complete. Anything else filters what is already in view. The
+  // daemon expands the tilde, so it counts as absolute here.
+  const typedPath = query.startsWith('/') || query.startsWith('~/')
   const browseDir = typedPath ? parentOf(query) : root
   const needle = (typedPath ? basename(query) : query).toLowerCase()
 
@@ -164,13 +165,16 @@ export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props):
 export function RootSuggestions({
   root,
   worktrees,
+  offerParent = true,
   onPick,
 }: {
   root: string
   worktrees: Worktree[]
+  /** File search sets this false: see the call site for why climbing is wrong. */
+  offerParent?: boolean
   onPick: (path: string) => void
 }): JSX.Element | null {
-  const parent = parentOf(root)
+  const parent = offerParent ? parentOf(root) : root
   const elsewhere = worktrees.filter((worktree) => worktree.path !== root).slice(0, SUGGESTED_WORKTREES)
   if (parent === root && elsewhere.length === 0) return null
 

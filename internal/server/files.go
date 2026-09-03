@@ -183,12 +183,12 @@ func encodeFileContent(content []byte, want string) (text, encoding string) {
 // resolveSafePath cleans and resolves the path, rejecting traversal attempts.
 // Expands a leading ~ to the current user's home directory.
 func resolveSafePath(path string) (string, error) {
-	if strings.HasPrefix(path, "~/") {
+	if path == "~" || strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
 		}
-		path = filepath.Join(home, path[2:])
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 	}
 	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {

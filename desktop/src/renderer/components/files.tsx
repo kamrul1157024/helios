@@ -470,7 +470,10 @@ export function FilesPanel({
     claimed.current = true
     const path = target.path
     if (target.mode === 'find') {
-      setQuickOpenQuery(basename(path))
+      // The whole path, not its last segment. The chip already knows the
+      // directory, and the search re-roots there rather than hunting the name
+      // across a tree it was never in.
+      setQuickOpenQuery(path)
       setQuickOpen(true)
       store.clearFileTarget()
       return

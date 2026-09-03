@@ -69,7 +69,8 @@ type searchMatch struct {
 }
 
 // handleSearchFiles ranks the file names under a root against a fuzzy query —
-// the quick-open list. An empty query returns the head of the file list.
+// the quick-open list. An empty query returns the head of the file list. A
+// query that names a directory searches there instead; see pathQuery.
 func (s *PublicServer) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 	root, ok := searchRoot(w, r)
 	if !ok {
@@ -77,21 +78,73 @@ func (s *PublicServer) handleSearchFiles(w http.ResponseWriter, r *http.Request)
 	}
 	limit := queryLimit(r, defaultSearchLimit)
 
+	q := r.URL.Query().Get("q")
+	searchIn, resolvedFrom := root, "query"
+	if dir, tail, isPath := pathQuery(q); isPath {
+		searchIn, q, resolvedFrom = dir, tail, "path"
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
 
-	files, truncated := candidateFiles(ctx, root)
-	matches := rankPaths(files, r.URL.Query().Get("q"), limit)
+	index := fileIndexes.get(ctx, searchIn)
+	matches := rankEntries(index.entries, q, limit)
+
+	// A directory that exists but does not hold the named file is usually an
+	// agent's path written from a working directory that is not this root. The
+	// name is still the best clue there is, so look for it under the root the
+	// panel is on rather than answering with nothing.
+	if resolvedFrom == "path" && len(matches) == 0 && q != "" {
+		searchIn, resolvedFrom = root, "query"
+		index = fileIndexes.get(ctx, searchIn)
+		matches = rankEntries(index.entries, q, limit)
+	}
+
 	for i := range matches {
-		matches[i].Path = filepath.Join(root, matches[i].Rel)
+		matches[i].Path = filepath.Join(searchIn, matches[i].Rel)
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"root":      root,
-		"matches":   matches,
-		"scanned":   len(files),
-		"truncated": truncated,
+		"root":          searchIn,
+		"resolved_from": resolvedFrom,
+		"matches":       matches,
+		"scanned":       len(index.entries),
+		"truncated":     index.partial,
 	})
+}
+
+// pathQuery splits a query that names a real directory into that directory and
+// the name being typed inside it.
+//
+// Someone who pastes a path already knows where the file is, and the fuzzy
+// matcher cannot use that: candidates are relative to the root, so none of them
+// contains the leading "~" or "/" and every one is rejected on the first
+// character. Re-rooting turns the directory into one stat instead of a search
+// term, which also shrinks the candidate set to the folder that was named.
+//
+// Only an absolute or tilde-rooted query counts. A relative "a/b/c" stays fuzzy
+// on purpose: it is how people fuzzy-match a path today, and fuzzyScore already
+// rewards the separators matching in order.
+func pathQuery(q string) (dir, tail string, ok bool) {
+	if !strings.HasPrefix(q, "/") && !strings.HasPrefix(q, "~/") {
+		return "", "", false
+	}
+	cut := strings.LastIndexByte(q, '/')
+	dir, tail = q[:cut], q[cut+1:]
+	if dir == "" {
+		dir = "/"
+	}
+	resolved, err := resolveSafePath(dir)
+	if err != nil {
+		return "", "", false
+	}
+	// Half a path names nothing while it is still being typed. That is the
+	// normal case, not an error: fall back to the fuzzy search.
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return "", "", false
+	}
+	return resolved, tail, true
 }
 
 type grepMatch struct {
@@ -348,20 +401,31 @@ func walkCandidates(ctx context.Context, root string) ([]string, bool) {
 	return files, truncated
 }
 
-// rankPaths keeps the best `limit` fuzzy matches for query, best first.
-func rankPaths(files []string, query string, limit int) []searchMatch {
+// rankEntries keeps the best `limit` fuzzy matches for query, best first.
+func rankEntries(entries []indexEntry, query string, limit int) []searchMatch {
 	q := strings.ToLower(strings.Join(strings.Fields(query), ""))
+	var wanted uint64
+	for i := 0; i < len(q); i++ {
+		wanted |= charBit(q[i])
+	}
+
 	matches := make([]searchMatch, 0, limit)
-	for _, rel := range files {
+	for _, entry := range entries {
 		score := 0
 		if q != "" {
+			// One AND against the character mask before the scan, because most
+			// candidates are missing a letter outright and finding that out
+			// should not cost a walk over the path.
+			if entry.mask&wanted != wanted {
+				continue
+			}
 			var ok bool
-			score, ok = fuzzyScore(rel, q)
+			score, ok = fuzzyScore(entry, q)
 			if !ok {
 				continue
 			}
 		}
-		matches = append(matches, searchMatch{Rel: rel, Score: score})
+		matches = append(matches, searchMatch{Rel: entry.rel, Score: score})
 	}
 	sort.SliceStable(matches, func(i, j int) bool {
 		if matches[i].Score != matches[j].Score {
@@ -378,13 +442,14 @@ func rankPaths(files []string, query string, limit int) []searchMatch {
 	return matches
 }
 
-// fuzzyScore matches query as a subsequence of text, rewarding hits in the file
-// name, runs of adjacent characters, and matches at word boundaries. query must
-// already be lowercase. The scan is greedy rather than optimal: it runs over
-// every path in the tree on each keystroke.
-func fuzzyScore(text, query string) (int, bool) {
-	lower := strings.ToLower(text)
-	nameStart := strings.LastIndexByte(lower, '/') + 1
+// fuzzyScore matches query as a subsequence of the entry's path, rewarding hits
+// in the file name, runs of adjacent characters, and matches at word
+// boundaries. query must already be lowercase.
+//
+// The scan is greedy rather than optimal. It makes one pass over the path
+// however long the query is, because `from` only ever advances.
+func fuzzyScore(entry indexEntry, query string) (int, bool) {
+	lower, nameStart := entry.lower, entry.nameStart
 	score, from, prev := 0, 0, -2
 	for i := 0; i < len(query); i++ {
 		offset := strings.IndexByte(lower[from:], query[i])
@@ -407,7 +472,7 @@ func fuzzyScore(text, query string) (int, bool) {
 	}
 	// A short path that matched beats a long one that happened to contain the
 	// same letters spread across its directories.
-	return score - len(text)/12, true
+	return score - len(entry.rel)/12, true
 }
 
 func isWordBoundary(c byte) bool {
