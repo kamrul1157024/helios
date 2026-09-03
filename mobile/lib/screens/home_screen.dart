@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:permission_handler/permission_handler.dart';
 // Both packages export Provider, ChangeNotifierProvider and Consumer.
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
@@ -33,7 +34,6 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
   bool _notifPermissionDenied = false;
-  UpdateInfo? _update;
 
   @override
   void initState() {
@@ -415,65 +415,23 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
     );
   }
 
-  /// Mentions a new release once. The APK does not update itself, and the
-  /// settings screen only says so to somebody already looking; dismissing is
+  /// Says what a new release changed, once.
+  ///
+  /// This was a banner carrying a version number and nothing else, so finding
+  /// out what had arrived meant leaving for GitHub — and somebody three
+  /// releases behind read the same line as somebody one behind. Dismissing is
   /// remembered per version, so the next release gets one mention and this one
-  /// gets none.
+  /// gets none. The settings screen still offers the download to anybody who
+  /// waved it away.
   Future<void> _checkForUpdate() async {
     final info = await UpdateService.instance.checkForUpdate();
     if (info == null || !mounted) return;
     if (await UpdateService.instance.isDismissed(info.latestVersion)) return;
-    if (mounted) setState(() => _update = info);
-  }
-
-  Widget _buildUpdateBanner(UpdateInfo update) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: theme.colorScheme.primaryContainer,
-      child: Row(
-        children: [
-          Icon(Icons.system_update, size: 18, color: theme.colorScheme.onPrimaryContainer),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'helios ${update.latestVersion} is out.',
-                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onPrimaryContainer),
-                ),
-                // Worth saying outright: the terminals are their own detached
-                // processes, so nothing here or on the daemon interrupts a
-                // session that is running.
-                Text(
-                  'Updating the daemon, desktop or app keeps running sessions alive.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.75),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              UpdateService.instance.dismiss(update.latestVersion);
-              setState(() => _update = null);
-            },
-            child: const Text('Later', style: TextStyle(fontSize: 12)),
-          ),
-          TextButton(
-            onPressed: () => UpdateService.instance.install(update),
-            child: Text(
-              update.canDirectInstall ? 'Update' : 'Get it',
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        ],
-      ),
-    );
+    if (!mounted) return;
+    // Closing by any route counts as read: a dialog that comes back tomorrow
+    // because it was dismissed with the back button is one nobody trusts.
+    await showDialog<void>(context: context, builder: (ctx) => _ReleaseNotesDialog(update: info));
+    await UpdateService.instance.dismiss(info.latestVersion);
   }
 
   Widget _buildNotifPermissionBanner() {
@@ -555,7 +513,6 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
           ),
           body: Column(
             children: [
-              if (_update != null) _buildUpdateBanner(_update!),
               if (_notifPermissionDenied) _buildNotifPermissionBanner(),
               Expanded(
                 child: IndexedStack(
@@ -628,6 +585,101 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
           ),
         );
       },
+    );
+  }
+}
+
+/// What arrived, once: one section per release, newest first, with the body
+/// GitHub was given rendered rather than linked to.
+class _ReleaseNotesDialog extends StatelessWidget {
+  const _ReleaseNotesDialog({required this.update});
+
+  final UpdateInfo update;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text('Helios ${update.latestVersion} is out'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // The half an app update leaves out: each paired machine runs its
+              // own daemon, and that is what runs the sessions.
+              Text(
+                'Update the daemon on each paired machine too — that is what runs the '
+                'sessions. Updating any part of it keeps running sessions alive.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final note in update.notes) _ReleaseSection(note: note),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Got it')),
+        FilledButton(
+          onPressed: () {
+            Navigator.pop(context);
+            UpdateService.instance.install(update);
+          },
+          child: Text(update.canDirectInstall ? 'Install' : 'Download'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReleaseSection extends StatelessWidget {
+  const _ReleaseSection({required this.note});
+
+  final ReleaseNote note;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final date = note.publishedAt;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(note.version, style: theme.textTheme.titleSmall),
+              if (date != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '${date.day}/${date.month}/${date.year}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (note.body.isEmpty)
+            Text(
+              'No notes for this one.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            MarkdownBody(data: note.body, shrinkWrap: true),
+        ],
+      ),
     );
   }
 }
