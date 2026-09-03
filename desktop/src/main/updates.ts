@@ -2,11 +2,30 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { UpdateInfo } from '../shared/models.ts'
-import { isNewer } from '../shared/version.ts'
+import type { ReleaseNote, UpdateInfo } from '../shared/models.ts'
+import { releasesSince } from '../shared/version.ts'
 
 const REPO = 'kamrul1157024/helios'
-const LATEST = `https://api.github.com/repos/${REPO}/releases/latest`
+/* The list rather than /releases/latest: a reader several versions behind is
+   owed the notes for each release they skipped, and the newest is the first
+   entry of this anyway. Thirty is a cap rather than a page to walk — twenty
+   releases of history is not something anyone reads in a dialog. */
+/* Overridable because the e2e suite launches a real app against a stub daemon:
+   left pointing at GitHub, every run raises the release dialog over the window
+   and every click in the suite lands on its backdrop. */
+const RELEASES =
+  process.env.HELIOS_RELEASES_URL ?? `https://api.github.com/repos/${REPO}/releases?per_page=30`
+
+/** The fields of a GitHub release this reads. The rest of the payload is large
+ *  and none of it is wanted. */
+interface GitHubRelease {
+  tag_name?: string
+  html_url?: string
+  body?: string
+  published_at?: string
+  draft?: boolean
+  prerelease?: boolean
+}
 
 /**
  * Whether a newer release exists, and whether the user has already been told.
@@ -40,20 +59,25 @@ export class UpdateChecker {
     if (this.checked) return this.suppressDismissed(this.checked)
 
     try {
-      const response = await fetch(LATEST, {
+      const response = await fetch(RELEASES, {
         headers: { Accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(10_000),
       })
       if (!response.ok) return null
 
-      const body = (await response.json()) as { tag_name?: string; html_url?: string }
-      const latest = (body.tag_name ?? '').replace(/^v/, '')
-      if (!latest || !isNewer(latest, app.getVersion())) return null
+      const payload = (await response.json()) as GitHubRelease[]
+      // A draft is not published and a prerelease is not for everyone; neither
+      // is news the reader can act on.
+      const published = payload
+        .filter((release) => !release.draft && !release.prerelease)
+        .map(toNote)
+        .filter((note) => note.version !== '')
 
-      this.checked = {
-        version: latest,
-        url: body.html_url ?? `https://github.com/${REPO}/releases/latest`,
-      }
+      const notes = releasesSince(published, app.getVersion())
+      const newest = notes[0]
+      if (!newest) return null
+
+      this.checked = { version: newest.version, url: newest.url, notes }
       return this.suppressDismissed(this.checked)
     } catch {
       // An update notice is not worth a word to the user when the network is
@@ -68,12 +92,21 @@ export class UpdateChecker {
     try {
       fs.writeFileSync(this.file, JSON.stringify({ version }), 'utf8')
     } catch {
-      // Losing the record costs one more banner, which is not worth failing a
+      // Losing the record costs one more notice, which is not worth failing a
       // dismissal the user has already seen work.
     }
   }
 
   private suppressDismissed(info: UpdateInfo): UpdateInfo | null {
     return info.version === this.dismissed ? null : info
+  }
+}
+
+function toNote(release: GitHubRelease): ReleaseNote {
+  return {
+    version: (release.tag_name ?? '').replace(/^v/, ''),
+    body: release.body?.trim() ?? '',
+    url: release.html_url ?? `https://github.com/${REPO}/releases`,
+    publishedAt: release.published_at ?? '',
   }
 }

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 
 import { bridge } from './bridge.ts'
-import type { UpdateInfo } from '../shared/models.ts'
 import { store, terminalId, useStore } from './store.ts'
 import { Detail } from './components/detail.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
 import { Rail } from './components/rail.tsx'
 import { Sidebar } from './components/sidebar.tsx'
+import { ReleaseNotes } from './components/updates.tsx'
 
 export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
@@ -72,7 +72,7 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <div className="titlebar" />
-      <UpdateBanner />
+      <ReleaseNotes />
       <div className="body">
         <Rail />
         <Sidebar
@@ -89,50 +89,6 @@ export function App(): JSX.Element {
       {dialog === 'new' && <NewSessionDialog seed={seed} onClose={() => setDialog(null)} />}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
-    </div>
-  )
-}
-
-/**
- * Says once that a newer release exists.
- *
- * None of the packages update themselves, so the most this can do is notice
- * and point at the download. Dismissing is remembered per version: the next
- * release earns one more mention, this one does not.
- */
-function UpdateBanner(): JSX.Element | null {
-  const [update, setUpdate] = useState<UpdateInfo | null>(null)
-
-  useEffect(() => {
-    void bridge.updates.check().then(setUpdate)
-  }, [])
-
-  if (!update) return null
-
-  return (
-    <div className="update-banner">
-      <span>helios {update.version} is out.</span>
-      {/* Worth saying outright: terminals are their own detached processes, so
-          neither the daemon restarting nor this app closing interrupts a
-          session that is running. */}
-      <span className="update-note">
-        Updating the daemon, desktop or app keeps running sessions alive.
-      </span>
-      {/* An anchor rather than a bridge call: the window open handler already
-          sends https elsewhere, and nothing in this app navigates itself. */}
-      <a className="ext-link" href={update.url} target="_blank" rel="noreferrer noopener">
-        Release notes
-      </a>
-      <span className="grow" />
-      <button
-        className="link dismiss"
-        onClick={() => {
-          void bridge.updates.dismiss(update.version)
-          setUpdate(null)
-        }}
-      >
-        Dismiss
-      </button>
     </div>
   )
 }

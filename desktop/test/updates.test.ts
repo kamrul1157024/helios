@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isNewer } from '../src/shared/version.ts'
+import { isNewer, releasesSince } from '../src/shared/version.ts'
 
 // The whole feature rests on this comparison: get it wrong in one direction
 // and nobody hears about a release, wrong in the other and everyone is told
@@ -37,4 +37,38 @@ test('an unparseable version is treated as older', () => {
 test('a shorter version is padded rather than misread', () => {
   assert.equal(isNewer('2.14', '2.14.0'), false)
   assert.equal(isNewer('2.14.1', '2.14'), true)
+})
+
+// The popup shows the notes for every release the reader skipped, so the list
+// it is given is the whole feature: one short and they miss a version's news.
+const RELEASES = [
+  { version: '2.13.0' },
+  { version: '2.15.0' },
+  { version: '2.14.0' },
+  { version: '2.12.0' },
+]
+
+test('every release after the running one is kept, newest first', () => {
+  assert.deepEqual(releasesSince(RELEASES, '2.13.0'), [{ version: '2.15.0' }, { version: '2.14.0' }])
+})
+
+test('nothing is kept when the newest release is already running', () => {
+  assert.deepEqual(releasesSince(RELEASES, '2.15.0'), [])
+})
+
+test('a reader far behind gets all of them', () => {
+  assert.equal(releasesSince(RELEASES, '1.0.0').length, 4)
+  assert.equal(releasesSince(RELEASES, '1.0.0')[0]?.version, '2.15.0')
+})
+
+// The API answers in its own order, and a hand-moved tag can put an older
+// release first. Ordering here rather than trusting that is what keeps the
+// dialog reading newest to oldest.
+test('the order comes from the versions, not the input', () => {
+  const shuffled = [{ version: '2.9.0' }, { version: '2.10.0' }, { version: '2.9.5' }]
+  assert.deepEqual(releasesSince(shuffled, '2.8.0').map((r) => r.version), [
+    '2.10.0',
+    '2.9.5',
+    '2.9.0',
+  ])
 })

@@ -47,7 +47,14 @@ export const test = base.extend<Fixtures>({
 
     // '.' is the desktop package: the suite is run by `npm run e2e`, which puts
     // the working directory there and has already built dist/.
-    const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`] })
+    // An empty release list, so the update dialog never opens. Pointed at
+    // GitHub it raises itself over the window on launch — the app under test is
+    // several releases behind whatever is published — and every click in the
+    // suite lands on its backdrop.
+    const app = await electron.launch({
+      args: ['.', `--user-data-dir=${userData}`],
+      env: { ...process.env, HELIOS_RELEASES_URL: 'data:application/json,[]' },
+    })
     await use(app)
     await app.close()
     await fs.rm(userData, { recursive: true, force: true })
