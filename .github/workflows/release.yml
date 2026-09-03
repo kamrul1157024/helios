@@ -3,19 +3,57 @@ name: Release
 # No version input: the number was decided in the PR that earned it and lives in
 # VERSION. Typing it again here is where the tag, the APK's build name and the
 # app's own number end up as three different numbers.
+#
+# Runs itself once main is green. A release nobody has to remember to cut is one
+# that goes out while the change is still fresh, and the gate below makes it a
+# no-op when the number in VERSION is already released.
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
+  # Whether there is anything to release, decided once rather than in four jobs.
+  gate:
+    name: Release?
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=$(cat VERSION)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "v$v is already released — nothing to do."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$v has not been released yet."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   apk:
     name: Android APK
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           # `make apk-release` derives the Android build number from
           # `git rev-list --count HEAD`, which a shallow clone reports as 1.
           fetch-depth: 0
@@ -48,9 +86,13 @@ jobs:
 
   desktop-mac:
     name: Desktop (macOS)
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       # electron-builder stamps this into the app, which reports it to the
       # update check; a checkout past a tag would otherwise describe itself as
@@ -89,9 +131,13 @@ jobs:
 
   desktop-linux:
     name: Desktop (Linux)
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Read the version
         run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
@@ -121,11 +167,12 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [apk, desktop-mac, desktop-linux]
+    needs: [gate, apk, desktop-mac, desktop-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           # The changelog covers the commits since the last tag, so both the
           # tags and the history behind them have to be here.
           fetch-depth: 0

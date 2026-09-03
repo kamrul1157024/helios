@@ -98,6 +98,12 @@ in a PR, and typing it again at release time is where the tag, the APK's build
 name and the app's own number become three different numbers. Every job reads
 `VERSION`, and `make release-publish` refuses to tag anything else.
 
+Nor is there anything to press. `Release` runs on `workflow_run` when `Test`
+succeeds on main, and a gate job asks whether `VERSION` names a release that
+already exists: if it does, nothing runs. So a merge that moved the number ships
+it while the change is still fresh, and a merge that did not costs one job that
+prints a line and stops.
+
 ### The page hands the file over itself
 
 The links cannot be `github.com` URLs. Android verifies that domain for the
