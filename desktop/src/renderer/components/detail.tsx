@@ -33,10 +33,11 @@ import { canResume, type Session } from '../../shared/models.ts'
 
 const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'git', 'files']
 
-// The transcript is the agent's side of the session, not a chat room. The
-// store key stays 'chat' — it is persisted and referenced from elsewhere.
+// The transcript is the agent's side of the session, not a chat room, and not
+// the agent either — the agent is the thing running, of which this is the
+// record. The store key stays 'chat': it is persisted and referenced elsewhere.
 const PANEL_LABELS: Record<RightPanel, string> = {
-  chat: 'agent',
+  chat: 'transcript',
   terminal: 'terminal',
   approvals: 'approvals',
   git: 'git',

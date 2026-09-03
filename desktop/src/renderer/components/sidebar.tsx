@@ -26,7 +26,7 @@ import {
   type Session,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Console, Cpu, Memory, Pencil, Plus, Search, Sort, Stop } from './icons.tsx'
+import { Chevron, Console, Cpu, Memory, Pencil, Plus, Search, Sort } from './icons.tsx'
 import {
   buildCwdTree,
   buildTree,
@@ -1225,27 +1225,6 @@ function SessionRow({
             <Pencil />
           </button>
         )}
-        {/* Ending a session was a right-click away, while resuming one is on
-            the row — the same pair of opposite actions reached two different
-            ways. Absent on a terminated session, which has nothing left to
-            end and offers Resume in this spot instead. */}
-        {!terminated && !editing && (
-          <button
-            className="row-act danger"
-            aria-label="Terminate session"
-            title="Terminate — the agent stops; Resume brings it back"
-            onClick={(event) => {
-              event.stopPropagation()
-              // The one row action that cannot be undone by clicking again.
-              if (!confirm('Terminate this session? The agent stops, and only Resume brings it back.')) {
-                return
-              }
-              void store.terminateSession(hostId, session.session_id)
-            }}
-          >
-            <Stop />
-          </button>
-        )}
         {terminated ? (
           <button
             className="row-btn resume"
@@ -1268,6 +1247,25 @@ function SessionRow({
             }}
           >
             <Console />
+          </button>
+        )}
+        {/* Last of the row's actions, and the right-click for a pointer that
+            does not have one: the only way to reach Terminate, Pin, the groups
+            and the permission modes without knowing the menu is there. Opens
+            under the button rather than at the pointer, since the button has a
+            fixed place. */}
+        {!editing && (
+          <button
+            className="row-act row-more"
+            aria-label="Session actions"
+            title="Session actions"
+            onClick={(event) => {
+              event.stopPropagation()
+              const box = event.currentTarget.getBoundingClientRect()
+              onContextMenu(box.left, box.bottom + 4)
+            }}
+          >
+            ⋯
           </button>
         )}
         <span className="row-time">{timeAgo(session.last_event_at ?? session.created_at)}</span>

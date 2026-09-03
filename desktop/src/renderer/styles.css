@@ -542,12 +542,17 @@ small {
 }
 
 .rail-item {
+  position: relative;
   width: 34px;
   height: 34px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: var(--r-lg);
+  /* The base button pads 7px/14px, which leaves a 6px content box in a 34px
+     square — the glyph then overflows it to the right and sits off-centre.
+     Every other icon button in the app zeroes this for the same reason. */
+  padding: 0;
+  border-radius: var(--r-md);
   background: none;
   color: var(--on-surface-variant);
   cursor: pointer;
@@ -558,11 +563,24 @@ small {
   color: var(--on-surface);
 }
 
-/* The same lit pill the settings nav uses for the pane it is on: one mode is
-   in force at a time, and both lists say so the same way. */
+/* Marked, not filled. A solid container this size is the shape of an app icon
+   — it read as a logo sitting above the list rather than as one of three
+   buttons — so the active mode is a tinted glyph with a bar on the window's
+   edge, which is where the eye already is. */
 .rail-item.on {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+  color: var(--primary);
+}
+
+/* Flush with the window's edge: the item is centred in a 48px rail, so -7px is
+   the rail's own left edge. A pixel further and the bar is off screen. */
+.rail-item.on::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  width: 2px;
+  height: 18px;
+  border-radius: 0 1px 1px 0;
+  background: var(--primary);
 }
 
 .rail-item .ui-icon {
@@ -865,9 +883,15 @@ small {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 8px 8px 8px 16px;
+  padding: 8px 8px 8px 8px;
   color: var(--on-surface-variant);
   font-size: 12px;
+}
+
+/* One at each end. Pushed rather than spread, so the quit stays on the right
+   in the settings mode, where pairing is on the pane and this end is empty. */
+.sidebar-foot .link:first-child {
+  margin-right: auto;
 }
 
 /* Smaller than the one in the session header: this bar is 12px text, and a
@@ -1331,13 +1355,11 @@ small {
   height: 14px;
 }
 
-/* The square is small on purpose: it sits beside the terminal glyph, and at the
-   same 14px it outweighs it. Its red comes from button.danger — the row action
-   that cannot be undone by clicking it again should not look like the two
-   beside it that can. */
-.row-act.danger .ui-icon {
-  width: 11px;
-  height: 11px;
+/* A typed glyph, not a drawn one — and a small one in its em box, so it needs
+   the size the icons get from their viewBox. */
+.row-act.row-more {
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* The word, not the glyph: resuming is the only move a terminated session has
