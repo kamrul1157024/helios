@@ -49,14 +49,14 @@ test('the bar is no taller than the text it holds', async ({ window }) => {
   // The strip above it is the other half of the saving, and the buttons a
   // terminal tab brings with it used to be what set its height.
   //
-  // Level with the sidebar's switch, not merely short: the two sit side by side
-  // at the same y and read as one row, and they drifted apart the first time
-  // this strip was trimmed.
+  // Level with the sidebar's own head, not merely short: the two sit side by
+  // side at the same y and read as one row, and they drifted apart the first
+  // time this strip was trimmed. It was the sessions/schedules switch that sat
+  // there until the rail took the switching over.
   const tabs = await window.locator('.panel-tabs').boundingBox()
-  const modes = await window.locator('.sidebar-modes').boundingBox()
+  const head = await window.locator('.sidebar-head').boundingBox()
   expect(tabs?.height).toBe(34)
-  expect(modes?.height).toBe(tabs?.height)
-  expect(modes?.y).toBe(tabs?.y)
+  expect(head?.y).toBe(tabs?.y)
 })
 
 test('the bar grows with the text size rather than clipping it', async ({ window }) => {
@@ -72,7 +72,7 @@ test('the bar grows with the text size rather than clipping it', async ({ window
     .locator('input')
   await field.fill('16')
   await field.blur()
-  await window.keyboard.press('Escape')
+  await closeSettings(window)
 
   // Height is derived from the size, not set beside it: 16 + 7.
   await expect
@@ -85,7 +85,9 @@ test('the permission mode is on the row menu, ticked on the one in force', async
 
   const menu = window.locator('.line-menu').first()
   await expect(menu).toBeVisible()
-  await expect(menu.getByText('Rename…')).toBeVisible()
+  // No ellipsis on it any more: the item opens a field on the row itself
+  // rather than the prompt it used to, which Electron never supported.
+  await expect(menu.getByText('Rename', { exact: true })).toBeVisible()
 
   // Hovering the parent row opens the child beside it. The parent is one row
   // tall whether or not the provider list has arrived, which is why the modes
@@ -97,10 +99,17 @@ test('the permission mode is on the row menu, ticked on the one in force', async
   await expect(submenu.getByText('bypassPermissions')).toBeVisible()
 })
 
+/** Settings is a mode now, opened from the rail and left the same way. */
 async function openSettings(window: Page): Promise<void> {
-  await window.locator('.sidebar-foot .menu summary').click()
-  await window.getByRole('button', { name: 'Settings' }).click()
+  await window.locator('.rail-item[aria-label="Settings"]').click()
+  await window.locator('.settings-nav button', { hasText: 'Appearance' }).click()
   await expect(window.locator('.seg-list')).toBeVisible()
+}
+
+/** Back to the sessions, where the session under test is still selected. */
+async function closeSettings(window: Page): Promise<void> {
+  await window.locator('.rail-item[aria-label="Sessions"]').click()
+  await expect(window.locator('.panel-tabs')).toBeVisible()
 }
 
 function segment(window: Page, label: string) {
@@ -153,7 +162,7 @@ test('a segment dragged up the list moves left along the bar', async ({ window }
 
   await expect(window.locator('.seg-row:not(.off) .seg-label').first()).toHaveText('Status')
 
-  await window.keyboard.press('Escape')
+  await closeSettings(window)
   await expect(bar(window).locator('> *').first()).toContainText('Idle')
 })
 
@@ -172,7 +181,7 @@ test('turning every segment off hides the bar', async ({ window }) => {
   }
 
   await expect(window.locator('.seg-list .seg-row:not(.off)')).toHaveCount(0)
-  await window.keyboard.press('Escape')
+  await closeSettings(window)
 
   // The preference went to the main process and came back over theme:changed —
   // no reload anywhere, which is the part worth asserting.
