@@ -4,16 +4,17 @@ import { bridge } from './bridge.ts'
 import type { UpdateInfo } from '../shared/models.ts'
 import { store, terminalId, useStore } from './store.ts'
 import { Detail } from './components/detail.tsx'
-import { HostsDialog } from './components/hosts.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
-import { SettingsDialog } from './components/settings.tsx'
+import { Rail } from './components/rail.tsx'
 import { Sidebar } from './components/sidebar.tsx'
 
 export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
   const toast = useStore((s) => s.toast)
   const pairingLink = useStore((s) => s.pairingLink)
-  const [dialog, setDialog] = useState<'new' | 'hosts' | 'settings' | null>(null)
+  // Starting a session is the last thing that interrupts the window. Settings
+  // and hosts are modes now, reached from the rail.
+  const [dialog, setDialog] = useState<'new' | null>(null)
   // Where the new-session dialog should start when it was opened from a
   // project rather than from the toolbar: the point of the project's own
   // button is that it does not ask again which project it meant.
@@ -23,13 +24,13 @@ export function App(): JSX.Element {
     void store.init()
   }, [])
 
-  // A pairing link from the OS should surface the dialog that can use it.
+  // A pairing link from the OS should surface the pane that can use it.
   useEffect(() => {
-    if (pairingLink) setDialog('hosts')
+    if (pairingLink) store.openSettings('hosts')
   }, [pairingLink])
 
   // The Settings item in the app menu lives in the main process.
-  useEffect(() => bridge.app.onOpenSettings(() => setDialog('settings')), [])
+  useEffect(() => bridge.app.onOpenSettings(() => store.openSettings()), [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -73,13 +74,12 @@ export function App(): JSX.Element {
       <div className="titlebar" />
       <UpdateBanner />
       <div className="body">
+        <Rail />
         <Sidebar
           onNewSession={(from) => {
             setSeed(from ?? null)
             setDialog('new')
           }}
-          onAddHost={() => setDialog('hosts')}
-          onSettings={() => setDialog('settings')}
         />
         <main className="main">
           <Detail />
@@ -87,8 +87,6 @@ export function App(): JSX.Element {
       </div>
 
       {dialog === 'new' && <NewSessionDialog seed={seed} onClose={() => setDialog(null)} />}
-      {dialog === 'hosts' && <HostsDialog onClose={() => setDialog(null)} />}
-      {dialog === 'settings' && <SettingsDialog onClose={() => setDialog(null)} />}
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>

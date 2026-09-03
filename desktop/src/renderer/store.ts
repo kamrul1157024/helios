@@ -41,6 +41,7 @@ import type {
   Notification,
   Session,
   SessionGroup,
+  SettingsSection,
   SSEEvent,
   TabStatus,
   HostStats,
@@ -72,7 +73,15 @@ function shellLabel(termId: string): string {
   return index ? `sh ${index}` : 'shell'
 }
 
-export type SidebarMode = 'sessions' | 'schedules'
+/**
+ * What the window is showing, both columns of it.
+ *
+ * The rail switches this, and the sidebar and the main panel both follow: each
+ * mode brings its own list and its own panel. Settings is a mode rather than a
+ * dialog because it is a screen and a half of controls, which a 760px box was
+ * never the shape for.
+ */
+export type SidebarMode = 'sessions' | 'schedules' | 'settings'
 
 /** What the main panel is showing about a schedule. */
 export interface ScheduleSelection {
@@ -198,6 +207,9 @@ export interface State {
    * rather than fighting for it. See docs/specs/55-scheduled-runs.md.
    */
   sidebarMode: SidebarMode
+  /** Which pane the settings mode is on. Kept while another mode is up, so
+   *  coming back lands where you left. */
+  settingsSection: SettingsSection
   /**
    * The schedules list's own search.
    *
@@ -399,6 +411,7 @@ const initial: State = {
   selection: null,
   renamingSession: null,
   sidebarMode: 'sessions',
+  settingsSection: 'appearance',
   scheduleQuery: '',
   autoRunsOpen: {},
   scheduleSelection: null,
@@ -1033,6 +1046,20 @@ class Store {
 
   setSidebarMode(mode: SidebarMode): void {
     this.set({ sidebarMode: mode })
+  }
+
+  /**
+   * Shows the settings, on a named pane when the caller has one in mind.
+   *
+   * ⌘, the app menu and the tray all arrive here, as does a `helios://pair`
+   * link — which names the Hosts pane, since pairing is what it came to do.
+   */
+  openSettings(section?: SettingsSection): void {
+    this.set(section ? { sidebarMode: 'settings', settingsSection: section } : { sidebarMode: 'settings' })
+  }
+
+  setSettingsSection(section: SettingsSection): void {
+    this.set({ settingsSection: section })
   }
 
   setScheduleQuery(query: string): void {

@@ -13,6 +13,7 @@ import { GitPanel } from './git.tsx'
 import { SchedulePanel } from './schedules.tsx'
 import { SelectionMenu } from './selection-menu.tsx'
 import { sessionActions } from './session-menu.ts'
+import { SettingsPane } from './settings.tsx'
 import { StatusLine } from './status-line.tsx'
 import {
   isVisible,
@@ -32,10 +33,11 @@ import { canResume, type Session } from '../../shared/models.ts'
 
 const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'git', 'files']
 
-// The transcript is the agent's side of the session, not a chat room. The
-// store key stays 'chat' — it is persisted and referenced from elsewhere.
+// The transcript is the agent's side of the session, not a chat room, and not
+// the agent either — the agent is the thing running, of which this is the
+// record. The store key stays 'chat': it is persisted and referenced elsewhere.
 const PANEL_LABELS: Record<RightPanel, string> = {
-  chat: 'agent',
+  chat: 'transcript',
   terminal: 'terminal',
   approvals: 'approvals',
   git: 'git',
@@ -196,6 +198,7 @@ export function Detail(): JSX.Element {
   // with no layout, and TerminalPane's ResizeObserver refits it on the way
   // back.
   const showingSchedules = sidebarMode === 'schedules'
+  const showingSettings = sidebarMode === 'settings'
 
   return (
     <>
@@ -206,7 +209,14 @@ export function Detail(): JSX.Element {
           </PanelBoundary>
         </div>
       )}
-      <div className="detail" style={showingSchedules ? { display: 'none' } : undefined}>
+      {showingSettings && (
+        <div className="detail">
+          <PanelBoundary resetKey="settings">
+            <SettingsPane />
+          </PanelBoundary>
+        </div>
+      )}
+      <div className="detail" style={showingSchedules || showingSettings ? { display: 'none' } : undefined}>
       {hostId && session && <ShowNoteStrip hostId={hostId} sessionId={session.session_id} />}
 
       <div

@@ -523,6 +523,73 @@ small {
   color: var(--on-surface-variant);
 }
 
+/* ─── Rail ──────────────────────────────────────────────────────────────── */
+
+/* What the window is showing, chosen from the left edge. Inside .body rather
+   than beside the titlebar, so it starts below the traffic lights and takes
+   nothing away from the drag region. */
+.rail {
+  flex: none;
+  /* Three buttons wide is all it will ever be, so it is sized to the target
+     rather than to the 48px a toolbar would take. */
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--surface-low);
+  /* The same hairline the sidebar draws, for the same reason: no width. */
+  box-shadow: 1px 0 0 var(--outline-variant);
+}
+
+.rail-item {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  /* The base button pads 7px/14px, which leaves a 6px content box in a 34px
+     square — the glyph then overflows it to the right and sits off-centre.
+     Every other icon button in the app zeroes this for the same reason. */
+  padding: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.rail-item:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  color: var(--on-surface);
+}
+
+/* Marked, not filled. A solid container this size is the shape of an app icon
+   — it read as a logo sitting above the list rather than as one of three
+   buttons — so the active mode is a tinted glyph with a bar on the window's
+   edge, which is where the eye already is. */
+.rail-item.on {
+  color: var(--primary);
+}
+
+/* Flush with the window's edge: the item is centred in a 44px rail, so -5px is
+   the rail's own left edge. A pixel further and the bar is off screen. */
+.rail-item.on::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  width: 2px;
+  height: 17px;
+  border-radius: 0 1px 1px 0;
+  background: var(--primary);
+}
+
+.rail-item .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
 .sidebar {
@@ -818,9 +885,15 @@ small {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 8px 8px 8px 16px;
+  padding: 8px 8px 8px 8px;
   color: var(--on-surface-variant);
   font-size: 12px;
+}
+
+/* One at each end. Pushed rather than spread, so the quit stays on the right
+   in the settings mode, where pairing is on the pane and this end is empty. */
+.sidebar-foot .link:first-child {
+  margin-right: auto;
 }
 
 /* Smaller than the one in the session header: this bar is 12px text, and a
@@ -1282,6 +1355,13 @@ small {
 .row-act .ui-icon {
   width: 14px;
   height: 14px;
+}
+
+/* A typed glyph, not a drawn one — and a small one in its em box, so it needs
+   the size the icons get from their viewBox. */
+.row-act.row-more {
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* The word, not the glyph: resuming is the only move a terminated session has
@@ -4330,30 +4410,35 @@ hr {
 
 /* ─── Settings ──────────────────────────────────────────────────────────── */
 
-/* Wider than the other modals, since it carries a nav as well as a panel.
-   Selected on the content rather than through a prop, so the Modal shell stays
-   the same shell every other dialog uses. */
-.modal:has(.settings-shell) {
-  width: 760px;
-}
-
-.settings-shell {
+/* The panes, in the main area. Settings is a mode now: the sidebar holds the
+   nav, this holds whichever pane it points at, and the reading width keeps a
+   row of controls from stretching across a wide window. */
+.settings-page {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 20px;
-  align-items: flex-start;
-  /* Tall enough that switching panes does not resize the dialog under the
-     pointer, short enough to sit on a laptop screen. */
-  height: min(60vh, 520px);
+  padding: 12px 16px 16px;
+  overflow: hidden;
 }
 
+/* In the sidebar rather than beside the panel it drives — the mode owns both
+   columns, so the list of panes is what its sidebar is for. It takes the whole
+   column, not the height of five buttons: the list below it is hidden in this
+   mode, and without something to fill the space the footer rides up under the
+   last section. */
 .settings-nav {
-  flex: none;
-  width: 150px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  align-content: flex-start;
   gap: 2px;
-  position: sticky;
-  top: 0;
+  padding: 8px 8px 0;
+  overflow-y: auto;
+}
+
+.settings-nav button {
+  flex: none;
 }
 
 .settings-nav button {
@@ -4375,17 +4460,19 @@ hr {
   font-weight: 600;
 }
 
-/* The pane scrolls, not the dialog: the nav stays put while a long theme list
-   moves past it. */
+/* The pane scrolls, not the window: the nav is in the sidebar and stays put
+   while a long theme list moves past it. Held to a reading width, so a setting
+   and its control do not end up at opposite edges of a wide window. */
 .settings-panel {
   flex: 1;
   min-width: 0;
+  max-width: 720px;
   height: 100%;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 8px;
 }
 
-/* The first heading in a pane has the dialog title right above it. */
+/* The first heading in a pane has nothing above it to space away from. */
 .settings-panel > .settings-group:first-child,
 .settings-panel > h3:first-child {
   margin-top: 0;
@@ -4786,6 +4873,22 @@ hr {
   color: var(--on-surface-variant);
 }
 
+/* The same two, for a pane that is not in a dialog. Named apart rather than
+   shared, so a change made for the modals cannot quietly move a settings
+   pane. */
+.pane-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.pane-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 /* Said once, above everything, and gone for good when dismissed: a release
    nobody has to act on today should not cost the layout permanently. */
 .update-banner {
@@ -5173,33 +5276,6 @@ hr {
    arrange control and the + button below it are about. */
 /* The same height as the detail pane's tab strip, which sits beside it at the
    same y. See --strip-h. */
-.sidebar-modes {
-  display: flex;
-  align-items: center;
-  flex: none;
-  height: var(--strip-h);
-  gap: 2px;
-  padding: 0 10px;
-}
-
-.sidebar-modes button {
-  flex: 1;
-  height: 22px;
-  background: var(--surface-low);
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  color: var(--on-surface-variant);
-  font-size: 11px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.sidebar-modes button.active {
-  background: var(--surface-high);
-  border-color: var(--outline-variant);
-  color: var(--on-surface);
-}
-
 .sched-rows {
   display: flex;
   flex-direction: column;

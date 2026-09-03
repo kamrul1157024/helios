@@ -39,6 +39,7 @@ import { GroupPicker } from './group-picker.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import { sessionActions } from './session-menu.ts'
+import { SECTIONS } from './settings.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
  *  session list taking half the window from the session itself. */
@@ -170,12 +171,8 @@ function dropModeFor(event: React.DragEvent, el: HTMLElement): DropMode {
 
 export function Sidebar({
   onNewSession,
-  onAddHost,
-  onSettings,
 }: {
   onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
-  onAddHost: () => void
-  onSettings: () => void
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
@@ -186,6 +183,7 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const renamingSession = useStore((s) => s.renamingSession)
   const mode = useStore((s) => s.sidebarMode)
+  const settingsSection = useStore((s) => s.settingsSection)
   // Its own search, because the two lists hold different things and a query
   // typed against one is meaningless against the other.
   const scheduleQuery = useStore((s) => s.scheduleQuery)
@@ -382,23 +380,21 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" ref={aside}>
-      {/* Above everything, because it decides what everything below is about:
-          the search, the arrange control and the + button all belong to one
-          list or the other. */}
-      <div className="sidebar-modes">
-        <button
-          className={mode === 'sessions' ? 'active' : ''}
-          onClick={() => store.setSidebarMode('sessions')}
-        >
-          sessions
-        </button>
-        <button
-          className={mode === 'schedules' ? 'active' : ''}
-          onClick={() => store.setSidebarMode('schedules')}
-        >
-          schedules
-        </button>
-      </div>
+      {/* Which mode this is comes from the rail, so the list starts at its own
+          search rather than at a switch it is not part of. */}
+      {mode === 'settings' && (
+        <nav className="settings-nav">
+          {SECTIONS.map((entry) => (
+            <button
+              key={entry.id}
+              className={settingsSection === entry.id ? 'active' : ''}
+              onClick={() => store.setSettingsSection(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
       {mode === 'schedules' && (
         <>
@@ -505,7 +501,7 @@ export function Sidebar({
       </header>
       )}
 
-      <div className="sidebar-list" hidden={mode === 'schedules'}>
+      <div className="sidebar-list" hidden={mode !== 'sessions'}>
         {grouped.map(({ host, rows, nodes, pending, count, hidden, loading }) => {
           const status = hostStatus[host.id]?.state ?? 'connecting'
           const isCollapsed = collapsed[host.id] ?? false
@@ -925,16 +921,26 @@ export function Sidebar({
             <p className="muted">
               Start one with <code>helios daemon</code>, or pair a remote machine.
             </p>
-            <button onClick={onAddHost}>Add host</button>
+            <button onClick={() => store.openSettings('hosts')}>Add host</button>
           </div>
         )}
       </div>
 
+      {/* Two buttons rather than the ⋯ menu they were behind: Settings left for
+          the rail, and a menu holding one item is a click in front of it. */}
       <footer className="sidebar-foot">
-        <button className="link" onClick={onAddHost}>
-          Add host
+        {/* Not in the settings mode, where it would sit an inch under the Hosts
+            pane it opens. */}
+        {mode !== 'settings' && (
+          <button className="link" onClick={() => store.openSettings('hosts')}>
+            Add host
+          </button>
+        )}
+        {/* Closing the window leaves the app on the tray so approvals keep
+            arriving; this is the one control that actually ends it. */}
+        <button className="link danger" onClick={() => void bridge.app.quit()}>
+          Quit Helios
         </button>
-        <AppMenu onSettings={onSettings} />
       </footer>
 
       {menu && (
@@ -1059,54 +1065,6 @@ function InlineNameField({
       }}
       onBlur={(event) => commit(event.target.value)}
     />
-  )
-}
-
-/**
- * Settings and Quit, which otherwise live only on the tray and the app menu —
- * neither of which is where the eye goes, and the app menu is not somewhere a
- * user looks on the platforms where the window is the whole of the app.
- */
-function AppMenu({ onSettings }: { onSettings: () => void }): JSX.Element {
-  const menu = useRef<HTMLDetailsElement | null>(null)
-
-  // <details> only closes on its own summary, so a menu left open stays open
-  // over whatever the user clicks next.
-  useEffect(() => {
-    const close = (event: Event): void => {
-      const element = menu.current
-      if (!element?.open) return
-      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
-      if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
-      element.open = false
-    }
-    window.addEventListener('mousedown', close)
-    window.addEventListener('keydown', close)
-    window.addEventListener('blur', close)
-    return () => {
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('keydown', close)
-      window.removeEventListener('blur', close)
-    }
-  }, [])
-
-  return (
-    <details className="menu drop-up" ref={menu}>
-      <summary title="More">⋯</summary>
-      <div
-        className="menu-body"
-        onClick={() => {
-          if (menu.current) menu.current.open = false
-        }}
-      >
-        <button onClick={onSettings}>Settings…</button>
-        {/* Closing the window leaves the app on the tray so approvals keep
-            arriving; this is the one control that actually ends it. */}
-        <button className="danger" onClick={() => void bridge.app.quit()}>
-          Quit Helios
-        </button>
-      </div>
-    </details>
   )
 }
 
@@ -1289,6 +1247,25 @@ function SessionRow({
             }}
           >
             <Console />
+          </button>
+        )}
+        {/* Last of the row's actions, and the right-click for a pointer that
+            does not have one: the only way to reach Terminate, Pin, the groups
+            and the permission modes without knowing the menu is there. Opens
+            under the button rather than at the pointer, since the button has a
+            fixed place. */}
+        {!editing && (
+          <button
+            className="row-act row-more"
+            aria-label="Session actions"
+            title="Session actions"
+            onClick={(event) => {
+              event.stopPropagation()
+              const box = event.currentTarget.getBoundingClientRect()
+              onContextMenu(box.left, box.bottom + 4)
+            }}
+          >
+            ⋯
           </button>
         )}
         <span className="row-time">{timeAgo(session.last_event_at ?? session.created_at)}</span>
