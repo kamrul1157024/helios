@@ -10,7 +10,11 @@ const REPO = 'kamrul1157024/helios'
    owed the notes for each release they skipped, and the newest is the first
    entry of this anyway. Thirty is a cap rather than a page to walk — twenty
    releases of history is not something anyone reads in a dialog. */
-const RELEASES = `https://api.github.com/repos/${REPO}/releases?per_page=30`
+/* Overridable because the e2e suite launches a real app against a stub daemon:
+   left pointing at GitHub, every run raises the release dialog over the window
+   and every click in the suite lands on its backdrop. */
+const RELEASES =
+  process.env.HELIOS_RELEASES_URL ?? `https://api.github.com/repos/${REPO}/releases?per_page=30`
 
 /** The fields of a GitHub release this reads. The rest of the payload is large
  *  and none of it is wanted. */
