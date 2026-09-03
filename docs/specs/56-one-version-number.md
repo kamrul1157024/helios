@@ -93,10 +93,10 @@ release must not try to be 3.10.0 again. Nobody has to remember that.
 
 ### The release reads the file
 
-`workflow_dispatch.inputs.version` becomes optional, defaulting to `VERSION`.
-The number was decided in a PR; typing it again at release time is where it goes
-wrong. `make release-publish` refuses to tag a number the file does not hold, so
-a hand-typed override still has to be honest.
+`workflow_dispatch` loses its `version` input entirely. The number was decided
+in a PR, and typing it again at release time is where the tag, the APK's build
+name and the app's own number become three different numbers. Every job reads
+`VERSION`, and `make release-publish` refuses to tag anything else.
 
 ## What we are not doing
 

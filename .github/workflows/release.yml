@@ -1,12 +1,10 @@
 name: Release
 
+# No version input: the number was decided in the PR that earned it and lives in
+# VERSION. Typing it again here is where the tag, the APK's build name and the
+# app's own number end up as three different numbers.
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. 3.10.0). Empty takes the number in VERSION, which is where it was decided."
-        required: false
-        default: ""
 
 permissions:
   contents: write
@@ -21,17 +19,6 @@ jobs:
           # `make apk-release` derives the Android build number from
           # `git rev-list --count HEAD`, which a shallow clone reports as 1.
           fetch-depth: 0
-
-      - name: Resolve the version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        # The number was decided in the PR that earned it. An input overrides it
-        # and is written back, so the APK's build name, the DMG's, and the tag
-        # cannot end up as three different numbers.
-        run: |
-          v="${INPUT_VERSION:-$(cat VERSION)}"
-          echo "$v" > VERSION
-          echo "VERSION=$v" >> "$GITHUB_ENV"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -68,10 +55,8 @@ jobs:
       # electron-builder stamps this into the app, which reports it to the
       # update check; a checkout past a tag would otherwise describe itself as
       # the release it sits above.
-      - name: Resolve the version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: echo "VERSION=${INPUT_VERSION:-$(cat VERSION)}" >> "$GITHUB_ENV"
+      - name: Read the version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -108,10 +93,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve the version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: echo "VERSION=${INPUT_VERSION:-$(cat VERSION)}" >> "$GITHUB_ENV"
+      - name: Read the version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -147,13 +130,8 @@ jobs:
           # tags and the history behind them have to be here.
           fetch-depth: 0
 
-      - name: Resolve the version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          v="${INPUT_VERSION:-$(cat VERSION)}"
-          echo "$v" > VERSION
-          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Read the version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
         with:
