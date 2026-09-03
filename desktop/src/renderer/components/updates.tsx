@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { bridge } from '../bridge.ts'
 import { renderMarkdown } from '../markdown.ts'
+import { store } from '../store.ts'
 import type { ReleaseNote, UpdateInfo } from '../../shared/models.ts'
 import { Modal } from './newsession.tsx'
 
@@ -34,12 +35,12 @@ export function ReleaseNotes(): JSX.Element | null {
 
   return (
     <Modal title={`Helios ${update.version} is out`} onClose={close}>
-      {/* Worth saying outright: terminals are their own detached processes, so
-          neither the daemon restarting nor this app closing interrupts a
-          session that is running. */}
+      {/* The half of the job this dialog used to leave out: every paired
+          machine runs its own daemon, and a session's behaviour comes from
+          that daemon rather than from the window looking at it. */}
       <p className="pane-note">
-        Updating the daemon, desktop or app keeps running sessions alive. None of the packages
-        update themselves — the release page has the download.
+        Update the daemon on each paired machine too — that is what runs the sessions. Nothing here
+        updates itself, and updating any part of it keeps running sessions alive.
       </p>
 
       <div className="release-notes">
@@ -54,7 +55,19 @@ export function ReleaseNotes(): JSX.Element | null {
         <a className="ext-link" href={update.url} target="_blank" rel="noreferrer noopener">
           Download {update.version}
         </a>
-        <button onClick={close}>Got it</button>
+        <button className="ghost" onClick={close}>
+          Got it
+        </button>
+        {/* The pane that names which daemons are behind, which is the question
+            this dialog raises and cannot answer itself. */}
+        <button
+          onClick={() => {
+            close()
+            store.openSettings('hosts')
+          }}
+        >
+          Review hosts
+        </button>
       </div>
     </Modal>
   )

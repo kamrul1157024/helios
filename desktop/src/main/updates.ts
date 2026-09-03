@@ -86,6 +86,19 @@ export class UpdateChecker {
     }
   }
 
+  /**
+   * The newest release, dismissed or not.
+   *
+   * The Hosts pane compares each daemon against it, and that comparison does
+   * not stop being true because the dialog was waved away — `check` answers
+   * null then, which is right for the dialog and wrong for the pane.
+   */
+  async latest(): Promise<UpdateInfo | null> {
+    if (this.checked) return this.checked
+    await this.check()
+    return this.checked
+  }
+
   /** Stops this version being mentioned again, on this machine. */
   dismiss(version: string): void {
     this.dismissed = version

@@ -16,8 +16,14 @@ DMG_PATH = helios.dmg
 # per-platform build jobs, which never share a runner.
 DIST = dist
 
+# Stamped, not hardcoded: the daemon reports this over /api/health so a client
+# can say which machines are behind, and a number edited by hand goes stale the
+# first release nobody remembers to edit it. An untagged checkout keeps the
+# "dev" default, which is not something the clients nag about.
+LDFLAGS = -X github.com/kamrul1157024/helios/internal/version.Current=$(VERSION)
+
 build:
-	go build -o helios ./cmd/helios/
+	go build -ldflags "$(LDFLAGS)" -o helios ./cmd/helios/
 ifeq ($(UNAME_S),Darwin)
 	codesign -s - -f ./helios
 endif

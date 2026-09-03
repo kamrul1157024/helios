@@ -144,6 +144,7 @@ const helios = {
   },
   updates: {
     check: () => call<unknown>('updates:check'),
+    latest: () => call<unknown>('updates:latest'),
     dismiss: (version: string) => call<void>('updates:dismiss', version),
   },
   app: {

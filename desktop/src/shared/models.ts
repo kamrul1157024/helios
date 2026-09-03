@@ -582,6 +582,10 @@ export interface HostStatus {
   id: string
   state: HostConnectionState
   error?: string
+  /** What the daemon reports over /api/health. Absent while connecting, and on
+   *  a daemon old enough not to report one — which is itself a sign it is
+   *  behind, but not one worth guessing a number from. */
+  version?: string
 }
 
 /** Terminal tab lifecycle, as reported to the renderer. */

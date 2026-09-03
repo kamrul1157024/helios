@@ -587,13 +587,19 @@ export class ApiClient {
     return res.devices ?? []
   }
 
-  /** Unauthenticated — used to check a host is reachable before pairing. */
-  async health(): Promise<boolean> {
+  /**
+   * Unauthenticated — a host is reachable before pairing, and says which
+   * version it runs. A daemon from before that field reported none, so an
+   * absent version means "old enough not to say" rather than unknown.
+   */
+  async health(): Promise<{ ok: boolean; version?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/api/health`, { signal: AbortSignal.timeout(5_000) })
-      return res.ok
+      if (!res.ok) return { ok: false }
+      const body = (await res.json()) as { version?: string }
+      return { ok: true, version: body.version }
     } catch {
-      return false
+      return { ok: false }
     }
   }
 }
