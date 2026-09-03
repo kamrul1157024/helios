@@ -26,7 +26,7 @@ import {
   type Session,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Console, Cpu, Memory, Pencil, Plus, Search, Sort } from './icons.tsx'
+import { Chevron, Console, Cpu, Memory, Pencil, Plus, Search, Sort, Stop } from './icons.tsx'
 import {
   buildCwdTree,
   buildTree,
@@ -926,15 +926,21 @@ export function Sidebar({
         )}
       </div>
 
+      {/* Two buttons rather than the ⋯ menu they were behind: Settings left for
+          the rail, and a menu holding one item is a click in front of it. */}
       <footer className="sidebar-foot">
-        {/* Not in the settings mode, where it would sit an inch under the
-            Hosts pane it opens. */}
+        {/* Not in the settings mode, where it would sit an inch under the Hosts
+            pane it opens. */}
         {mode !== 'settings' && (
           <button className="link" onClick={() => store.openSettings('hosts')}>
             Add host
           </button>
         )}
-        <AppMenu />
+        {/* Closing the window leaves the app on the tray so approvals keep
+            arriving; this is the one control that actually ends it. */}
+        <button className="link danger" onClick={() => void bridge.app.quit()}>
+          Quit Helios
+        </button>
       </footer>
 
       {menu && (
@@ -1059,54 +1065,6 @@ function InlineNameField({
       }}
       onBlur={(event) => commit(event.target.value)}
     />
-  )
-}
-
-/**
- * Quit, which otherwise lives only on the tray and the app menu — neither of
- * which is where the eye goes, and the app menu is not somewhere a user looks
- * on the platforms where the window is the whole of the app. Settings left
- * here for the rail, which says what it is with an icon rather than an ⋯.
- */
-function AppMenu(): JSX.Element {
-  const menu = useRef<HTMLDetailsElement | null>(null)
-
-  // <details> only closes on its own summary, so a menu left open stays open
-  // over whatever the user clicks next.
-  useEffect(() => {
-    const close = (event: Event): void => {
-      const element = menu.current
-      if (!element?.open) return
-      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
-      if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
-      element.open = false
-    }
-    window.addEventListener('mousedown', close)
-    window.addEventListener('keydown', close)
-    window.addEventListener('blur', close)
-    return () => {
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('keydown', close)
-      window.removeEventListener('blur', close)
-    }
-  }, [])
-
-  return (
-    <details className="menu drop-up" ref={menu}>
-      <summary title="More">⋯</summary>
-      <div
-        className="menu-body"
-        onClick={() => {
-          if (menu.current) menu.current.open = false
-        }}
-      >
-        {/* Closing the window leaves the app on the tray so approvals keep
-            arriving; this is the one control that actually ends it. */}
-        <button className="danger" onClick={() => void bridge.app.quit()}>
-          Quit Helios
-        </button>
-      </div>
-    </details>
   )
 }
 
@@ -1265,6 +1223,27 @@ function SessionRow({
             }}
           >
             <Pencil />
+          </button>
+        )}
+        {/* Ending a session was a right-click away, while resuming one is on
+            the row — the same pair of opposite actions reached two different
+            ways. Absent on a terminated session, which has nothing left to
+            end and offers Resume in this spot instead. */}
+        {!terminated && !editing && (
+          <button
+            className="row-act danger"
+            aria-label="Terminate session"
+            title="Terminate — the agent stops; Resume brings it back"
+            onClick={(event) => {
+              event.stopPropagation()
+              // The one row action that cannot be undone by clicking again.
+              if (!confirm('Terminate this session? The agent stops, and only Resume brings it back.')) {
+                return
+              }
+              void store.terminateSession(hostId, session.session_id)
+            }}
+          >
+            <Stop />
           </button>
         )}
         {terminated ? (

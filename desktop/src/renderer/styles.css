@@ -1331,6 +1331,15 @@ small {
   height: 14px;
 }
 
+/* The square is small on purpose: it sits beside the terminal glyph, and at the
+   same 14px it outweighs it. Its red comes from button.danger — the row action
+   that cannot be undone by clicking it again should not look like the two
+   beside it that can. */
+.row-act.danger .ui-icon {
+  width: 11px;
+  height: 11px;
+}
+
 /* The word, not the glyph: resuming is the only move a terminated session has
    left, so it says so without being hovered — and being always-on, it never
    moves anything either. */

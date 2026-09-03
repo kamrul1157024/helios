@@ -147,6 +147,15 @@ export function Gear({ className = '' }: { className?: string }): JSX.Element {
   )
 }
 
+/** A filled square: the stop that ends a session's agent. */
+export function Stop({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 /** A pencil, for the title a row lets you type over. */
 export function Pencil({ className = '' }: { className?: string }): JSX.Element {
   return (

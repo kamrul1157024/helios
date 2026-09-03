@@ -1539,6 +1539,17 @@ class Store {
     this.set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, title: trimmed } : t)) }))
   }
 
+  /** Ends a session's agent. The transcript on disk is untouched, and Resume
+   *  is what brings it back. */
+  async terminateSession(hostId: string, sessionId: string): Promise<void> {
+    try {
+      await api(hostId).terminate(sessionId)
+    } catch (err) {
+      this.fail(err)
+    }
+    await this.invalidateSessions(hostId)
+  }
+
   /**
    * Brings a terminated session's agent back and moves the daemon's record out
    * of `terminated`, which is what re-enables prompts. Distinct from waking:
