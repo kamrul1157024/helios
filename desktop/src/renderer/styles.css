@@ -4900,31 +4900,63 @@ hr {
   margin-top: 20px;
 }
 
-/* Said once, above everything, and gone for good when dismissed: a release
-   nobody has to act on today should not cost the layout permanently. */
-.update-banner {
+/* What arrived, said once. Scrolls on its own so the dialog keeps its height
+   whether the reader skipped one release or ten. */
+.release-notes {
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  margin-top: 12px;
+  padding-right: 4px;
+}
+
+.release + .release {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.release h3 {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 14px;
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.release-date {
   font-size: 12px;
-}
-
-/* The note carries the detail and the headline carries the version, so the
-   two are told apart by weight rather than by fading one of them. */
-.update-note {
   font-weight: 400;
+  color: var(--on-surface-variant);
 }
 
-.update-banner .ext-link {
-  color: inherit;
-  text-decoration: underline;
+/* Release notes are a list of one-line changes, not prose: the transcript's
+   paragraph spacing leaves them floating apart. */
+.release .md {
+  font-size: 13px;
 }
 
-.update-banner .dismiss {
-  color: inherit;
+/* A heading inside a release body is a section of that release, so it cannot
+   be louder than the version it sits under — which is what the transcript's
+   sizes would make it. */
+.release .md h1,
+.release .md h2,
+.release .md h3 {
+  margin: 12px 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.release .md ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.release .md li + li {
+  margin-top: 2px;
 }
 
 /* ─── Agent note ────────────────────────────────────────────────────────── */

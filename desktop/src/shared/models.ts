@@ -691,8 +691,20 @@ export interface HostStats {
   memory_total: number
 }
 
+/** One release, as its author wrote it up. */
+export interface ReleaseNote {
+  version: string
+  /** The release body, in GitHub markdown. Empty when the author wrote none. */
+  body: string
+  url: string
+  publishedAt: string
+}
+
 /** A release newer than what is running, and where to get it. */
 export interface UpdateInfo {
   version: string
   url: string
+  /** Every release between the one running and this one, newest first — what
+   *  arrives on updating, rather than only the name of the last of them. */
+  notes: ReleaseNote[]
 }
