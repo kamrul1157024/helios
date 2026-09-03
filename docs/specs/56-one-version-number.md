@@ -98,6 +98,22 @@ in a PR, and typing it again at release time is where the tag, the APK's build
 name and the app's own number become three different numbers. Every job reads
 `VERSION`, and `make release-publish` refuses to tag anything else.
 
+### The page hands the file over itself
+
+The links cannot be `github.com` URLs. Android verifies that domain for the
+GitHub app, so a tap on the phone the page exists for opens the app on the
+release page instead of downloading anything.
+
+So the page links `/download/<asset>` on the daemon. That handler asks GitHub
+for the asset without following the answer, reads the `Location` — a signed
+`release-assets.githubusercontent.com` URL, which no app claims — and redirects
+the browser there. The bytes still come from GitHub and none pass through the
+tunnel; only the address the browser is asked to visit changes. Five asset names
+are known, and nothing else becomes a URL the daemon will fetch. If GitHub
+cannot be reached, the browser gets the `github.com` URL and follows the
+redirect itself: one tap that may open the app, which beats a download that
+never starts.
+
 ## What we are not doing
 
 - **Deriving the bump from conventional commits.** A `feat` should take the

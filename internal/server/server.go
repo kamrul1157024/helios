@@ -191,6 +191,9 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 
 	// Landing page (no auth — download links, exact root path only)
 	mux.HandleFunc("GET /{$}", handleLanding)
+	// The links on it: a redirect to GitHub's CDN, so Android does not hand the
+	// tap to the GitHub app instead of downloading.
+	mux.HandleFunc("GET /download/{asset}", s.handleDownload)
 
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)

@@ -21,59 +21,44 @@ func TestLandingSubstitutesEveryPlaceholder(t *testing.T) {
 	}
 }
 
-// Offline, rate-limited, or asked before the daemon has ever reached GitHub:
-// the page is still a working download page.
-func TestLandingWithoutATagFallsBackToLatest(t *testing.T) {
-	body := renderLanding("")
+// Every link on the page is one this daemon serves, and every one of them is an
+// asset the download handler will fetch. A github.com link here is the bug:
+// Android gives those to the GitHub app.
+func TestLandingLinksItsOwnDownloadPaths(t *testing.T) {
+	body := renderLanding("v3.9.0")
 
-	for _, url := range []string{
-		APKDownloadURL,
-		MacArm64DownloadURL,
-		MacIntelDownloadURL,
-		LinuxAppImageDownloadURL,
-		LinuxDebDownloadURL,
-	} {
-		if !strings.Contains(body, url) {
-			t.Errorf("landing page is missing the download link %s", url)
-		}
+	if strings.Contains(body, "github.com/kamrul1157024/helios/releases") {
+		t.Error("landing page links github.com directly")
 	}
-	if strings.Contains(body, "releases/download/") {
-		t.Error("landing page pinned a tag it was never given")
+	for asset := range releaseAssets {
+		if !strings.Contains(body, "/download/"+asset) {
+			t.Errorf("landing page is missing the download link for %s", asset)
+		}
 	}
 }
 
-// The version the page prints and the file it hands over come from the same
-// release, which is the whole point of resolving the tag.
-func TestLandingPinsTheTagItWasGiven(t *testing.T) {
-	body := renderLanding("v3.9.0")
-
-	want := "https://github.com/kamrul1157024/helios/releases/download/v3.9.0/helios.apk"
-	if !strings.Contains(body, want) {
-		t.Errorf("landing page does not link %s", want)
-	}
-	if strings.Contains(body, "releases/latest/download/") {
-		t.Error("landing page still links the unpinned form")
-	}
-	if !strings.Contains(body, "3.9.0") {
+// The page says which release it is offering, so a reader comparing it with a
+// daemon's version has something to compare.
+func TestLandingNamesTheRelease(t *testing.T) {
+	if !strings.Contains(renderLanding("v3.9.0"), "3.9.0") {
 		t.Error("landing page does not name the version it is serving")
+	}
+	// Offline, rate-limited, or asked before the daemon ever reached GitHub: a
+	// page that names no version beats one naming a version it invented.
+	if strings.Contains(renderLanding(""), "from your phone ·") {
+		t.Error("landing page named a version it was never given")
 	}
 }
 
 func TestLandingServesOK(t *testing.T) {
-	// Answered from the cache, so the test does not reach the network.
-	latestRelease.mu.Lock()
-	latestRelease.tag = "v3.9.0"
-	latestRelease.expires = time.Now().Add(time.Hour)
-	latestRelease.mu.Unlock()
-
 	rec := httptest.NewRecorder()
 	handleLanding(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if !strings.Contains(rec.Body.String(), "releases/download/v3.9.0/") {
-		t.Error("the handler did not use the resolved tag")
+	if !strings.Contains(rec.Body.String(), "/download/helios.apk") {
+		t.Error("the page the handler served has no download link")
 	}
 }
 
@@ -107,5 +92,10 @@ func TestReleaseResolverAnswersNothingWhenGitHubRefuses(t *testing.T) {
 	resolver := &releaseResolver{url: api.URL, client: api.Client()}
 	if got := resolver.get(context.Background()); got != "" {
 		t.Errorf("tag = %q, want empty", got)
+	}
+	// Cached as a failure, and briefly: the next page load must not wait on
+	// GitHub all over again.
+	if resolver.expires.After(time.Now().Add(releaseTTL)) {
+		t.Error("a failure was cached for as long as an answer")
 	}
 }

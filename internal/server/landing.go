@@ -28,12 +28,15 @@ func renderLanding(tag string) string {
 		version = " · " + strings.TrimPrefix(tag, "v")
 	}
 
+	// The daemon's own path rather than github.com: Android gives a github.com
+	// link to the GitHub app, which opens the release page instead of
+	// downloading. /download/<asset> resolves to the same file on GitHub's CDN.
 	return strings.NewReplacer(
-		"{{APK_URL}}", releaseAsset(tag, "helios.apk"),
-		"{{MAC_ARM64_URL}}", releaseAsset(tag, "helios-desktop-macos-arm64.dmg"),
-		"{{MAC_INTEL_URL}}", releaseAsset(tag, "helios-desktop-macos-x64.dmg"),
-		"{{LINUX_APPIMAGE_URL}}", releaseAsset(tag, "helios-desktop-linux-x86_64.AppImage"),
-		"{{LINUX_DEB_URL}}", releaseAsset(tag, "helios-desktop-linux-amd64.deb"),
+		"{{APK_URL}}", "/download/helios.apk",
+		"{{MAC_ARM64_URL}}", "/download/helios-desktop-macos-arm64.dmg",
+		"{{MAC_INTEL_URL}}", "/download/helios-desktop-macos-x64.dmg",
+		"{{LINUX_APPIMAGE_URL}}", "/download/helios-desktop-linux-x86_64.AppImage",
+		"{{LINUX_DEB_URL}}", "/download/helios-desktop-linux-amd64.deb",
 		"{{VERSION}}", version,
 	).Replace(landingHTML)
 }
