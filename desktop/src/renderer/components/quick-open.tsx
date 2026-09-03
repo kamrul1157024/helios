@@ -50,6 +50,10 @@ export function QuickOpen({
     placeholderData: keepPreviousData,
   })
   const matches = data?.matches ?? NO_MATCHES
+  // Where the daemon actually looked. A query naming a directory is searched
+  // there, so reporting the panel's root would name the wrong folder.
+  const searchedIn = data?.root ?? root
+  const fromPath = data?.resolved_from === 'path'
 
   // Back to the top whenever the question changes; arrowing applies to an
   // answer, and this is a different one.
@@ -107,16 +111,22 @@ export function QuickOpen({
               }}
             >
               <span className="quick-name">{basename(match.rel)}</span>
-              <span className="quick-dir">{dirOf(match.rel)}</span>
+              <span className="quick-dir">{dirOf(match.rel) || (fromPath ? searchedIn : '')}</span>
             </button>
           ))}
           {!error && matches.length === 0 && (
             <>
-              <p className="empty-note">No matching file under {root}.</p>
+              <p className="empty-note">
+                No matching file under {searchedIn}.
+                {!fromPath && ' Paste a full path to reach a file outside it.'}
+              </p>
               {onPickRoot && (
                 <RootSuggestions
                   root={root}
                   worktrees={worktrees}
+                  // Climbing widens the search and cannot hold what the folder
+                  // below it did not. Another checkout is the useful direction.
+                  offerParent={false}
                   onPick={(path) => {
                     onPickRoot(path)
                     setActive(0)

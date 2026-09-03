@@ -15,11 +15,11 @@ import (
 )
 
 func TestFuzzyScorePrefersFileNameMatches(t *testing.T) {
-	deep, ok := fuzzyScore("internal/server/files.go", "files")
+	deep, ok := fuzzyScore(newIndexEntry("internal/server/files.go"), "files")
 	if !ok {
 		t.Fatal("expected a match on the file name")
 	}
-	scattered, ok := fuzzyScore("fixtures/inline/lib/e/system.go", "files")
+	scattered, ok := fuzzyScore(newIndexEntry("fixtures/inline/lib/e/system.go"), "files")
 	if !ok {
 		t.Fatal("expected a scattered subsequence match")
 	}
@@ -27,19 +27,20 @@ func TestFuzzyScorePrefersFileNameMatches(t *testing.T) {
 		t.Fatalf("name match scored %d, scattered match %d", deep, scattered)
 	}
 
-	if _, ok := fuzzyScore("internal/server/files.go", "zzz"); ok {
+	if _, ok := fuzzyScore(newIndexEntry("internal/server/files.go"), "zzz"); ok {
 		t.Fatal("expected no match")
 	}
 }
 
-func TestRankPathsOrdersAndLimits(t *testing.T) {
+func TestRankEntriesOrdersAndLimits(t *testing.T) {
 	files := []string{
 		"internal/server/files.go",
 		"internal/server/filesearch.go",
 		"docs/specs/31-desktop-app.md",
 		"desktop/src/renderer/components/files.tsx",
 	}
-	matches := rankPaths(files, "files.go", 2)
+	entries := newIndexEntries(files)
+	matches := rankEntries(entries, "files.go", 2)
 	if len(matches) != 2 {
 		t.Fatalf("limit ignored: got %d matches", len(matches))
 	}
@@ -48,8 +49,35 @@ func TestRankPathsOrdersAndLimits(t *testing.T) {
 	}
 
 	// An empty query is the quick-open list before anyone types.
-	if all := rankPaths(files, "", 10); len(all) != len(files) {
+	if all := rankEntries(entries, "", 10); len(all) != len(files) {
 		t.Fatalf("empty query returned %d of %d files", len(all), len(files))
+	}
+}
+
+// The mask must never reject something the scan would have matched. A
+// disagreement is invisible in normal use: the row simply does not appear.
+func TestMaskNeverRejectsARealMatch(t *testing.T) {
+	files := []string{
+		"internal/server/files.go",
+		"docs/specs/57-vim-mode.md",
+		"desktop/src/renderer/components/quick-open.tsx",
+		"mobile/lib/screens/FileBrowser.dart",
+		"README.md",
+	}
+	entries := newIndexEntries(files)
+	queries := []string{"", "f", "vimmd", "57vim", "quickopen", "readme", "FILES.GO", "browser", "zzz", "/", "-", "_"}
+
+	for _, query := range queries {
+		survivors := map[string]bool{}
+		for _, match := range rankEntries(entries, query, len(files)) {
+			survivors[match.Rel] = true
+		}
+		q := strings.ToLower(query)
+		for _, entry := range entries {
+			if _, ok := fuzzyScore(entry, q); ok && !survivors[entry.rel] {
+				t.Fatalf("query %q: mask rejected %q, which the scan matches", query, entry.rel)
+			}
+		}
 	}
 }
 
@@ -126,6 +154,143 @@ func TestSearchFilesEndpoint(t *testing.T) {
 	// symlink — so the absolute path is checked against that, not against root.
 	if first["path"] != filepath.Join(body["root"].(string), "internal", "server", "files.go") {
 		t.Fatalf("path is not absolute: %v", first["path"])
+	}
+}
+
+// An absolute path is what someone pastes out of a chat message or a stack
+// trace. Before pathQuery it matched nothing at all: no candidate is absolute,
+// so every one failed on the leading separator.
+func TestSearchFilesResolvesAnAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "docs", "specs", "57-vim-mode.md"), "# vim")
+	write(t, filepath.Join(root, "docs", "specs", "56-versions.md"), "# versions")
+	write(t, filepath.Join(root, "internal", "server", "files.go"), "package server")
+
+	body := getJSON(t, (&PublicServer{}).handleSearchFiles, url.Values{
+		"path": {root},
+		"q":    {filepath.Join(root, "docs", "specs", "57-vim")},
+	})
+	if body["resolved_from"] != "path" {
+		t.Fatalf("expected the path rule to fire, got %v", body["resolved_from"])
+	}
+	matches := body["matches"].([]interface{})
+	if len(matches) != 1 {
+		t.Fatalf("expected one match, got %v", matches)
+	}
+	// Re-rooted at the directory that was named, so rel is relative to it.
+	if first := matches[0].(map[string]interface{}); first["rel"] != "57-vim-mode.md" {
+		t.Fatalf("wrong rel: %v", first["rel"])
+	}
+	// The search space is the named directory, not the whole tree.
+	if scanned := body["scanned"].(float64); scanned != 2 {
+		t.Fatalf("expected to scan the two files in docs/specs, scanned %v", scanned)
+	}
+}
+
+func TestSearchFilesResolvesATildePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	write(t, filepath.Join(home, "notes", "todo.md"), "- thing")
+
+	body := getJSON(t, (&PublicServer{}).handleSearchFiles, url.Values{
+		"path": {home},
+		"q":    {"~/notes/todo"},
+	})
+	if body["resolved_from"] != "path" {
+		t.Fatalf("expected the path rule to fire, got %v", body["resolved_from"])
+	}
+	matches := body["matches"].([]interface{})
+	if len(matches) != 1 {
+		t.Fatalf("expected one match, got %v", matches)
+	}
+	if first := matches[0].(map[string]interface{}); first["rel"] != "todo.md" {
+		t.Fatalf("wrong rel: %v", first["rel"])
+	}
+}
+
+// A trailing separator names the directory itself and nothing inside it yet.
+func TestSearchFilesListsADirectoryForAnEmptyTail(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "docs", "a.md"), "a")
+	write(t, filepath.Join(root, "docs", "b.md"), "b")
+	write(t, filepath.Join(root, "other", "c.md"), "c")
+
+	body := getJSON(t, (&PublicServer{}).handleSearchFiles, url.Values{
+		"path": {root},
+		"q":    {filepath.Join(root, "docs") + "/"},
+	})
+	if body["resolved_from"] != "path" {
+		t.Fatalf("expected the path rule to fire, got %v", body["resolved_from"])
+	}
+	if matches := body["matches"].([]interface{}); len(matches) != 2 {
+		t.Fatalf("expected the two files in docs, got %v", matches)
+	}
+}
+
+// Half a path is the normal state of a field being typed into, and it must not
+// blank the list: fall back to fuzzy rather than reporting nothing.
+func TestSearchFilesFallsBackWhenTheDirectoryIsNotReal(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "internal", "server", "files.go"), "package server")
+
+	body := getJSON(t, (&PublicServer{}).handleSearchFiles, url.Values{
+		"path": {root},
+		"q":    {"/no/such/place/filesgo"},
+	})
+	if body["resolved_from"] != "query" {
+		t.Fatalf("expected a fuzzy fallback, got %v", body["resolved_from"])
+	}
+	if matches := body["matches"].([]interface{}); len(matches) != 0 {
+		t.Fatalf("a path naming nothing should match nothing, got %v", matches)
+	}
+}
+
+// Agents write paths relative to the directory they are working in, which is
+// not always the session's. The directory then resolves and holds nothing, and
+// the name is the only usable part left.
+func TestSearchFilesFallsBackToTheNameWhenTheDirectoryHasNoSuchFile(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "docs", "empty.md"), "nothing here")
+	write(t, filepath.Join(root, "workspace", "helios", "docs", "specs", "57-vim-mode.md"), "# vim")
+
+	body := getJSON(t, (&PublicServer{}).handleSearchFiles, url.Values{
+		"path": {root},
+		// docs/ exists but does not hold the file: the path is wrong, the name is not.
+		"q": {filepath.Join(root, "docs", "57-vim-mode.md")},
+	})
+	if body["resolved_from"] != "query" {
+		t.Fatalf("expected the fallback to report a fuzzy search, got %v", body["resolved_from"])
+	}
+	matches := body["matches"].([]interface{})
+	if len(matches) != 1 {
+		t.Fatalf("expected the name to be found under the root, got %v", matches)
+	}
+	first := matches[0].(map[string]interface{})
+	if first["rel"] != "workspace/helios/docs/specs/57-vim-mode.md" {
+		t.Fatalf("wrong rel: %v", first["rel"])
+	}
+}
+
+// The guard that keeps the change from swallowing ordinary queries: a relative
+// path with separators is how people fuzzy-match today and must stay fuzzy.
+func TestSearchFilesKeepsRelativeQueriesFuzzy(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "internal", "terminal", "host.go"), "package terminal")
+	write(t, filepath.Join(root, "internal", "terminal", "session.go"), "package terminal")
+
+	body := getJSON(t, (&PublicServer{}).handleSearchFiles, url.Values{
+		"path": {root},
+		"q":    {"internal/terminal/host"},
+	})
+	if body["resolved_from"] != "query" {
+		t.Fatalf("a relative query must stay fuzzy, got %v", body["resolved_from"])
+	}
+	matches := body["matches"].([]interface{})
+	if len(matches) == 0 {
+		t.Fatal("expected the fuzzy matcher to find host.go")
+	}
+	if first := matches[0].(map[string]interface{}); first["rel"] != "internal/terminal/host.go" {
+		t.Fatalf("wrong first match: %v", first["rel"])
 	}
 }
 

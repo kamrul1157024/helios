@@ -495,7 +495,10 @@ export interface FileMatch {
 }
 
 export interface FileSearchResult {
+  /** Where the search ran. Not the requested root when the query named a directory. */
   root: string
+  /** `path` when the query named a real directory and was searched there. */
+  resolved_from: 'query' | 'path'
   matches: FileMatch[]
   scanned: number
   truncated: boolean
