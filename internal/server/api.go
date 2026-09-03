@@ -1483,19 +1483,25 @@ func (s *InternalServer) handleDeviceRevoke(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// Download URLs for the packaged clients, served on the landing page. Each one
-// points at the latest release rather than a tag, which is why the release
-// workflow strips the version out of the asset names.
+// Download URLs for the packaged clients, served on the landing page. These are
+// the unpinned form, resolved through GitHub's "latest" redirect — which is why
+// the release workflow strips the version out of the asset names. When the tag
+// is known the page links it directly instead, so the version it prints and the
+// file it hands over cannot come from different releases.
 var (
-	APKDownloadURL           = releaseAsset("helios.apk")
-	MacArm64DownloadURL      = releaseAsset("helios-desktop-macos-arm64.dmg")
-	MacIntelDownloadURL      = releaseAsset("helios-desktop-macos-x64.dmg")
-	LinuxAppImageDownloadURL = releaseAsset("helios-desktop-linux-x86_64.AppImage")
-	LinuxDebDownloadURL      = releaseAsset("helios-desktop-linux-amd64.deb")
+	APKDownloadURL           = releaseAsset("", "helios.apk")
+	MacArm64DownloadURL      = releaseAsset("", "helios-desktop-macos-arm64.dmg")
+	MacIntelDownloadURL      = releaseAsset("", "helios-desktop-macos-x64.dmg")
+	LinuxAppImageDownloadURL = releaseAsset("", "helios-desktop-linux-x86_64.AppImage")
+	LinuxDebDownloadURL      = releaseAsset("", "helios-desktop-linux-amd64.deb")
 )
 
-func releaseAsset(name string) string {
-	return "https://github.com/kamrul1157024/helios/releases/latest/download/" + name
+func releaseAsset(tag, name string) string {
+	const base = "https://github.com/kamrul1157024/helios/releases"
+	if tag == "" {
+		return base + "/latest/download/" + name
+	}
+	return base + "/download/" + tag + "/" + name
 }
 
 // ==================== Commands ====================

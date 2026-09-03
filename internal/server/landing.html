@@ -40,31 +40,34 @@
 <body>
 <div class="container">
   <h1>Helios</h1>
-  <p class="subtitle">Orchestrate AI coding agents from your phone</p>
+  <!-- The version is empty when GitHub could not be asked which release is
+       newest, so the sentence has to read without it. -->
+  <p class="subtitle">Orchestrate AI coding agents from your phone{{VERSION}}</p>
   <div class="downloads">
-    <!-- Opened in a new tab, and without a download attribute: the targets are
-         cross-origin, where browsers ignore that attribute anyway. -->
-    <a href="{{APK_URL}}" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
+    <!-- Same-origin paths on this daemon, which redirect to the file on
+         GitHub's CDN. A github.com link here would be handed to the GitHub app
+         on Android, which opens the release page instead of downloading. -->
+    <a href="{{APK_URL}}" class="btn btn-primary">
       <span class="label">Download for Android</span>
       <span class="meta">APK</span>
     </a>
     <p class="group">Desktop app</p>
     <div class="pair">
-      <a href="{{MAC_ARM64_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+      <a href="{{MAC_ARM64_URL}}" class="btn btn-secondary">
         <span class="label">macOS</span>
         <span class="meta">Apple silicon · DMG</span>
       </a>
-      <a href="{{MAC_INTEL_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+      <a href="{{MAC_INTEL_URL}}" class="btn btn-secondary">
         <span class="label">macOS</span>
         <span class="meta">Intel · DMG</span>
       </a>
     </div>
     <div class="pair">
-      <a href="{{LINUX_APPIMAGE_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+      <a href="{{LINUX_APPIMAGE_URL}}" class="btn btn-secondary">
         <span class="label">Linux</span>
         <span class="meta">AppImage</span>
       </a>
-      <a href="{{LINUX_DEB_URL}}" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+      <a href="{{LINUX_DEB_URL}}" class="btn btn-secondary">
         <span class="label">Linux</span>
         <span class="meta">.deb</span>
       </a>
