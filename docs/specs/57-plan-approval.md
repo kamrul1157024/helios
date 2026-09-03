@@ -13,7 +13,7 @@ The CLI's own dialog, in the same moment, offers three rows:
 
 ```
 Claude has written up a plan and is ready to execute. Would you like to proceed?
-❯ 1. Yes, auto-accept edits
+❯ 1. Yes, and use auto mode
   2. Yes, manually approve edits
   3. Tell Claude what to change
       shift+tab to approve with this feedback
@@ -24,13 +24,15 @@ Three things were lost. The mode the session continues in — the difference bet
 approving one plan and approving every edit that follows from it. The ability to disagree
 in words rather than with a bare no. And the plan itself, which nobody could read.
 
-## Where we are
+## Where we were
 
 | | Mode choice | Disagree with a reason | Plan readable |
 | --- | --- | --- | --- |
 | CLI's own dialog | yes, two rows | yes | yes |
 | Terminal overlay | no | no | no — raw JSON, 100 chars |
 | Mobile / desktop | no | no | no |
+
+Every row but the first says no. This change makes the other two say yes.
 
 ## What it looks like
 
@@ -67,8 +69,9 @@ After:
 │ 2. Carry the typed text into the deny message.                             │
 │ …14 more lines · ~/.claude/plans/give-plan-approval-its-own-rows.md        │
 │                                                                            │
-│ ❯ Yes, auto-accept edits                                                   │
-│     Claude edits files without asking for the rest of this session         │
+│ ❯ Yes, and use auto mode                                                   │
+│     Claude edits and runs commands without asking, for the rest of this    │
+│     session                                                                │
 │   Yes, manually approve edits                                              │
 │     Claude asks before each edit, as it does now                           │
 │   Tell Claude what to change                                               │
@@ -83,8 +86,9 @@ After Enter on the third row:
 ┌─ Ready to code? ───────────────────────────────────────────────────────────┐
 │ …14 more lines · ~/.claude/plans/give-plan-approval-its-own-rows.md        │
 │                                                                            │
-│   Yes, auto-accept edits                                                   │
-│     Claude edits files without asking for the rest of this session         │
+│   Yes, and use auto mode                                                   │
+│     Claude edits and runs commands without asking, for the rest of this    │
+│     session                                                                │
 │   Yes, manually approve edits                                              │
 │     Claude asks before each edit, as it does now                           │
 │ ❯ Tell Claude what to change                                               │
@@ -116,8 +120,8 @@ passed as one entry collapses into a single paragraph and the headings vanish.
 plan pushes the rows themselves off the screen. `planFilePath` is already in the hook
 payload, and it is where the whole plan lives.
 
-**The rows.** Two `setMode` rows. The text under each is `Prompt.Details`, which the
-overlay already draws and caps at two lines.
+**The rows.** Two mode rows. The text under each is `Prompt.Details`, which the overlay
+already draws and caps at two lines.
 
 **The third row is not an option.** It is `Prompt.AllowText` with
 `TextLabel: "Tell Claude what to change"`. Enter opens the field, Enter sends, and the
@@ -125,28 +129,41 @@ text becomes the hook's deny message.
 
 **Escape** still denies, and gets a written reason in place of `"Denied via helios"`.
 
-## Wire effects
+## A plan is the one permission a hook cannot decide
 
-| Row | Hook response |
-| --- | --- |
-| Yes, auto-accept edits | `allow` + `updatedPermissions: [{"type":"setMode","destination":"session","mode":"acceptEdits"}]` |
-| Yes, manually approve edits | `allow` + `setMode` `default` |
-| Tell Claude what to change | `deny`, `message` = a line naming the user, then their words |
-| Esc | `deny`, message says the plan was rejected and asks Claude to plan again |
+The CLI ignores an `allow` for `ExitPlanMode`. It shows its own dialog anyway and the plan
+does not start. That is measured, not assumed — see Evidence. So helios cannot answer a
+plan the way it answers `Bash`.
+
+What it does instead: it collects the answer on its own overlay, replies `ask` to get out
+of the CLI's way, and then presses the matching row on the CLI's dialog. The keystroke has
+to follow the reply rather than accompany it, because the CLI does not draw that dialog
+until the hook has answered. `answerPlanDialog` therefore runs in a goroutine and polls for
+up to 15 seconds, reusing `provider.ConfirmChoice` — the same screen-scraping row picker
+that answers the workspace trust dialog.
+
+The match is a substring of the CLI's row, kept to the words that carry the meaning:
+`auto mode` and `manually approve`. Failing to find it is survivable and deliberately
+quiet: the CLI's dialog is on screen, fully usable, and the person at the terminal answers
+it by hand. A renamed row degrades to that, not to a hung session.
+
+| Row | Hook response | Then |
+| --- | --- | --- |
+| Yes, and use auto mode | `ask` | Enter on the CLI's `auto mode` row; record `auto` |
+| Yes, manually approve edits | `ask` | Enter on the CLI's `manually approve` row; record `manual` |
+| Tell Claude what to change | `deny`, `message` = a line naming the user, then their words | — |
+| Esc | `deny`, message says the plan was rejected and asks Claude to plan again | — |
 
 A denied tool reaches the model as `Error: <message>`, so the feedback needs someone
 attached to it. Bare text there reads as a malfunction rather than as a person talking.
 
 ## The mode has to be written down twice
 
-`setMode` reaches the running CLI process and nothing else. Helios repeats
+The CLI applies the chosen mode to the running process and nothing else. Helios repeats
 `--permission-mode` from the session record on every resume
 (`internal/provider/claude/register.go:56`), so a session that left plan mode would wake
-back up inside it. Approving a plan therefore also writes the mode to the session record.
-
-The two vocabularies differ by one name: `setMode` calls the ask-each-time mode `default`,
-and `--permission-mode` calls it `manual`. `heliosMode` is that translation and refuses
-any mode helios cannot launch with.
+back up inside it. Approving a plan therefore also writes `auto` or `manual` to the session
+record.
 
 ## Evidence
 
@@ -176,13 +193,43 @@ Claude then said *"I see the feedback has changed the requirement"*, rewrote the
 called `ExitPlanMode` again. The disagree path already worked end to end. Helios simply
 never collected the words.
 
-## Not in this change
+**An `allow` for a plan is ignored.** The first cut of this change replied `allow` with a
+`setMode` permission update and stopped there. Run live, the plan never started and the
+CLI's own dialog came up regardless. Four runs in a single-hook environment — helios's own
+hooks are installed globally in `~/.claude/settings.json`, so the probe needed an isolated
+`HOME` to avoid two `PermissionRequest` hooks answering at once:
 
-The mobile and desktop cards keep their Approve / Deny pair
-(`mobile/lib/providers/cards.dart:267`). The daemon side is ready for them: the answer a
-surface posts to `/api/notifications/{id}/action` now carries `permission_updates` and
-`feedback`, so a phone can pick a mode or send a plan back in words as soon as the card
-draws the rows. That is the follow-up.
+| Probe | Result |
+| --- | --- |
+| `allow` for `ExitPlanMode` | ignored; dialog shown, plan not started |
+| `allow` + `setMode` for `ExitPlanMode` | ignored; same |
+| `allow` for `Bash` (control) | honoured; the command ran with no dialog |
+| `deny` with a message | honoured; Claude re-planned from the words |
+
+The control run is what makes this a statement about the tool rather than about the
+response shape: the same JSON, on `Bash`, works.
+
+**The dialog is drawn after the hook replies, not before.** A hook that blocked for 90
+seconds saw no dialog appear. So the keystroke cannot be sent alongside the reply.
+
+**The keystroke works, and the mode takes.** Sending `1` to the CLI's dialog started the
+plan in six seconds, and the `Write` that followed produced no `PermissionRequest` hook
+entry — the chosen mode was in force.
+
+## The phone and the desktop app get the same rows
+
+`mobile/lib/providers/cards.dart` and
+`desktop/src/renderer/components/notification-card.tsx` draw the permission card. For
+`ExitPlanMode` both now show the plan as prose, the two mode rows, and a feedback field, and
+post `plan_choice` or `feedback` to `/api/notifications/{id}/action`. Approve stays disabled
+until a row is picked; typing words relabels Deny to `Send back`.
+
+Both drop the quick rules and the edit field for a plan: the CLI sends no
+`permission_suggestions` for this tool, and there is no command to edit.
+
+The daemon does not care which surface answered. `handlePermissionAction` and the terminal
+build the same `permissionAnswer`, so a plan approved from a phone is pressed onto the CLI's
+dialog exactly as one approved at the keyboard is.
 
 ## Known limit
 

@@ -56,6 +56,25 @@ extension NotificationPayload on HeliosNotification {
   List<dynamic>? get permissionSuggestions =>
       payload?['permission_suggestions'] as List?;
 
+  /// A plan waiting for approval. On the wire it is a permission like any
+  /// other, but it is not a yes-or-no question: the answer picks the mode the
+  /// session continues in, or sends the plan back in words.
+  bool get isPlan => toolName == 'ExitPlanMode';
+
+  /// The plan as Claude wrote it, markdown and all.
+  String? get planText {
+    final ti = payload?['tool_input'];
+    if (ti is Map) return ti['plan'] as String?;
+    return null;
+  }
+
+  /// Where the whole plan lives on the machine running the agent.
+  String? get planFilePath {
+    final ti = payload?['tool_input'];
+    if (ti is Map) return ti['planFilePath'] as String?;
+    return null;
+  }
+
   // Payload accessors for a question
   List<dynamic>? get questions => payload?['questions'] as List?;
 

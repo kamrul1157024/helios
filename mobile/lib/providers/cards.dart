@@ -25,10 +25,32 @@ class PermissionCard extends StatefulWidget {
   State<PermissionCard> createState() => _PermissionCardState();
 }
 
+/// The two ways to say yes to a plan, worded as the CLI words them, and the
+/// name each one travels under. The daemon presses the matching row on the
+/// CLI's own dialog, so the phone sends the name and not the label.
+const _planRows = [
+  (
+    choice: 'auto',
+    label: 'Yes, and use auto mode',
+    detail:
+        'Claude edits and runs commands without asking, '
+        'for the rest of this session',
+  ),
+  (
+    choice: 'manual',
+    label: 'Yes, manually approve edits',
+    detail: 'Claude asks before each edit, as it does now',
+  ),
+];
+
 class _PermissionCardState extends State<PermissionCard> {
   final Map<String, TextEditingController> _editControllers = {};
+  final TextEditingController _feedback = TextEditingController();
   bool _isEditing = false;
   int? _selectedPermissionIdx;
+
+  /// Which way to say yes to a plan, or null while nothing is picked.
+  String? _planChoice;
 
   HeliosNotification get n => widget.notification;
 
@@ -37,12 +59,15 @@ class _PermissionCardState extends State<PermissionCard> {
     for (final c in _editControllers.values) {
       c.dispose();
     }
+    _feedback.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final suggestions = n.permissionSuggestions;
+    // A plan gets neither the quick rules nor the edit field: there is no
+    // command to edit, and the CLI sends no suggestions for this tool.
+    final suggestions = n.isPlan ? null : n.permissionSuggestions;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -88,7 +113,9 @@ class _PermissionCardState extends State<PermissionCard> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    n.displayTitle,
+                    // A tool name is the right label for Bash. For this tool
+                    // it names the mechanism, not the decision.
+                    n.isPlan ? 'Ready to code?' : n.displayTitle,
                     style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 14,
@@ -106,7 +133,9 @@ class _PermissionCardState extends State<PermissionCard> {
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(8),
               ),
-              constraints: const BoxConstraints(maxHeight: 160),
+              // A plan is meant to be read before it is answered, so it gets
+              // more of the card than a command does.
+              constraints: BoxConstraints(maxHeight: n.isPlan ? 280 : 160),
               child: SingleChildScrollView(
                 child: Text(
                   _displayInput(),
@@ -202,8 +231,27 @@ class _PermissionCardState extends State<PermissionCard> {
                 ),
               ),
             ],
+            // How to say yes to a plan, and how to disagree with one
+            if (n.isPlan) ...[
+              const SizedBox(height: 12),
+              ..._planRows.map(_planRow),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _feedback,
+                maxLines: 3,
+                minLines: 1,
+                style: const TextStyle(fontSize: 13),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Tell Claude what to change',
+                  hintText: 'Send the plan back in your own words',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
             // Edit input
-            if (_isEditing) ...[
+            if (_isEditing && !n.isPlan) ...[
               const SizedBox(height: 8),
               TextField(
                 controller: _editControllers.putIfAbsent(
@@ -226,36 +274,87 @@ class _PermissionCardState extends State<PermissionCard> {
               children: [
                 Expanded(
                   child: FilledButton(
-                    onPressed: _approve,
+                    // A plan cannot be approved without saying which way, so
+                    // the button waits for a row.
+                    onPressed: n.isPlan && _planChoice == null
+                        ? null
+                        : _approve,
                     child: const Text('Approve'),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: FilledButton(
-                    onPressed: () =>
-                        widget.sse.sendAction(n.id, {'action': 'deny'}),
+                    onPressed: _deny,
                     style: FilledButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.error,
                       foregroundColor: Theme.of(context).colorScheme.onError,
                     ),
-                    child: const Text('Deny'),
+                    // Words turn a refusal into a re-plan, so the button says
+                    // what it will do with them.
+                    child: Text(
+                      n.isPlan && _feedback.text.trim().isNotEmpty
+                          ? 'Send back'
+                          : 'Deny',
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Center(
-              child: TextButton(
-                onPressed: () {
-                  setState(() {
-                    _isEditing = !_isEditing;
-                  });
-                },
-                child: Text(
-                  _isEditing ? 'Cancel editing' : 'Edit before approving',
-                  style: const TextStyle(fontSize: 12),
+            if (!n.isPlan) ...[
+              const SizedBox(height: 4),
+              Center(
+                child: TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isEditing = !_isEditing;
+                    });
+                  },
+                  child: Text(
+                    _isEditing ? 'Cancel editing' : 'Edit before approving',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// One way of saying yes to a plan, with the mode it leaves behind spelled
+  /// out under it.
+  Widget _planRow(({String choice, String label, String detail}) row) {
+    final selected = _planChoice == row.choice;
+    return InkWell(
+      onTap: () => setState(() => _planChoice = row.choice),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(row.label, style: const TextStyle(fontSize: 13)),
+                  Text(
+                    row.detail,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -264,8 +363,21 @@ class _PermissionCardState extends State<PermissionCard> {
     );
   }
 
+  /// Refuse, with the user's words when they wrote any. Claude re-plans from
+  /// them rather than stopping.
+  void _deny() {
+    final body = <String, dynamic>{'action': 'deny'};
+    final text = _feedback.text.trim();
+    if (text.isNotEmpty) body['feedback'] = text;
+    widget.sse.sendAction(n.id, body);
+  }
+
   void _approve() {
     final body = <String, dynamic>{'action': 'approve'};
+
+    if (_planChoice != null) {
+      body['plan_choice'] = _planChoice;
+    }
 
     if (_isEditing && _editControllers.containsKey(n.id)) {
       final edited = _editControllers[n.id]!.text;
@@ -294,6 +406,11 @@ class _PermissionCardState extends State<PermissionCard> {
   /// is shown as it is, and any other input as one field per block with its
   /// multi-line values printed as the lines they are.
   String _displayInput() {
+    // A plan is prose. Showing it under a "plan:" key, or as JSON, would put
+    // escapes through the one thing on the card meant to be read.
+    final plan = n.planText;
+    if (plan != null && plan.trim().isNotEmpty) return plan.trimRight();
+
     final ti = n.payload?['tool_input'];
     if (ti is String && ti.isNotEmpty) return ti;
     if (ti is Map) {

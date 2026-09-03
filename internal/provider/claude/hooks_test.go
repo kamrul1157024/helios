@@ -45,6 +45,7 @@ type fakeBackend struct {
 	keys    []string // "sessionID:key"
 	texts   []string // "sessionID:text"
 	evicted map[string]bool
+	screen  string
 }
 
 func newFakeBackend() *fakeBackend {
@@ -115,7 +116,37 @@ func (f *fakeBackend) SendKey(sessionID string, k backend.Key) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.keys = append(f.keys, sessionID+":"+string(k))
+	if k == backend.KeyUp || k == backend.KeyDown {
+		f.screen = moveHighlight(f.screen, k)
+	}
 	return nil
+}
+
+// moveHighlight walks the ❯ marker one row, so a fake screen answers arrows the
+// way a real dialog does. A picker that reads the screen between keystrokes
+// arrows forever without it.
+func moveHighlight(screen string, k backend.Key) string {
+	lines := strings.Split(screen, "\n")
+	at := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "❯") {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return screen
+	}
+	to := at + 1
+	if k == backend.KeyUp {
+		to = at - 1
+	}
+	if to < 0 || to >= len(lines) || strings.TrimSpace(lines[to]) == "" {
+		return screen
+	}
+	lines[at] = strings.Replace(lines[at], "❯ ", "  ", 1)
+	lines[to] = "❯ " + strings.TrimLeft(lines[to], " ")
+	return strings.Join(lines, "\n")
 }
 
 // sentKeys returns a copy of the recorded keystrokes.
@@ -133,9 +164,19 @@ func (f *fakeBackend) Kill(sessionID string) error {
 	return nil
 }
 
-// Capture reports an empty screen: nothing in this package reads a session's
-// screen any more.
-func (f *fakeBackend) Capture(sessionID string) (string, error) { return "", nil }
+// Capture reports whatever the test put on the session's screen. An approved
+// plan is answered on the CLI's own dialog, which means reading it first.
+func (f *fakeBackend) Capture(sessionID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.screen, nil
+}
+
+func (f *fakeBackend) setScreen(text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.screen = text
+}
 
 func (f *fakeBackend) Rename(sessionID, name string) error {
 	f.renames = append(f.renames, sessionID+":"+name)

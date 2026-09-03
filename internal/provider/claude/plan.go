@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
+	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
@@ -19,30 +21,22 @@ import (
 // back with a reason. See docs/specs/57-plan-approval.md.
 const exitPlanModeTool = "ExitPlanMode"
 
-// The rows helios draws for a plan, in the CLI's own words. The first two
+// The rows helios draws for a plan, worded as the CLI words them. The first two
 // differ only in the mode they leave the session in. The third is not a choice
 // at all: it labels the row that opens the answer field.
 const (
-	planAcceptEdits = "Yes, auto-accept edits"
+	planAutoMode    = "Yes, and use auto mode"
 	planManualEdits = "Yes, manually approve edits"
 	planFeedback    = "Tell Claude what to change"
 )
 
 const (
-	planAcceptEditsDetail = "Claude edits files without asking for the rest of this session"
+	planAutoModeDetail    = "Claude edits and runs commands without asking, for the rest of this session"
 	planManualEditsDetail = "Claude asks before each edit, as it does now"
 )
 
-// The permission modes the two "Yes" rows switch a session to, spelled the way
-// the CLI's setMode update spells them. Note that these are not the names
-// helios stores; see heliosMode.
-const (
-	modeAcceptEdits = "acceptEdits"
-	modeDefault     = "default"
-)
-
-// planTitle names the box after the decision rather than after the tool. A
-// tool name is the right label for Bash. Here it would name the mechanism.
+// planTitle names the box after the decision rather than after the tool. A tool
+// name is the right label for Bash. Here it would name the mechanism.
 const planTitle = "Ready to code?"
 
 // planPrompt is the approval a plan gets.
@@ -50,8 +44,8 @@ func planPrompt(input *hookInput) hitl.Prompt {
 	return hitl.Prompt{
 		Title:     planTitle,
 		Body:      planBody(input.ToolInput),
-		Choices:   []string{planAcceptEdits, planManualEdits},
-		Details:   []string{planAcceptEditsDetail, planManualEditsDetail},
+		Choices:   []string{planAutoMode, planManualEdits},
+		Details:   []string{planAutoModeDetail, planManualEditsDetail},
 		AllowText: true,
 		TextLabel: planFeedback,
 	}
@@ -126,22 +120,32 @@ func planHeadline(plan string) string {
 	return ""
 }
 
-// setModeUpdate is the permission update that leaves the session in mode.
-//
-// The shape is the CLI's own: its plan dialog sends exactly this through
-// permissionUpdates when the user picks one of the "Yes" rows. Measured against
-// Claude Code 2.1.259.
-func setModeUpdate(mode string) json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(
-		`[{"type":"setMode","destination":"session","mode":%q}]`, mode))
+// The two ways to say yes to a plan, as they travel between surfaces. Short
+// names rather than the row labels, because the labels are the CLI's copy and
+// change with its releases.
+const (
+	planChoiceAuto   = "auto"
+	planChoiceManual = "manual"
+)
+
+// planChoiceOf names the answer a row stands for, or "" for a row that is not
+// one of the two ways to say yes.
+func planChoiceOf(choice string) string {
+	switch choice {
+	case planAutoMode:
+		return planChoiceAuto
+	case planManualEdits:
+		return planChoiceManual
+	}
+	return ""
 }
 
-// approvedWithMode is a "Yes" row: the plan is approved, and the session
-// continues in mode rather than in the mode plan mode was entered from.
-func approvedWithMode(mode string) notifications.Decision {
+// approvedWithPlanChoice is a "Yes" row. The mode rides along because the CLI
+// does not take it from the hook; see answerPlanDialog.
+func approvedWithPlanChoice(choice string) notifications.Decision {
 	return notifications.Decision{
 		Status:   "approved",
-		Response: answerJSON(permissionAnswer{PermissionUpdates: setModeUpdate(mode)}),
+		Response: answerJSON(permissionAnswer{PlanChoice: choice}),
 	}
 }
 
@@ -153,53 +157,70 @@ func deniedWithFeedback(text string) notifications.Decision {
 	}
 }
 
-// recordSessionMode writes a mode switch back to the session record.
+// What each plan choice matches on the CLI's own dialog, and the permission
+// mode helios records for it.
 //
-// The CLI applies a setMode update to the running process only. Helios repeats
-// --permission-mode from the record on every resume (see ResumeArgs), so
-// without this a session that left plan mode would wake back up inside it.
-func recordSessionMode(ctx *provider.HookContext, sessionID string, updates json.RawMessage) {
-	mode := heliosMode(setModeOf(updates))
-	if mode == "" {
+// The match is a substring of the CLI's row, kept to the words that carry the
+// meaning. Its full copy is "Yes, and use auto mode", and that wording is the
+// CLI's to change.
+var planChoices = map[string]struct {
+	dialogRow string
+	mode      string
+}{
+	planChoiceAuto:   {dialogRow: "auto mode", mode: "auto"},
+	planChoiceManual: {dialogRow: "manually approve", mode: "manual"},
+}
+
+// planDialogWait is how long helios keeps looking for the CLI's dialog.
+//
+// The hook has to answer before the dialog is drawn — the CLI holds it back
+// until the hook replies — so the reply and the keystroke cannot be sent
+// together. Measured at well under a second; the rest is slack.
+const (
+	planDialogWait = 15 * time.Second
+	planDialogPoll = 150 * time.Millisecond
+)
+
+// answerPlanDialog picks a row on the CLI's own plan dialog.
+//
+// A plan is the one permission the CLI will not let a hook decide: an "allow"
+// for ExitPlanMode is ignored and the dialog is shown regardless. Measured
+// against Claude Code 2.1.259 — an allow, with and without a setMode permission
+// update, left the dialog up and the plan unstarted. So helios collects the
+// answer on its own overlay, replies "ask" to get out of the CLI's way, and
+// presses the row the user chose.
+//
+// Failing here is survivable and deliberately quiet: the CLI's dialog is on
+// screen, fully usable, and the person at the terminal can answer it. That is
+// also the behaviour if the CLI renames a row out from under the match.
+func answerPlanDialog(b backend.Backend, sessionID, choice string) {
+	row, ok := planChoices[choice]
+	if !ok {
 		return
 	}
-	if err := ctx.DB.UpdateSessionPermissionMode(sessionID, mode); err != nil {
-		log.Printf("hook: record permission mode %q for %s: %v", mode, sessionID, err)
-	}
-}
 
-// setModeOf returns the mode a set of permission updates switches to, or ""
-// when none of them does. Rules and directories are not a mode change.
-func setModeOf(updates json.RawMessage) string {
-	if len(updates) == 0 {
-		return ""
-	}
-	var list []struct {
-		Type string `json:"type"`
-		Mode string `json:"mode"`
-	}
-	if err := json.Unmarshal(updates, &list); err != nil {
-		return ""
-	}
-	for _, u := range list {
-		if u.Type == "setMode" && u.Mode != "" {
-			return u.Mode
+	deadline := time.Now().Add(planDialogWait)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if lastErr = provider.ConfirmChoice(b, sessionID, row.dialogRow); lastErr == nil {
+			return
 		}
+		time.Sleep(planDialogPoll)
 	}
-	return ""
+	log.Printf("hook: answer the plan dialog for %s with %q: %v", sessionID, row.dialogRow, lastErr)
 }
 
-// heliosMode maps the CLI's name for a permission mode onto the one helios
-// stores, and returns "" for a mode helios cannot launch with.
+// recordPlanMode writes an approved plan's mode to the session record.
 //
-// The two vocabularies agree on all but one name: setMode calls the
-// ask-each-time mode "default", and --permission-mode calls it "manual".
-func heliosMode(cliMode string) string {
-	if cliMode == modeDefault {
-		return "manual"
+// The CLI applies the mode to the running process only. Helios repeats
+// --permission-mode from the record on every resume (see ResumeArgs), so
+// without this a session that left plan mode would wake back up inside it.
+func recordPlanMode(ctx *provider.HookContext, sessionID, choice string) {
+	row, ok := planChoices[choice]
+	if !ok {
+		return
 	}
-	if ValidPermissionMode(cliMode) {
-		return cliMode
+	if err := ctx.DB.UpdateSessionPermissionMode(sessionID, row.mode); err != nil {
+		log.Printf("hook: record permission mode %q for %s: %v", row.mode, sessionID, err)
 	}
-	return ""
 }

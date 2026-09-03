@@ -94,6 +94,91 @@ function readableInput(fields: Record<string, unknown> | null): string | null {
     .join('\n\n')
 }
 
+/**
+ * The two ways to say yes to a plan, worded as the CLI words them, and the
+ * name each one travels under.
+ *
+ * The name rather than the label, because the daemon presses the matching row
+ * on the CLI's own dialog and that copy is the CLI's to change.
+ */
+const planRows = [
+  {
+    choice: 'auto',
+    label: 'Yes, and use auto mode',
+    detail: 'Claude edits and runs commands without asking, for the rest of this session',
+  },
+  {
+    choice: 'manual',
+    label: 'Yes, manually approve edits',
+    detail: 'Claude asks before each edit, as it does now',
+  },
+] as const
+
+/**
+ * A plan waiting for approval.
+ *
+ * On the wire it is a permission like any other, but it is not a yes-or-no
+ * question: the answer picks the mode the session continues in, or sends the
+ * plan back in words. See docs/specs/57-plan-approval.md.
+ */
+function PlanCard({
+  plan,
+  busy,
+  act,
+}: {
+  plan: string
+  busy: boolean
+  act: (body: Record<string, unknown>) => Promise<void>
+}): JSX.Element {
+  const [choice, setChoice] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState('')
+  const words = feedback.trim()
+
+  return (
+    <>
+      <pre className="code">{plan}</pre>
+
+      {planRows.map((row) => (
+        <button
+          key={row.choice}
+          className={`option ${choice === row.choice ? 'chosen' : ''}`}
+          onClick={() => setChoice(row.choice)}
+        >
+          <span className="option-label">{row.label}</span>
+          <span className="option-desc">{row.detail}</span>
+        </button>
+      ))}
+
+      <label className="field">
+        <span>Tell Claude what to change</span>
+        <input
+          value={feedback}
+          placeholder="Send the plan back in your own words"
+          onChange={(event) => setFeedback(event.target.value)}
+        />
+      </label>
+
+      <Actions busy={busy}>
+        {/* A plan cannot be approved without saying which way. */}
+        <button
+          disabled={choice === null}
+          onClick={() => void act({ action: 'approve', plan_choice: choice })}
+        >
+          Approve
+        </button>
+        {/* Words turn a refusal into a re-plan, so the button says what it
+            will do with them. */}
+        <button
+          className="ghost"
+          onClick={() => void act(words === '' ? { action: 'deny' } : { action: 'deny', feedback: words })}
+        >
+          {words === '' ? 'Deny' : 'Send back'}
+        </button>
+      </Actions>
+    </>
+  )
+}
+
 function PermissionCard({
   payload,
   busy,
@@ -117,6 +202,13 @@ function PermissionCard({
   const [editing, setEditing] = useState(false)
   const [edited, setEdited] = useState(original)
   const [rule, setRule] = useState<number | null>(null)
+
+  // A plan is prose and its answer is not a yes-or-no. The state above is
+  // declared first so the hook order holds whichever card is drawn.
+  const plan = typeof fields?.plan === 'string' ? fields.plan : null
+  if (payload.tool_name === 'ExitPlanMode' && plan !== null) {
+    return <PlanCard plan={plan.trimEnd()} busy={busy} act={act} />
+  }
 
   const approve = (): void => {
     const body: Record<string, unknown> = { action: 'approve' }
