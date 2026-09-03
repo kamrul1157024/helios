@@ -26,7 +26,7 @@ import {
   type Session,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Console, Cpu, Memory, Plus, Search, Sort } from './icons.tsx'
+import { Chevron, Console, Cpu, Memory, Pencil, Plus, Search, Sort } from './icons.tsx'
 import {
   buildCwdTree,
   buildTree,
@@ -184,6 +184,7 @@ export function Sidebar({
   const jobSessions = useHostJobSessions()
   const autoRunsOpen = useStore((s) => s.autoRunsOpen)
   const selection = useStore((s) => s.selection)
+  const renamingSession = useStore((s) => s.renamingSession)
   const mode = useStore((s) => s.sidebarMode)
   // Its own search, because the two lists hold different things and a query
   // typed against one is meaningless against the other.
@@ -544,6 +545,10 @@ export function Sidebar({
                 // header's own dragend never fires, because it is not the source.
                 setGroupDrop(null)
               }}
+              editing={
+                renamingSession?.hostId === host.id &&
+                renamingSession.sessionId === session.session_id
+              }
               onContextMenu={(x, y) => setMenu({ kind: 'session', hostId: host.id, session, x, y })}
               onDropBefore={(draggedId) => {
                 // The id off the drag itself, not React state: the drop can
@@ -603,7 +608,7 @@ export function Sidebar({
                   }}
                 >
                   {editing ? (
-                    <NewGroupField
+                    <InlineNameField
                       initial={node.name}
                       onCancel={() => setRenaming(null)}
                       onCommit={(name) => {
@@ -754,7 +759,7 @@ export function Sidebar({
                         click mounts two fields, the second steals focus from
                         the first, and the first's blur cancels both. */}
                     {real && creatingIn === `${host.id}:${node.key}` && (
-                      <NewGroupField
+                      <InlineNameField
                         onCancel={() => setCreatingIn(null)}
                         onCommit={(name) => {
                           setCreatingIn(null)
@@ -823,7 +828,7 @@ export function Sidebar({
               </div>
 
               {!isCollapsed && groupMode === 'manual' && creatingIn === `${host.id}:` && (
-                <NewGroupField
+                <InlineNameField
                   onCancel={() => setCreatingIn(null)}
                   onCommit={(name) => {
                     setCreatingIn(null)
@@ -869,6 +874,10 @@ export function Sidebar({
                         draggable={false}
                         dragging={false}
                         accepts={false}
+                        editing={
+                          renamingSession?.hostId === host.id &&
+                          renamingSession.sessionId === session.session_id
+                        }
                         onDragStart={() => {}}
                         onDragEnd={() => {}}
                         onContextMenu={(x, y) =>
@@ -987,16 +996,20 @@ function groupActions(hostId: string, key: string, onRename: () => void): MenuAc
 }
 
 /**
- * Names a new group, in place.
+ * Names a group or a session, in place.
  *
  * Inline rather than a dialog: the point of a `+` on a header is that the
  * parent is already chosen by where you clicked, and a modal would ask again
- * with a field the header could just have shown.
+ * with a field the header could just have shown. The same holds for a row —
+ * and a dialog is not on offer anyway, since Electron does not implement
+ * window.prompt.
  */
-function NewGroupField({
+function InlineNameField({
   onCommit,
   onCancel,
   initial = '',
+  className = 'new-group',
+  placeholder = 'Group name',
 }: {
   onCommit: (name: string) => void
   onCancel: () => void
@@ -1004,6 +1017,8 @@ function NewGroupField({
    *  one. Seeded into state rather than left as a defaultValue, so the field
    *  stays controlled — see below for what uncontrolled cost. */
   initial?: string
+  className?: string
+  placeholder?: string
 }): JSX.Element {
   const [draft, setDraft] = useState(initial)
   const field = useRef<HTMLInputElement | null>(null)
@@ -1031,8 +1046,8 @@ function NewGroupField({
   return (
     <input
       ref={field}
-      className="new-group"
-      placeholder="Group name"
+      className={className}
+      placeholder={placeholder}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onKeyDown={(event) => {
@@ -1112,6 +1127,7 @@ function SessionRow({
   draggable,
   dragging,
   accepts,
+  editing,
   onDragStart,
   onDragEnd,
   onContextMenu,
@@ -1126,6 +1142,9 @@ function SessionRow({
   dragging: boolean
   /** A drag is in flight and this row is somewhere it may be dropped. */
   accepts: boolean
+  /** The title is a field rather than a label, because this is the row being
+   *  renamed. */
+  editing: boolean
   onDragStart: () => void
   onDragEnd: () => void
   onContextMenu: (x: number, y: number) => void
@@ -1146,7 +1165,10 @@ function SessionRow({
   return (
     <article
       className={classes.filter(Boolean).join(' ')}
-      draggable={draggable}
+      // A draggable ancestor takes the pointer off the field inside it: the
+      // browser starts a drag instead of placing the caret, so a title cannot
+      // be clicked into while the row can be moved.
+      draggable={draggable && !editing}
       onDragStart={(event) => {
         // Firefox and Chromium both want data on the transfer or the drag never
         // starts; the id is also what makes the drop unambiguous.
@@ -1179,16 +1201,34 @@ function SessionRow({
       }}
       // A terminated session has to be resumed before it has a terminal worth
       // opening, so the shortcut resumes instead of waking one it will refuse.
-      onDoubleClick={() =>
+      // Double-clicking a word in the field is how you edit one word of a
+      // title, and it must not also open the terminal underneath.
+      onDoubleClick={() => {
+        if (editing) return
         void (terminated
           ? store.resumeSession(hostId, session.session_id)
           : store.openTerminal(hostId, session, !live))
-      }
+      }}
     >
       <div className="row-main">
-        <span className="row-title" title={label}>
-          {label}
-        </span>
+        {editing ? (
+          <InlineNameField
+            className="row-rename"
+            placeholder={label}
+            initial={session.title ?? ''}
+            onCancel={() => store.endSessionRename()}
+            onCommit={(title) => {
+              store.endSessionRename()
+              if (title !== (session.title ?? '')) {
+                void store.patchSessionField(hostId, session.session_id, { title })
+              }
+            }}
+          />
+        ) : (
+          <span className="row-title" title={label}>
+            {label}
+          </span>
+        )}
         {cold && (
           <span className="cold-mark" title="Cold — no live terminal">
             ⚯
@@ -1211,6 +1251,22 @@ function SessionRow({
             is what makes hovering feel jarring. A terminated one gets the word,
             because resuming is the only move it has left and it should not have
             to be hovered to say so. */}
+        {/* Held in the row like the action beside it, so the title does not
+            shift when the pointer arrives. Hidden while the field is up: it
+            opens what is already open. */}
+        {!editing && (
+          <button
+            className="row-act"
+            aria-label="Rename session"
+            title="Rename"
+            onClick={(event) => {
+              event.stopPropagation()
+              store.renameSession(hostId, session.session_id)
+            }}
+          >
+            <Pencil />
+          </button>
+        )}
         {terminated ? (
           <button
             className="row-btn resume"

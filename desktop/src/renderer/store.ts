@@ -185,6 +185,12 @@ export interface State {
   tabs: Tab[]
   selection: Selection | null
   /**
+   * The session whose title is being typed, if any. Held here rather than in
+   * the sidebar because the row menu is shared with the detail panel's ⋯, and
+   * both start the same edit on the same row.
+   */
+  renamingSession: Selection | null
+  /**
    * Which list the sidebar is showing.
    *
    * Sessions and schedules are two lists of the same shape — grouped by host,
@@ -391,6 +397,7 @@ const initial: State = {
   hostStatus: {},
   tabs: [],
   selection: null,
+  renamingSession: null,
   sidebarMode: 'sessions',
   scheduleQuery: '',
   autoRunsOpen: {},
@@ -601,6 +608,20 @@ class Store {
       .map((session) => session.session_id)
     await api(hostId).setSessionOrder(ordered)
     await this.invalidateSessions(hostId)
+  }
+
+  /**
+   * Puts one row's title into a field, where the row is.
+   *
+   * The window.prompt this replaces threw: Electron does not implement it, so
+   * Rename was a menu item that did nothing at all.
+   */
+  renameSession(hostId: string, sessionId: string): void {
+    this.set({ renamingSession: { hostId, sessionId } })
+  }
+
+  endSessionRename(): void {
+    if (this.state.renamingSession) this.set({ renamingSession: null })
   }
 
   /**

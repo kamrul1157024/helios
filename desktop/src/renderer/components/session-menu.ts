@@ -97,15 +97,11 @@ export function sessionActions(
 
   actions.push(
     {
-      // Prompted rather than edited in place, as New group above is. The title
-      // used to be an input in the detail header; with the header gone this is
-      // the only way to set one by hand.
-      label: 'Rename…',
-      run: () => {
-        const title = window.prompt('Name the session', session.title ?? '')?.trim()
-        if (title === undefined || title === (session.title ?? '')) return
-        void store.patchSessionField(hostId, session.session_id, { title })
-      },
+      // Edited on the row itself, where a group header is renamed. Prompting
+      // was not a choice between two designs: window.prompt throws in Electron,
+      // so this item did nothing until the field replaced it.
+      label: 'Rename',
+      run: () => store.renameSession(hostId, session.session_id),
     },
     {
       label: 'Regenerate title',

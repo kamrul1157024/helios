@@ -1158,6 +1158,23 @@ small {
   text-overflow: ellipsis;
 }
 
+/* The title as a field, sized like the label it stands in for so the row keeps
+   its height and the words do not move on the way in and out. */
+.row-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  margin: -1px 0;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 /* A session that has ended is still worth listing and no longer worth reading
    first. */
 .session-row.terminated .row-title,
