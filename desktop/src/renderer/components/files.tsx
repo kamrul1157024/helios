@@ -95,12 +95,15 @@ export function FilesPanel({
   sessionId,
   cwd,
   visible = true,
+  beside = false,
 }: {
   hostId: string
   sessionId: string
   cwd: string
   /** False while another tab is showing. */
   visible?: boolean
+  /** True while the panel is a pane of its own, beside another. */
+  beside?: boolean
 }): JSX.Element {
   const [rootOverride, setRootOverride] = useState<string | null>(null)
   const sessionRoot = useMemo(() => cwd.replace(/\/+$/, '') || '/', [cwd])
@@ -289,6 +292,28 @@ export function FilesPanel({
       ) as Record<string, ReadingPosition>,
     })
   }, [memory, loadedFor, rootOverride, tabs, activePath, expanded, side, viewTick])
+
+  /**
+   * The tree answers to where the panel is, not to how the file was opened.
+   *
+   * A pane beside the transcript is half a width already, and a tree in it
+   * takes that half again from the file being read. Edge-triggered rather than
+   * derived, so the toggle below still wins for the reader who wants the tree
+   * back for a moment; the panel takes the width back when the pane closes.
+   *
+   * Declared after the restore above so it has the last word on mount: a panel
+   * that opens straight into a side pane collapses, rather than putting a saved
+   * tree into half a pane. One that opens in front keeps whatever it saved,
+   * which is why an unchanged `false` does nothing here.
+   */
+  const wasBeside = useRef<boolean | null>(null)
+  useEffect(() => {
+    const was = wasBeside.current
+    wasBeside.current = beside
+    if (was === beside) return
+    if (beside) setSide(null)
+    else if (was !== null) setSide('tree')
+  }, [beside])
 
   const save = useCallback(
     async (path: string, quiet = true): Promise<void> => {

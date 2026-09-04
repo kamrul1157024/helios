@@ -16,6 +16,7 @@ import { sessionActions } from './session-menu.ts'
 import { SettingsPane } from './settings.tsx'
 import { StatusLine } from './status-line.tsx'
 import {
+  isBeside,
   isVisible,
   panelItem,
   panelOf,
@@ -297,6 +298,7 @@ export function Detail(): JSX.Element {
                     pending={pending}
                     visible={owner.active === item}
                     focused={owner.id === layout.focused}
+                    beside={isBeside(layout, item)}
                   />
                 </PanelBoundary>
               </div>
@@ -420,6 +422,7 @@ function ItemContent({
   pending,
   visible,
   focused,
+  beside,
 }: {
   item: ItemId
   hostId: string
@@ -428,6 +431,8 @@ function ItemContent({
   pending: number
   visible: boolean
   focused: boolean
+  /** True when this item has a pane of its own, beside another. */
+  beside: boolean
 }): JSX.Element | null {
   // Terminals are drawn by the deck in Detail, which outlives the session being
   // selected. Nothing to render here but the panel behind them.
@@ -477,7 +482,13 @@ function ItemContent({
 
   if (panel === 'files') {
     return (
-      <FilesPanel hostId={hostId} sessionId={session.session_id} cwd={session.cwd} visible={visible} />
+      <FilesPanel
+        hostId={hostId}
+        sessionId={session.session_id}
+        cwd={session.cwd}
+        visible={visible}
+        beside={beside}
+      />
     )
   }
 

@@ -10,6 +10,7 @@ import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarge
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
 import { Chevron } from './icons.tsx'
+import { isBeside, panelItem } from './layout.ts'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
   extractFilePaths,
@@ -19,7 +20,7 @@ import {
   resolveFilePath,
 } from '../markdown.ts'
 import { useMermaid } from '../mermaid.ts'
-import { store, useStore } from '../store.ts'
+import { currentLayout, store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
   canResume,
@@ -471,6 +472,11 @@ function FileChip({
   const resolved = resolveFilePath(path, cwd)
   const name = label ?? path.split('/').filter(Boolean).pop() ?? path
   const isDir = !name.includes('.')
+  // Where the file could go, which is what decides whether there is a choice to
+  // offer: with the panel already a pane of its own, the second button would
+  // only undo the arrangement the reader has.
+  const beside = useStore((state) => isBeside(currentLayout(state), panelItem('files')))
+
   return (
     <span className="file-chip">
       {/* Search, not open: the transcript's path is the checkout the agent ran
@@ -483,9 +489,26 @@ function FileChip({
         <span className="file-chip-icon">{isDir ? <Chevron dir="right" /> : '⌕'}</span>
         {name}
       </button>
-      <button className="file-chip-act" title={`Open ${resolved}`} onClick={() => store.openFile(hostId, resolved)}>
-        ↗
+      {/* Both destinations in reach, rather than a menu asking which: the
+          answer is one of two and the reader knows it before clicking. */}
+      <button
+        className="file-chip-act file-chip-side"
+        title={`Open ${resolved} beside the transcript`}
+        onClick={() => store.openFileBeside(hostId, resolved)}
+      >
+        ◨
       </button>
+      {/* Gone once the pane is on the side: putting the panel back in front of
+          the transcript is undoing the arrangement, not opening a file. */}
+      {!beside && (
+        <button
+          className="file-chip-act file-chip-tab"
+          title={`Open ${resolved} in the Files tab`}
+          onClick={() => store.openFile(hostId, resolved)}
+        >
+          ↗
+        </button>
+      )}
       <button
         className="file-chip-act"
         title="Copy path"
@@ -554,20 +577,28 @@ function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
 
   return (
     <div className="msg tool-call">
-      <button className="tool-head" onClick={() => setOpen(!open)}>
-        <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
-        <span className="tool-name">{tool}</span>
-        <span className="tool-summary">{oneLine(message.summary)}</span>
-        <Chevron className="chevron" open={open} />
-      </button>
+      {/* The head is a row rather than one button: the file chip is three
+          buttons of its own, and a button cannot hold a button. */}
+      <div className="tool-head">
+        <button className="tool-toggle" onClick={() => setOpen(!open)}>
+          <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
+          <span className="tool-name">{tool}</span>
+          <span className="tool-summary">{oneLine(message.summary)}</span>
+        </button>
+        {/* On the head, not at the foot of the expansion: the file is what the
+            row is about, and reaching it should not cost an expand first. */}
+        {filePath && <FileChip hostId={hostId} cwd={cwd} path={filePath} label={filePath.split('/').pop()} />}
+        <button
+          className="tool-chevron"
+          title={open ? 'Collapse' : 'Expand'}
+          onClick={() => setOpen(!open)}
+        >
+          <Chevron className="chevron" open={open} />
+        </button>
+      </div>
       {open && (
         <div className="tool-detail">
           <ToolInput tool={tool} input={input} />
-          {filePath && (
-            <div className="file-chips">
-              <FileChip hostId={hostId} cwd={cwd} path={filePath} label={filePath.split('/').pop()} />
-            </div>
-          )}
         </div>
       )}
     </div>

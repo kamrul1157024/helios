@@ -279,12 +279,17 @@ export function renderMarkdownBlocks(source: string): MarkdownBlock[] {
 }
 
 /**
- * Paths mentioned in prose: `~/a/b`, `/a/b`, or a relative path with at least
- * three segments. Same expression as the mobile app, which errs towards missing
- * a path over turning ordinary words into chips.
+ * Paths mentioned in prose: `~/a/b`, `/a/b`, a relative path with at least
+ * three segments, or a two-segment one whose last part carries a file
+ * extension — `scratch/report.md` is a file, `and/or` is two words. Same
+ * expression as the mobile app, which errs towards missing a path over turning
+ * ordinary words into chips.
+ *
+ * The three-segment branch comes first so a deep path is matched whole rather
+ * than cut down to its first two segments.
  */
 const FILE_PATH =
-  /(^|[\s:,;(`])(~\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+|\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+){2,})/gm
+  /(^|[\s:,;(`])(~\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+|\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+){2,}|[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]*[a-zA-Z0-9_-]\.[a-zA-Z0-9]{1,8})/gm
 
 /** File paths mentioned in a message, deduped and in order of appearance. */
 export function extractFilePaths(text: string): string[] {
