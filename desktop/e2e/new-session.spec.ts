@@ -35,6 +35,21 @@ test('every chip opens on its own value', async ({ window }) => {
   await expect(window.locator('.composer-foot')).toContainText('Default model')
 })
 
+// `.composer` names two things: this dialog's card, and the transcript's prompt
+// box (chat.tsx). A width on the bare class pins the second to the size of the
+// first, which cost the transcript 240px of input and stopped the prompt
+// growing with the window — invisible to every test that only opens the dialog.
+test('the dialog card does not follow the class onto the transcript', async ({ window }) => {
+  await window.setViewportSize({ width: 1280, height: 900 })
+  await window.locator('.session-row').first().click()
+  await expect(window.locator('.panel-tabs')).toBeVisible()
+
+  const chat = await window.locator('.chat').boundingBox()
+  const prompt = await window.locator('.chat .composer').boundingBox()
+  if (!chat || !prompt) throw new Error('no transcript to measure')
+  expect(prompt.width).toBe(chat.width)
+})
+
 test('picking a model puts it on the chip', async ({ window }) => {
   await openComposer(window)
   await openChip(window, /model/i)
