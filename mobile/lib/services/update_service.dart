@@ -24,7 +24,11 @@ class ReleaseNote {
   final String body;
   final DateTime? publishedAt;
 
-  const ReleaseNote({required this.version, required this.body, this.publishedAt});
+  const ReleaseNote({
+    required this.version,
+    required this.body,
+    this.publishedAt,
+  });
 }
 
 class UpdateInfo {
@@ -75,14 +79,18 @@ class UpdateService {
   Future<UpdateInfo?> checkForUpdate() async {
     try {
       final res = await http
-          .get(Uri.parse(_apiUrl), headers: {'Accept': 'application/vnd.github+json'})
+          .get(
+            Uri.parse(_apiUrl),
+            headers: {'Accept': 'application/vnd.github+json'},
+          )
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
         debugPrint('[UpdateService] github said ${res.statusCode}');
         return null;
       }
 
-      final payload = (jsonDecode(res.body) as List).cast<Map<String, dynamic>>();
+      final payload = (jsonDecode(res.body) as List)
+          .cast<Map<String, dynamic>>();
       // A draft is not published and a prerelease is not for everyone; neither
       // is news the reader can act on.
       final published = payload
@@ -122,15 +130,27 @@ class UpdateService {
 
   // Android: downloads APK to cache and opens system installer.
   // Desktop: opens releases page in browser.
-  Future<void> install(UpdateInfo info, {void Function(double)? onProgress}) async {
+  Future<void> install(
+    UpdateInfo info, {
+    void Function(double)? onProgress,
+  }) async {
     if (info.canDirectInstall) {
-      await _downloadAndInstallApk(info.apkDownloadUrl!, onProgress: onProgress);
+      await _downloadAndInstallApk(
+        info.apkDownloadUrl!,
+        onProgress: onProgress,
+      );
     } else {
-      await launchUrl(Uri.parse(info.releasesPageUrl), mode: LaunchMode.externalApplication);
+      await launchUrl(
+        Uri.parse(info.releasesPageUrl),
+        mode: LaunchMode.externalApplication,
+      );
     }
   }
 
-  Future<void> _downloadAndInstallApk(String url, {void Function(double)? onProgress}) async {
+  Future<void> _downloadAndInstallApk(
+    String url, {
+    void Function(double)? onProgress,
+  }) async {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/helios-update.apk');
 
@@ -186,7 +206,11 @@ class UpdateService {
     String current,
   ) {
     final newer = releases.where((r) => isNewer(_tagOf(r), current)).toList();
-    newer.sort((a, b) => isNewer(_tagOf(a), _tagOf(b)) ? -1 : (isNewer(_tagOf(b), _tagOf(a)) ? 1 : 0));
+    newer.sort(
+      (a, b) => isNewer(_tagOf(a), _tagOf(b))
+          ? -1
+          : (isNewer(_tagOf(b), _tagOf(a)) ? 1 : 0),
+    );
     return newer;
   }
 
@@ -202,6 +226,9 @@ class UpdateService {
   /// Leading digits of each dotted component; anything else counts as zero.
   List<int> _parts(String version) => version
       .split('.')
-      .map((part) => int.tryParse(RegExp(r'^\d+').firstMatch(part)?.group(0) ?? '') ?? 0)
+      .map(
+        (part) =>
+            int.tryParse(RegExp(r'^\d+').firstMatch(part)?.group(0) ?? '') ?? 0,
+      )
       .toList();
 }

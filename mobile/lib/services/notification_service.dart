@@ -5,7 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Callback for when a notification action (approve/deny) is tapped.
-typedef NotificationActionCallback = void Function(String notificationId, String action);
+typedef NotificationActionCallback =
+    void Function(String notificationId, String action);
 
 class NotificationService {
   NotificationService._();
@@ -29,13 +30,13 @@ class NotificationService {
   /// answer something — which is the same question whoever raised it. Keying
   /// on kind means a new provider needs no new rows and no new defaults.
   static const Map<String, bool> _defaultAlertTypes = {
-    'permission':       true,
-    'question':         true,
+    'permission': true,
+    'question': true,
     'elicitation.form': true,
-    'elicitation.url':  true,
-    'trust':            true,
-    'done':             true,
-    'error':            true,
+    'elicitation.url': true,
+    'trust': true,
+    'done': true,
+    'error': true,
   };
 
   bool _soundEnabled = true;
@@ -185,14 +186,18 @@ class NotificationService {
         final decoded = jsonDecode(alertJson) as Map<String, dynamic>;
         _alertTypes = {
           ..._defaultAlertTypes,
-          ...migrateLegacyAlertKeys(decoded.map((k, v) => MapEntry(k, v as bool))),
+          ...migrateLegacyAlertKeys(
+            decoded.map((k, v) => MapEntry(k, v as bool)),
+          ),
         };
       } catch (_) {
         _alertTypes = Map.of(_defaultAlertTypes);
       }
     }
 
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const darwinSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -208,17 +213,25 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onResponse,
     );
 
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     if (android != null) {
       // Clean up all old channel IDs.
       for (final old in [
-        'helios_permissions', 'helios_general',
-        'helios_perm_v2', 'helios_general_v2',
-        'helios_perm_v3', 'helios_general_v3',
-        'helios_perm_v4', 'helios_general_v4',
-        'helios_perm_v5', 'helios_general_v5',
-        'helios_perm_v6', 'helios_general_v6',
+        'helios_permissions',
+        'helios_general',
+        'helios_perm_v2',
+        'helios_general_v2',
+        'helios_perm_v3',
+        'helios_general_v3',
+        'helios_perm_v4',
+        'helios_general_v4',
+        'helios_perm_v5',
+        'helios_general_v5',
+        'helios_perm_v6',
+        'helios_general_v6',
       ]) {
         await android.deleteNotificationChannel(old);
       }
@@ -245,51 +258,71 @@ class NotificationService {
       });
       debugPrint('[NotificationService] Native channels created');
     } on MissingPluginException {
-      debugPrint('[NotificationService] Native channel creation not available, using plugin');
+      debugPrint(
+        '[NotificationService] Native channel creation not available, using plugin',
+      );
       // Fallback to plugin-based channel creation.
       if (android != null) {
         await android.deleteNotificationChannel(_permChannel);
         await android.deleteNotificationChannel(_generalChannel);
 
-        await android.createNotificationChannel(AndroidNotificationChannel(
-          _permChannel,
-          'Permission Requests',
-          description: 'Claude tool permission requests',
-          importance: Importance.max,
-          playSound: false,
-          enableVibration: false,
-        ));
-        await android.createNotificationChannel(AndroidNotificationChannel(
-          _generalChannel,
-          'General',
-          description: 'General helios notifications',
-          importance: Importance.max,
-          playSound: false,
-          enableVibration: false,
-        ));
+        await android.createNotificationChannel(
+          AndroidNotificationChannel(
+            _permChannel,
+            'Permission Requests',
+            description: 'Claude tool permission requests',
+            importance: Importance.max,
+            playSound: false,
+            enableVibration: false,
+          ),
+        );
+        await android.createNotificationChannel(
+          AndroidNotificationChannel(
+            _generalChannel,
+            'General',
+            description: 'General helios notifications',
+            importance: Importance.max,
+            playSound: false,
+            enableVibration: false,
+          ),
+        );
       }
     }
   }
 
   Future<bool> requestPermission() async {
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     if (android != null) {
       final granted = await android.requestNotificationsPermission();
       return granted ?? false;
     }
 
-    final ios = _plugin.resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>();
+    final ios = _plugin
+        .resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin
+        >();
     if (ios != null) {
-      final granted = await ios.requestPermissions(alert: true, badge: true, sound: true);
+      final granted = await ios.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
       return granted ?? false;
     }
 
-    final macos = _plugin.resolvePlatformSpecificImplementation<
-        MacOSFlutterLocalNotificationsPlugin>();
+    final macos = _plugin
+        .resolvePlatformSpecificImplementation<
+          MacOSFlutterLocalNotificationsPlugin
+        >();
     if (macos != null) {
-      final granted = await macos.requestPermissions(alert: true, badge: true, sound: true);
+      final granted = await macos.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
       return granted ?? false;
     }
 
@@ -305,7 +338,9 @@ class NotificationService {
     bool silent = false,
   }) async {
     final nid = _notifId(id);
-    debugPrint('[NotificationService] showPermission id=$id nid=$nid tool=$toolName');
+    debugPrint(
+      '[NotificationService] showPermission id=$id nid=$nid tool=$toolName',
+    );
 
     final androidDetails = AndroidNotificationDetails(
       _permChannel,
@@ -318,8 +353,16 @@ class NotificationService {
       fullScreenIntent: true,
       category: AndroidNotificationCategory.alarm,
       actions: [
-        const AndroidNotificationAction('approve', 'Approve', showsUserInterface: true),
-        const AndroidNotificationAction('deny', 'Deny', showsUserInterface: true),
+        const AndroidNotificationAction(
+          'approve',
+          'Approve',
+          showsUserInterface: true,
+        ),
+        const AndroidNotificationAction(
+          'deny',
+          'Deny',
+          showsUserInterface: true,
+        ),
       ],
     );
 
@@ -355,7 +398,9 @@ class NotificationService {
     bool silent = false,
   }) async {
     final nid = _notifId(id);
-    debugPrint('[NotificationService] showNotification id=$id nid=$nid title=$title');
+    debugPrint(
+      '[NotificationService] showNotification id=$id nid=$nid title=$title',
+    );
 
     final androidDetails = AndroidNotificationDetails(
       _generalChannel,

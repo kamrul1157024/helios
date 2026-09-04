@@ -5,12 +5,13 @@ import 'cards.dart';
 import 'notification_ext.dart';
 
 /// Signature for a notification card builder.
-typedef CardBuilder = Widget Function({
-  required HeliosNotification notification,
-  required DaemonAPIService sse,
-  required Set<String> selected,
-  required VoidCallback onSelectionChanged,
-});
+typedef CardBuilder =
+    Widget Function({
+      required HeliosNotification notification,
+      required DaemonAPIService sse,
+      required Set<String> selected,
+      required VoidCallback onSelectionChanged,
+    });
 
 /// Maps a notification to the card that renders it.
 ///
@@ -35,30 +36,15 @@ Widget? buildCardForType({
         onSelectionChanged: onSelectionChanged,
       );
     case 'question':
-      return QuestionCard(
-        notification: notification,
-        sse: sse,
-      );
+      return QuestionCard(notification: notification, sse: sse);
     case 'elicitation.form':
-      return ElicitationFormCard(
-        notification: notification,
-        sse: sse,
-      );
+      return ElicitationFormCard(notification: notification, sse: sse);
     case 'elicitation.url':
-      return ElicitationUrlCard(
-        notification: notification,
-        sse: sse,
-      );
+      return ElicitationUrlCard(notification: notification, sse: sse);
     case 'trust':
-      return TrustCard(
-        notification: notification,
-        sse: sse,
-      );
+      return TrustCard(notification: notification, sse: sse);
     case 'error':
-      return ErrorCard(
-        notification: notification,
-        sse: sse,
-      );
+      return ErrorCard(notification: notification, sse: sse);
     default:
       return null;
   }

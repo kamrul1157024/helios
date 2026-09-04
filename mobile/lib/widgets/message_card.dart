@@ -55,7 +55,9 @@ class _UserMessageCard extends StatelessWidget {
       child: GestureDetector(
         onLongPress: () => _copyToClipboard(context, content),
         child: Container(
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
@@ -128,10 +130,15 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
       // If the first segment of the relative path matches the last segment of
       // sessionCwd (e.g. cwd=".../helios/mobile" and path="mobile/lib/..."),
       // strip that duplicate segment.
-      final cwdLastSegment = widget.sessionCwd.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '';
+      final cwdLastSegment =
+          widget.sessionCwd.split('/').where((s) => s.isNotEmpty).lastOrNull ??
+          '';
       final firstSegment = path.split('/').first;
       if (cwdLastSegment.isNotEmpty && firstSegment == cwdLastSegment) {
-        final parent = widget.sessionCwd.substring(0, widget.sessionCwd.lastIndexOf('/'));
+        final parent = widget.sessionCwd.substring(
+          0,
+          widget.sessionCwd.lastIndexOf('/'),
+        );
         resolvedPath = '$parent/$path';
       } else {
         resolvedPath = '${widget.sessionCwd}/$path';
@@ -158,12 +165,16 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
     final content = widget.message.content ?? '';
     if (content.isEmpty) return const SizedBox.shrink();
 
-    final filePaths = widget.hostId.isNotEmpty ? _extractFilePaths(content) : <String>[];
+    final filePaths = widget.hostId.isNotEmpty
+        ? _extractFilePaths(content)
+        : <String>[];
 
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.85,
+        ),
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
@@ -188,56 +199,80 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                 ),
               },
               styleSheet: MarkdownStyleSheet(
-                  p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-                  a: TextStyle(
-                    fontSize: 14,
-                    color: theme.colorScheme.primary,
-                    decoration: TextDecoration.underline,
-                    decorationColor: theme.colorScheme.primary,
-                  ),
-                  code: TextStyle(
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                    color: theme.colorScheme.onSurface,
-                    backgroundColor: theme.colorScheme.surfaceContainerHigh,
-                  ),
-                  codeblockDecoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  codeblockPadding: const EdgeInsets.all(10),
-                  blockquoteDecoration: BoxDecoration(
-                    border: Border(
-                      left: BorderSide(color: theme.colorScheme.primary, width: 3),
+                p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+                a: TextStyle(
+                  fontSize: 14,
+                  color: theme.colorScheme.primary,
+                  decoration: TextDecoration.underline,
+                  decorationColor: theme.colorScheme.primary,
+                ),
+                code: TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: theme.colorScheme.onSurface,
+                  backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                ),
+                codeblockDecoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                codeblockPadding: const EdgeInsets.all(10),
+                blockquoteDecoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: theme.colorScheme.primary,
+                      width: 3,
                     ),
                   ),
-                  blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
-                  h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-                  h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-                  h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
-                  listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+                ),
+                blockquotePadding: const EdgeInsets.only(
+                  left: 12,
+                  top: 4,
+                  bottom: 4,
+                ),
+                h1: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+                h2: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+                h3: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+                listBullet: TextStyle(
+                  fontSize: 14,
+                  color: theme.colorScheme.onSurface,
                 ),
               ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  GestureDetector(
-                    onTap: () => _copyToClipboard(context, content),
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 4, right: 8),
-                      child: Icon(
-                        Icons.copy,
-                        size: 14,
-                        color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                GestureDetector(
+                  onTap: () => _copyToClipboard(context, content),
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4, right: 8),
+                    child: Icon(
+                      Icons.copy,
+                      size: 14,
+                      color: theme.colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.6,
                       ),
                     ),
                   ),
-                ],
-              ),
-              // File path chips — SelectionContainer.disabled so taps aren't absorbed by MarkdownBody's selection area
-              if (filePaths.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                SelectionContainer.disabled(
+                ),
+              ],
+            ),
+            // File path chips — SelectionContainer.disabled so taps aren't absorbed by MarkdownBody's selection area
+            if (filePaths.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SelectionContainer.disabled(
                 child: Wrap(
                   spacing: 6,
                   runSpacing: 4,
@@ -247,18 +282,30 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                     return GestureDetector(
                       onTap: () => _openFilePath(path),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.6),
+                          color: theme.colorScheme.secondaryContainer
+                              .withValues(alpha: 0.6),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                            color: theme.colorScheme.secondary.withValues(alpha: 0.3),
+                            color: theme.colorScheme.secondary.withValues(
+                              alpha: 0.3,
+                            ),
                           ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(isDir ? Icons.folder : Icons.insert_drive_file, size: 12, color: isDir ? Colors.amber.shade700 : theme.colorScheme.secondary),
+                            Icon(
+                              isDir ? Icons.folder : Icons.insert_drive_file,
+                              size: 12,
+                              color: isDir
+                                  ? Colors.amber.shade700
+                                  : theme.colorScheme.secondary,
+                            ),
                             const SizedBox(width: 4),
                             Flexible(
                               child: Text(
@@ -277,11 +324,11 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                     );
                   }).toList(),
                 ),
-                ),
-              ],
+              ),
             ],
-          ),
+          ],
         ),
+      ),
     );
   }
 }
@@ -335,7 +382,8 @@ class _ToolUseCardState extends State<_ToolUseCard> {
                     color: theme.colorScheme.tertiary,
                   ),
                 ),
-                if (widget.message.summary != null && widget.message.summary!.isNotEmpty) ...[
+                if (widget.message.summary != null &&
+                    widget.message.summary!.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -367,7 +415,11 @@ class _ToolUseCardState extends State<_ToolUseCard> {
     );
   }
 
-  Widget _buildExpandedContent(BuildContext context, ThemeData theme, Map<String, dynamic> meta) {
+  Widget _buildExpandedContent(
+    BuildContext context,
+    ThemeData theme,
+    Map<String, dynamic> meta,
+  ) {
     final tool = widget.message.tool ?? '';
     final isDark = theme.brightness == Brightness.dark;
 
@@ -381,9 +433,19 @@ class _ToolUseCardState extends State<_ToolUseCard> {
       final widgets = <Widget>[];
 
       // Show non-content fields as plain text first (e.g. old_string label)
-      final contentKeys = {'content', 'new_string', 'old_string', 'new_content'};
+      final contentKeys = {
+        'content',
+        'new_string',
+        'old_string',
+        'new_content',
+      };
       final otherFields = meta.entries
-          .where((e) => !contentKeys.contains(e.key) && e.key != 'file_path' && e.key != 'path')
+          .where(
+            (e) =>
+                !contentKeys.contains(e.key) &&
+                e.key != 'file_path' &&
+                e.key != 'path',
+          )
           .toList();
       if (otherFields.isNotEmpty) {
         final plain = otherFields.map((e) => '${e.key}: ${e.value}').join('\n');
@@ -392,24 +454,41 @@ class _ToolUseCardState extends State<_ToolUseCard> {
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
             child: SelectableText(
               plain,
-              style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         );
       }
 
       // Render each content field with syntax highlighting
-      for (final key in ['content', 'new_content', 'new_string', 'old_string']) {
+      for (final key in [
+        'content',
+        'new_content',
+        'new_string',
+        'old_string',
+      ]) {
         final value = meta[key];
         if (value is! String || value.isEmpty) continue;
-        final label = key == 'new_string' ? 'new' : key == 'old_string' ? 'old' : null;
+        final label = key == 'new_string'
+            ? 'new'
+            : key == 'old_string'
+            ? 'old'
+            : null;
         if (label != null) {
           widgets.add(
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
               child: Text(
                 label,
-                style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  fontSize: 10,
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           );
@@ -422,7 +501,11 @@ class _ToolUseCardState extends State<_ToolUseCard> {
               language: language ?? 'plaintext',
               theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
               padding: const EdgeInsets.all(8),
-              textStyle: const TextStyle(fontSize: 11, fontFamily: 'monospace', height: 1.4),
+              textStyle: const TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                height: 1.4,
+              ),
             ),
           ),
         );
@@ -454,7 +537,11 @@ class _ToolUseCardState extends State<_ToolUseCard> {
             language: 'bash',
             theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
             padding: const EdgeInsets.all(8),
-            textStyle: const TextStyle(fontSize: 11, fontFamily: 'monospace', height: 1.4),
+            textStyle: const TextStyle(
+              fontSize: 11,
+              fontFamily: 'monospace',
+              height: 1.4,
+            ),
           ),
         );
       }
@@ -464,7 +551,11 @@ class _ToolUseCardState extends State<_ToolUseCard> {
     final lines = <String>[];
     for (final MapEntry(:key, :value) in meta.entries) {
       if (value is String) {
-        lines.add(value.length > 500 ? '$key: ${value.substring(0, 500)}...' : '$key: $value');
+        lines.add(
+          value.length > 500
+              ? '$key: ${value.substring(0, 500)}...'
+              : '$key: $value',
+        );
       } else {
         lines.add('$key: $value');
       }
@@ -478,38 +569,72 @@ class _ToolUseCardState extends State<_ToolUseCard> {
       ),
       child: SelectableText(
         lines.join('\n'),
-        style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+        style: TextStyle(
+          fontSize: 11,
+          fontFamily: 'monospace',
+          color: theme.colorScheme.onSurface,
+        ),
       ),
     );
   }
 
   String? _langForExt(String ext) {
     switch (ext) {
-      case 'dart': return 'dart';
-      case 'go': return 'go';
-      case 'py': return 'python';
-      case 'js': return 'javascript';
-      case 'ts': case 'tsx': return 'typescript';
-      case 'jsx': return 'javascript';
-      case 'java': return 'java';
-      case 'kt': return 'kotlin';
-      case 'swift': return 'swift';
-      case 'rs': return 'rust';
-      case 'c': case 'h': return 'c';
-      case 'cpp': return 'cpp';
-      case 'cs': return 'cs';
-      case 'rb': return 'ruby';
-      case 'sh': case 'bash': case 'zsh': return 'bash';
-      case 'json': return 'json';
-      case 'yaml': case 'yml': return 'yaml';
-      case 'toml': return 'ini';
-      case 'xml': return 'xml';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'scss': return 'scss';
-      case 'sql': return 'sql';
-      case 'md': return 'markdown';
-      default: return null;
+      case 'dart':
+        return 'dart';
+      case 'go':
+        return 'go';
+      case 'py':
+        return 'python';
+      case 'js':
+        return 'javascript';
+      case 'ts':
+      case 'tsx':
+        return 'typescript';
+      case 'jsx':
+        return 'javascript';
+      case 'java':
+        return 'java';
+      case 'kt':
+        return 'kotlin';
+      case 'swift':
+        return 'swift';
+      case 'rs':
+        return 'rust';
+      case 'c':
+      case 'h':
+        return 'c';
+      case 'cpp':
+        return 'cpp';
+      case 'cs':
+        return 'cs';
+      case 'rb':
+        return 'ruby';
+      case 'sh':
+      case 'bash':
+      case 'zsh':
+        return 'bash';
+      case 'json':
+        return 'json';
+      case 'yaml':
+      case 'yml':
+        return 'yaml';
+      case 'toml':
+        return 'ini';
+      case 'xml':
+        return 'xml';
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'scss':
+        return 'scss';
+      case 'sql':
+        return 'sql';
+      case 'md':
+        return 'markdown';
+      default:
+        return null;
     }
   }
 
@@ -567,7 +692,9 @@ class _ToolResultCard extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            message.tool != null ? '${message.tool} ${success ? "done" : "failed"}' : (success ? 'done' : 'failed'),
+            message.tool != null
+                ? '${message.tool} ${success ? "done" : "failed"}'
+                : (success ? 'done' : 'failed'),
             style: TextStyle(
               fontSize: 11,
               color: theme.colorScheme.onSurfaceVariant,
@@ -602,10 +729,18 @@ class _SyntaxHighlightBuilder extends MarkdownElementBuilder {
       language: lang.isNotEmpty ? lang : 'plaintext',
       theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
       padding: const EdgeInsets.all(10),
-      textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace', height: 1.5),
+      textStyle: const TextStyle(
+        fontSize: 12,
+        fontFamily: 'monospace',
+        height: 1.5,
+      ),
     );
     if (lang == 'mermaid') {
-      return MermaidDiagram(source: code.trimRight(), isDark: isDark, fallback: block);
+      return MermaidDiagram(
+        source: code.trimRight(),
+        isDark: isDark,
+        fallback: block,
+      );
     }
     return block;
   }

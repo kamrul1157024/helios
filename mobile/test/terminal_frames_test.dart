@@ -11,7 +11,9 @@ import 'package:helios/services/terminal/frames.dart';
 Uint8List fixture(String name) {
   final file = File('../internal/terminal/testdata/frames/$name.bin');
   if (!file.existsSync()) {
-    fail('missing ${file.path} — run: go test ./internal/terminal -run Golden -update');
+    fail(
+      'missing ${file.path} — run: go test ./internal/terminal -run Golden -update',
+    );
   }
   return file.readAsBytesSync();
 }
@@ -30,17 +32,28 @@ void main() {
     });
 
     test('resize', () {
-      expect(encodeFrame(FrameType.resize, encodeResize(120, 34)), equals(fixture('resize')));
+      expect(
+        encodeFrame(FrameType.resize, encodeResize(120, 34)),
+        equals(fixture('resize')),
+      );
     });
 
     test('snapshot', () {
-      final ansi = Uint8List.fromList(utf8.encode('\x1b[2J\x1b[H\x1b[32mready\x1b[0m'));
-      final encoded = encodeFrame(FrameType.snapshot, encodeSnapshot(1 << 40, ansi));
+      final ansi = Uint8List.fromList(
+        utf8.encode('\x1b[2J\x1b[H\x1b[32mready\x1b[0m'),
+      );
+      final encoded = encodeFrame(
+        FrameType.snapshot,
+        encodeSnapshot(1 << 40, ansi),
+      );
       expect(encoded, equals(fixture('snapshot')));
     });
 
     test('input', () {
-      final encoded = encodeFrame(FrameType.input, Uint8List.fromList([0x1b, 0x5b, 0x5a]));
+      final encoded = encodeFrame(
+        FrameType.input,
+        Uint8List.fromList([0x1b, 0x5b, 0x5a]),
+      );
       expect(encoded, equals(fixture('input')));
     });
 
@@ -78,7 +91,10 @@ void main() {
 
     test('output survives multibyte text', () {
       final frames = FrameParser().push(fixture('output'));
-      expect(utf8.decode(frames.single.payload), '\x1b[1mhello\x1b[0m 🎉 中文\r\n');
+      expect(
+        utf8.decode(frames.single.payload),
+        '\x1b[1mhello\x1b[0m 🎉 中文\r\n',
+      );
     });
 
     test('resize round-trips', () {
@@ -94,7 +110,11 @@ void main() {
     // frame per chunk would drop two of them.
     test('several frames in one chunk', () {
       final frames = FrameParser().push(fixture('stream'));
-      expect(frames.map((f) => f.type), [FrameType.output, FrameType.ping, FrameType.output]);
+      expect(frames.map((f) => f.type), [
+        FrameType.output,
+        FrameType.ping,
+        FrameType.output,
+      ]);
       expect(utf8.decode(frames[0].payload), 'first');
       expect(utf8.decode(frames[2].payload), 'second');
     });
@@ -107,14 +127,21 @@ void main() {
       for (final byte in blob) {
         collected.addAll(parser.push([byte]));
       }
-      expect(collected.map((f) => f.type), [FrameType.output, FrameType.ping, FrameType.output]);
+      expect(collected.map((f) => f.type), [
+        FrameType.output,
+        FrameType.ping,
+        FrameType.output,
+      ]);
       expect(utf8.decode(collected[2].payload), 'second');
     });
 
     test('a length prefix past the maximum is refused, not allocated', () {
       final absurd = Uint8List(headerSize);
       ByteData.view(absurd.buffer).setUint32(0, maxFrameSize + 1);
-      expect(() => FrameParser().push(absurd), throwsA(isA<FrameTooLargeException>()));
+      expect(
+        () => FrameParser().push(absurd),
+        throwsA(isA<FrameTooLargeException>()),
+      );
     });
   });
 }

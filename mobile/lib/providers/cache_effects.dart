@@ -211,7 +211,13 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
       final sessionId = _text(map['session_id']);
       return sessionId.isEmpty
           ? const []
-          : [InvalidateTarget(CacheTarget.subagents, hostId, sessionId: sessionId)];
+          : [
+              InvalidateTarget(
+                CacheTarget.subagents,
+                hostId,
+                sessionId: sessionId,
+              ),
+            ];
 
     case 'session_evicted':
       // A session going cold invalidates everything about it, and the payload

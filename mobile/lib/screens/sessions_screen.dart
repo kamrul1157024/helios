@@ -54,7 +54,8 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
 
   List<Session> _filterSessions(List<Session> sessions) {
     // When search or CWD filter is active, API already filtered — pass through.
-    if (_searchExpanded && _searchController.text.trim().isNotEmpty || _cwdFilter != null) {
+    if (_searchExpanded && _searchController.text.trim().isNotEmpty ||
+        _cwdFilter != null) {
       return sessions;
     }
     switch (_filter) {
@@ -95,7 +96,8 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   DaemonAPIService? _orderableService(HostManager hm) {
     if (hm.activeHostId == null) return null;
     if (_cwdFilter != null) return null;
-    if (_searchExpanded && _searchController.text.trim().isNotEmpty) return null;
+    if (_searchExpanded && _searchController.text.trim().isNotEmpty)
+      return null;
     return hm.serviceFor(hm.activeHostId!);
   }
 
@@ -109,16 +111,27 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       byHost.putIfAbsent(session.hostId, () => []).add(session.sessionId);
     }
     final manual = !ref.read(manualOrderProvider);
-    await Future.wait(hm.hosts.map((host) async {
-      final order = byHost[host.id] ?? const <String>[];
-      if (manual && order.isNotEmpty) {
-        await ref.read(sessionsProvider(allSessionsKey(host.id)).notifier).reorder(order);
-      }
-      await ref.read(hostSettingsProvider(host.id).notifier).setManualOrder(manual);
-    }));
+    await Future.wait(
+      hm.hosts.map((host) async {
+        final order = byHost[host.id] ?? const <String>[];
+        if (manual && order.isNotEmpty) {
+          await ref
+              .read(sessionsProvider(allSessionsKey(host.id)).notifier)
+              .reorder(order);
+        }
+        await ref
+            .read(hostSettingsProvider(host.id).notifier)
+            .setManualOrder(manual);
+      }),
+    );
   }
 
-  Future<void> _onReorder(DaemonAPIService service, List<Session> visible, int from, int to) async {
+  Future<void> _onReorder(
+    DaemonAPIService service,
+    List<Session> visible,
+    int from,
+    int to,
+  ) async {
     final ids = visible.map((s) => s.sessionId).toList();
     if (to > from) to -= 1;
     ids.insert(to, ids.removeAt(from));
@@ -138,7 +151,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     }
   }
 
-    /// What the list is currently asking the daemon for. Also its cache key, so
+  /// What the list is currently asking the daemon for. Also its cache key, so
   /// changing the search re-reads under a different entry rather than
   /// overwriting the unfiltered one.
   SessionQuery get _query {
@@ -195,44 +208,62 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
                   'Filter by directory',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               const Divider(height: 1),
-              ...dirs.map((d) => ListTile(
-                leading: const Icon(Icons.folder_outlined),
-                title: Text(d.project.isNotEmpty ? d.project : d.shortCwd),
-                subtitle: Text(
-                  d.shortCwd,
-                  style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (d.activeCount > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(4),
+              ...dirs.map(
+                (d) => ListTile(
+                  leading: const Icon(Icons.folder_outlined),
+                  title: Text(d.project.isNotEmpty ? d.project : d.shortCwd),
+                  subtitle: Text(
+                    d.shortCwd,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (d.activeCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '${d.activeCount} active',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.green,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
-                        child: Text(
-                          '${d.activeCount} active',
-                          style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.w600),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${d.sessionCount}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${d.sessionCount}',
-                      style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
-                    ),
-                  ],
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _setCwdFilter(d.cwd, d.project);
+                  },
                 ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _setCwdFilter(d.cwd, d.project);
-                },
-              )),
+              ),
               const SizedBox(height: 8),
             ],
           ),
@@ -264,7 +295,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        ref.read(sessionsProvider(allSessionsKey(parts[0])).notifier).patch(parts[1], pinned: pin);
+        ref
+            .read(sessionsProvider(allSessionsKey(parts[0])).notifier)
+            .patch(parts[1], pinned: pin);
       }
     }
     _exitMultiSelect();
@@ -284,8 +317,14 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
               : 'The agent is mid-turn. Terminating loses the work in flight. Resume starts it again.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Terminate')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Terminate'),
+          ),
         ],
       ),
     );
@@ -318,12 +357,19 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete sessions'),
-        content: Text('Delete ${_selected.length} session(s)? This cannot be undone.'),
+        content: Text(
+          'Delete ${_selected.length} session(s)? This cannot be undone.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             child: const Text('Delete'),
           ),
         ],
@@ -334,7 +380,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     for (final key in _selected.toList()) {
       final parts = key.split(':');
       if (parts.length == 2) {
-        ref.read(sessionsProvider(allSessionsKey(parts[0])).notifier).delete(parts[1]);
+        ref
+            .read(sessionsProvider(allSessionsKey(parts[0])).notifier)
+            .delete(parts[1]);
       }
     }
     _exitMultiSelect();
@@ -359,8 +407,12 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           );
         }
 
-        final isSearchActive = _searchExpanded && _searchController.text.trim().isNotEmpty;
-        final isFilterActive = isSearchActive || _cwdFilter != null || _filter != SessionFilter.all;
+        final isSearchActive =
+            _searchExpanded && _searchController.text.trim().isNotEmpty;
+        final isFilterActive =
+            isSearchActive ||
+            _cwdFilter != null ||
+            _filter != SessionFilter.all;
 
         if (sessions.isEmpty && !isFilterActive) {
           return _buildEmptyState();
@@ -370,7 +422,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
         final orderable = manual ? _orderableService(hm) : null;
         final matching = _filterSessions(sessions);
         final filtered = _sortSessions(
-          _hidingTerminated ? matching.where((s) => !s.isTerminated).toList() : matching,
+          _hidingTerminated
+              ? matching.where((s) => !s.isTerminated).toList()
+              : matching,
           manual: manual,
         );
 
@@ -388,18 +442,27 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                           : ref.refreshAllHosts(),
                       child: manual && orderable != null
                           ? ReorderableListView.builder(
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
                               itemCount: filtered.length,
-                              onReorder: (from, to) => _onReorder(orderable, filtered, from, to),
+                              onReorder: (from, to) =>
+                                  _onReorder(orderable, filtered, from, to),
                               // The cards carry their own handle, so the list's
                               // long-press drag would only fight the options
                               // sheet that a long press already opens.
                               buildDefaultDragHandles: false,
                               itemBuilder: (context, index) =>
-                                  _buildSwipeableCard(filtered[index], hm, reorderIndex: index),
+                                  _buildSwipeableCard(
+                                    filtered[index],
+                                    hm,
+                                    reorderIndex: index,
+                                  ),
                             )
                           : ListView.builder(
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
                               itemCount: filtered.length,
                               itemBuilder: (context, index) =>
                                   _buildSwipeableCard(filtered[index], hm),
@@ -421,13 +484,27 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       color: theme.colorScheme.surfaceContainerHighest,
       child: Row(
         children: [
-          IconButton(icon: const Icon(Icons.close), onPressed: _exitMultiSelect),
-          Text('${_selected.length} selected', style: const TextStyle(fontWeight: FontWeight.w600)),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: _exitMultiSelect,
+          ),
+          Text(
+            '${_selected.length} selected',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
           const Spacer(),
           if (!isTerminatedTab)
-            IconButton(icon: const Icon(Icons.push_pin_outlined), tooltip: 'Pin', onPressed: () => _batchPin(true)),
+            IconButton(
+              icon: const Icon(Icons.push_pin_outlined),
+              tooltip: 'Pin',
+              onPressed: () => _batchPin(true),
+            ),
           IconButton(
-            icon: Icon(isTerminatedTab ? Icons.play_arrow_outlined : Icons.stop_circle_outlined),
+            icon: Icon(
+              isTerminatedTab
+                  ? Icons.play_arrow_outlined
+                  : Icons.stop_circle_outlined,
+            ),
             tooltip: isTerminatedTab ? 'Resume' : 'Terminate',
             onPressed: () =>
                 isTerminatedTab ? _batchResume(hm) : _batchTerminate(hm),
@@ -442,19 +519,29 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     );
   }
 
-  Widget _buildFilterRow(List<Session> allSessions, HostManager hm, List<Session> visible) {
+  Widget _buildFilterRow(
+    List<Session> allSessions,
+    HostManager hm,
+    List<Session> visible,
+  ) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: AnimatedCrossFade(
         duration: const Duration(milliseconds: 200),
-        crossFadeState: _searchExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+        crossFadeState: _searchExpanded
+            ? CrossFadeState.showSecond
+            : CrossFadeState.showFirst,
         firstChild: _buildFilterChips(allSessions, hm, visible),
         secondChild: _buildSearchBar(),
       ),
     );
   }
 
-  Widget _buildFilterChips(List<Session> allSessions, HostManager hm, List<Session> visible) {
+  Widget _buildFilterChips(
+    List<Session> allSessions,
+    HostManager hm,
+    List<Session> visible,
+  ) {
     // Counting what the tab would show, not what exists: a chip reading 155
     // over a list of twelve is a chip that has to be explained. Terminated
     // sessions have their own tab, and it holds them on purpose.
@@ -581,7 +668,11 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   /// [reorderIndex] is the card's place in a list arranged by hand, and null
   /// when the list sorts itself. The drag handle needs it to say which card is
   /// being moved.
-  Widget _buildSwipeableCard(Session session, HostManager hm, {int? reorderIndex}) {
+  Widget _buildSwipeableCard(
+    Session session,
+    HostManager hm, {
+    int? reorderIndex,
+  }) {
     final theme = Theme.of(context);
     // Terminated is the archival state: putting a session away is ending it,
     // and the way back out is Resume rather than an unarchive.
@@ -600,24 +691,39 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
         padding: const EdgeInsets.only(left: 20),
         child: Row(
           children: [
-            Icon(isTerminated ? Icons.play_arrow : Icons.stop_circle_outlined, color: Colors.white),
+            Icon(
+              isTerminated ? Icons.play_arrow : Icons.stop_circle_outlined,
+              color: Colors.white,
+            ),
             const SizedBox(width: 8),
             Text(
               isTerminated ? 'Resume' : 'Terminate',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
       ),
       secondaryBackground: Container(
         margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(color: theme.colorScheme.error, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.error,
+          borderRadius: BorderRadius.circular(12),
+        ),
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            Text('Delete', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            Text(
+              'Delete',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             SizedBox(width: 8),
             Icon(Icons.delete, color: Colors.white),
           ],
@@ -636,19 +742,28 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
             context: context,
             builder: (ctx) => AlertDialog(
               title: const Text('Delete session'),
-              content: const Text('Delete this session? This cannot be undone.'),
+              content: const Text(
+                'Delete this session? This cannot be undone.',
+              ),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
                 FilledButton(
                   onPressed: () => Navigator.pop(ctx, true),
-                  style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: theme.colorScheme.error,
+                  ),
                   child: const Text('Delete'),
                 ),
               ],
             ),
           );
           if (confirmed == true) {
-            ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).delete(session.sessionId);
+            ref
+                .read(sessionsProvider(allSessionsKey(session.hostId)).notifier)
+                .delete(session.sessionId);
           }
           return false;
         }
@@ -657,7 +772,11 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     );
   }
 
-  Widget _buildSessionCard(Session session, HostManager hm, {int? reorderIndex}) {
+  Widget _buildSessionCard(
+    Session session,
+    HostManager hm, {
+    int? reorderIndex,
+  }) {
     final theme = Theme.of(context);
     final statusColor = _statusColor(session.status, theme);
     final statusIcon = _statusIcon(session.status);
@@ -674,8 +793,8 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
         side: isSelected
             ? BorderSide(color: theme.colorScheme.primary, width: 2)
             : session.isActive
-                ? BorderSide(color: statusColor.withValues(alpha: 0.4), width: 1.5)
-                : BorderSide.none,
+            ? BorderSide(color: statusColor.withValues(alpha: 0.4), width: 1.5)
+            : BorderSide.none,
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -684,7 +803,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
             _toggleSelection(session);
           } else {
             Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => SessionDetailScreen(session: session)),
+              MaterialPageRoute(
+                builder: (_) => SessionDetailScreen(session: session),
+              ),
             );
           }
         },
@@ -717,19 +838,34 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                             Row(
                               children: [
                                 if (session.isActive)
-                                  _PulsingIcon(icon: statusIcon, color: statusColor, size: 14)
+                                  _PulsingIcon(
+                                    icon: statusIcon,
+                                    color: statusColor,
+                                    size: 14,
+                                  )
                                 else
-                                  Icon(statusIcon, size: 14, color: statusColor),
+                                  Icon(
+                                    statusIcon,
+                                    size: 14,
+                                    color: statusColor,
+                                  ),
                                 const SizedBox(width: 6),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: statusColor.withValues(alpha: 0.12),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
                                     _statusLabel(session.status),
-                                    style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: statusColor,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                                 if (session.memoryLabel.isNotEmpty) ...[
@@ -746,17 +882,28 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                                   const SizedBox(width: 6),
                                   Tooltip(
                                     message: 'Cold — tap to resume',
-                                    child: Icon(Icons.link_off, size: 14, color: Colors.amber.shade700),
+                                    child: Icon(
+                                      Icons.link_off,
+                                      size: 14,
+                                      color: Colors.amber.shade700,
+                                    ),
                                   ),
                                 ],
                                 if (session.pinned) ...[
                                   const SizedBox(width: 6),
-                                  Icon(Icons.push_pin, size: 14, color: theme.colorScheme.primary),
+                                  Icon(
+                                    Icons.push_pin,
+                                    size: 14,
+                                    color: theme.colorScheme.primary,
+                                  ),
                                 ],
                                 const Spacer(),
                                 Text(
                                   session.timeAgo,
-                                  style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
                                 ),
                               ],
                             ),
@@ -791,13 +938,20 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                                 Flexible(
                                   child: Text(
                                     session.model ?? '',
-                                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 Text(
                                   hostLabel,
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: hostColor),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: hostColor,
+                                  ),
                                 ),
                               ],
                             ),
@@ -860,7 +1014,11 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                     ),
                     Text(
                       session.shortId,
-                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
@@ -897,16 +1055,26 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                 },
               ),
               ListTile(
-                leading: Icon(session.pinned ? Icons.push_pin : Icons.push_pin_outlined),
+                leading: Icon(
+                  session.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                ),
                 title: Text(session.pinned ? 'Unpin' : 'Pin'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).patch(sessionId, pinned: !session.pinned);
+                  ref
+                      .read(
+                        sessionsProvider(
+                          allSessionsKey(session.hostId),
+                        ).notifier,
+                      )
+                      .patch(sessionId, pinned: !session.pinned);
                 },
               ),
               ListTile(
                 leading: Icon(
-                  isTerminated ? Icons.play_arrow_outlined : Icons.stop_circle_outlined,
+                  isTerminated
+                      ? Icons.play_arrow_outlined
+                      : Icons.stop_circle_outlined,
                 ),
                 title: Text(isTerminated ? 'Resume' : 'Terminate'),
                 onTap: () async {
@@ -920,8 +1088,14 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                 },
               ),
               ListTile(
-                leading: Icon(Icons.delete_outline, color: theme.colorScheme.error),
-                title: Text('Delete', style: TextStyle(color: theme.colorScheme.error)),
+                leading: Icon(
+                  Icons.delete_outline,
+                  color: theme.colorScheme.error,
+                ),
+                title: Text(
+                  'Delete',
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
                 onTap: () async {
                   Navigator.pop(ctx);
                   if (!mounted) return;
@@ -929,23 +1103,38 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                     context: context,
                     builder: (dCtx) => AlertDialog(
                       title: const Text('Delete session'),
-                      content: const Text('Delete this session? This cannot be undone.'),
+                      content: const Text(
+                        'Delete this session? This cannot be undone.',
+                      ),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
+                        TextButton(
+                          onPressed: () => Navigator.pop(dCtx, false),
+                          child: const Text('Cancel'),
+                        ),
                         FilledButton(
                           onPressed: () => Navigator.pop(dCtx, true),
-                          style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: theme.colorScheme.error,
+                          ),
                           child: const Text('Delete'),
                         ),
                       ],
                     ),
                   );
                   if (confirmed == true) {
-                    ref.read(sessionsProvider(allSessionsKey(session.hostId)).notifier).delete(sessionId);
+                    ref
+                        .read(
+                          sessionsProvider(
+                            allSessionsKey(session.hostId),
+                          ).notifier,
+                        )
+                        .delete(sessionId);
                   }
                 },
               ),
-              if (session.canStop || session.canTerminate || session.canResume) ...[
+              if (session.canStop ||
+                  session.canTerminate ||
+                  session.canResume) ...[
                 const Divider(height: 1),
                 if (session.canStop)
                   ListTile(
@@ -998,7 +1187,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
             autofocus: true,
             decoration: InputDecoration(
               hintText: session.lastUserMessage ?? 'Session title',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
             onSubmitted: (value) => Navigator.pop(ctx, value.trim()),
           ),
@@ -1016,7 +1207,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       },
     ).then((title) {
       if (title != null && title.isNotEmpty) {
-        ref.read(sessionsProvider(allSessionsKey(hostId)).notifier).patch(sessionId, title: title);
+        ref
+            .read(sessionsProvider(allSessionsKey(hostId)).notifier)
+            .patch(sessionId, title: title);
       }
     });
   }
@@ -1026,20 +1219,30 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.terminal, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+          Icon(
+            Icons.terminal,
+            size: 48,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
           const SizedBox(height: 16),
           Text(
             'No sessions yet.',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
             'Start a Claude session:\nhelios new "your prompt"',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                  fontFamily: 'monospace',
-                ),
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+              fontFamily: 'monospace',
+            ),
           ),
         ],
       ),
@@ -1047,7 +1250,8 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   }
 
   Widget _buildEmptyFilterState() {
-    final isSearchActive = _searchExpanded && _searchController.text.trim().isNotEmpty;
+    final isSearchActive =
+        _searchExpanded && _searchController.text.trim().isNotEmpty;
 
     final String label;
     final String hint;
@@ -1084,20 +1288,26 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           Icon(
             icon,
             size: 48,
-            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
           ),
           const SizedBox(height: 16),
           Text(
             label,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           if (hint.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
               hint,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                  ),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+              ),
             ),
           ],
         ],
@@ -1174,13 +1384,18 @@ class _PulsingIcon extends StatefulWidget {
   final Color color;
   final double size;
 
-  const _PulsingIcon({required this.icon, required this.color, required this.size});
+  const _PulsingIcon({
+    required this.icon,
+    required this.color,
+    required this.size,
+  });
 
   @override
   State<_PulsingIcon> createState() => _PulsingIconState();
 }
 
-class _PulsingIconState extends State<_PulsingIcon> with SingleTickerProviderStateMixin {
+class _PulsingIconState extends State<_PulsingIcon>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -1207,7 +1422,11 @@ class _PulsingIconState extends State<_PulsingIcon> with SingleTickerProviderSta
         final scale = 1.0 + 0.15 * _controller.value;
         return Transform.scale(
           scale: scale,
-          child: Icon(widget.icon, size: widget.size, color: widget.color.withValues(alpha: opacity)),
+          child: Icon(
+            widget.icon,
+            size: widget.size,
+            color: widget.color.withValues(alpha: opacity),
+          ),
         );
       },
     );

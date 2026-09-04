@@ -41,7 +41,10 @@ void main() {
 
   group('removeFirst', () {
     test('takes only the pasted block out', () {
-      expect(removeFirst('look at this: LOG here', 'LOG'), 'look at this:  here');
+      expect(
+        removeFirst('look at this: LOG here', 'LOG'),
+        'look at this:  here',
+      );
     });
 
     // An identical block pasted earlier on purpose is not the one being filed.
@@ -56,11 +59,18 @@ void main() {
 
   group('pastedTextFile', () {
     test('names by UTC stamp and carries the bytes', () {
-      final file = pastedTextFile('hello', at: DateTime.utc(2026, 8, 15, 4, 5, 6));
+      final file = pastedTextFile(
+        'hello',
+        at: DateTime.utc(2026, 8, 15, 4, 5, 6),
+      );
       expect(file.name, 'pasted-20260815T040506.txt');
       expect(file.size, 5);
       expect(utf8.decode(file.bytes), 'hello');
-      expect(file.storedPath, isNull, reason: 'not stored until the send uploads it');
+      expect(
+        file.storedPath,
+        isNull,
+        reason: 'not stored until the send uploads it',
+      );
     });
   });
 }

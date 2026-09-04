@@ -78,7 +78,10 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
     final sse = _service;
     if (sse == null) return;
     setState(() => _refreshingModels = true);
-    final models = await sse.fetchModels(_selectedProvider!.id, forceRefresh: true);
+    final models = await sse.fetchModels(
+      _selectedProvider!.id,
+      forceRefresh: true,
+    );
     if (mounted) {
       setState(() {
         _models = models;
@@ -150,7 +153,9 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.3,
+                ),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -232,10 +237,11 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
       initialValue: _selectedHostId,
       decoration: InputDecoration(
         labelText: 'Host',
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
       items: hm.hosts.map((host) {
         final isConnected = hm.serviceFor(host.id)?.connected == true;
@@ -275,22 +281,20 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
     final providers = hostId == null
         ? const <ProviderInfo>[]
         : ref.watch(readyProvidersProvider(hostId)).valueOrNull ??
-            const <ProviderInfo>[];
+              const <ProviderInfo>[];
 
     return DropdownButtonFormField<String>(
       initialValue: _selectedProvider?.id,
       decoration: InputDecoration(
         labelText: 'Provider',
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
       items: providers.map((p) {
-        return DropdownMenuItem(
-          value: p.id,
-          child: Text(p.name),
-        );
+        return DropdownMenuItem(value: p.id, child: Text(p.name));
       }).toList(),
       onChanged: (value) {
         if (value == null) return;
@@ -388,7 +392,7 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
             final dirs = hostId == null
                 ? const <DirectoryInfo>[]
                 : ref.watch(directoriesProvider(hostId)).valueOrNull ??
-                    const <DirectoryInfo>[];
+                      const <DirectoryInfo>[];
             return Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -400,12 +404,18 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
                         ? Container(
                             width: 8,
                             height: 8,
-                            decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.green),
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.green,
+                            ),
                           )
                         : null,
                     label: Text(
                       d.project.isNotEmpty ? d.project : d.shortCwd,
-                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                     selected: isSelected,
                     onSelected: (selected) {
@@ -421,7 +431,10 @@ class _NewSessionSheetState extends rp.ConsumerState<NewSessionSheet> {
                   );
                 }),
                 FilterChip(
-                  label: const Text('Custom...', style: TextStyle(fontSize: 12)),
+                  label: const Text(
+                    'Custom...',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   selected: _showCustomCwd,
                   onSelected: (selected) {
                     setState(() {

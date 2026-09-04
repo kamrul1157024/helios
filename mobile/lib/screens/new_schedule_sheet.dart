@@ -26,7 +26,8 @@ String schedulePrompt(String description, String cwd) {
     'Use the helios skill and the `helios schedule` CLI. Work out which kind it is —',
     'a timer, a one-shot, a monitor with a check, or a job that runs after another —',
     'and create it with a name that reads well in a list.',
-    if (cwd.isNotEmpty) 'Unless the description says otherwise, it should run in $cwd.',
+    if (cwd.isNotEmpty)
+      'Unless the description says otherwise, it should run in $cwd.',
     '',
     'Then run `helios schedule list` and tell me in one or two lines what you made,',
     'when it next fires, and anything you had to guess.',
@@ -39,7 +40,9 @@ Future<void> showNewScheduleSheet(BuildContext context, String hostId) {
     context: context,
     isScrollControlled: true,
     builder: (_) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: _NewScheduleSheet(hostId: hostId),
     ),
   );
@@ -74,7 +77,8 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    final ok = await service?.createSession(
+    final ok =
+        await service?.createSession(
           provider: _provider.isEmpty ? 'claude' : _provider,
           cwd: _cwd.text.trim(),
           prompt: schedulePrompt(_description.text, _cwd.text.trim()),
@@ -86,9 +90,11 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
     navigator.pop();
     messenger.showSnackBar(
       SnackBar(
-        content: Text(ok
-            ? 'An agent is writing it. Watch it in Sessions.'
-            : 'Could not start an agent on that machine.'),
+        content: Text(
+          ok
+              ? 'An agent is writing it. Watch it in Sessions.'
+              : 'Could not start an agent on that machine.',
+        ),
       ),
     );
   }
@@ -97,8 +103,12 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final hosts = ref.watch(hostManagerProvider).hosts;
-    final providers = ref.watch(readyProvidersProvider(_hostId)).valueOrNull ?? const <ProviderInfo>[];
-    final agent = _provider.isEmpty ? (providers.isEmpty ? '' : providers.first.id) : _provider;
+    final providers =
+        ref.watch(readyProvidersProvider(_hostId)).valueOrNull ??
+        const <ProviderInfo>[];
+    final agent = _provider.isEmpty
+        ? (providers.isEmpty ? '' : providers.first.id)
+        : _provider;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -132,7 +142,8 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
             decoration: const InputDecoration(
               labelText: 'Describe it',
               alignLabelWithHint: true,
-              hintText: 'every 15 minutes, run the tests and if they fail, fix them',
+              hintText:
+                  'every 15 minutes, run the tests and if they fail, fix them',
             ),
           ),
           const SizedBox(height: 8),
@@ -149,7 +160,8 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
               initialValue: agent.isEmpty ? null : agent,
               decoration: const InputDecoration(labelText: 'Agent'),
               items: [
-                for (final p in providers) DropdownMenuItem(value: p.id, child: Text(p.name)),
+                for (final p in providers)
+                  DropdownMenuItem(value: p.id, child: Text(p.name)),
               ],
               onChanged: (v) => setState(() => _provider = v ?? ''),
             ),
@@ -177,7 +189,9 @@ class _NewScheduleSheetState extends rp.ConsumerState<_NewScheduleSheet> {
               ),
               const Spacer(),
               FilledButton(
-                onPressed: _starting || _description.text.trim().isEmpty ? null : _askAnAgent,
+                onPressed: _starting || _description.text.trim().isEmpty
+                    ? null
+                    : _askAnAgent,
                 child: Text(_starting ? 'Starting…' : 'Ask an agent'),
               ),
             ],

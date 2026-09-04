@@ -28,7 +28,8 @@ class TerminalScreen extends StatefulWidget {
   State<TerminalScreen> createState() => _TerminalScreenState();
 }
 
-class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObserver {
+class _TerminalScreenState extends State<TerminalScreen>
+    with WidgetsBindingObserver {
   final Map<String, _TerminalTab> _tabs = {};
   List<TerminalInfo> _terminals = [];
   String? _activeId;
@@ -51,7 +52,8 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
     // A shell is the session's, not this client's: one opened on the desktop
     // should appear here without a manual refresh.
     _eventSub = _sse?.events.listen((event) {
-      if (event.type != 'terminal_opened' && event.type != 'terminal_closed') return;
+      if (event.type != 'terminal_opened' && event.type != 'terminal_closed')
+        return;
       if (event.data is! Map) return;
       if ((event.data as Map)['session_id'] != widget.session.sessionId) return;
       _load();
@@ -97,7 +99,8 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
   }
 
   Future<void> _load() async {
-    final terminals = await _sse?.fetchTerminals(widget.session.sessionId) ?? [];
+    final terminals =
+        await _sse?.fetchTerminals(widget.session.sessionId) ?? [];
     if (!mounted) return;
 
     // Anything gone from the daemon's list is gone for good; keep the rest
@@ -194,8 +197,14 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
           'and anyone attached in a terminal.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Fit')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Fit'),
+          ),
         ],
       ),
     );
@@ -219,7 +228,10 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                 child: Row(
                   children: [
-                    Text('Text size', style: Theme.of(ctx).textTheme.titleSmall),
+                    Text(
+                      'Text size',
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
                     const Spacer(),
                     Text('${_fontSize.toStringAsFixed(0)} pt'),
                   ],
@@ -264,13 +276,22 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
     final tab = _active;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.session.displayTitle, overflow: TextOverflow.ellipsis),
+        title: Text(
+          widget.session.displayTitle,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           if (tab != null)
             IconButton(
-              icon: Icon(tab.interactive ? Icons.fit_screen : Icons.fit_screen_outlined,
-                  color: tab.interactive ? Theme.of(context).colorScheme.primary : null),
-              tooltip: tab.interactive ? 'Hand the size back' : 'Fit to this screen',
+              icon: Icon(
+                tab.interactive ? Icons.fit_screen : Icons.fit_screen_outlined,
+                color: tab.interactive
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+              tooltip: tab.interactive
+                  ? 'Hand the size back'
+                  : 'Fit to this screen',
               onPressed: _claimSize,
             ),
           IconButton(
@@ -280,7 +301,11 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
           ),
           IconButton(
             icon: _opening
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.add),
             tooltip: 'Open a shell',
             onPressed: _opening ? null : _openShell,
@@ -290,43 +315,56 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _terminals.isEmpty
-              ? _buildCold()
-              : Column(
-                  children: [
-                    _buildTabs(),
-                    if (tab != null) _buildStatusLine(tab),
-                    Expanded(child: tab == null ? const SizedBox.shrink() : _buildTerminal(tab)),
-                    if (tab != null) _KeyBar(tab: tab),
-                  ],
+          ? _buildCold()
+          : Column(
+              children: [
+                _buildTabs(),
+                if (tab != null) _buildStatusLine(tab),
+                Expanded(
+                  child: tab == null
+                      ? const SizedBox.shrink()
+                      : _buildTerminal(tab),
                 ),
+                if (tab != null) _KeyBar(tab: tab),
+              ],
+            ),
     );
   }
 
   Widget _buildCold() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.terminal, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
-              const SizedBox(height: 12),
-              const Text('This session has no live terminal.', textAlign: TextAlign.center),
-              const SizedBox(height: 4),
-              Text(
-                'Send it a prompt to wake it, or open a shell in its directory.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.tonalIcon(
-                onPressed: _opening ? null : _openShell,
-                icon: const Icon(Icons.add),
-                label: const Text('Open a shell'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.terminal,
+            size: 48,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
-        ),
-      );
+          const SizedBox(height: 12),
+          const Text(
+            'This session has no live terminal.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Send it a prompt to wake it, or open a shell in its directory.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.tonalIcon(
+            onPressed: _opening ? null : _openShell,
+            icon: const Icon(Icons.add),
+            label: const Text('Open a shell'),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildTabs() {
     if (_terminals.length < 2) return const SizedBox.shrink();
@@ -344,9 +382,15 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
           return InputChip(
             selected: selected,
             showCheckmark: false,
-            avatar: Icon(terminal.isAgent ? Icons.smart_toy_outlined : Icons.terminal, size: 16),
+            avatar: Icon(
+              terminal.isAgent ? Icons.smart_toy_outlined : Icons.terminal,
+              size: 16,
+            ),
             label: Text(terminal.isAgent ? 'agent' : 'shell $index'),
-            labelStyle: TextStyle(fontSize: 12, color: selected ? theme.colorScheme.primary : null),
+            labelStyle: TextStyle(
+              fontSize: 12,
+              color: selected ? theme.colorScheme.primary : null,
+            ),
             onPressed: () {
               setState(() => _activeId = terminal.id);
               _tabFor(terminal.id);
@@ -368,11 +412,13 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
         LinkState.connecting => 'connecting',
         LinkState.reconnecting => 'reconnecting',
         LinkState.closed => tab.closeReason ?? 'closed',
-        LinkState.live => tab.interactive ? 'fitted to this screen' : 'watching',
+        LinkState.live =>
+          tab.interactive ? 'fitted to this screen' : 'watching',
       },
       if (status != null) '${status.cols}×${status.rows}',
       if (status != null && status.viewers > 1) '${status.viewers} viewers',
-      if (status?.writer != null && status!.writer!.isNotEmpty) 'typing: ${status.writer}',
+      if (status?.writer != null && status!.writer!.isNotEmpty)
+        'typing: ${status.writer}',
     ];
     return Container(
       width: double.infinity,
@@ -380,7 +426,10 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
       color: theme.colorScheme.surfaceContainerHighest,
       child: Text(
         parts.join(' · '),
-        style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+        style: TextStyle(
+          fontSize: 11,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -399,10 +448,14 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
           // Observing a desktop means inheriting its columns — 191 of them is
           // normal. Shrinking type until they fit produces something no one can
           // read, so the type stays legible and the screen pans instead.
-          final width = (tab.status?.cols ?? tab.cols) * _fontSize * _cellRatio + 12;
+          final width =
+              (tab.status?.cols ?? tab.cols) * _fontSize * _cellRatio + 12;
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: _view(tab, width < constraints.maxWidth ? constraints.maxWidth : width),
+            child: _view(
+              tab,
+              width < constraints.maxWidth ? constraints.maxWidth : width,
+            ),
           );
         },
       ),
@@ -410,21 +463,21 @@ class _TerminalScreenState extends State<TerminalScreen> with WidgetsBindingObse
   }
 
   Widget _view(_TerminalTab tab, double width) => SizedBox(
-        width: width,
-        child: TerminalView(
-          tab.terminal,
-          controller: tab.controller,
-          textStyle: TerminalStyle(fontSize: _fontSize, fontFamily: _fontFamily),
-          padding: const EdgeInsets.all(6),
-          // Observing, the host owns the size and the view must not touch it;
-          // fitted, the view owns it and the host follows.
-          autoResize: tab.interactive,
-          // Android's IME sends no hardware delete event, so without this the
-          // backspace key does nothing at all.
-          deleteDetection: true,
-          backgroundOpacity: 0,
-        ),
-      );
+    width: width,
+    child: TerminalView(
+      tab.terminal,
+      controller: tab.controller,
+      textStyle: TerminalStyle(fontSize: _fontSize, fontFamily: _fontFamily),
+      padding: const EdgeInsets.all(6),
+      // Observing, the host owns the size and the view must not touch it;
+      // fitted, the view owns it and the host follows.
+      autoResize: tab.interactive,
+      // Android's IME sends no hardware delete event, so without this the
+      // backspace key does nothing at all.
+      deleteDetection: true,
+      backgroundOpacity: 0,
+    ),
+  );
 
   /// Bundled rather than the platform's "monospace": Android maps that to
   /// Droid Sans Mono, whose box-drawing characters do not join, and a TUI is
@@ -504,6 +557,7 @@ class _TerminalTab {
   LinkState state = LinkState.connecting;
   TerminalStatus? status;
   String? closeReason;
+
   /// Whether this viewer votes on the PTY size. On by default: a phone
   /// showing a desktop's 180 columns is unreadable, and the terminal is here
   /// to be used rather than watched. Handing it back leaves the phone an
@@ -580,10 +634,15 @@ class _TerminalTab {
     connect();
   }
 
-  void send(String data) => _connection?.send(Uint8List.fromList(utf8.encode(data)));
+  void send(String data) =>
+      _connection?.send(Uint8List.fromList(utf8.encode(data)));
 
-  void key(TerminalKey key, {bool ctrl = false, bool shift = false, bool alt = false}) =>
-      terminal.keyInput(key, ctrl: ctrl, shift: shift, alt: alt);
+  void key(
+    TerminalKey key, {
+    bool ctrl = false,
+    bool shift = false,
+    bool alt = false,
+  }) => terminal.keyInput(key, ctrl: ctrl, shift: shift, alt: alt);
 
   Future<void> pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -698,7 +757,9 @@ class _KeyBarState extends State<_KeyBar> {
               _key('⇧tab', () => widget.tab.key(TerminalKey.tab, shift: true)),
               _key(
                 'ctrl',
-                () => setState(() => widget.tab.ctrlArmed = !widget.tab.ctrlArmed),
+                () => setState(
+                  () => widget.tab.ctrlArmed = !widget.tab.ctrlArmed,
+                ),
                 active: widget.tab.ctrlArmed,
               ),
               _key('^C', () => _chord(0x63)),
@@ -732,14 +793,18 @@ class _KeyBarState extends State<_KeyBar> {
           constraints: const BoxConstraints(minWidth: 44),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
-            color: active ? theme.colorScheme.primaryContainer : theme.colorScheme.surface,
+            color: active
+                ? theme.colorScheme.primaryContainer
+                : theme.colorScheme.surface,
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
             label,
             style: TextStyle(
               fontSize: 13,
-              color: active ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.onSurface,
+              color: active
+                  ? theme.colorScheme.onPrimaryContainer
+                  : theme.colorScheme.onSurface,
             ),
           ),
         ),

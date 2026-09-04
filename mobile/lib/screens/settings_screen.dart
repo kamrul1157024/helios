@@ -60,9 +60,12 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
       _updateDownloading = true;
       _updateProgress = 0;
     });
-    await UpdateService.instance.install(info, onProgress: (p) {
-      if (mounted) setState(() => _updateProgress = p);
-    });
+    await UpdateService.instance.install(
+      info,
+      onProgress: (p) {
+        if (mounted) setState(() => _updateProgress = p);
+      },
+    );
     if (mounted) setState(() => _updateDownloading = false);
   }
 
@@ -79,7 +82,10 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
               const _SectionHeader('Hosts'),
               ...hm.hosts.map((host) => _buildHostTile(host, hm)),
               ListTile(
-                leading: Icon(Icons.add, color: Theme.of(context).colorScheme.primary),
+                leading: Icon(
+                  Icons.add,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 title: const Text('Add new host'),
                 onTap: () {
                   Navigator.of(context).push(
@@ -111,7 +117,9 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
               ListTile(
                 leading: const Icon(Icons.notifications_outlined),
                 title: const Text('Alert settings'),
-                subtitle: const Text('Choose which notifications buzz and play sound'),
+                subtitle: const Text(
+                  'Choose which notifications buzz and play sound',
+                ),
                 trailing: const Icon(Icons.chevron_right, size: 20),
                 onTap: () {
                   Navigator.of(context).push(
@@ -137,7 +145,9 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
       return ListTile(
         leading: const Icon(Icons.system_update),
         title: const Text('Downloading update...'),
-        subtitle: LinearProgressIndicator(value: _updateProgress > 0 ? _updateProgress : null),
+        subtitle: LinearProgressIndicator(
+          value: _updateProgress > 0 ? _updateProgress : null,
+        ),
       );
     }
 
@@ -151,11 +161,16 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
 
     if (hasUpdate) {
       return ListTile(
-        leading: Icon(Icons.system_update, color: Theme.of(context).colorScheme.primary),
+        leading: Icon(
+          Icons.system_update,
+          color: Theme.of(context).colorScheme.primary,
+        ),
         title: Text('Update available — v${_updateInfo!.latestVersion}'),
         subtitle: Text(
           'Current: v$_currentVersion  ·  Tap to ${_updateInfo!.canDirectInstall ? 'download & install' : 'open release page'}',
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
         trailing: FilledButton.tonal(
           onPressed: _doInstall,
@@ -181,15 +196,24 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
         tp.mode == ThemeMode.dark
             ? Icons.dark_mode
             : tp.mode == ThemeMode.light
-                ? Icons.light_mode
-                : Icons.brightness_auto,
+            ? Icons.light_mode
+            : Icons.brightness_auto,
       ),
       title: const Text('Theme'),
       trailing: SegmentedButton<ThemeMode>(
         segments: const [
-          ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto, size: 18)),
-          ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode, size: 18)),
-          ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode, size: 18)),
+          ButtonSegment(
+            value: ThemeMode.system,
+            icon: Icon(Icons.brightness_auto, size: 18),
+          ),
+          ButtonSegment(
+            value: ThemeMode.light,
+            icon: Icon(Icons.light_mode, size: 18),
+          ),
+          ButtonSegment(
+            value: ThemeMode.dark,
+            icon: Icon(Icons.dark_mode, size: 18),
+          ),
         ],
         selected: {tp.mode},
         onSelectionChanged: (modes) => tp.setMode(modes.first),
@@ -208,7 +232,9 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
   String? _hostSettingsSummary(String hostId) {
     final settings = ref.watch(hostSettingsProvider(hostId)).valueOrNull;
     if (settings == null) return null;
-    final title = settings.autoTitleEnabled ? 'Auto title on' : 'Auto title off';
+    final title = settings.autoTitleEnabled
+        ? 'Auto title on'
+        : 'Auto title off';
     final memory = settings.evictEnabled
         ? 'Save memory ${(settings.budgetFraction * 100).round()}%'
         : 'Save memory off';
@@ -236,7 +262,10 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
         children: [
           Text(
             host.serverUrl,
-            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             overflow: TextOverflow.ellipsis,
           ),
           if (summary != null)
@@ -244,9 +273,7 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
               summary,
               style: TextStyle(
                 fontSize: 11,
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurfaceVariant
+                color: Theme.of(context).colorScheme.onSurfaceVariant
                     .withValues(alpha: isConnected ? 1.0 : 0.5),
               ),
               overflow: TextOverflow.ellipsis,
@@ -260,7 +287,9 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
             isConnected ? 'Connected' : 'Offline',
             style: TextStyle(
               fontSize: 12,
-              color: isConnected ? Colors.green : Theme.of(context).colorScheme.onSurfaceVariant,
+              color: isConnected
+                  ? Colors.green
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(width: 4),
@@ -287,8 +316,8 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         title,
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-            ),
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
     );
   }

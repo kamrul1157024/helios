@@ -706,7 +706,36 @@ Hook map:
 means *keep going*. Helios must return `{}`. Anything else restarts the turn.
 
 Action handlers: `codex.permission` only. It maps approve/deny onto
-`{"decision": {"behavior": "allow"}}` or `deny` with a message.
+`{"decision": {"behavior": "allow"}}` or `deny` with a message. A refusal may
+carry `feedback`, which becomes that message; see "A refusal can carry words".
+
+### A refusal can carry words
+
+Codex's own approval dialog offers eight rows, and one of them is
+`No, and tell Codex what to do differently`. Helios painted `Allow once` and
+`Deny` over it, and answered every refusal with `Denied via helios` — so the
+one thing the user most often wants to say, *not like that, like this*, had
+nowhere to go.
+
+The wire already carried it. `deny` with a message is one of the two responses
+`PermissionRequest` honours, measured against 0.150.1.
+
+So the overlay gains a third row that is not a choice: `AllowText` with
+`TextLabel: "Tell Codex what to do differently"`. Enter opens the field, Enter
+sends, and the words become the deny message under a line naming who is
+speaking — a refused call comes back to the model as an error, and bare text
+there reads as a malfunction rather than as a person talking. Escape still
+denies without a word and still says `Denied via helios`.
+
+The phone and the desktop app post `feedback` on the deny action and get the
+same field. Unlike Claude, the field is on every Codex permission card rather
+than on a plan card alone: Codex has no `ExitPlanMode`, and no rule to write
+instead.
+
+Two rows are still missing, for reasons that have not changed. There is no
+"don't ask again" because `updatedPermissions` fails closed. There is no plan
+card because leaving plan mode is a TUI prompt Codex draws itself — `Implement
+this plan?` — with no tool call and no hook behind it. Helios never sees it.
 
 ### What a Codex session will not have
 

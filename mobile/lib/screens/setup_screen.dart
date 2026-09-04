@@ -8,8 +8,7 @@ import 'home_screen.dart';
 
 /// Whether QR scanning should be the default input mode.
 /// Disabled on web and desktop platforms where camera scanning is impractical.
-bool get _defaultToScanner =>
-    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+bool get _defaultToScanner => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 class SetupScreen extends StatefulWidget {
   final String? deepLinkToken;
@@ -56,7 +55,10 @@ class _SetupScreenState extends State<SetupScreen> {
     if (input.isEmpty) return;
     final parsed = _parsePairingUrl(input);
     if (parsed == null) {
-      setState(() => _error = 'Invalid pairing URL. Scan the QR code from the terminal.');
+      setState(
+        () =>
+            _error = 'Invalid pairing URL. Scan the QR code from the terminal.',
+      );
       return;
     }
     await _doSetup(parsed.token, parsed.serverUrl);
@@ -106,10 +108,7 @@ class _SetupScreenState extends State<SetupScreen> {
     if (_error != null) return _buildError();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('helios'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('helios'), centerTitle: true),
       body: _scanning ? _buildScanner() : _buildManualInput(),
     );
   }
@@ -136,16 +135,26 @@ class _SetupScreenState extends State<SetupScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.camera_alt_outlined, size: 48,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                      Icon(
+                        Icons.camera_alt_outlined,
+                        size: 48,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      ),
                       const SizedBox(height: 16),
-                      Text('Camera unavailable',
-                          style: Theme.of(context).textTheme.bodyLarge),
+                      Text(
+                        'Camera unavailable',
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
                       const SizedBox(height: 8),
-                      Text('Grant camera permission or paste the URL manually.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          textAlign: TextAlign.center),
+                      Text(
+                        'Grant camera permission or paste the URL manually.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
                     ],
                   ),
                 ),
@@ -166,8 +175,8 @@ class _SetupScreenState extends State<SetupScreen> {
               Text(
                 'Run helios start in your terminal to generate a QR code',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -191,15 +200,17 @@ class _SetupScreenState extends State<SetupScreen> {
         children: [
           Text(
             'helios',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Text(
             'Add Host',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
@@ -247,53 +258,78 @@ class _SetupScreenState extends State<SetupScreen> {
                 children: [
                   Text(
                     'helios',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    isPending ? 'Waiting for approval...' : 'Setting up device...',
+                    isPending
+                        ? 'Waiting for approval...'
+                        : 'Setting up device...',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 16),
-                  ..._statusMessages.map((msg) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Row(
-                          children: [
-                            Text('+',
-                                style: TextStyle(
-                                    color: Theme.of(context).colorScheme.primary, fontFamily: 'monospace')),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(msg,
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        fontFamily: 'monospace',
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                      )),
+                  ..._statusMessages.map(
+                    (msg) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          Text(
+                            '+',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontFamily: 'monospace',
                             ),
-                          ],
-                        ),
-                      )),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              msg,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    fontFamily: 'monospace',
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   if (isPending) ...[
                     const SizedBox(height: 16),
                     if (hm.pendingDeviceId != null) ...[
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.key, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            Icon(
+                              Icons.key,
+                              size: 16,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
                             const SizedBox(width: 8),
                             Text(
                               'Device ID: ${hm.pendingDeviceId!.substring(0, 8)}...',
                               style: TextStyle(
                                 fontFamily: 'monospace',
                                 fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ],
@@ -309,14 +345,21 @@ class _SetupScreenState extends State<SetupScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.terminal,
-                              color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
+                          Icon(
+                            Icons.terminal,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onPrimaryContainer,
+                            size: 20,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'Press "y" in the terminal to approve this device.',
                               style: TextStyle(
-                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onPrimaryContainer,
                                 fontSize: 13,
                               ),
                             ),
@@ -338,7 +381,8 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Widget _buildError() {
     final isTokenExpired =
-        _error?.contains('expired') == true || _error?.contains('already been used') == true;
+        _error?.contains('expired') == true ||
+        _error?.contains('already been used') == true;
 
     return Scaffold(
       body: Center(
@@ -351,13 +395,19 @@ class _SetupScreenState extends State<SetupScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('helios',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'helios',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 4),
-                  Text('Setup Failed',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          )),
+                  Text(
+                    'Setup Failed',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -365,43 +415,61 @@ class _SetupScreenState extends State<SetupScreen> {
                       color: Theme.of(context).colorScheme.errorContainer,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(_error!,
-                        style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer, fontSize: 13)),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                        fontSize: 13,
+                      ),
+                    ),
                   ),
                   if (isTokenExpired) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('What happened?',
-                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          Text(
+                            'What happened?',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
                           SizedBox(height: 4),
                           Text(
-                              'The pairing QR code has expired or was already used. Each QR code can only be scanned once and expires after 2 minutes.',
-                              style: TextStyle(fontSize: 13)),
+                            'The pairing QR code has expired or was already used. Each QR code can only be scanned once and expires after 2 minutes.',
+                            style: TextStyle(fontSize: 13),
+                          ),
                           SizedBox(height: 8),
                           Text(
-                              'A new QR code is automatically generated in the terminal. Scan the latest one.',
-                              style: TextStyle(fontSize: 13)),
+                            'A new QR code is automatically generated in the terminal. Scan the latest one.',
+                            style: TextStyle(fontSize: 13),
+                          ),
                         ],
                       ),
                     ),
                   ],
                   const SizedBox(height: 16),
-                  ..._statusMessages.map((msg) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 1),
-                        child: Text(msg,
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  fontFamily: 'monospace',
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                )),
-                      )),
+                  ..._statusMessages.map(
+                    (msg) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 1),
+                      child: Text(
+                        msg,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,

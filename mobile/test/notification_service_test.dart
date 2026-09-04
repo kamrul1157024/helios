@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:helios/services/notification_service.dart';
 
 /// The channel flutter_local_notifications talks to.
-const _pluginChannel = MethodChannel('dexterous.com/flutter/local_notifications');
+const _pluginChannel = MethodChannel(
+  'dexterous.com/flutter/local_notifications',
+);
 
 /// Helios' own channel for sound/vibration and channel creation.
 const _nativeChannel = MethodChannel('com.helios.helios/notifications');
@@ -110,9 +112,19 @@ void main() {
 
   test('cancelling one key leaves the other posted', () async {
     await NotificationService.instance.showNotification(
-      id: 'p1', key: 'host-a:n1', title: 'a', body: 'a', silent: true);
+      id: 'p1',
+      key: 'host-a:n1',
+      title: 'a',
+      body: 'a',
+      silent: true,
+    );
     await NotificationService.instance.showNotification(
-      id: 'p2', key: 'host-b:n2', title: 'b', body: 'b', silent: true);
+      id: 'p2',
+      key: 'host-b:n2',
+      title: 'b',
+      body: 'b',
+      silent: true,
+    );
 
     await NotificationService.instance.cancel('host-a:n1');
 
@@ -122,9 +134,19 @@ void main() {
 
   test('cancelAll retracts everything and clears tracking', () async {
     await NotificationService.instance.showNotification(
-      id: 'p1', key: 'host-a:n1', title: 'a', body: 'a', silent: true);
+      id: 'p1',
+      key: 'host-a:n1',
+      title: 'a',
+      body: 'a',
+      silent: true,
+    );
     await NotificationService.instance.showNotification(
-      id: 'p2', key: 'host-b:n2', title: 'b', body: 'b', silent: true);
+      id: 'p2',
+      key: 'host-b:n2',
+      title: 'b',
+      body: 'b',
+      silent: true,
+    );
 
     calls.clear();
     await NotificationService.instance.cancelAll();
@@ -179,16 +201,18 @@ void main() {
       expect(calls.where((c) => c.method == 'cancel').length, 2);
     });
 
-    test('everything still pending is left posted and nothing is cancelled',
-        () async {
-      await post('host-a', 'n1');
-      calls.clear();
+    test(
+      'everything still pending is left posted and nothing is cancelled',
+      () async {
+        await post('host-a', 'n1');
+        calls.clear();
 
-      await NotificationService.instance.retainOnly('host-a', {'n1'});
+        await NotificationService.instance.retainOnly('host-a', {'n1'});
 
-      expect(calls.where((c) => c.method == 'cancel'), isEmpty);
-      expect(NotificationService.instance.isPosted('host-a:n1'), isTrue);
-    });
+        expect(calls.where((c) => c.method == 'cancel'), isEmpty);
+        expect(NotificationService.instance.isPosted('host-a:n1'), isTrue);
+      },
+    );
 
     test('a host with nothing posted is a no-op', () async {
       await NotificationService.instance.retainOnly('host-z', {'n1'});

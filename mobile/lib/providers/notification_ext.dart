@@ -56,6 +56,41 @@ extension NotificationPayload on HeliosNotification {
   List<dynamic>? get permissionSuggestions =>
       payload?['permission_suggestions'] as List?;
 
+  /// Whether Codex raised this. The card is the same card whoever raised it,
+  /// but the words on it name the agent the user is talking to.
+  bool get isCodex => source == 'codex';
+
+  /// A plan waiting for approval. On the wire it is a permission like any
+  /// other, but it is not a yes-or-no question: the answer picks the mode the
+  /// session continues in, or sends the plan back in words.
+  bool get isPlan => toolName == 'ExitPlanMode';
+
+  /// The plan as Claude wrote it, markdown and all.
+  String? get planText {
+    final ti = payload?['tool_input'];
+    if (ti is Map) return ti['plan'] as String?;
+    return null;
+  }
+
+  /// Where the whole plan lives on the machine running the agent.
+  String? get planFilePath {
+    final ti = payload?['tool_input'];
+    if (ti is Map) return ti['planFilePath'] as String?;
+    return null;
+  }
+
+  /// What to call the plan in one line: its first heading, marks taken off.
+  ///
+  /// Read from the plan rather than from the notification's own detail, which
+  /// is written by the daemon and so is missing from a card built by hand.
+  String? get planHeadline {
+    for (final line in (planText ?? '').split('\n')) {
+      final text = line.replaceFirst(RegExp(r'^\s*#+\s*'), '').trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
   // Payload accessors for a question
   List<dynamic>? get questions => payload?['questions'] as List?;
 

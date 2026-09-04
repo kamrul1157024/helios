@@ -68,7 +68,8 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
                 spacing: 12,
                 children: List.generate(HostConnection.hostColors.length, (i) {
                   final color = HostConnection.hostColors[i];
-                  final isSelected = host.colorIndex % HostConnection.hostColors.length == i;
+                  final isSelected =
+                      host.colorIndex % HostConnection.hostColors.length == i;
                   return GestureDetector(
                     onTap: () => hm.updateHostColor(host.id, i),
                     child: Container(
@@ -78,11 +79,18 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
                         shape: BoxShape.circle,
                         color: color,
                         border: isSelected
-                            ? Border.all(color: theme.colorScheme.onSurface, width: 3)
+                            ? Border.all(
+                                color: theme.colorScheme.onSurface,
+                                width: 3,
+                              )
                             : null,
                       ),
                       child: isSelected
-                          ? const Icon(Icons.check, color: Colors.white, size: 18)
+                          ? const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 18,
+                            )
                           : null,
                     ),
                   );
@@ -151,15 +159,24 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     'Tailnet address — reachable only while Tailscale is connected.',
-                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               const SizedBox(height: 16),
 
               // Info fields
               _infoRow('Device ID', host.deviceId, theme),
-              _infoRow('Status', isConnected ? 'Connected' : 'Offline', theme,
-                  valueColor: isConnected ? Colors.green : theme.colorScheme.onSurfaceVariant),
+              _infoRow(
+                'Status',
+                isConnected ? 'Connected' : 'Offline',
+                theme,
+                valueColor: isConnected
+                    ? Colors.green
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
               _infoRow('Paired', _formatDate(host.addedAt), theme),
 
               const SizedBox(height: 24),
@@ -208,7 +225,11 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
         if (isConnected)
           const Row(
             children: [
-              SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
               SizedBox(width: 12),
               Text('Loading…'),
             ],
@@ -216,7 +237,10 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
         else
           Text(
             'Offline — settings unavailable until this host reconnects.',
-            style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
       ];
     }
@@ -232,7 +256,10 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
           padding: const EdgeInsets.only(top: 4),
           child: Text(
             'Offline — showing the last known values. Reconnect to change them.',
-            style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       const SizedBox(height: 8),
@@ -244,9 +271,9 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
         value: settings.autoTitleEnabled,
         onChanged: isConnected
             ? (value) => _saveHostSetting(
-                  () => writer.setAutoTitleEnabled(value),
-                  'Auto title',
-                )
+                () => writer.setAutoTitleEnabled(value),
+                'Auto title',
+              )
             : null,
       ),
       if (settings.autoTitleEnabled)
@@ -258,9 +285,9 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
           value: settings.autoTitleEmoji,
           onChanged: isConnected
               ? (value) => _saveHostSetting(
-                    () => writer.setAutoTitleEmoji(value),
-                    'Title icon',
-                  )
+                  () => writer.setAutoTitleEmoji(value),
+                  'Title icon',
+                )
               : null,
         ),
       SwitchListTile(
@@ -274,9 +301,9 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
         value: settings.evictEnabled,
         onChanged: isConnected
             ? (value) => _saveHostSetting(
-                  () => writer.setEvictEnabled(value),
-                  'Save memory',
-                )
+                () => writer.setEvictEnabled(value),
+                'Save memory',
+              )
             : null,
       ),
       if (settings.evictEnabled)
@@ -293,12 +320,17 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
             ],
           ),
           subtitle: Slider(
-            value: fraction.clamp(DaemonAPIService.budgetMin, DaemonAPIService.budgetMax),
+            value: fraction.clamp(
+              DaemonAPIService.budgetMin,
+              DaemonAPIService.budgetMax,
+            ),
             min: DaemonAPIService.budgetMin,
             max: DaemonAPIService.budgetMax,
             divisions: 17,
             label: '${(fraction * 100).round()}%',
-            onChanged: isConnected ? (value) => setState(() => _budgetDrag = value) : null,
+            onChanged: isConnected
+                ? (value) => setState(() => _budgetDrag = value)
+                : null,
             onChangeEnd: isConnected
                 ? (value) async {
                     await _saveHostSetting(
@@ -316,11 +348,16 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
   /// Writes one setting and says so when it fails. The cache puts the old
   /// value back on its own; without a message the control would flick back
   /// with no reason given.
-  Future<void> _saveHostSetting(Future<bool> Function() write, String label) async {
+  Future<void> _saveHostSetting(
+    Future<bool> Function() write,
+    String label,
+  ) async {
     final ok = await write();
     if (!mounted || ok) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Could not save $label — the host did not answer')),
+      SnackBar(
+        content: Text('Could not save $label — the host did not answer'),
+      ),
     );
   }
 
@@ -330,13 +367,16 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
   Future<void> _saveUrl(HostManager hm, String value) async {
     final trimmed = value.trim();
     final uri = Uri.tryParse(trimmed);
-    final valid = uri != null &&
+    final valid =
+        uri != null &&
         (uri.scheme == 'http' || uri.scheme == 'https') &&
         uri.host.isNotEmpty;
 
     if (!valid) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a full URL, e.g. https://host.tailnet.ts.net')),
+        const SnackBar(
+          content: Text('Enter a full URL, e.g. https://host.tailnet.ts.net'),
+        ),
       );
       return;
     }
@@ -348,7 +388,12 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
     );
   }
 
-  Widget _infoRow(String label, String value, ThemeData theme, {Color? valueColor}) {
+  Widget _infoRow(
+    String label,
+    String value,
+    ThemeData theme, {
+    Color? valueColor,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -356,7 +401,13 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
         children: [
           SizedBox(
             width: 100,
-            child: Text(label, style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant)),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
           ),
           Expanded(
             child: Text(
@@ -386,16 +437,23 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Disconnect host'),
-        content: Text('Remove "${host.label}" and delete stored credentials? You can re-pair later.'),
+        content: Text(
+          'Remove "${host.label}" and delete stored credentials? You can re-pair later.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
               await hm.removeHost(host.id);
               if (mounted) Navigator.of(context).pop();
             },
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             child: const Text('Disconnect'),
           ),
         ],

@@ -210,7 +210,9 @@ class DaemonAPIService extends ChangeNotifier {
       if (raw == null) return null;
       final list = (jsonDecode(raw) as List?) ?? [];
       return list
-          .map((s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId))
+          .map(
+            (s) => Session.fromJson(s as Map<String, dynamic>, hostId: hostId),
+          )
           .toList();
     } catch (_) {
       // Schema changed, corrupt cache, or no store at all. Either way the
@@ -500,7 +502,9 @@ class DaemonAPIService extends ChangeNotifier {
     }
     final data = jsonDecode(resp.body);
     final list = (data['schedules'] as List?) ?? [];
-    return list.map((s) => Schedule.fromJson(s as Map<String, dynamic>)).toList();
+    return list
+        .map((s) => Schedule.fromJson(s as Map<String, dynamic>))
+        .toList();
   }
 
   Future<Schedule> saveSchedule(String id, Map<String, dynamic> fields) async {
@@ -512,7 +516,9 @@ class DaemonAPIService extends ChangeNotifier {
       // The daemon refuses at save what would otherwise be found at 3am — a
       // cron that can never fire, a link that would close a loop — and says
       // which, so its message is worth more than the status.
-      throw Exception((data['message'] as String?) ?? 'could not save the schedule');
+      throw Exception(
+        (data['message'] as String?) ?? 'could not save the schedule',
+      );
     }
     return Schedule.fromJson(data['schedule'] as Map<String, dynamic>);
   }
@@ -569,8 +575,9 @@ class DaemonAPIService extends ChangeNotifier {
     final queryString = params.entries
         .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
         .join('&');
-    final path =
-        queryString.isNotEmpty ? '/api/sessions?$queryString' : '/api/sessions';
+    final path = queryString.isNotEmpty
+        ? '/api/sessions?$queryString'
+        : '/api/sessions';
 
     final resp = await _api.get(path);
     if (resp.statusCode != 200) {
@@ -610,9 +617,7 @@ class DaemonAPIService extends ChangeNotifier {
       final query = afterSeq != null
           ? 'limit=$limit&after_seq=$afterSeq&epoch=${Uri.encodeQueryComponent(epoch ?? '')}'
           : 'limit=$limit&offset=$offset';
-      final resp = await _api.get(
-        '/api/sessions/$sessionId/transcript?$query',
-      );
+      final resp = await _api.get('/api/sessions/$sessionId/transcript?$query');
       debugPrint(
         '[$hostId] fetchTranscript[$sessionId] status=${resp.statusCode}',
       );
@@ -654,9 +659,14 @@ class DaemonAPIService extends ChangeNotifier {
   ) async {
     if (files.isEmpty) return const [];
     try {
-      final resp = await _api.postFiles('/api/sessions/$sessionId/files', files);
+      final resp = await _api.postFiles(
+        '/api/sessions/$sessionId/files',
+        files,
+      );
       if (resp.statusCode != 200) {
-        debugPrint('[$hostId] uploadSessionFiles: ${resp.statusCode} ${resp.body}');
+        debugPrint(
+          '[$hostId] uploadSessionFiles: ${resp.statusCode} ${resp.body}',
+        );
         return null;
       }
       final data = jsonDecode(resp.body);
@@ -810,11 +820,15 @@ class DaemonAPIService extends ChangeNotifier {
   /// The live terminals beside a session: its agent, then any shells.
   Future<List<TerminalInfo>> fetchTerminals(String sessionId) async {
     try {
-      final resp = await _api.get('/api/sessions/${Uri.encodeComponent(sessionId)}/terminals');
+      final resp = await _api.get(
+        '/api/sessions/${Uri.encodeComponent(sessionId)}/terminals',
+      );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         final list = (data['terminals'] as List?) ?? [];
-        return list.map((t) => TerminalInfo.fromJson(t as Map<String, dynamic>)).toList();
+        return list
+            .map((t) => TerminalInfo.fromJson(t as Map<String, dynamic>))
+            .toList();
       }
     } catch (e) {
       debugPrint('[$hostId] fetchTerminals error: $e');
@@ -827,9 +841,13 @@ class DaemonAPIService extends ChangeNotifier {
   /// something yourself.
   Future<TerminalInfo?> openShell(String sessionId) async {
     try {
-      final resp = await _api.post('/api/sessions/${Uri.encodeComponent(sessionId)}/terminals');
+      final resp = await _api.post(
+        '/api/sessions/${Uri.encodeComponent(sessionId)}/terminals',
+      );
       if (isSuccess(resp.statusCode)) {
-        return TerminalInfo.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+        return TerminalInfo.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
       }
       debugPrint('[$hostId] openShell failed: ${resp.statusCode} ${resp.body}');
     } catch (e) {
@@ -842,7 +860,9 @@ class DaemonAPIService extends ChangeNotifier {
   /// stop and terminate of its own.
   Future<bool> closeTerminal(String terminalId) async {
     try {
-      final resp = await _api.delete('/api/terminals/${Uri.encodeComponent(terminalId)}');
+      final resp = await _api.delete(
+        '/api/terminals/${Uri.encodeComponent(terminalId)}',
+      );
       return isSuccess(resp.statusCode);
     } catch (e) {
       debugPrint('[$hostId] closeTerminal error: $e');
@@ -918,7 +938,10 @@ class DaemonAPIService extends ChangeNotifier {
   /// Writes the arrangement. The cache paints it before this answers.
   Future<bool> setSessionOrder(List<String> sessionIds) async {
     try {
-      final resp = await _api.post('/api/sessions/order', body: {'order': sessionIds});
+      final resp = await _api.post(
+        '/api/sessions/order',
+        body: {'order': sessionIds},
+      );
       if (resp.statusCode == 200) return true;
     } catch (e) {
       debugPrint('[$hostId] setSessionOrder error: $e');
@@ -1085,7 +1108,8 @@ class DaemonAPIService extends ChangeNotifier {
         'file=${Uri.encodeComponent(file)}',
         if (staged) 'staged=true',
         if (untracked) 'untracked=true',
-        if (from != null && from.isNotEmpty) 'from=${Uri.encodeComponent(from)}',
+        if (from != null && from.isNotEmpty)
+          'from=${Uri.encodeComponent(from)}',
         if (to != null && to.isNotEmpty) 'to=${Uri.encodeComponent(to)}',
       ];
       final resp = await _api.get('/api/git/diff?${query.join('&')}');
@@ -1113,7 +1137,8 @@ class DaemonAPIService extends ChangeNotifier {
         'limit=$limit',
         if (skip > 0) 'skip=$skip',
         if (all) 'all=true',
-        if (base != null && base.isNotEmpty) 'base=${Uri.encodeComponent(base)}',
+        if (base != null && base.isNotEmpty)
+          'base=${Uri.encodeComponent(base)}',
       ];
       final resp = await _api.get('/api/git/log?${query.join('&')}');
       if (resp.statusCode == 200) {
@@ -1131,7 +1156,8 @@ class DaemonAPIService extends ChangeNotifier {
       final query = <String>[
         'path=${Uri.encodeComponent(path)}',
         'to=${Uri.encodeComponent(to)}',
-        if (from != null && from.isNotEmpty) 'from=${Uri.encodeComponent(from)}',
+        if (from != null && from.isNotEmpty)
+          'from=${Uri.encodeComponent(from)}',
       ];
       final resp = await _api.get('/api/git/changes?${query.join('&')}');
       if (resp.statusCode == 200) {
@@ -1225,7 +1251,8 @@ class HostSettings {
     return HostSettings(
       manualOrder: settings[DaemonAPIService.settingSortMode] == 'manual',
       autoTitleEnabled: settings[DaemonAPIService.settingAutoTitle] == 'true',
-      autoTitleEmoji: settings[DaemonAPIService.settingAutoTitleEmoji] == 'true',
+      autoTitleEmoji:
+          settings[DaemonAPIService.settingAutoTitleEmoji] == 'true',
       evictEnabled: settings[DaemonAPIService.settingEvict] == 'true',
       budgetFraction: budget == null
           ? DaemonAPIService.budgetDefault
@@ -1242,14 +1269,13 @@ class HostSettings {
     bool? autoTitleEmoji,
     bool? evictEnabled,
     double? budgetFraction,
-  }) =>
-      HostSettings(
-        manualOrder: manualOrder ?? this.manualOrder,
-        autoTitleEnabled: autoTitleEnabled ?? this.autoTitleEnabled,
-        autoTitleEmoji: autoTitleEmoji ?? this.autoTitleEmoji,
-        evictEnabled: evictEnabled ?? this.evictEnabled,
-        budgetFraction: budgetFraction ?? this.budgetFraction,
-      );
+  }) => HostSettings(
+    manualOrder: manualOrder ?? this.manualOrder,
+    autoTitleEnabled: autoTitleEnabled ?? this.autoTitleEnabled,
+    autoTitleEmoji: autoTitleEmoji ?? this.autoTitleEmoji,
+    evictEnabled: evictEnabled ?? this.evictEnabled,
+    budgetFraction: budgetFraction ?? this.budgetFraction,
+  );
 }
 
 /// The filters a session list is read under, and the key it is cached against.
@@ -1265,7 +1291,13 @@ class SessionQuery {
   /// Narrows to the runs of one schedule, which is what the runs list is.
   final String? scheduleId;
 
-  const SessionQuery({this.q, this.status, this.filter, this.cwd, this.scheduleId});
+  const SessionQuery({
+    this.q,
+    this.status,
+    this.filter,
+    this.cwd,
+    this.scheduleId,
+  });
 
   static const all = SessionQuery();
 
@@ -1286,7 +1318,8 @@ class SessionQuery {
   int get hashCode => Object.hash(q, status, filter, cwd, scheduleId);
 
   @override
-  String toString() => 'SessionQuery(q: $q, status: $status, filter: $filter, cwd: $cwd)';
+  String toString() =>
+      'SessionQuery(q: $q, status: $status, filter: $filter, cwd: $cwd)';
 }
 
 class FileEntry {
@@ -1433,11 +1466,11 @@ class TerminalInfo {
   });
 
   factory TerminalInfo.fromJson(Map<String, dynamic> json) => TerminalInfo(
-        id: json['id'] as String,
-        parent: json['parent'] as String? ?? '',
-        kind: json['kind'] as String? ?? 'shell',
-        cwd: json['cwd'] as String? ?? '',
-      );
+    id: json['id'] as String,
+    parent: json['parent'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'shell',
+    cwd: json['cwd'] as String? ?? '',
+  );
 
   bool get isAgent => kind == 'agent';
 }
@@ -1811,7 +1844,9 @@ bool isSuccess(int statusCode) => statusCode >= 200 && statusCode < 300;
 /// Most recently committed first. Worktrees with no date — pruned, or past the
 /// detail cap the daemon enforces — keep their listing order at the end.
 List<Worktree> sortWorktreesByLastTouched(List<Worktree> worktrees) {
-  final order = {for (var i = 0; i < worktrees.length; i++) worktrees[i].path: i};
+  final order = {
+    for (var i = 0; i < worktrees.length; i++) worktrees[i].path: i,
+  };
   final sorted = [...worktrees];
   sorted.sort((a, b) {
     final da = DateTime.tryParse(a.date)?.toUtc();

@@ -69,7 +69,9 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
   @override
   void didUpdateWidget(HtmlPreview old) {
     super.didUpdateWidget(old);
-    if (old.html != widget.html || old.path != widget.path || old.scripts != widget.scripts) {
+    if (old.html != widget.html ||
+        old.path != widget.path ||
+        old.scripts != widget.scripts) {
       unawaited(_prepare());
     }
   }
@@ -85,7 +87,9 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
         // Off unless asked for. On, the page can compute and draw and has
         // nowhere to send anything — see the policy injected above.
         ..setJavaScriptMode(
-          widget.scripts ? JavaScriptMode.unrestricted : JavaScriptMode.disabled,
+          widget.scripts
+              ? JavaScriptMode.unrestricted
+              : JavaScriptMode.disabled,
         )
         ..setBackgroundColor(Colors.white)
         ..setNavigationDelegate(
@@ -110,11 +114,17 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
     final images = document.querySelectorAll('img[src]');
     final sheets = document
         .querySelectorAll('link[href]')
-        .where((el) => (el.attributes['rel'] ?? '').split(RegExp(r'\s+')).contains('stylesheet'))
+        .where(
+          (el) => (el.attributes['rel'] ?? '')
+              .split(RegExp(r'\s+'))
+              .contains('stylesheet'),
+        )
         .toList();
 
     // A local script is only worth fetching if it will be allowed to run.
-    final code = widget.scripts ? document.querySelectorAll('script[src]') : <dom.Element>[];
+    final code = widget.scripts
+        ? document.querySelectorAll('script[src]')
+        : <dom.Element>[];
 
     final refs = <AssetRef>[
       for (final el in images) AssetRef('img', el.attributes['src'] ?? ''),
@@ -128,7 +138,9 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
     final loaded = <String, FileReadResult>{};
     var spent = 0;
     for (final asset in planned) {
-      final file = await ref.read(readFileProvider((widget.hostId, asset.path)).future);
+      final file = await ref.read(
+        readFileProvider((widget.hostId, asset.path)).future,
+      );
       // A page that names a file the agent has since deleted still renders;
       // the reference simply goes unresolved.
       if (file?.content == null) continue;
@@ -146,7 +158,8 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
       final asset = matches.first;
 
       if (file.encoding == 'base64') {
-        el.attributes['src'] = 'data:${mimeForPath(asset.path)};base64,${file.content}';
+        el.attributes['src'] =
+            'data:${mimeForPath(asset.path)};base64,${file.content}';
       } else if (mimeForPath(asset.path) == 'image/svg+xml') {
         // An SVG is text and arrives as text; anything else that is not base64
         // came from a daemon too old to send bytes, and is already lost.
@@ -184,14 +197,18 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
     // The page's own <meta http-equiv> goes whatever happens: it could carry a
     // policy of its own, and the one this installs below has to be the only one.
     const always = 'iframe, object, embed, form, base, meta[http-equiv]';
-    for (final el in document.querySelectorAll(widget.scripts ? always : 'script, $always')) {
+    for (final el in document.querySelectorAll(
+      widget.scripts ? always : 'script, $always',
+    )) {
       el.remove();
     }
 
     // Anything still pointing at a scheme after the inlining above is remote:
     // an image on a CDN, a font, a tracking pixel. It is dropped rather than
     // left to be fetched the moment the page loads.
-    for (final el in document.querySelectorAll('[src], [href], [srcset], [poster], [data]')) {
+    for (final el in document.querySelectorAll(
+      '[src], [href], [srcset], [poster], [data]',
+    )) {
       for (final name in const ['src', 'href', 'srcset', 'poster', 'data']) {
         final value = el.attributes[name];
         if (value == null) continue;
@@ -248,10 +265,14 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
       );
     }
     final controller = _controller;
-    if (controller == null) return const Center(child: CircularProgressIndicator());
+    if (controller == null)
+      return const Center(child: CircularProgressIndicator());
 
     // White behind it, because a document assumes paper. A dark app around a
     // page written for a browser would misrepresent it.
-    return Container(color: Colors.white, child: WebViewWidget(controller: controller));
+    return Container(
+      color: Colors.white,
+      child: WebViewWidget(controller: controller),
+    );
   }
 }

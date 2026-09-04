@@ -42,8 +42,9 @@ class Message {
 
   String get timeAgo {
     try {
-      final normalized =
-          timestamp.contains('T') ? timestamp : '${timestamp.replaceAll(' ', 'T')}Z';
+      final normalized = timestamp.contains('T')
+          ? timestamp
+          : '${timestamp.replaceAll(' ', 'T')}Z';
       final d = DateTime.parse(normalized);
       final diff = DateTime.now().toUtc().difference(d);
       if (diff.inSeconds < 60) return 'just now';
@@ -89,7 +90,9 @@ class TranscriptResult {
   factory TranscriptResult.fromJson(Map<String, dynamic> json) {
     final list = (json['messages'] as List?) ?? [];
     return TranscriptResult(
-      messages: list.map((m) => Message.fromJson(m as Map<String, dynamic>)).toList(),
+      messages: list
+          .map((m) => Message.fromJson(m as Map<String, dynamic>))
+          .toList(),
       total: json['total'] as int? ?? 0,
       returned: json['returned'] as int? ?? 0,
       offset: json['offset'] as int? ?? 0,

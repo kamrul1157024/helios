@@ -63,16 +63,14 @@ class ApiClient {
   Future<String> _signJWT() async {
     final header = {'alg': 'EdDSA', 'typ': 'JWT', 'kid': deviceId};
     final now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final payload = {
-      'iat': now,
-      'exp': now + 3600,
-      'sub': 'helios-client',
-    };
+    final payload = {'iat': now, 'exp': now + 3600, 'sub': 'helios-client'};
 
     final encodedHeader = _base64urlEncode(
-        Uint8List.fromList(utf8.encode(jsonEncode(header))));
+      Uint8List.fromList(utf8.encode(jsonEncode(header))),
+    );
     final encodedPayload = _base64urlEncode(
-        Uint8List.fromList(utf8.encode(jsonEncode(payload))));
+      Uint8List.fromList(utf8.encode(jsonEncode(payload))),
+    );
     final signingInput = '$encodedHeader.$encodedPayload';
 
     final algorithm = Ed25519();
@@ -82,8 +80,9 @@ class ApiClient {
       keyPair: keyPair,
     );
 
-    final encodedSignature =
-        _base64urlEncode(Uint8List.fromList(signature.bytes));
+    final encodedSignature = _base64urlEncode(
+      Uint8List.fromList(signature.bytes),
+    );
     return '$signingInput.$encodedSignature';
   }
 
@@ -161,7 +160,10 @@ class ApiClient {
   /// builds a second one rather than replaying the first.
   Future<http.Response> postFiles(String path, List<UploadFile> files) async {
     Future<http.Response> attempt() async {
-      final request = http.MultipartRequest('POST', Uri.parse('$serverUrl$path'));
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$serverUrl$path'),
+      );
       request.headers.addAll(await _authHeaders());
       for (final file in files) {
         request.files.add(

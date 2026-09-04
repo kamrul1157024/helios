@@ -21,15 +21,15 @@ import 'package:helios/services/daemon_api_service.dart';
 /// green.
 
 DaemonAPIService serviceReturning(MockClient client) => DaemonAPIService(
-      hostId: 'h1',
-      serverUrl: 'http://localhost:1',
-      api: ApiClient(
-        serverUrl: 'http://localhost:1',
-        deviceId: 'd1',
-        privateKeySeed: Uint8List(32),
-        client: client,
-      ),
-    );
+  hostId: 'h1',
+  serverUrl: 'http://localhost:1',
+  api: ApiClient(
+    serverUrl: 'http://localhost:1',
+    deviceId: 'd1',
+    privateKeySeed: Uint8List(32),
+    client: client,
+  ),
+);
 
 /// Answers the token handshake, then defers to [onWrite] for everything else.
 MockClient clientWhere(http.Response Function(http.Request) onWrite) {
@@ -38,8 +38,10 @@ MockClient clientWhere(http.Response Function(http.Request) onWrite) {
       return http.Response(
         jsonEncode({
           'token': 't',
-          'expires_at':
-              DateTime.now().toUtc().add(const Duration(hours: 1)).toIso8601String(),
+          'expires_at': DateTime.now()
+              .toUtc()
+              .add(const Duration(hours: 1))
+              .toIso8601String(),
         }),
         200,
       );
@@ -48,17 +50,22 @@ MockClient clientWhere(http.Response Function(http.Request) onWrite) {
   });
 }
 
-Map<String, dynamic> sessionJson(String id, {int order = 0, bool pinned = false, String? title}) => {
-      'session_id': id,
-      'source': 'claude',
-      'cwd': '/tmp/p',
-      'project': 'p',
-      'status': 'idle',
-      'created_at': '2026-01-01T00:00:00Z',
-      'sort_order': order,
-      'pinned': pinned,
-      'title': ?title,
-    };
+Map<String, dynamic> sessionJson(
+  String id, {
+  int order = 0,
+  bool pinned = false,
+  String? title,
+}) => {
+  'session_id': id,
+  'source': 'claude',
+  'cwd': '/tmp/p',
+  'project': 'p',
+  'status': 'idle',
+  'created_at': '2026-01-01T00:00:00Z',
+  'sort_order': order,
+  'pinned': pinned,
+  'title': ?title,
+};
 
 /// A container whose session list has loaded with [sessions], and whose writes
 /// are answered by [onWrite].
@@ -66,12 +73,14 @@ Future<ProviderContainer> containerHolding(
   List<Map<String, dynamic>> sessions,
   http.Response Function(http.Request) onWrite,
 ) async {
-  final svc = serviceReturning(clientWhere((req) {
-    if (req.method == 'GET' && req.url.path == '/api/sessions') {
-      return http.Response(jsonEncode({'sessions': sessions}), 200);
-    }
-    return onWrite(req);
-  }));
+  final svc = serviceReturning(
+    clientWhere((req) {
+      if (req.method == 'GET' && req.url.path == '/api/sessions') {
+        return http.Response(jsonEncode({'sessions': sessions}), 200);
+      }
+      return onWrite(req);
+    }),
+  );
   final container = ProviderContainer(
     overrides: [serviceProvider('h1').overrideWithValue(svc)],
   );
@@ -94,10 +103,10 @@ void main() {
 
   group('reorder', () {
     test('paints the new order before the daemon answers', () async {
-      final c = await containerHolding(
-        [sessionJson('a', order: 0), sessionJson('b', order: 1)],
-        (_) => http.Response('{}', 200),
-      );
+      final c = await containerHolding([
+        sessionJson('a', order: 0),
+        sessionJson('b', order: 1),
+      ], (_) => http.Response('{}', 200));
 
       final write = writerOf(c).reorder(['b', 'a']);
 
@@ -107,10 +116,10 @@ void main() {
     });
 
     test('puts the old order back when the daemon refuses', () async {
-      final c = await containerHolding(
-        [sessionJson('a', order: 0), sessionJson('b', order: 1)],
-        (_) => http.Response('nope', 500),
-      );
+      final c = await containerHolding([
+        sessionJson('a', order: 0),
+        sessionJson('b', order: 1),
+      ], (_) => http.Response('nope', 500));
 
       expect(await writerOf(c).reorder(['b', 'a']), isFalse);
       expect(rowsOf(c).firstWhere((s) => s.sessionId == 'a').sortOrder, 0);
@@ -120,12 +129,14 @@ void main() {
 
   group('patch', () {
     test('puts the original row back when the daemon refuses', () async {
-      final c = await containerHolding(
-        [sessionJson('a', title: 'before')],
-        (_) => http.Response('nope', 500),
-      );
+      final c = await containerHolding([
+        sessionJson('a', title: 'before'),
+      ], (_) => http.Response('nope', 500));
 
-      expect(await writerOf(c).patch('a', title: 'after', pinned: true), isFalse);
+      expect(
+        await writerOf(c).patch('a', title: 'after', pinned: true),
+        isFalse,
+      );
       final row = rowsOf(c).single;
       expect(row.title, 'before');
       expect(row.pinned, isFalse);
@@ -135,26 +146,32 @@ void main() {
     // finishes popping first — rebuilding its dependents inside that transition
     // trips the framework's _dependents.isEmpty assertion.
     test('defers the paint past the current synchronous turn', () async {
-      final c = await containerHolding(
-        [sessionJson('a', title: 'before')],
-        (_) => http.Response(jsonEncode({'ok': true}), 200),
-      );
+      final c = await containerHolding([
+        sessionJson('a', title: 'before'),
+      ], (_) => http.Response(jsonEncode({'ok': true}), 200));
 
       final write = writerOf(c).patch('a', title: 'after');
-      expect(rowsOf(c).single.title, 'before',
-          reason: 'must not repaint synchronously');
+      expect(
+        rowsOf(c).single.title,
+        'before',
+        reason: 'must not repaint synchronously',
+      );
 
       await write;
-      expect(rowsOf(c).single.title, 'after', reason: 'the paint still arrives');
+      expect(
+        rowsOf(c).single.title,
+        'after',
+        reason: 'the paint still arrives',
+      );
     });
   });
 
   group('delete', () {
     test('drops the row, and puts it back when the daemon refuses', () async {
-      final c = await containerHolding(
-        [sessionJson('a'), sessionJson('b')],
-        (_) => http.Response('nope', 500),
-      );
+      final c = await containerHolding([
+        sessionJson('a'),
+        sessionJson('b'),
+      ], (_) => http.Response('nope', 500));
 
       expect(await writerOf(c).delete('a'), isFalse);
       expect(rowsOf(c).map((s) => s.sessionId), ['a', 'b']);
@@ -165,20 +182,22 @@ void main() {
     /// A container wired to one host, whose settings read succeeds and whose
     /// writes are refused.
     ProviderContainer containerRefusingWrites() {
-      final svc = serviceReturning(clientWhere((req) {
-        if (req.method == 'GET') {
-          return http.Response(
-            jsonEncode({
-              'settings': {
-                DaemonAPIService.settingAutoTitle: 'true',
-                DaemonAPIService.settingEvict: 'true',
-              },
-            }),
-            200,
-          );
-        }
-        return http.Response('nope', 500);
-      }));
+      final svc = serviceReturning(
+        clientWhere((req) {
+          if (req.method == 'GET') {
+            return http.Response(
+              jsonEncode({
+                'settings': {
+                  DaemonAPIService.settingAutoTitle: 'true',
+                  DaemonAPIService.settingEvict: 'true',
+                },
+              }),
+              200,
+            );
+          }
+          return http.Response('nope', 500);
+        }),
+      );
       final container = ProviderContainer(
         overrides: [serviceProvider('h1').overrideWithValue(svc)],
       );
@@ -199,7 +218,11 @@ void main() {
 
       final after = container.read(hostSettingsProvider('h1')).valueOrNull!;
       expect(after.evictEnabled, isTrue, reason: 'the refused write reverts');
-      expect(after.autoTitleEnabled, isTrue, reason: 'its neighbour is untouched');
+      expect(
+        after.autoTitleEnabled,
+        isTrue,
+        reason: 'its neighbour is untouched',
+      );
     });
 
     // The daemon merges by key, so the cache has to merge by field. Replacing

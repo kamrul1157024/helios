@@ -120,13 +120,9 @@ class TerminalConnection {
   }
 
   void _sendHello() {
-    _write(encodeHello(
-      role: role,
-      cols: cols,
-      rows: rows,
-      since: _seq,
-      name: name,
-    ));
+    _write(
+      encodeHello(role: role, cols: cols, rows: rows, since: _seq, name: name),
+    );
     _sentCols = cols;
     _sentRows = rows;
   }
@@ -228,10 +224,14 @@ class TerminalConnection {
     if (_closed) return;
     _teardown();
     if (_reconnectTimer != null) return;
-    final delay = _reconnectDelays[
-        _attempt < _reconnectDelays.length ? _attempt : _reconnectDelays.length - 1];
+    final delay =
+        _reconnectDelays[_attempt < _reconnectDelays.length
+            ? _attempt
+            : _reconnectDelays.length - 1];
     _attempt++;
-    debugPrint('[Terminal] $terminalId dropped: $reason — retrying in ${delay.inMilliseconds}ms');
+    debugPrint(
+      '[Terminal] $terminalId dropped: $reason — retrying in ${delay.inMilliseconds}ms',
+    );
     _emitState(LinkState.reconnecting);
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;

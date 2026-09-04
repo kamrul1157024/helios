@@ -175,39 +175,157 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 
 	if decision.Status == "approved" {
 		resp.HookSpecificOutput.Decision.Behavior = "allow"
-
-		if len(decision.Response) > 0 {
-			var respData struct {
-				UpdatedInput    map[string]interface{} `json:"updated_input,omitempty"`
-				ApplyPermission *int                   `json:"apply_permission,omitempty"`
-			}
-			if json.Unmarshal(decision.Response, &respData) == nil {
-				if respData.UpdatedInput != nil {
-					resp.HookSpecificOutput.Decision.UpdatedInput = respData.UpdatedInput
-				}
-				if respData.ApplyPermission != nil {
-					var p map[string]json.RawMessage
-					if json.Unmarshal(payloadJSON, &p) == nil {
-						if sugRaw, ok := p["permission_suggestions"]; ok {
-							var suggestions []json.RawMessage
-							if json.Unmarshal(sugRaw, &suggestions) == nil {
-								idx := *respData.ApplyPermission
-								if idx >= 0 && idx < len(suggestions) {
-									resp.HookSpecificOutput.Decision.UpdatedPermissions =
-										json.RawMessage("[" + string(suggestions[idx]) + "]")
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+		applyApproval(&input, payloadJSON, decision, &resp)
 	} else {
 		resp.HookSpecificOutput.Decision.Behavior = "deny"
-		resp.HookSpecificOutput.Decision.Message = "Denied via helios"
+		resp.HookSpecificOutput.Decision.Message = denyMessage(&input, decision)
+	}
+
+	// An approved plan is not settled by this reply; see answerPlanDialog. The
+	// keystroke has to follow the reply rather than accompany it, because the
+	// CLI draws the dialog it lands on only once the hook has answered.
+	if choice := approvedPlanChoice(&input, decision); choice != "" {
+		resp.HookSpecificOutput.Decision.Behavior = "ask"
+		recordPlanMode(ctx, input.SessionID, choice)
+		go answerPlanDialog(ctx.Terminal, input.SessionID, choice)
 	}
 
 	writePermResponse(w, resp)
+}
+
+// approvedPlanChoice returns the plan row a surface picked, or "" when this
+// decision is not an approved plan.
+func approvedPlanChoice(input *hookInput, decision *notifications.Decision) string {
+	if input.ToolName != exitPlanModeTool || decision.Status != "approved" ||
+		len(decision.Response) == 0 {
+		return ""
+	}
+	var answer permissionAnswer
+	if err := json.Unmarshal(decision.Response, &answer); err != nil {
+		log.Printf("hook: read plan answer for %s: %v", input.SessionID, err)
+		return ""
+	}
+	return answer.PlanChoice
+}
+
+// permissionAnswer is what a surface sends back for an approval, whichever
+// surface it was. Every field is optional: a plain "Allow once" carries none.
+type permissionAnswer struct {
+	// UpdatedInput replaces the tool's arguments with the ones the user edited.
+	UpdatedInput map[string]interface{} `json:"updated_input,omitempty"`
+	// ApplyPermission indexes the CLI's own permission_suggestions, and means
+	// "don't ask again".
+	ApplyPermission *int `json:"apply_permission,omitempty"`
+	// PlanChoice is the way a plan was approved: which mode the session
+	// continues in. Empty for every tool but ExitPlanMode.
+	PlanChoice string `json:"plan_choice,omitempty"`
+	// Feedback is what the user wrote when they refused. Claude reads it in
+	// place of the tool's result.
+	Feedback string `json:"feedback,omitempty"`
+}
+
+// empty reports whether the answer says nothing beyond yes or no. Written out
+// because the struct holds a map, so == does not apply.
+func (a permissionAnswer) empty() bool {
+	return a.UpdatedInput == nil && a.ApplyPermission == nil &&
+		a.PlanChoice == "" && a.Feedback == ""
+}
+
+// answerJSON encodes an answer helios composed itself. The value is built from
+// known fields, so an error is a bug rather than bad input, and the decision
+// still stands without the detail.
+func answerJSON(a permissionAnswer) json.RawMessage {
+	raw, err := json.Marshal(a)
+	if err != nil {
+		log.Printf("hook: encode permission answer: %v", err)
+		return nil
+	}
+	return raw
+}
+
+// applyApproval folds whatever the answering surface sent into the reply the
+// CLI gets: an edited input, or a rule to remember.
+func applyApproval(input *hookInput, payloadJSON []byte,
+	decision *notifications.Decision, resp *permResponse) {
+	if len(decision.Response) == 0 {
+		return
+	}
+	var answer permissionAnswer
+	if err := json.Unmarshal(decision.Response, &answer); err != nil {
+		log.Printf("hook: read permission answer for %s: %v", input.SessionID, err)
+		return
+	}
+
+	if answer.UpdatedInput != nil {
+		resp.HookSpecificOutput.Decision.UpdatedInput = answer.UpdatedInput
+	}
+	if answer.ApplyPermission != nil {
+		if rule := suggestedRule(payloadJSON, *answer.ApplyPermission); rule != nil {
+			resp.HookSpecificOutput.Decision.UpdatedPermissions = rule
+		}
+	}
+}
+
+// suggestedRule returns the rule at idx of the CLI's own suggestions, wrapped
+// as the one-entry list updatedPermissions takes.
+func suggestedRule(payloadJSON []byte, idx int) json.RawMessage {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil
+	}
+	raw, ok := payload["permission_suggestions"]
+	if !ok {
+		return nil
+	}
+	var suggestions []json.RawMessage
+	if err := json.Unmarshal(raw, &suggestions); err != nil {
+		return nil
+	}
+	if idx < 0 || idx >= len(suggestions) {
+		return nil
+	}
+	return json.RawMessage("[" + string(suggestions[idx]) + "]")
+}
+
+// What Claude reads in place of the tool's result when it is refused.
+//
+// A denied tool call reaches the model as "Error: <message>", so a bare
+// instruction there reads as something that went wrong rather than as someone
+// talking. Each of these says who is speaking.
+const (
+	deniedReason   = "Denied via helios"
+	deniedFeedback = "The user denied this in helios and said:"
+	planFeedbacked = "The user reviewed this plan in helios and asked for changes:"
+	// planRejected covers the plan refused without a word. A plan is how Claude
+	// asks to start work, so a bare no has to say what happens next, or it
+	// reads as "stop".
+	planRejected = "The user rejected this plan in helios without saying why. " +
+		"Stay in plan mode, ask them what to change, and call ExitPlanMode again."
+)
+
+// denyMessage renders a refusal as the text Claude receives.
+func denyMessage(input *hookInput, decision *notifications.Decision) string {
+	text := ""
+	if len(decision.Response) > 0 {
+		var answer permissionAnswer
+		if err := json.Unmarshal(decision.Response, &answer); err != nil {
+			log.Printf("hook: read denial for %s: %v", input.SessionID, err)
+		} else {
+			text = strings.TrimSpace(answer.Feedback)
+		}
+	}
+
+	plan := input.ToolName == exitPlanModeTool
+	switch {
+	case text != "" && plan:
+		return planFeedbacked + "\n" + text
+	case text != "":
+		return deniedFeedback + "\n" + text
+	case plan:
+		return planRejected
+	default:
+		return deniedReason
+	}
 }
 
 // The approval choices helios draws over the terminal. They are compared by
@@ -221,21 +339,35 @@ const (
 
 // showPermissionPrompt paints the approval over the session's terminal so the
 // person sitting at it can answer, and returns the function that takes it down.
+//
+// A plan gets no box. The CLI draws its own dialog for one — the mode rows, the
+// feedback row and all — and painting over it cost more than it gave: the two
+// boxes composite into one unreadable screen, which is also the screen helios
+// reads back when it presses a row for the phone. The person at the keyboard
+// answers the CLI directly; the phone still gets its card.
 func showPermissionPrompt(ctx *provider.HookContext, input *hookInput, notifID string) func() {
+	if input.ToolName == exitPlanModeTool {
+		return func() {}
+	}
+	p := permissionPrompt(input)
+	return showPrompt(ctx, input.SessionID, p, func(a hitl.Answer) {
+		resolvePermissionFromTerminal(ctx, notifID, p.Choices, a)
+	})
+}
+
+// permissionPrompt is the box a tool's approval gets.
+func permissionPrompt(input *hookInput) hitl.Prompt {
 	choices := []string{allowOnce, denyChoice}
 	// "Don't ask again" is only offerable when the CLI told us what rule it
 	// would write; there is nothing to apply otherwise.
 	if len(input.PermissionSuggestions) > 0 {
 		choices = []string{allowOnce, allowAlways, denyChoice}
 	}
-
-	return showPrompt(ctx, input.SessionID, hitl.Prompt{
+	return hitl.Prompt{
 		Title:   input.ToolName,
 		Body:    []string{summarizeToolInput(input.ToolInput)},
 		Choices: choices,
-	}, func(a hitl.Answer) {
-		resolvePermissionFromTerminal(ctx, notifID, choices, a)
-	})
+	}
 }
 
 // showPrompt paints a helios modal over a session's terminal and returns the
@@ -260,22 +392,38 @@ func showPrompt(ctx *provider.HookContext, sessionID string, p hitl.Prompt, onAn
 // phone would have produced and resolves it through the manager, so which
 // surface won is decided in exactly one place.
 func resolvePermissionFromTerminal(ctx *provider.HookContext, notifID string, choices []string, a hitl.Answer) {
-	decision := notifications.Decision{Status: "denied"}
-	if !a.Cancelled() && a.Index < len(choices) {
-		switch choices[a.Index] {
-		case allowOnce:
-			decision.Status = "approved"
-		case allowAlways:
-			decision.Status = "approved"
-			// The suggestions are a list, and the CLI puts the one it would
-			// apply first. Same index the phone's "don't ask again" sends.
-			decision.Response = json.RawMessage(`{"apply_permission":0}`)
-		}
-	}
+	decision := terminalDecision(choices, a)
 	if err := ctx.Mgr.Resolve(notifID, decision, "terminal"); err != nil &&
 		!errors.Is(err, store.ErrAlreadyResolved) {
 		log.Printf("hook: resolve permission %s from the terminal: %v", notifID, err)
 	}
+}
+
+// terminalDecision reads an answer off the overlay. Anything it does not
+// recognise — escape, a row that is gone, a prompt that changed under it —
+// denies, because the safe reading of an unclear answer is no.
+func terminalDecision(choices []string, a hitl.Answer) notifications.Decision {
+	// Text first: a typed answer carries Index -1, so indexing choices with it
+	// would read off the front of the list.
+	if text := strings.TrimSpace(a.Text); text != "" {
+		return deniedWithFeedback(text)
+	}
+	if a.Cancelled() || a.Index < 0 || a.Index >= len(choices) {
+		return notifications.Decision{Status: "denied"}
+	}
+
+	switch choices[a.Index] {
+	case allowOnce:
+		return notifications.Decision{Status: "approved"}
+	case allowAlways:
+		// The suggestions are a list, and the CLI puts the one it would apply
+		// first. Same index the phone's "don't ask again" sends.
+		return notifications.Decision{
+			Status:   "approved",
+			Response: json.RawMessage(`{"apply_permission":0}`),
+		}
+	}
+	return notifications.Decision{Status: "denied"}
 }
 
 // ==================== AskUserQuestion Hook ====================
@@ -1301,6 +1449,11 @@ func summarizeToolInput(raw json.RawMessage) string {
 			return cmd[:100] + "..."
 		}
 		return cmd
+	}
+	// A plan is markdown, and its first heading is the title someone reading a
+	// push notification needs. Raw JSON cut at 100 characters is not.
+	if plan, ok := m["plan"].(string); ok {
+		return planHeadline(plan)
 	}
 	if len(raw) > 100 {
 		return string(raw[:100]) + "..."

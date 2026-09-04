@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { Notification } from '../../shared/models.ts'
-import { kindOf } from '../../shared/notifications.ts'
+import { kindOf, providerOf } from '../../shared/notifications.ts'
 
 /**
  * One notification, rendered with the controls its type needs.
@@ -37,7 +37,9 @@ export function NotificationCard({
   const body = ((): JSX.Element => {
     switch (kindOf(notif.type)) {
       case 'permission':
-        return <PermissionCard payload={payload} busy={busy} act={act} />
+        return (
+          <PermissionCard payload={payload} provider={providerOf(notif.type)} busy={busy} act={act} />
+        )
       case 'question':
         return <QuestionCard payload={payload} busy={busy} act={act} />
       case 'trust':
@@ -94,12 +96,99 @@ function readableInput(fields: Record<string, unknown> | null): string | null {
     .join('\n\n')
 }
 
+/**
+ * The two ways to say yes to a plan, worded as the CLI words them, and the
+ * name each one travels under.
+ *
+ * The name rather than the label, because the daemon presses the matching row
+ * on the CLI's own dialog and that copy is the CLI's to change.
+ */
+const planRows = [
+  {
+    choice: 'auto',
+    label: 'Yes, and use auto mode',
+    detail: 'Claude edits and runs commands without asking, for the rest of this session',
+  },
+  {
+    choice: 'manual',
+    label: 'Yes, manually approve edits',
+    detail: 'Claude asks before each edit, as it does now',
+  },
+] as const
+
+/**
+ * A plan waiting for approval.
+ *
+ * On the wire it is a permission like any other, but it is not a yes-or-no
+ * question: the answer picks the mode the session continues in, or sends the
+ * plan back in words. See docs/specs/57-plan-approval.md.
+ */
+function PlanCard({
+  plan,
+  busy,
+  act,
+}: {
+  plan: string
+  busy: boolean
+  act: (body: Record<string, unknown>) => Promise<void>
+}): JSX.Element {
+  const [choice, setChoice] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState('')
+  const words = feedback.trim()
+
+  return (
+    <>
+      <pre className="code">{plan}</pre>
+
+      {planRows.map((row) => (
+        <button
+          key={row.choice}
+          className={`option ${choice === row.choice ? 'chosen' : ''}`}
+          onClick={() => setChoice(row.choice)}
+        >
+          <span className="option-label">{row.label}</span>
+          <span className="option-desc">{row.detail}</span>
+        </button>
+      ))}
+
+      <label className="field">
+        <span>Tell Claude what to change</span>
+        <input
+          value={feedback}
+          placeholder="Send the plan back in your own words"
+          onChange={(event) => setFeedback(event.target.value)}
+        />
+      </label>
+
+      <Actions busy={busy}>
+        {/* A plan cannot be approved without saying which way. */}
+        <button
+          disabled={choice === null}
+          onClick={() => void act({ action: 'approve', plan_choice: choice })}
+        >
+          Approve
+        </button>
+        {/* Words turn a refusal into a re-plan, so the button says what it
+            will do with them. */}
+        <button
+          className="ghost"
+          onClick={() => void act(words === '' ? { action: 'deny' } : { action: 'deny', feedback: words })}
+        >
+          {words === '' ? 'Deny' : 'Send back'}
+        </button>
+      </Actions>
+    </>
+  )
+}
+
 function PermissionCard({
   payload,
+  provider,
   busy,
   act,
 }: {
   payload: Record<string, unknown>
+  provider: string
   busy: boolean
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
@@ -117,6 +206,21 @@ function PermissionCard({
   const [editing, setEditing] = useState(false)
   const [edited, setEdited] = useState(original)
   const [rule, setRule] = useState<number | null>(null)
+  const [feedback, setFeedback] = useState('')
+
+  // Codex's own approval dialog offers "No, and tell Codex what to do
+  // differently". Helios paints over that dialog, so it has to offer the row
+  // too or the only refusal it leaves is a bare no. Claude's plan card carries
+  // its own field; its other tools take a rule instead.
+  const takesFeedback = provider === 'codex'
+  const words = feedback.trim()
+
+  // A plan is prose and its answer is not a yes-or-no. The state above is
+  // declared first so the hook order holds whichever card is drawn.
+  const plan = typeof fields?.plan === 'string' ? fields.plan : null
+  if (payload.tool_name === 'ExitPlanMode' && plan !== null) {
+    return <PlanCard plan={plan.trimEnd()} busy={busy} act={act} />
+  }
 
   const approve = (): void => {
     const body: Record<string, unknown> = { action: 'approve' }
@@ -163,10 +267,26 @@ function PermissionCard({
         </div>
       )}
 
+      {takesFeedback && (
+        <label className="field">
+          <span>Tell Codex what to do differently</span>
+          <input
+            value={feedback}
+            placeholder="Say what to do instead"
+            onChange={(event) => setFeedback(event.target.value)}
+          />
+        </label>
+      )}
+
       <Actions busy={busy}>
         <button onClick={approve}>Approve</button>
-        <button className="ghost" onClick={() => void act({ action: 'deny' })}>
-          Deny
+        {/* Words turn a refusal into another attempt, so the button says what
+            it will do with them. */}
+        <button
+          className="ghost"
+          onClick={() => void act(words === '' ? { action: 'deny' } : { action: 'deny', feedback: words })}
+        >
+          {words === '' ? 'Deny' : 'Send back'}
         </button>
         <button className="link" onClick={() => setEditing(!editing)}>
           {editing ? 'Cancel editing' : 'Edit before approving'}

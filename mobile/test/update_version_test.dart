@@ -53,11 +53,10 @@ void main() {
         {'tag_name': 'v2.10.0'},
         {'tag_name': 'v2.9.5'},
       ];
-      expect(service.releasesSince(shuffled, '2.8.0').map((r) => r['tag_name']), [
-        'v2.10.0',
-        'v2.9.5',
-        'v2.9.0',
-      ]);
+      expect(
+        service.releasesSince(shuffled, '2.8.0').map((r) => r['tag_name']),
+        ['v2.10.0', 'v2.9.5', 'v2.9.0'],
+      );
     });
 
     // A dev build reports "0.2.0-dev", and every published release is newer.

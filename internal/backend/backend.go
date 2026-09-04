@@ -21,6 +21,12 @@ const (
 	KeyCtrlC  Key = "ctrl-c"
 	KeyUp     Key = "up"
 	KeyDown   Key = "down"
+	// A numbered dialog row answers to its own digit, which is what the CLI
+	// tells the user to press. Picking a row that way needs no highlight, and
+	// so cannot be thrown off by another cursor mark elsewhere on the screen.
+	Key1 Key = "1"
+	Key2 Key = "2"
+	Key3 Key = "3"
 )
 
 // Status reports backend health for the doctor/status endpoints.

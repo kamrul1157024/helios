@@ -12,7 +12,8 @@ const int largePasteChars = 2000;
 const int largePasteLines = 50;
 
 bool isLargePaste(String text) =>
-    text.length >= largePasteChars || '\n'.allMatches(text).length + 1 >= largePasteLines;
+    text.length >= largePasteChars ||
+    '\n'.allMatches(text).length + 1 >= largePasteLines;
 
 /// The text inserted in one edit, or null when the change was not a single
 /// insertion.

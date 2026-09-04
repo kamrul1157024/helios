@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -372,7 +373,75 @@ func writePermResponse(w http.ResponseWriter, behavior, message string) {
 const (
 	allowOnce  = "Allow once"
 	denyChoice = "Deny"
+
+	// Codex's own approval dialog offers "No, and tell Codex what to do
+	// differently". Helios paints over that dialog, so it has to offer the row
+	// too or the only refusal it leaves the user is a bare no.
+	feedbackLabel = "Tell Codex what to do differently"
 )
+
+// What Codex reads in place of the tool's result when it is refused.
+//
+// A denied call comes back to the model as an error, so bare text there reads
+// as a malfunction rather than as a person talking. Each of these says who is
+// speaking. Codex honours a deny message; see docs/specs/46-codex-provider.md.
+const (
+	deniedReason   = "Denied via helios"
+	deniedFeedback = "The user denied this in helios and said:"
+)
+
+// permissionAnswer is what a surface sends back beyond approve or deny. Only
+// the words matter here: Codex cannot write a permission rule and cannot take
+// an edited input, so there is nothing else to carry.
+type permissionAnswer struct {
+	Feedback string `json:"feedback,omitempty"`
+}
+
+// deniedWithFeedback refuses the tool in the user's own words.
+func deniedWithFeedback(text string) notifications.Decision {
+	response, err := json.Marshal(permissionAnswer{Feedback: text})
+	if err != nil {
+		log.Printf("codex: encode denial feedback: %v", err)
+		return notifications.Decision{Status: "denied"}
+	}
+	return notifications.Decision{Status: "denied", Response: response}
+}
+
+// denyMessage is the sentence Codex reads for a refusal, whichever surface
+// refused. Unreadable feedback degrades to the bare reason rather than to a
+// tool that hangs.
+func denyMessage(sessionID string, decision *notifications.Decision) string {
+	if len(decision.Response) == 0 {
+		return deniedReason
+	}
+	var answer permissionAnswer
+	if err := json.Unmarshal(decision.Response, &answer); err != nil {
+		log.Printf("codex: read denial for %s: %v", sessionID, err)
+		return deniedReason
+	}
+	if text := strings.TrimSpace(answer.Feedback); text != "" {
+		return deniedFeedback + "\n" + text
+	}
+	return deniedReason
+}
+
+// terminalDecision reads an answer off the overlay. Anything it does not
+// recognise — escape, a row that is gone, a prompt that changed under it —
+// denies, because the safe reading of an unclear answer is no.
+func terminalDecision(choices []string, a hitl.Answer) notifications.Decision {
+	// Text first: a typed answer carries Index -1, so indexing choices with it
+	// would read off the front of the list.
+	if text := strings.TrimSpace(a.Text); text != "" {
+		return deniedWithFeedback(text)
+	}
+	if a.Cancelled() || a.Index < 0 || a.Index >= len(choices) {
+		return notifications.Decision{Status: "denied"}
+	}
+	if choices[a.Index] == allowOnce {
+		return notifications.Decision{Status: "approved"}
+	}
+	return notifications.Decision{Status: "denied"}
+}
 
 func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.Request, raw json.RawMessage) {
 	in, ok := decode(w, raw)
@@ -423,18 +492,17 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 	// matter which of them settled it.
 	//
 	// Only two choices: Codex cannot write a permission rule, so there is
-	// nothing for "don't ask again" to apply.
+	// nothing for "don't ask again" to apply. The third row is not a choice —
+	// it is the text field, and the words it takes become the deny message.
 	choices := []string{allowOnce, denyChoice}
 	defer showPrompt(ctx, key, hitl.Prompt{
-		Title:   in.ToolName,
-		Body:    []string{summarize(in.ToolInput)},
-		Choices: choices,
+		Title:     in.ToolName,
+		Body:      []string{summarize(in.ToolInput)},
+		Choices:   choices,
+		AllowText: true,
+		TextLabel: feedbackLabel,
 	}, func(a hitl.Answer) {
-		decision := notifications.Decision{Status: "denied"}
-		if !a.Cancelled() && a.Index < len(choices) && choices[a.Index] == allowOnce {
-			decision.Status = "approved"
-		}
-		if err := ctx.Mgr.Resolve(notifID, decision, "terminal"); err != nil &&
+		if err := ctx.Mgr.Resolve(notifID, terminalDecision(choices, a), "terminal"); err != nil &&
 			!errors.Is(err, store.ErrAlreadyResolved) {
 			log.Printf("codex: resolve permission %s from the terminal: %v", notifID, err)
 		}
@@ -452,7 +520,7 @@ func handlePermission(ctx *provider.HookContext, w http.ResponseWriter, r *http.
 		writePermResponse(w, "allow", "")
 		return
 	}
-	writePermResponse(w, "deny", "Denied via helios")
+	writePermResponse(w, "deny", denyMessage(key, decision))
 }
 
 // ==================== Compaction and subagents ====================

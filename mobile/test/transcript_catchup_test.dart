@@ -25,11 +25,11 @@ const _session = 's1';
 const _key = (_host, _session);
 
 Map<String, dynamic> msg(int seq) => {
-      'seq': seq,
-      'role': 'assistant',
-      'content': 'm$seq',
-      'timestamp': '2026-01-01T00:00:00Z',
-    };
+  'seq': seq,
+  'role': 'assistant',
+  'content': 'm$seq',
+  'timestamp': '2026-01-01T00:00:00Z',
+};
 
 /// The daemon's answer: `seqs`, and whether the limit cut it short.
 String body(List<int> seqs, {String epoch = 'e1', bool moreAfter = false}) =>
@@ -123,13 +123,17 @@ void main() {
 
     await notifierOf(c).pullNew();
 
-    expect(seqsOf(c), [1, 2, 3, 4, 5, 6, 7],
-        reason: 'a delta cut short must be followed to the end, not left as a hole');
     expect(
-      daemon.deltas.map((u) => u.queryParameters['after_seq']),
-      ['2', '4', '6'],
-      reason: 'each request advances the cursor to the last seq it was given',
+      seqsOf(c),
+      [1, 2, 3, 4, 5, 6, 7],
+      reason:
+          'a delta cut short must be followed to the end, not left as a hole',
     );
+    expect(daemon.deltas.map((u) => u.queryParameters['after_seq']), [
+      '2',
+      '4',
+      '6',
+    ], reason: 'each request advances the cursor to the last seq it was given');
   });
 
   test('one delta is enough when nothing was cut short', () async {
@@ -146,77 +150,93 @@ void main() {
     expect(daemon.deltas, hasLength(1));
   });
 
-  test('a trigger arriving mid-flight is run once afterwards, not dropped',
-      () async {
-    final release = Completer<void>();
-    final daemon = Daemon([
-      body([1, 2]),
-      body([3]),
-      body([4]),
-    ])
-      ..gates = [null, release.future];
+  test(
+    'a trigger arriving mid-flight is run once afterwards, not dropped',
+    () async {
+      final release = Completer<void>();
+      final daemon = Daemon([
+        body([1, 2]),
+        body([3]),
+        body([4]),
+      ])..gates = [null, release.future];
 
-    final c = containerFor(daemon);
-    await c.read(transcriptProvider(_key).future);
+      final c = containerFor(daemon);
+      await c.read(transcriptProvider(_key).future);
 
-    final first = notifierOf(c).pullNew();
-    await pumpEventQueue();
-    expect(daemon.deltas, hasLength(1), reason: 'the first read is out');
+      final first = notifierOf(c).pullNew();
+      await pumpEventQueue();
+      expect(daemon.deltas, hasLength(1), reason: 'the first read is out');
 
-    // A second event lands while that read is still waiting on the daemon.
-    notifierOf(c).pullNew();
-    await pumpEventQueue();
-    expect(daemon.deltas, hasLength(1),
-        reason: 'the second trigger must not open a second request');
+      // A second event lands while that read is still waiting on the daemon.
+      notifierOf(c).pullNew();
+      await pumpEventQueue();
+      expect(
+        daemon.deltas,
+        hasLength(1),
+        reason: 'the second trigger must not open a second request',
+      );
 
-    release.complete();
-    await first;
-    await pumpEventQueue();
+      release.complete();
+      await first;
+      await pumpEventQueue();
 
-    expect(daemon.deltas, hasLength(2),
-        reason: 'the trigger that arrived mid-flight is the one this provider '
-            'used to lose; it must produce a read that started after it');
-    expect(seqsOf(c), [1, 2, 3, 4]);
-  });
+      expect(
+        daemon.deltas,
+        hasLength(2),
+        reason:
+            'the trigger that arrived mid-flight is the one this provider '
+            'used to lose; it must produce a read that started after it',
+      );
+      expect(seqsOf(c), [1, 2, 3, 4]);
+    },
+  );
 
-  test('a failed read leaves the conversation alone and does not wedge the next',
-      () async {
-    final daemon = Daemon([body([1, 2])]);
-    final c = containerFor(daemon);
-    await c.read(transcriptProvider(_key).future);
+  test(
+    'a failed read leaves the conversation alone and does not wedge the next',
+    () async {
+      final daemon = Daemon([
+        body([1, 2]),
+      ]);
+      final c = containerFor(daemon);
+      await c.read(transcriptProvider(_key).future);
 
-    // fetchTranscript swallows the failure and answers null.
-    daemon.answers.add('not json');
-    await notifierOf(c).pullNew();
-    expect(seqsOf(c), [1, 2]);
+      // fetchTranscript swallows the failure and answers null.
+      daemon.answers.add('not json');
+      await notifierOf(c).pullNew();
+      expect(seqsOf(c), [1, 2]);
 
-    daemon.answers.add(body([3]));
-    await notifierOf(c).pullNew();
-    expect(seqsOf(c), [1, 2, 3], reason: 'the next pull must still run');
-  });
+      daemon.answers.add(body([3]));
+      await notifierOf(c).pullNew();
+      expect(seqsOf(c), [1, 2, 3], reason: 'the next pull must still run');
+    },
+  );
 
-  test('an epoch change replaces the conversation and stops the walk', () async {
-    final daemon = Daemon([
-      body([1, 2]),
-      jsonEncode({
-        'messages': [msg(9)],
-        'total': 1,
-        'returned': 1,
-        'offset': 0,
-        'has_more': false,
-        'epoch': 'e2',
-        'epoch_changed': true,
-      }),
-    ]);
-    final c = containerFor(daemon);
-    await c.read(transcriptProvider(_key).future);
+  test(
+    'an epoch change replaces the conversation and stops the walk',
+    () async {
+      final daemon = Daemon([
+        body([1, 2]),
+        jsonEncode({
+          'messages': [msg(9)],
+          'total': 1,
+          'returned': 1,
+          'offset': 0,
+          'has_more': false,
+          'epoch': 'e2',
+          'epoch_changed': true,
+        }),
+      ]);
+      final c = containerFor(daemon);
+      await c.read(transcriptProvider(_key).future);
 
-    await notifierOf(c).pullNew();
+      await notifierOf(c).pullNew();
 
-    expect(seqsOf(c), [9],
-        reason: 'the seq numbers held counted against a parse that is gone');
-    expect(daemon.deltas, hasLength(1));
-  });
+      expect(seqsOf(c), [
+        9,
+      ], reason: 'the seq numbers held counted against a parse that is gone');
+      expect(daemon.deltas, hasLength(1));
+    },
+  );
 
   test('catching up never returns the cell to a loading state', () async {
     final daemon = Daemon([
@@ -233,8 +253,12 @@ void main() {
     await notifierOf(c).pullNew();
 
     expect(seen, isNotEmpty);
-    expect(seen, everyElement(isFalse),
-        reason: 'a loading state here draws the skeleton over messages the '
-            'reader is looking at');
+    expect(
+      seen,
+      everyElement(isFalse),
+      reason:
+          'a loading state here draws the skeleton over messages the '
+          'reader is looking at',
+    );
   });
 }

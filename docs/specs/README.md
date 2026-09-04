@@ -64,6 +64,7 @@ what is merged. Some are superseded and stay here for the history.
 | [54-file-change-events.md](54-file-change-events.md) | File Change Events: Watch What Someone Is Looking At |
 | [55-answering-a-question-from-the-terminal.md](55-answering-a-question-from-the-terminal.md) | Answering a Question From the Terminal |
 | [56-one-version-number.md](56-one-version-number.md) | One Version Number, and Builds That Do Not Lie About It |
+| [57-plan-approval.md](57-plan-approval.md) | Approving a Plan From a Phone |
 | [58-files-without-a-root.md](58-files-without-a-root.md) | Files Without a Root: Folders, an Index, and a Path You Can Type |
 | [ai-narration.md](ai-narration.md) | AI Narration for Voice Mode |
 | [desktop-notification-handoff.md](desktop-notification-handoff.md) | Hand desktop notifications to the desktop app |

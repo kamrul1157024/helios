@@ -5,14 +5,14 @@ import 'package:helios/providers/card_registry.dart';
 import 'package:helios/providers/notification_ext.dart';
 
 HeliosNotification _notif(String type, String status) => HeliosNotification(
-      id: 'n1',
-      source: 'claude',
-      sourceSession: 's1',
-      cwd: '/tmp',
-      type: type,
-      status: status,
-      createdAt: '2026-01-01T00:00:00Z',
-    );
+  id: 'n1',
+  source: 'claude',
+  sourceSession: 's1',
+  cwd: '/tmp',
+  type: type,
+  status: status,
+  createdAt: '2026-01-01T00:00:00Z',
+);
 
 const _allTypes = [
   'claude.permission',

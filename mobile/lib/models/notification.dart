@@ -51,7 +51,10 @@ class HeliosNotification {
     return i < 0 ? '' : type.substring(i + 1);
   }
 
-  factory HeliosNotification.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
+  factory HeliosNotification.fromJson(
+    Map<String, dynamic> json, {
+    String hostId = '',
+  }) {
     Map<String, dynamic>? parseJson(dynamic raw) {
       if (raw == null) return null;
       if (raw is Map<String, dynamic>) return raw;
@@ -112,6 +115,7 @@ class HeliosNotification {
         return type;
     }
   }
+
   String get displayDetail => detail ?? 'No details';
 
   String get timeAgo {

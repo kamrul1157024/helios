@@ -5,21 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:helios/models/notification.dart';
 import 'package:helios/providers/notification_ext.dart';
 
-HeliosNotification errorNotif(Map<String, dynamic> payload,
-        {String status = 'pending'}) =>
-    HeliosNotification.fromJson({
-      'id': 'n1',
-      'source': 'claude',
-      'source_session': 'sess-1',
-      'cwd': '/tmp/proj',
-      'type': 'claude.error',
-      'status': status,
-      'title': 'Session error',
-      'detail': 'API Error: Response stalled mid-stream.',
-      // The daemon stores the payload as a JSON string.
-      'payload': jsonEncode(payload),
-      'created_at': '2026-01-01T00:00:00Z',
-    });
+HeliosNotification errorNotif(
+  Map<String, dynamic> payload, {
+  String status = 'pending',
+}) => HeliosNotification.fromJson({
+  'id': 'n1',
+  'source': 'claude',
+  'source_session': 'sess-1',
+  'cwd': '/tmp/proj',
+  'type': 'claude.error',
+  'status': status,
+  'title': 'Session error',
+  'detail': 'API Error: Response stalled mid-stream.',
+  // The daemon stores the payload as a JSON string.
+  'payload': jsonEncode(payload),
+  'created_at': '2026-01-01T00:00:00Z',
+});
 
 void main() {
   group('error payload accessors', () {
@@ -32,7 +33,10 @@ void main() {
       });
 
       expect(n.errorSessionId, 'sess-1');
-      expect(n.errorText, 'API Error: Stream idle timeout - no chunks received');
+      expect(
+        n.errorText,
+        'API Error: Stream idle timeout - no chunks received',
+      );
       expect(n.isRateLimit, isFalse);
       expect(n.isRetryable, isTrue);
       expect(n.rateLimitResetAt, isNull);

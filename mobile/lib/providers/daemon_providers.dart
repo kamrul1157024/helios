@@ -24,7 +24,8 @@ import '../services/host_manager.dart';
 /// it from. So the single instance built in `main` is handed to both trees, and
 /// this is overridden at the `ProviderScope` that wraps the app.
 final hostManagerProvider = Provider<HostManager>(
-  (ref) => throw UnimplementedError('override hostManagerProvider in ProviderScope'),
+  (ref) =>
+      throw UnimplementedError('override hostManagerProvider in ProviderScope'),
 );
 
 final serviceProvider = Provider.family<DaemonAPIService?, String>(
@@ -34,7 +35,10 @@ final serviceProvider = Provider.family<DaemonAPIService?, String>(
 // ─── Schedules ──────────────────────────────────────────────────────────────
 
 /// A host's schedules, parents before children so the tree renders in one pass.
-final schedulesProvider = FutureProvider.family<List<Schedule>, String>((ref, hostId) async {
+final schedulesProvider = FutureProvider.family<List<Schedule>, String>((
+  ref,
+  hostId,
+) async {
   final service = ref.watch(serviceProvider(hostId));
   if (service == null) return const [];
   return service.listSchedules();
@@ -46,11 +50,11 @@ final schedulesProvider = FutureProvider.family<List<Schedule>, String>((ref, ho
 /// second list widget anywhere: the runs list is the session list.
 final scheduleRunsProvider =
     FutureProvider.family<List<Session>, (String, String)>((ref, arg) async {
-  final (hostId, scheduleId) = arg;
-  final service = ref.watch(serviceProvider(hostId));
-  if (service == null) return const [];
-  return service.listSessions(SessionQuery(scheduleId: scheduleId));
-});
+      final (hostId, scheduleId) = arg;
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) return const [];
+      return service.listSessions(SessionQuery(scheduleId: scheduleId));
+    });
 
 // ─── Sessions and notifications ─────────────────────────────────────────────
 
@@ -85,7 +89,10 @@ class SessionsNotifier
     return service.listSessions(query);
   }
 
-  Future<void> _refreshBehind(DaemonAPIService service, SessionQuery query) async {
+  Future<void> _refreshBehind(
+    DaemonAPIService service,
+    SessionQuery query,
+  ) async {
     try {
       final fresh = await service.listSessions(query);
       state = AsyncData(fresh);
@@ -172,28 +179,38 @@ class SessionsNotifier
   }
 }
 
-final sessionsProvider = AsyncNotifierProvider.family<SessionsNotifier,
-    List<Session>, (String, SessionQuery)>(SessionsNotifier.new);
+final sessionsProvider =
+    AsyncNotifierProvider.family<
+      SessionsNotifier,
+      List<Session>,
+      (String, SessionQuery)
+    >(SessionsNotifier.new);
 
 /// The unfiltered list — what most screens want, and the one the disk cache
 /// seeds.
 ///
 /// An alias, not a second provider: it resolves to the same family entry, so
 /// the whole list is never held twice.
-AsyncNotifierProviderFamily<SessionsNotifier, List<Session>,
-        (String, SessionQuery)>
-    get allSessions => sessionsProvider;
+AsyncNotifierProviderFamily<
+  SessionsNotifier,
+  List<Session>,
+  (String, SessionQuery)
+>
+get allSessions => sessionsProvider;
 
 /// The key for a host's unfiltered list.
 (String, SessionQuery) allSessionsKey(String hostId) =>
     (hostId, SessionQuery.all);
 
 final notificationsProvider =
-    FutureProvider.family<List<HeliosNotification>, String>((ref, hostId) async {
-  final service = ref.watch(serviceProvider(hostId));
-  if (service == null) return const [];
-  return service.listNotifications();
-});
+    FutureProvider.family<List<HeliosNotification>, String>((
+      ref,
+      hostId,
+    ) async {
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) return const [];
+      return service.listNotifications();
+    });
 
 // ─── Across hosts ───────────────────────────────────────────────────────────
 
@@ -215,9 +232,9 @@ final allHostSessionsProvider = Provider<AsyncValue<List<Session>>>((ref) {
 /// Every host's pending notifications, merged.
 final allHostNotificationsProvider =
     Provider<AsyncValue<List<HeliosNotification>>>((ref) {
-  final hosts = ref.watch(hostManagerProvider).hosts;
-  return _merge(hosts.map((h) => ref.watch(notificationsProvider(h.id))));
-});
+      final hosts = ref.watch(hostManagerProvider).hosts;
+      return _merge(hosts.map((h) => ref.watch(notificationsProvider(h.id))));
+    });
 
 /// The sessions under one query: from the checked-out host, or merged across
 /// all of them.
@@ -226,11 +243,13 @@ final allHostNotificationsProvider =
 /// the filters of the last fetch in order to repeat it.
 final visibleSessionsForProvider =
     Provider.family<AsyncValue<List<Session>>, SessionQuery>((ref, query) {
-  final active = ref.watch(hostManagerProvider).activeHostId;
-  if (active != null) return ref.watch(sessionsProvider((active, query)));
-  final hosts = ref.watch(hostManagerProvider).hosts;
-  return _merge(hosts.map((h) => ref.watch(sessionsProvider((h.id, query)))));
-});
+      final active = ref.watch(hostManagerProvider).activeHostId;
+      if (active != null) return ref.watch(sessionsProvider((active, query)));
+      final hosts = ref.watch(hostManagerProvider).hosts;
+      return _merge(
+        hosts.map((h) => ref.watch(sessionsProvider((h.id, query)))),
+      );
+    });
 
 /// The unfiltered list for the current filter.
 final visibleSessionsProvider = Provider<AsyncValue<List<Session>>>(
@@ -240,10 +259,10 @@ final visibleSessionsProvider = Provider<AsyncValue<List<Session>>>(
 /// The notifications for the current filter.
 final visibleNotificationsProvider =
     Provider<AsyncValue<List<HeliosNotification>>>((ref) {
-  final active = ref.watch(hostManagerProvider).activeHostId;
-  if (active == null) return ref.watch(allHostNotificationsProvider);
-  return ref.watch(notificationsProvider(active));
-});
+      final active = ref.watch(hostManagerProvider).activeHostId;
+      if (active == null) return ref.watch(allHostNotificationsProvider);
+      return ref.watch(notificationsProvider(active));
+    });
 
 /// Flattens per-host answers into one.
 ///
@@ -264,8 +283,10 @@ AsyncValue<List<T>> _merge<T>(Iterable<AsyncValue<List<T>>> parts) {
 
 // ─── Providers, models, directories, settings ───────────────────────────────
 
-final providersProvider =
-    FutureProvider.family<List<ProviderInfo>, String>((ref, hostId) async {
+final providersProvider = FutureProvider.family<List<ProviderInfo>, String>((
+  ref,
+  hostId,
+) async {
   final service = ref.watch(serviceProvider(hostId));
   if (service == null) return const [];
   return service.listProviders();
@@ -277,21 +298,24 @@ final providersProvider =
 /// runs and is never heard from, which reads as a hang.
 final readyProvidersProvider =
     FutureProvider.family<List<ProviderInfo>, String>((ref, hostId) async {
-  final all = await ref.watch(providersProvider(hostId).future);
-  return all.where((p) => p.ready).toList(growable: false);
-});
+      final all = await ref.watch(providersProvider(hostId).future);
+      return all.where((p) => p.ready).toList(growable: false);
+    });
 
-final modelsProvider =
-    FutureProvider.family<List<ModelInfo>, (String, String)>((ref, key) async {
-  final (hostId, providerId) = key;
-  if (providerId.isEmpty) return const [];
-  final service = ref.watch(serviceProvider(hostId));
-  if (service == null) return const [];
-  return service.fetchModels(providerId);
-});
+final modelsProvider = FutureProvider.family<List<ModelInfo>, (String, String)>(
+  (ref, key) async {
+    final (hostId, providerId) = key;
+    if (providerId.isEmpty) return const [];
+    final service = ref.watch(serviceProvider(hostId));
+    if (service == null) return const [];
+    return service.fetchModels(providerId);
+  },
+);
 
-final directoriesProvider =
-    FutureProvider.family<List<DirectoryInfo>, String>((ref, hostId) async {
+final directoriesProvider = FutureProvider.family<List<DirectoryInfo>, String>((
+  ref,
+  hostId,
+) async {
   final service = ref.watch(serviceProvider(hostId));
   if (service == null) return const [];
   return service.fetchDirectories();
@@ -328,22 +352,22 @@ class HostSettingsNotifier extends FamilyAsyncNotifier<HostSettings, String> {
   }
 
   Future<bool> setAutoTitleEnabled(bool value) => _write(
-        DaemonAPIService.settingAutoTitle,
-        value ? 'true' : 'false',
-        (s) => s.copyWith(autoTitleEnabled: value),
-      );
+    DaemonAPIService.settingAutoTitle,
+    value ? 'true' : 'false',
+    (s) => s.copyWith(autoTitleEnabled: value),
+  );
 
   Future<bool> setAutoTitleEmoji(bool value) => _write(
-        DaemonAPIService.settingAutoTitleEmoji,
-        value ? 'true' : 'false',
-        (s) => s.copyWith(autoTitleEmoji: value),
-      );
+    DaemonAPIService.settingAutoTitleEmoji,
+    value ? 'true' : 'false',
+    (s) => s.copyWith(autoTitleEmoji: value),
+  );
 
   Future<bool> setEvictEnabled(bool value) => _write(
-        DaemonAPIService.settingEvict,
-        value ? 'true' : 'false',
-        (s) => s.copyWith(evictEnabled: value),
-      );
+    DaemonAPIService.settingEvict,
+    value ? 'true' : 'false',
+    (s) => s.copyWith(evictEnabled: value),
+  );
 
   Future<bool> setBudgetFraction(double value) {
     final clamped = value.clamp(
@@ -358,14 +382,16 @@ class HostSettingsNotifier extends FamilyAsyncNotifier<HostSettings, String> {
   }
 
   Future<bool> setManualOrder(bool value) => _write(
-        DaemonAPIService.settingSortMode,
-        value ? 'manual' : 'activity',
-        (s) => s.copyWith(manualOrder: value),
-      );
+    DaemonAPIService.settingSortMode,
+    value ? 'manual' : 'activity',
+    (s) => s.copyWith(manualOrder: value),
+  );
 }
 
-final hostSettingsProvider = AsyncNotifierProvider.family<HostSettingsNotifier,
-    HostSettings, String>(HostSettingsNotifier.new);
+final hostSettingsProvider =
+    AsyncNotifierProvider.family<HostSettingsNotifier, HostSettings, String>(
+      HostSettingsNotifier.new,
+    );
 
 /// Whether any host is sorting by hand.
 ///
@@ -374,14 +400,17 @@ final hostSettingsProvider = AsyncNotifierProvider.family<HostSettingsNotifier,
 final manualOrderProvider = Provider<bool>((ref) {
   final hosts = ref.watch(hostManagerProvider).hosts;
   return hosts.any(
-    (h) => ref.watch(hostSettingsProvider(h.id)).valueOrNull?.manualOrder ?? false,
+    (h) =>
+        ref.watch(hostSettingsProvider(h.id)).valueOrNull?.manualOrder ?? false,
   );
 });
 
 // ─── Git ────────────────────────────────────────────────────────────────────
 
-final gitStatusProvider =
-    FutureProvider.family<GitStatus?, (String, String)>((ref, key) async {
+final gitStatusProvider = FutureProvider.family<GitStatus?, (String, String)>((
+  ref,
+  key,
+) async {
   final (hostId, cwd) = key;
   if (cwd.isEmpty) return null;
   return ref.watch(serviceProvider(hostId))?.gitStatus(cwd);
@@ -389,12 +418,12 @@ final gitStatusProvider =
 
 final gitWorktreesProvider =
     FutureProvider.family<List<Worktree>, (String, String)>((ref, key) async {
-  final (hostId, cwd) = key;
-  if (cwd.isEmpty) return const [];
-  final service = ref.watch(serviceProvider(hostId));
-  if (service == null) return const [];
-  return service.gitWorktrees(cwd);
-});
+      final (hostId, cwd) = key;
+      if (cwd.isEmpty) return const [];
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) return const [];
+      return service.gitWorktrees(cwd);
+    });
 
 /// What a log read varies by. Part of the key, because two different logs are
 /// two different answers and cannot share an entry.
@@ -429,9 +458,14 @@ class GitLogKey {
   int get hashCode => Object.hash(hostId, cwd, base, all, limit, skip);
 }
 
-final gitLogProvider = FutureProvider.family<GitLog?, GitLogKey>((ref, key) async {
+final gitLogProvider = FutureProvider.family<GitLog?, GitLogKey>((
+  ref,
+  key,
+) async {
   if (key.cwd.isEmpty) return null;
-  return ref.watch(serviceProvider(key.hostId))?.gitLog(
+  return ref
+      .watch(serviceProvider(key.hostId))
+      ?.gitLog(
         key.cwd,
         base: key.base,
         all: key.all,
@@ -475,9 +509,14 @@ class GitDiffKey {
       Object.hash(hostId, cwd, file, staged, from, to, untracked);
 }
 
-final gitDiffProvider = FutureProvider.family<GitDiff?, GitDiffKey>((ref, key) async {
+final gitDiffProvider = FutureProvider.family<GitDiff?, GitDiffKey>((
+  ref,
+  key,
+) async {
   if (key.cwd.isEmpty || key.file.isEmpty) return null;
-  return ref.watch(serviceProvider(key.hostId))?.gitDiff(
+  return ref
+      .watch(serviceProvider(key.hostId))
+      ?.gitDiff(
         key.cwd,
         key.file,
         staged: key.staged,
@@ -507,8 +546,10 @@ class GitChangesKey {
   int get hashCode => Object.hash(hostId, cwd, to, from);
 }
 
-final gitChangesProvider =
-    FutureProvider.family<GitChanges?, GitChangesKey>((ref, key) async {
+final gitChangesProvider = FutureProvider.family<GitChanges?, GitChangesKey>((
+  ref,
+  key,
+) async {
   if (key.cwd.isEmpty || key.to.isEmpty) return null;
   return ref
       .watch(serviceProvider(key.hostId))
@@ -517,12 +558,13 @@ final gitChangesProvider =
 
 // ─── Files ──────────────────────────────────────────────────────────────────
 
-final listFilesProvider =
-    FutureProvider.family<FileListing?, (String, String)>((ref, key) async {
-  final (hostId, path) = key;
-  if (path.isEmpty) return null;
-  return ref.watch(serviceProvider(hostId))?.listFiles(path);
-});
+final listFilesProvider = FutureProvider.family<FileListing?, (String, String)>(
+  (ref, key) async {
+    final (hostId, path) = key;
+    if (path.isEmpty) return null;
+    return ref.watch(serviceProvider(hostId))?.listFiles(path);
+  },
+);
 
 /// A file's contents.
 ///
@@ -532,21 +574,21 @@ final listFilesProvider =
 /// explicit reload.
 final readFileProvider =
     FutureProvider.family<FileReadResult?, (String, String)>((ref, key) async {
-  final (hostId, path) = key;
-  if (path.isEmpty) return null;
-  return ref.watch(serviceProvider(hostId))?.readFile(path);
-});
+      final (hostId, path) = key;
+      if (path.isEmpty) return null;
+      return ref.watch(serviceProvider(hostId))?.readFile(path);
+    });
 
 // ─── Subagents ──────────────────────────────────────────────────────────────
 
 final subagentsProvider =
     FutureProvider.family<List<Subagent>, (String, String)>((ref, key) async {
-  final (hostId, sessionId) = key;
-  if (sessionId.isEmpty) return const [];
-  final service = ref.watch(serviceProvider(hostId));
-  if (service == null) return const [];
-  return service.fetchSubagents(sessionId);
-});
+      final (hostId, sessionId) = key;
+      if (sessionId.isEmpty) return const [];
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) return const [];
+      return service.fetchSubagents(sessionId);
+    });
 
 // ─── Refreshing by hand ─────────────────────────────────────────────────────
 
@@ -565,6 +607,6 @@ extension RefreshHosts on WidgetRef {
   }
 
   Future<void> refreshAllHosts() => Future.wait(
-        read(hostManagerProvider).hosts.map((h) => refreshHost(h.id)),
-      );
+    read(hostManagerProvider).hosts.map((h) => refreshHost(h.id)),
+  );
 }

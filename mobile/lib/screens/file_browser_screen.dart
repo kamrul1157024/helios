@@ -34,7 +34,8 @@ class FileBrowserScreen extends rp.ConsumerStatefulWidget {
   });
 
   @override
-  rp.ConsumerState<FileBrowserScreen> createState() => _FileBrowserScreenState();
+  rp.ConsumerState<FileBrowserScreen> createState() =>
+      _FileBrowserScreenState();
 }
 
 class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
@@ -43,12 +44,32 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   late String _rootPath;
   final List<String> _history = [];
 
+  /// Whether the read that [didChangeDependencies] owes the first build is done.
+  bool _readOnOpen = false;
+
   @override
   void initState() {
     super.initState();
     _currentPath = widget.startPath ?? widget.rootPath;
     _rootPath = widget.rootPath;
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// The first read, from the earliest place `ref` is allowed to work.
+  ///
+  /// Not `initState`. Riverpod resolves the enclosing scope lazily, on the
+  /// first `ref` call, through `dependOnInheritedWidgetOfExactType` — and
+  /// Flutter forbids that until `initState` has returned. The check is an
+  /// `assert`, so this throws a red screen in debug and passes silently in
+  /// release, which is how it survived being shipped.
+  ///
+  /// `didChangeDependencies` still runs before the first build, which is what
+  /// `_reread` needs.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_readOnOpen) return;
+    _readOnOpen = true;
     _reread();
   }
 
@@ -102,7 +123,9 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   Future<void> _pickRoot() async {
     if (_svc == null) return;
     final worktrees = sortWorktreesByLastTouched(
-      await ref.read(gitWorktreesProvider((widget.hostId, _currentPath)).future),
+      await ref.read(
+        gitWorktreesProvider((widget.hostId, _currentPath)).future,
+      ),
     );
     if (!mounted) return;
     if (worktrees.isEmpty) {
@@ -139,17 +162,26 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
                 final selected = wt.path == _rootPath;
                 return ListTile(
                   leading: Icon(
-                    selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
                     size: 22,
-                    color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                    color: selected
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurfaceVariant,
                   ),
                   title: Text(
                     wt.branch.isEmpty ? '(detached)' : wt.branch,
-                    style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'monospace',
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: Text(
-                    wt.date.isEmpty ? wt.shortPath : '${wt.shortPath} · ${wt.timeAgo}',
+                    wt.date.isEmpty
+                        ? wt.shortPath
+                        : '${wt.shortPath} · ${wt.timeAgo}',
                     style: const TextStyle(fontSize: 12),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -230,9 +262,9 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
             IconButton(
               icon: const Icon(Icons.chat_bubble_outline),
               tooltip: 'Back to chat',
-              onPressed: () => Navigator.of(context).popUntil(
-                (route) => route.settings.name != '/file-browser',
-              ),
+              onPressed: () => Navigator.of(
+                context,
+              ).popUntil((route) => route.settings.name != '/file-browser'),
             ),
           ],
           bottom: PreferredSize(
@@ -241,7 +273,10 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
               height: 36,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 itemCount: crumbs.length,
                 separatorBuilder: (_, i) => Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -264,7 +299,9 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
                         color: isLast
                             ? theme.colorScheme.onSurface
                             : theme.colorScheme.primary,
-                        fontWeight: isLast ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight: isLast
+                            ? FontWeight.w600
+                            : FontWeight.normal,
                       ),
                     ),
                   );
@@ -286,7 +323,8 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
     // reader is looking at and redraw it. The skeleton is a first-load
     // affordance. Same guard as the transcript's (spec 52,
     // session_detail_screen.dart:460).
-    if (listing.isLoading && !listing.hasValue) return const _FileListSkeleton();
+    if (listing.isLoading && !listing.hasValue)
+      return const _FileListSkeleton();
 
     final failed = listing.hasError || listing.valueOrNull == null;
     if (failed) {
@@ -349,17 +387,26 @@ class _EntryTile extends StatelessWidget {
       leading: Icon(
         entry.isDir ? Icons.folder : _iconForFile(entry.name),
         size: 28,
-        color: entry.isDir ? Colors.amber.shade700 : theme.colorScheme.onSurfaceVariant,
+        color: entry.isDir
+            ? Colors.amber.shade700
+            : theme.colorScheme.onSurfaceVariant,
       ),
       title: Text(
         entry.name,
         style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
       ),
       trailing: entry.isDir
-          ? Icon(Icons.chevron_right, size: 24, color: theme.colorScheme.onSurfaceVariant)
+          ? Icon(
+              Icons.chevron_right,
+              size: 24,
+              color: theme.colorScheme.onSurfaceVariant,
+            )
           : Text(
               entry.formattedSize,
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
       onTap: onTap,
       dense: true,
@@ -438,7 +485,9 @@ class _ScriptsSwitch extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: value ? FontWeight.w700 : FontWeight.w500,
-                  color: value ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                  color: value
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               Transform.scale(
@@ -496,6 +545,7 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   bool _runScripts = false;
 
   FileReadResult? get _result => _file.valueOrNull;
+
   /// Whether there is nothing to show yet.
   ///
   /// Not a bare `isLoading`: an agent editing this file invalidates the entry,
@@ -507,11 +557,22 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
 
   (String, String) get _fileKey => (widget.hostId, widget.path);
 
+  /// Whether the read that [didChangeDependencies] owes the first build is done.
+  bool _readOnOpen = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Same reasoning as the listing's: see _FileBrowserScreenState._reread.
+  }
+
+  /// Why the read waits for dependencies, and why it happens at all: see
+  /// `_FileBrowserScreenState.didChangeDependencies` and `_reread`.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_readOnOpen) return;
+    _readOnOpen = true;
     ref.invalidate(readFileProvider(_fileKey));
   }
 
@@ -523,13 +584,15 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) ref.invalidate(readFileProvider(_fileKey));
+    if (state == AppLifecycleState.resumed)
+      ref.invalidate(readFileProvider(_fileKey));
   }
 
   /// What a preview may read from, and what "show in folder" browses.
   String get _root => widget.rootPath ?? _directory;
 
-  String get _directory => widget.path.substring(0, widget.path.lastIndexOf('/'));
+  String get _directory =>
+      widget.path.substring(0, widget.path.lastIndexOf('/'));
 
   /// Whether what is on screen is text the reader can point at.
   bool get _showsText {
@@ -543,7 +606,8 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   /// the stack does not grow a second browser every time.
   void _showInFolder() {
     final nav = Navigator.of(context);
-    if (nav.canPop() && ModalRoute.of(context)?.settings.name == '/file-viewer') {
+    if (nav.canPop() &&
+        ModalRoute.of(context)?.settings.name == '/file-viewer') {
       nav.pop(_directory);
       return;
     }
@@ -563,7 +627,7 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   bool _userConfirmedLarge = false;
   static const _softLimit = 1024 * 1024; // 1 MB
   int? _selStart; // 1-based line number
-  int? _selEnd;   // 1-based line number
+  int? _selEnd; // 1-based line number
 
   bool get _hasSelection => _selStart != null;
   String get _selLabel {
@@ -571,6 +635,7 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
     if (_selEnd == null || _selStart == _selEnd) return 'L$_selStart';
     return 'L$_selStart-$_selEnd';
   }
+
   int get _selCount {
     if (_selStart == null) return 0;
     if (_selEnd == null) return 1;
@@ -631,18 +696,28 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   @override
   Widget build(BuildContext context) {
     _file = ref.watch(readFileProvider(_fileKey));
-    ref.listen(readFileProvider(_fileKey), (_, next) => _redirectIfDirectory(next));
+    ref.listen(
+      readFileProvider(_fileKey),
+      (_, next) => _redirectIfDirectory(next),
+    );
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_fileName, style: const TextStyle(fontSize: 15), overflow: TextOverflow.ellipsis),
+            Text(
+              _fileName,
+              style: const TextStyle(fontSize: 15),
+              overflow: TextOverflow.ellipsis,
+            ),
             if (_result != null)
               Text(
                 _result!.formattedSize,
-                style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
           ],
         ),
@@ -697,15 +772,21 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
 
   Widget _buildAskAIBar(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    final accentColor = isDark
+        ? const Color(0xFF58A6FF)
+        : const Color(0xFF0969DA);
     return Container(
       padding: EdgeInsets.only(
-        left: 12, right: 8, top: 8,
+        left: 12,
+        right: 8,
+        top: 8,
         bottom: MediaQuery.of(context).padding.bottom + 8,
       ),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
       ),
       child: Row(
         children: [
@@ -714,17 +795,31 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
           if (_hasSelection) ...[
             Text(
               '$_selLabel · $_selCount ${_selCount == 1 ? 'line' : 'lines'}',
-              style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: theme.colorScheme.onSurface,
+              ),
             ),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: () => setState(() { _selStart = null; _selEnd = null; }),
-              child: Icon(Icons.close, size: 18, color: theme.colorScheme.onSurfaceVariant),
+              onTap: () => setState(() {
+                _selStart = null;
+                _selEnd = null;
+              }),
+              child: Icon(
+                Icons.close,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ] else
             Text(
               'Tap lines to select',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           const Spacer(),
           FilledButton.tonalIcon(
@@ -744,14 +839,18 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   void _showAskAISheet(ThemeData theme) {
     final controller = TextEditingController();
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    final accentColor = isDark
+        ? const Color(0xFF58A6FF)
+        : const Color(0xFF0969DA);
     final label = _hasSelection ? '$_fileName:$_selLabel' : widget.path;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
         return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -761,13 +860,18 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.insert_drive_file, size: 20, color: accentColor),
+                      Icon(
+                        Icons.insert_drive_file,
+                        size: 20,
+                        color: accentColor,
+                      ),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
                           label,
                           style: TextStyle(
-                            fontSize: 13, fontFamily: 'monospace',
+                            fontSize: 13,
+                            fontFamily: 'monospace',
                             fontWeight: FontWeight.w600,
                             color: accentColor,
                           ),
@@ -784,10 +888,20 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
                     maxLines: 4,
                     style: const TextStyle(fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: _hasSelection ? 'Ask about this code...' : 'Ask about this file...',
-                      hintStyle: TextStyle(fontSize: 14, color: theme.colorScheme.onSurfaceVariant),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      hintText: _hasSelection
+                          ? 'Ask about this code...'
+                          : 'Ask about this file...',
+                      hintStyle: TextStyle(
+                        fontSize: 14,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.send, size: 20),
                         onPressed: () => _sendAskAI(ctx, controller.text),
@@ -815,9 +929,13 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
       final lines = content.split('\n');
       final start = (_selStart ?? 1) - 1;
       final end = (_selEnd ?? _selStart ?? 1);
-      final selected = lines.sublist(start.clamp(0, lines.length), end.clamp(0, lines.length));
+      final selected = lines.sublist(
+        start.clamp(0, lines.length),
+        end.clamp(0, lines.length),
+      );
       final ext = _fileName.contains('.') ? _fileName.split('.').last : '';
-      prompt = 'Regarding `${widget.path}` $_selLabel:\n```$ext\n${selected.join('\n')}\n```\n${question.trim()}';
+      prompt =
+          'Regarding `${widget.path}` $_selLabel:\n```$ext\n${selected.join('\n')}\n```\n${question.trim()}';
     } else {
       prompt = 'Regarding file `${widget.path}`:\n${question.trim()}';
     }
@@ -828,7 +946,9 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
     await svc.sendSessionPrompt(widget.sessionId!, prompt);
     if (!mounted) return;
     nav.popUntil(
-      (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
+      (route) =>
+          route.settings.name != '/file-browser' &&
+          route.settings.name != '/git-status',
     );
   }
 
@@ -851,7 +971,10 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
 
     // Server hard limit exceeded
     if (_result!.isTooLarge) {
-      return _buildTooLargeView(theme, '${_result!.formattedSize} — exceeds 10 MB server limit');
+      return _buildTooLargeView(
+        theme,
+        '${_result!.formattedSize} — exceeds 10 MB server limit',
+      );
     }
 
     // Client soft limit: warn before showing large files
@@ -908,10 +1031,25 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
               borderRadius: BorderRadius.circular(8),
             ),
             codeblockPadding: const EdgeInsets.all(0),
-            h1: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-            h2: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
-            h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
-            listBullet: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+            h1: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.onSurface,
+            ),
+            h2: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.onSurface,
+            ),
+            h3: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+            listBullet: TextStyle(
+              fontSize: 14,
+              color: theme.colorScheme.onSurface,
+            ),
           ),
         ),
       );
@@ -924,14 +1062,25 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
     return _buildLineListView(theme, lines, language, isDark);
   }
 
-  Widget _buildLineListView(ThemeData theme, List<String> lines, String? language, bool isDark) {
+  Widget _buildLineListView(
+    ThemeData theme,
+    List<String> lines,
+    String? language,
+    bool isDark,
+  ) {
     // Syntax highlight all lines together for context
     List<List<TextSpan>>? highlightedLines;
     if (language != null) {
-      highlightedLines = _highlightCodeLines(lines.join('\n'), language, isDark);
+      highlightedLines = _highlightCodeLines(
+        lines.join('\n'),
+        language,
+        isDark,
+      );
     }
 
-    final selectedBg = isDark ? const Color(0xFF1A3A5C) : const Color(0xFFD4E8FC);
+    final selectedBg = isDark
+        ? const Color(0xFF1A3A5C)
+        : const Color(0xFFD4E8FC);
     final gutterColor = theme.colorScheme.onSurfaceVariant.withAlpha(120);
 
     return ListView.builder(
@@ -951,7 +1100,11 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
         } else {
           textWidget = Text(
             lines[i],
-            style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+            style: TextStyle(
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: theme.colorScheme.onSurface,
+            ),
             maxLines: 1,
             overflow: TextOverflow.clip,
           );
@@ -969,7 +1122,11 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
                   child: Text(
                     '$lineNum',
                     textAlign: TextAlign.right,
-                    style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: selected ? theme.colorScheme.primary : gutterColor),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: selected ? theme.colorScheme.primary : gutterColor,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -982,10 +1139,15 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
     );
   }
 
-  List<List<TextSpan>> _highlightCodeLines(String code, String language, bool isDark) {
+  List<List<TextSpan>> _highlightCodeLines(
+    String code,
+    String language,
+    bool isDark,
+  ) {
     final themeMap = isDark ? atomOneDarkTheme : atomOneLightTheme;
     final defaultStyle = TextStyle(
-      fontSize: 12, fontFamily: 'monospace',
+      fontSize: 12,
+      fontFamily: 'monospace',
       color: isDark ? Colors.white70 : Colors.black87,
     );
     try {
@@ -1009,11 +1171,19 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
       }
       return lines;
     } catch (_) {
-      return code.split('\n').map((l) => [TextSpan(text: l, style: defaultStyle)]).toList();
+      return code
+          .split('\n')
+          .map((l) => [TextSpan(text: l, style: defaultStyle)])
+          .toList();
     }
   }
 
-  void _buildHighlightSpans(List<dynamic> nodes, Map<String, TextStyle> themeMap, TextStyle defaultStyle, List<TextSpan> out) {
+  void _buildHighlightSpans(
+    List<dynamic> nodes,
+    Map<String, TextStyle> themeMap,
+    TextStyle defaultStyle,
+    List<TextSpan> out,
+  ) {
     for (final node in nodes) {
       if (node.value != null) {
         TextStyle style = defaultStyle;
@@ -1024,45 +1194,82 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
         }
         out.add(TextSpan(text: node.value as String, style: style));
       } else if (node.children != null) {
-        _buildHighlightSpans(node.children as List<dynamic>, themeMap, defaultStyle, out);
+        _buildHighlightSpans(
+          node.children as List<dynamic>,
+          themeMap,
+          defaultStyle,
+          out,
+        );
       }
     }
   }
 
   String? _languageForExt(String ext) {
     switch (ext) {
-      case 'dart': return 'dart';
-      case 'go': return 'go';
-      case 'py': return 'python';
-      case 'js': return 'javascript';
-      case 'ts': return 'typescript';
-      case 'tsx': return 'typescript';
-      case 'jsx': return 'javascript';
-      case 'java': return 'java';
-      case 'kt': return 'kotlin';
-      case 'swift': return 'swift';
-      case 'rs': return 'rust';
-      case 'c': return 'c';
-      case 'cpp': return 'cpp';
-      case 'h': return 'cpp';
-      case 'cs': return 'cs';
-      case 'rb': return 'ruby';
-      case 'sh': return 'bash';
-      case 'bash': return 'bash';
-      case 'zsh': return 'bash';
-      case 'json': return 'json';
-      case 'yaml': return 'yaml';
-      case 'yml': return 'yaml';
-      case 'toml': return 'ini';
-      case 'xml': return 'xml';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'scss': return 'scss';
-      case 'sql': return 'sql';
-      case 'dockerfile': return 'dockerfile';
-      case 'tf': return 'hcl';
-      case 'proto': return 'protobuf';
-      default: return null;
+      case 'dart':
+        return 'dart';
+      case 'go':
+        return 'go';
+      case 'py':
+        return 'python';
+      case 'js':
+        return 'javascript';
+      case 'ts':
+        return 'typescript';
+      case 'tsx':
+        return 'typescript';
+      case 'jsx':
+        return 'javascript';
+      case 'java':
+        return 'java';
+      case 'kt':
+        return 'kotlin';
+      case 'swift':
+        return 'swift';
+      case 'rs':
+        return 'rust';
+      case 'c':
+        return 'c';
+      case 'cpp':
+        return 'cpp';
+      case 'h':
+        return 'cpp';
+      case 'cs':
+        return 'cs';
+      case 'rb':
+        return 'ruby';
+      case 'sh':
+        return 'bash';
+      case 'bash':
+        return 'bash';
+      case 'zsh':
+        return 'bash';
+      case 'json':
+        return 'json';
+      case 'yaml':
+        return 'yaml';
+      case 'yml':
+        return 'yaml';
+      case 'toml':
+        return 'ini';
+      case 'xml':
+        return 'xml';
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'scss':
+        return 'scss';
+      case 'sql':
+        return 'sql';
+      case 'dockerfile':
+        return 'dockerfile';
+      case 'tf':
+        return 'hcl';
+      case 'proto':
+        return 'protobuf';
+      default:
+        return null;
     }
   }
 
@@ -1082,7 +1289,10 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
             const SizedBox(height: 8),
             Text(
               'Loading may be slow or cause performance issues.',
-              style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -1112,7 +1322,10 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
             const SizedBox(height: 8),
             Text(
               detail,
-              style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
           ],
@@ -1147,7 +1360,11 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.do_not_disturb, size: 48, color: theme.colorScheme.onSurfaceVariant),
+            Icon(
+              Icons.do_not_disturb,
+              size: 48,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
             const SizedBox(height: 16),
             const Text(
               'Binary file',
@@ -1156,7 +1373,10 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
             const SizedBox(height: 8),
             Text(
               '${_result!.formattedSize} — cannot display',
-              style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -1179,7 +1399,11 @@ class _FileListSkeleton extends StatelessWidget {
           for (int i = 0; i < 10; i++) ...[
             Row(
               children: [
-                const Skeleton(width: 24, height: 24, borderRadius: BorderRadius.all(Radius.circular(4))),
+                const Skeleton(
+                  width: 24,
+                  height: 24,
+                  borderRadius: BorderRadius.all(Radius.circular(4)),
+                ),
                 const SizedBox(width: 12),
                 Skeleton(width: 80.0 + (i * 31 % 120), height: 16),
                 const Spacer(),
@@ -1243,10 +1467,18 @@ class _SyntaxHighlightBuilder extends MarkdownElementBuilder {
       language: lang.isNotEmpty ? lang : 'plaintext',
       theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
       padding: const EdgeInsets.all(12),
-      textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace', height: 1.5),
+      textStyle: const TextStyle(
+        fontSize: 12,
+        fontFamily: 'monospace',
+        height: 1.5,
+      ),
     );
     if (lang == 'mermaid') {
-      return MermaidDiagram(source: code.trimRight(), isDark: isDark, fallback: block);
+      return MermaidDiagram(
+        source: code.trimRight(),
+        isDark: isDark,
+        fallback: block,
+      );
     }
     return block;
   }
