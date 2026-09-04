@@ -379,7 +379,13 @@ export function Sidebar({
   const manual = hosts.some((host) => sortMode[host.id] === 'manual')
 
   return (
-    <aside className="sidebar" ref={aside}>
+    <aside
+      className="sidebar"
+      ref={aside}
+      // The zone this column is, which is whichever list the rail chose.
+      data-vim-zone={mode === 'sessions' ? 'sidebar' : mode}
+      onFocusCapture={() => store.setColumn('sidebar')}
+    >
       {/* Which mode this is comes from the rail, so the list starts at its own
           search rather than at a switch it is not part of. */}
       {mode === 'settings' && (
@@ -1123,6 +1129,11 @@ function SessionRow({
   return (
     <article
       className={classes.filter(Boolean).join(' ')}
+      // What the keyboard cursor steps over. Focusable but out of the tab
+      // order: Tab should still cross the app in one press, not walk a list
+      // that can be hundreds long.
+      data-vim-item=""
+      tabIndex={-1}
       // A draggable ancestor takes the pointer off the field inside it: the
       // browser starts a drag instead of placing the caret, so a title cannot
       // be clicked into while the row can be moved.

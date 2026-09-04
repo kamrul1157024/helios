@@ -5640,3 +5640,88 @@ hr {
   flex: 1;
   min-width: 0;
 }
+
+/* ─── Vim mode ─────────────────────────────────────────────────────────────
+   The mode rides the session's own status line rather than a bar of its own.
+   Two bars at the foot of the window is one more than the window can spare,
+   and the mode belongs beside the branch: both answer "where am I". */
+.status-line .vim-mode {
+  padding: 2px 7px;
+  border-radius: var(--r-xs, 3px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--inverse-on-surface);
+  background: var(--on-surface-variant);
+}
+
+.status-line.normal .vim-mode {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.status-line.insert .vim-mode {
+  background: #3f9e5c;
+  color: #fff;
+}
+
+.status-line.visual .vim-mode {
+  background: #b8860b;
+  color: #fff;
+}
+
+.status-line.terminal .vim-mode,
+.status-line.scroll .vim-mode {
+  background: #b3261e;
+  color: #fff;
+}
+
+.status-line .vim-zone {
+  opacity: 0.7;
+}
+
+/* Hard right, so a half-typed sequence is always in the same place. */
+.status-line .vim-pending {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+/* The keyboard cursor. Never drawn on a row the pointer merely passed over. */
+[data-vim-item]:focus,
+[data-vim-item]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.keymap {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.keymap td {
+  padding: 4px 8px 4px 0;
+  vertical-align: baseline;
+}
+
+.keymap-keys {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.keymap-keys kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-xs, 3px);
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.keymap-scope {
+  width: 1%;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+  opacity: 0.8;
+}

@@ -31,6 +31,7 @@ import {
   type ItemId,
   type Layout,
 } from './components/layout.ts'
+import type { Mode, Zone } from './vim/types.ts'
 import type { SegmentId } from '../shared/status-line.ts'
 import { applyDensity, applyProseSize, applyStatusSize, applyTheme } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
@@ -82,6 +83,9 @@ function shellLabel(termId: string): string {
  * never the shape for.
  */
 export type SidebarMode = 'sessions' | 'schedules' | 'settings'
+
+/** The three columns, left to right. What `Ctrl-h` and `Ctrl-l` move between. */
+export type Column = 'rail' | 'sidebar' | 'main'
 
 /** What the main panel is showing about a schedule. */
 export interface ScheduleSelection {
@@ -211,6 +215,23 @@ export interface State {
    *  coming back lands where you left. */
   settingsSection: SettingsSection
   /**
+   * Which of the three columns owns the keyboard.
+   *
+   * Only the column, not the zone: below the detail panel `Layout.focused`
+   * already knows which group has the keyboard, and a second copy of that fact
+   * would be one to keep in step. `currentZone` derives the rest.
+   */
+  column: Column
+  /**
+   * Whether keys are commands, and which mode they are commands in.
+   *
+   * The mode is authoritative and DOM focus follows it. `pending` is what has
+   * been typed and not yet resolved, which the mode line draws.
+   */
+  vimEnabled: boolean
+  vimMode: Mode
+  vimPending: string
+  /**
    * The schedules list's own search.
    *
    * Separate from `query`: the two lists hold different things, and a query
@@ -314,6 +335,32 @@ function writeGroupMode(mode: GroupMode): void {
   }
 }
 
+const VIM_KEY = 'helios.vim'
+
+/**
+ * Off until it is turned on.
+ *
+ * Vim mode makes every bare letter a command, so arriving switched on would
+ * leave someone who has never asked for it unable to type. The keymap file this
+ * grows into holds the same flag, but the flag is worth reading from here as
+ * well: the file is loaded over IPC and the first keystroke can beat it.
+ */
+function readVimEnabled(): boolean {
+  try {
+    return localStorage.getItem(VIM_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeVimEnabled(on: boolean): void {
+  try {
+    localStorage.setItem(VIM_KEY, on ? '1' : '0')
+  } catch {
+    // A full or unavailable store costs the preference, not the setting.
+  }
+}
+
 const TERMINAL_UPLOADS_KEY = 'helios.terminalUploads'
 
 /**
@@ -412,6 +459,10 @@ const initial: State = {
   renamingSession: null,
   sidebarMode: 'sessions',
   settingsSection: 'appearance',
+  column: 'sidebar',
+  vimEnabled: readVimEnabled(),
+  vimMode: 'normal',
+  vimPending: '',
   scheduleQuery: '',
   autoRunsOpen: {},
   scheduleSelection: null,
@@ -1209,6 +1260,32 @@ class Store {
     this.editLayout(target, (layout) => removeItem(layout, item))
   }
 
+  // ─── Vim mode ─────────────────────────────────────────────────────────────
+
+  setColumn(column: Column): void {
+    if (this.state.column !== column) this.set({ column })
+  }
+
+  /**
+   * Turns the keymap on or off.
+   *
+   * Always lands in normal: leaving it switched off while a mode other than
+   * normal was current would mean turning it back on into a mode nothing can
+   * leave.
+   */
+  setVimEnabled(on: boolean): void {
+    writeVimEnabled(on)
+    this.set({ vimEnabled: on, vimMode: 'normal', vimPending: '' })
+  }
+
+  setVimMode(mode: Mode): void {
+    if (this.state.vimMode !== mode) this.set({ vimMode: mode, vimPending: '' })
+  }
+
+  setVimPending(pending: string): void {
+    if (this.state.vimPending !== pending) this.set({ vimPending: pending })
+  }
+
   focusGroup(target: Selection, groupId: string): void {
     this.editLayout(target, (layout) =>
       layout.focused === groupId ? layout : { ...layout, focused: groupId },
@@ -1639,6 +1716,43 @@ export const store = new Store()
 
 export function useStore<T>(select: (state: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(store.getSnapshot()))
+}
+
+/**
+ * Which zone owns the keyboard, derived rather than stored.
+ *
+ * The column is a fact this store keeps. Everything below it is already known:
+ * the sidebar's zone is whichever list it is showing, and the detail panel's is
+ * whatever the focused group has in front. Storing those again would give two
+ * answers that could disagree.
+ */
+export function currentZone(state: State): Zone {
+  if (state.column === 'rail') return 'rail'
+  if (state.column === 'sidebar') {
+    if (state.sidebarMode === 'schedules') return 'schedules'
+    if (state.sidebarMode === 'settings') return 'settings'
+    return 'sidebar'
+  }
+
+  const layout = currentLayout(state)
+  const group = layout.groups.find((one) => one.id === layout.focused) ?? layout.groups[0]
+  const active = group?.active ?? ''
+  // A shell is a terminal like the session's own is.
+  if (tabOf(active)) return 'terminal'
+  switch (panelOf(active)) {
+    case 'chat':
+      return 'transcript'
+    case 'terminal':
+      return 'terminal'
+    case 'approvals':
+      return 'approvals'
+    case 'git':
+      return 'git'
+    case 'files':
+      return 'files'
+    default:
+      return 'transcript'
+  }
 }
 
 /** How the selected session's panels are arranged. */

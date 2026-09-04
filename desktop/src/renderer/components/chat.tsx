@@ -290,7 +290,10 @@ export function ChatPanel({
   }
 
   return (
-    <div className="chat">
+    // Focusable so leaving insert mode has somewhere to put the keyboard: the
+    // transcript has no rows to step over, and blurring onto the document
+    // would leave the next motion with nothing to move.
+    <div className="chat" data-vim-zone="transcript" tabIndex={-1}>
       <div
         className="chat-scroll"
         ref={scroller}
@@ -441,6 +444,8 @@ export function ChatPanel({
             />
             <textarea
               ref={composer}
+              // Where `i` puts the cursor when the transcript has the keyboard.
+              data-vim-insert=""
               value={draft}
               rows={3}
               placeholder={

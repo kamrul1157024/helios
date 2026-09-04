@@ -650,7 +650,13 @@ export type Density = 'comfortable' | 'compact'
  * the sidebar and the pane by the main panel, so the state that joins them
  * lives in the store, which cannot import a component.
  */
-export type SettingsSection = 'appearance' | 'sessions' | 'terminal' | 'notifications' | 'hosts'
+export type SettingsSection =
+  | 'appearance'
+  | 'sessions'
+  | 'terminal'
+  | 'notifications'
+  | 'keys'
+  | 'hosts'
 
 /**
  * What the backdrop picker shows, for whichever theme is active.
