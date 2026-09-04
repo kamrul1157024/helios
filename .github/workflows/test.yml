@@ -98,6 +98,95 @@ jobs:
           path: desktop/test-results/
           retention-days: 7
 
+  install:
+    name: Install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The installer checks out a ref from this clone, so it needs history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test the scripts on their own
+        run: sh scripts/install_test.sh
+
+      # And then for real. A runner is the only machine that can be given a
+      # stale /usr/local/bin/helios and have it deleted to prove the point —
+      # the case every upgrader hits, and the one the unit tests cannot cover.
+      - name: Plant an older install where installs used to go
+        run: |
+          printf '#!/bin/sh\necho helios v1.0.0-ancient\n' | sudo tee /usr/local/bin/helios > /dev/null
+          sudo chmod +x /usr/local/bin/helios
+          test "$(command -v helios)" = /usr/local/bin/helios
+
+      - name: Install over it
+        run: |
+          # Node would send the installer off to build the Electron app, which
+          # takes minutes and is what the Desktop jobs are for.
+          sudo mv "$(command -v node)" /tmp/node.hidden
+          HELIOS_SRC="$PWD" HELIOS_REF="$(git rev-parse HEAD)" SHELL=/bin/bash \
+            sh scripts/install.sh
+
+      - name: Check what it left behind
+        run: |
+          set -e
+          test ! -e /usr/local/bin/helios || { echo "the older install survived"; exit 1; }
+          test -x "$HOME/.local/bin/helios" || { echo "nothing was installed"; exit 1; }
+          "$HOME/.local/bin/helios" version | grep -q '^helios' || {
+            echo "the installed binary is not helios"; exit 1; }
+          # The outcome, not the mechanism. A runner already has ~/.local/bin on
+          # its PATH, so ensure-path.sh rightly writes nothing here and there is
+          # no rc line to look for — install_test.sh covers the machines where
+          # there is. What has to be true either way is this.
+          #
+          # Asked of an interactive shell, because Ubuntu's .bashrc returns
+          # early for every other kind: a non-interactive check would pass
+          # whether the line worked or not.
+          found=$(bash -ic 'command -v helios' 2> /dev/null | tr -d '\r')
+          test "$found" = "$HOME/.local/bin/helios" || {
+            echo "a new shell resolves helios to '$found'"; exit 1; }
+
+      # The one path the install above cannot reach: there was no daemon to
+      # restart. Started here so the restart runs against a real one.
+      - name: Restart a running daemon
+        run: |
+          set -e
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # The pid, or nothing. Compared rather than the whole status line,
+          # which says "is running" for the old daemon and the new one alike.
+          pid() { helios daemon status | sed -n 's/^helios daemon is running (pid \([0-9]*\)).*/\1/p'; }
+
+          # Waited for, not assumed: `daemon start -d` returns before the pid
+          # file exists, and a status read too early says "not running" — which
+          # would make restart-daemon.sh correctly do nothing, and this step
+          # pass while testing nothing at all.
+          wait_for_pid() {
+            for _ in $(seq 30); do
+              p=$(pid); [ -n "$p" ] && [ "$p" != "${1:-}" ] && { echo "$p"; return 0; }
+              sleep 1
+            done
+            return 1
+          }
+
+          helios daemon start -d
+          before=$(wait_for_pid) || { echo "the daemon never came up"; exit 1; }
+          echo "before: pid $before"
+
+          sh scripts/restart-daemon.sh "$HOME/.local/bin/helios"
+
+          after=$(wait_for_pid "$before") || {
+            echo "no daemon with a new pid after the restart"; helios daemon status; exit 1; }
+          echo "after:  pid $after"
+
+          helios daemon stop
+
   mobile:
     name: Mobile
     runs-on: ubuntu-latest

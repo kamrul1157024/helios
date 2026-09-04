@@ -13,6 +13,15 @@ VERSION ?= $(shell git describe --tags 2>/dev/null | sed 's/^v//')
 # same way the Release workflow's dropdown does. See AGENTS.md.
 BUMP ?= patch
 REPO = kamrul1157024/helios
+# Where the binary lands. A directory you own, so no install asks for a
+# password: sudo for one file copy is a habit worth not having. Override it for
+# a machine-wide install — `make install-dev PREFIX=/usr/local/bin` — and add
+# sudo yourself if that path needs it.
+PREFIX ?= $(HOME)/.local/bin
+# This file's own directory, which is not $(CURDIR): `make install` re-enters
+# with -C on a worktree parked at the release tag, and the scripts that run
+# there have to be this checkout's, not whatever the tag shipped.
+MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
@@ -66,24 +75,24 @@ endif
 install:
 	$(call build_release,install)
 
-## Build this checkout and install it to /usr/local/bin
+## Build this checkout and install it to $(PREFIX)
 install-dev: build
-ifeq ($(UNAME_S),Linux)
-	# Linux returns ETXTBSY when overwriting a mapped binary; rename over it instead
-	sudo cp helios /usr/local/bin/helios.new
-	sudo mv -f /usr/local/bin/helios.new /usr/local/bin/helios
-else
-	sudo cp helios /usr/local/bin/helios
-endif
+	@mkdir -p $(PREFIX)
+# Linux returns ETXTBSY when overwriting a mapped binary; rename over it instead
+	@cp helios $(PREFIX)/helios.new
+	@mv -f $(PREFIX)/helios.new $(PREFIX)/helios
 ifeq ($(UNAME_S),Darwin)
-	sudo codesign -s - -f /usr/local/bin/helios
-	sudo xattr -d com.apple.quarantine /usr/local/bin/helios 2>/dev/null || true
+	@codesign -s - -f $(PREFIX)/helios
+	@xattr -d com.apple.quarantine $(PREFIX)/helios 2>/dev/null || true
 endif
-	@echo "helios installed to /usr/local/bin/helios"
+	@echo "helios installed to $(PREFIX)/helios"
+	@sh $(MAKEFILE_DIR)scripts/remove-old-installs.sh $(PREFIX)/helios
+	@sh $(MAKEFILE_DIR)scripts/ensure-path.sh $(PREFIX) helios
+	@sh $(MAKEFILE_DIR)scripts/restart-daemon.sh $(PREFIX)/helios
 
 uninstall:
-	sudo rm -f /usr/local/bin/helios
-	@echo "helios removed from /usr/local/bin"
+	rm -f $(PREFIX)/helios
+	@echo "helios removed from $(PREFIX)"
 
 clean:
 	rm -f helios

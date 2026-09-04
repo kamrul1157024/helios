@@ -16,7 +16,7 @@ Full picture: [docs/architecture.md](docs/architecture.md). Design intent lives 
 make build               # Build Go binary (includes codesign)
 make test                # Run Go tests: go test ./...
 make install             # Install the newest published release
-make install-dev         # Install this checkout to /usr/local/bin
+make install-dev         # Install this checkout to ~/.local/bin (override with PREFIX=)
 make desktop-install     # Install the newest released desktop app (macOS)
 make desktop-install-dev # Install this checkout's desktop app (macOS)
 make apk                 # Build debug APK

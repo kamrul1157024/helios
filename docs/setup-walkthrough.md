@@ -27,7 +27,7 @@ $ make install
 ┌──────────────────────────────────────────────┐
 │  $ make install                              │
 │  go build -o helios ./cmd/helios/            │
-│  helios installed to /usr/local/bin/helios   │
+│  helios installed to ~/.local/bin/helios     │
 └──────────────────────────────────────────────┘
 ```
 

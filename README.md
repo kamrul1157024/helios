@@ -74,7 +74,7 @@ Or do it by hand:
 ```bash
 git clone https://github.com/kamrul1157024/helios.git && cd helios
 
-make install           # daemon + CLI  → /usr/local/bin/helios   (needs Go 1.26+)
+make install           # daemon + CLI  → ~/.local/bin/helios      (needs Go 1.26+)
 make desktop-install   # desktop app   → /Applications/Helios.app (macOS, needs Node 22+)
 make apk-install       # Android app   → the device on adb        (needs Flutter 3.32+)
 
@@ -89,13 +89,31 @@ what you want while working on it.
 
 | Command | Builds | Installs to |
 | --- | --- | --- |
-| `make install` | the newest release, from source | `/usr/local/bin/helios` |
-| `make install-dev` | this checkout | `/usr/local/bin/helios` |
+| `make install` | the newest release, from source | `~/.local/bin/helios` |
+| `make install-dev` | this checkout | `~/.local/bin/helios` |
 | `make desktop-install` | the newest release's Electron app | `/Applications/Helios.app` |
 | `make desktop-install-dev` | this checkout's Electron app | `/Applications/Helios.app` |
 | `make desktop-app` | Electron app | `desktop/release/*.dmg` (no install) |
 | `make apk-install` | Debug APK | the connected Android device |
 | `make apk-release VERSION=x.y.z` | Release APK, named that number | `~/.helios/helios.apk` |
+
+The daemon goes to a directory you own, and the install finishes the job rather
+than leaving you a list of things to do:
+
+- **Earlier installs are deleted**, so exactly one `helios` is left on your
+  machine. Installs used to go to `/usr/local/bin`, which usually belongs to
+  root — removing that one asks for your password, once, and it is the only
+  step that ever does. A copy installed by Homebrew or apt is left alone for
+  that package manager to remove.
+- **`~/.local/bin` is put on your `PATH`** if it is not there already, by a line
+  written to `.zshrc`, `.bash_profile` or `config.fish`. Open a new terminal
+  afterwards.
+- **A running daemon is restarted**, or it would go on serving the build you
+  just replaced. Sessions and the tunnel stay up: each session is its own
+  process and outlives the daemon.
+
+Somewhere else instead: `make install PREFIX=/usr/local/bin`, with `sudo` in
+front of it if that path is the system's.
 
 Prebuilt DMGs, an AppImage, a `.deb` and an APK are attached to every
 [release](https://github.com/kamrul1157024/helios/releases/latest).
