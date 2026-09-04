@@ -135,6 +135,15 @@ export function ListRows({ className = '' }: { className?: string }): JSX.Elemen
   )
 }
 
+/** A four-pointed spark: the model a session runs on. */
+export function Spark({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3.5c0 4.7 3.8 8.5 8.5 8.5-4.7 0-8.5 3.8-8.5 8.5 0-4.7-3.8-8.5-8.5-8.5 4.7 0 8.5-3.8 8.5-8.5z" />
+    </svg>
+  )
+}
+
 /** A clock, for what runs on one. */
 export function Clock({ className = '' }: { className?: string }): JSX.Element {
   return (
@@ -160,6 +169,33 @@ export function Pencil({ className = '' }: { className?: string }): JSX.Element 
   return (
     <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M4 20h4l10-10-4-4L4 16v4zM14.5 5.5l4 4" />
+    </svg>
+  )
+}
+
+/** A shield, for how much the agent may do without asking. */
+export function Shield({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3.5l7 2.5v6c0 4-3 7.3-7 8.5-4-1.2-7-4.5-7-8.5V6l7-2.5z" />
+    </svg>
+  )
+}
+
+/** A paperclip: files going with the prompt. */
+export function Paperclip({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M18.5 11.5l-6.8 6.8a4 4 0 01-5.7-5.7l7.5-7.5a2.7 2.7 0 013.8 3.8l-7.5 7.5a1.4 1.4 0 01-1.9-1.9l6.6-6.6" />
+    </svg>
+  )
+}
+
+/** A folder, for a directory the composer offers rather than one it remembers. */
+export function Folder({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3.5 6.5A1.5 1.5 0 015 5h4l2 2.5h8A1.5 1.5 0 0120.5 9v8.5A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-11z" />
     </svg>
   )
 }

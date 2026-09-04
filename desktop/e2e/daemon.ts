@@ -47,8 +47,26 @@ export interface StubDaemon {
    * how a test knows the refetch it provoked has happened at all.
    */
   greps(): number
+  /**
+   * What the app asked the daemon to do, in the order it asked.
+   *
+   * A session with files on its first prompt is three calls that have to
+   * happen in one order — create, upload, send — because the upload needs an
+   * id that only the create can give it. Nothing on screen shows the order, so
+   * the record of what arrived is the only thing that can.
+   */
+  writes(): DaemonWrite[]
   close(): Promise<void>
 }
+
+/** One thing the app asked of the daemon. */
+export type DaemonWrite =
+  | { kind: 'create'; spec: Record<string, unknown> }
+  | { kind: 'upload'; sessionId: string; names: string[] }
+  | { kind: 'send'; sessionId: string; message: string }
+
+/** The session every create in these tests hands back. */
+export const CREATED = 's-created'
 
 /** What `/api/file` answers before a test has said otherwise. */
 const DEFAULT_CONTENT = 'package main\n'
@@ -219,18 +237,41 @@ const WORKTREES: Worktree[] = [
   },
 ]
 
+/**
+ * Home, and the one directory under it with anything in it.
+ *
+ * The new-session picker completes a typed path against the disk, so the roots
+ * it can be sitting in have to answer with directories and not only with the
+ * flat list of files: `~/` for a picker with no directory picked, and `/repo`
+ * for one set to a session's.
+ */
+export const HOME = '/home/dev'
+export const WORKSPACE = `${HOME}/workspace`
+
 /** One file per worktree, named after it, so a wrong root is visible on sight. */
 const TREES: Record<string, FileEntry[]> = {
-  [REPO]: [file(REPO, 'main.go'), file(REPO, 'README.md')],
+  [REPO]: [dir(REPO, 'desktop'), dir(REPO, 'docs'), file(REPO, 'main.go'), file(REPO, 'README.md')],
   [OTHER_WORKTREE]: [file(OTHER_WORKTREE, 'hotfix.go')],
+  [HOME]: [dir(HOME, 'workspace'), dir(HOME, 'worktrees'), dir(HOME, '.config'), file(HOME, 'notes.md')],
+  [WORKSPACE]: [dir(WORKSPACE, 'acme-api'), dir(WORKSPACE, 'acme-web')],
 }
 
 function file(root: string, name: string): FileEntry {
   return { name, path: `${root}/${name}`, is_dir: false, size: 12, mod_time: '2026-01-01T00:00:00Z' }
 }
 
+function dir(root: string, name: string): FileEntry {
+  return { ...file(root, name), is_dir: true, size: 0 }
+}
+
+/** What the daemon's resolveSafePath does to a path before it reads it. */
+function resolveStubPath(asked: string): string {
+  const expanded = asked.startsWith('~/') ? `${HOME}/${asked.slice(2)}` : asked
+  return expanded.length > 1 ? expanded.replace(/\/+$/, '') : expanded
+}
+
 function grepMatches(root: string, query: string): GrepMatch[] {
-  const entries = TREES[root] ?? []
+  const entries = (TREES[root] ?? []).filter((entry) => !entry.is_dir)
   return entries.map((entry, index) => ({
     path: entry.path,
     rel: entry.name,
@@ -272,6 +313,8 @@ export async function startDaemon(): Promise<StubDaemon> {
     }
   }
 
+  const writes: DaemonWrite[] = []
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
@@ -282,6 +325,16 @@ export async function startDaemon(): Promise<StubDaemon> {
       res.write(': open\n\n')
       streams.add(res)
       req.on('close', () => streams.delete(res))
+      return
+    }
+
+    if (req.method === 'POST' && written(path)) {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify(record(writes, path, Buffer.concat(chunks))))
+      })
       return
     }
 
@@ -301,6 +354,7 @@ export async function startDaemon(): Promise<StubDaemon> {
     },
     reads: (target) => readCount.get(target) ?? 0,
     greps: () => grepCount,
+    writes: () => [...writes],
     setFile: (target, content) => {
       contents.set(target, content)
       revision += 1
@@ -311,6 +365,37 @@ export async function startDaemon(): Promise<StubDaemon> {
         for (const stream of streams) stream.end()
         server.close(() => resolve())
       }),
+  }
+}
+
+/** The three calls that start a session and give it its first turn. */
+function written(path: string): boolean {
+  return path === '/api/sessions' || path.endsWith('/files') || path.endsWith('/send')
+}
+
+/**
+ * Takes down what the app asked for, and answers as the daemon would.
+ *
+ * The upload is multipart, and a stub has no business parsing it properly: the
+ * filenames are what a test asserts on, and they are in the part headers.
+ */
+function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
+  if (path === '/api/sessions') {
+    writes.push({ kind: 'create', spec: JSON.parse(body.toString() || '{}') })
+    return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
+  }
+
+  const id = path.slice('/api/sessions/'.length, path.lastIndexOf('/'))
+  if (path.endsWith('/send')) {
+    const { message } = JSON.parse(body.toString() || '{}')
+    writes.push({ kind: 'send', sessionId: id, message: String(message ?? '') })
+    return { success: true }
+  }
+
+  const names = [...body.toString('latin1').matchAll(/filename="([^"]*)"/g)].map((m) => m[1] ?? '')
+  writes.push({ kind: 'upload', sessionId: id, names })
+  return {
+    files: names.map((name) => ({ name, path: `${HOME}/.helios/uploads/${id}/${name}`, size: 1 })),
   }
 }
 
@@ -365,8 +450,12 @@ function answer(
       // No base branch and no commits: the git panel then opens on the working
       // tree, which is the view these tests drive.
       return { root: q('path'), branch: 'main', base: '', scope: 'all', commits: [], has_more: false }
-    case '/api/files':
-      return { path: q('path'), entries: TREES[q('path')] ?? [] }
+    case '/api/files': {
+      // `~/` is expanded before the listing is read, and the answer says which
+      // directory it turned out to be (internal/server/files.go).
+      const root = resolveStubPath(q('path'))
+      return { path: root, entries: TREES[root] ?? [] }
+    }
     case '/api/file': {
       const { content, modTime } = held(q('path'))
       return { path: q('path'), size: content.length, mod_time: modTime, content }
