@@ -17,6 +17,8 @@ import {
   toggleSegment,
   type SegmentId,
 } from '../../shared/status-line.ts'
+import { DEFAULT_BINDINGS } from '../vim/keymap.ts'
+import { command } from '../vim/registry.ts'
 import { BACKDROP_STYLES, MAX_BLUR, MAX_INTENSITY, MIN_INTENSITY, backdropValue } from '../../shared/theme/backdrop.ts'
 import { parseColor, type BackdropSpec, type BackdropStyle, type Rgb } from '../../shared/theme/vscode.ts'
 import type { HeliosTheme } from '../../shared/theme/resolve.ts'
@@ -89,6 +91,7 @@ export const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'sessions', label: 'Sessions' },
   { id: 'terminal', label: 'Terminal' },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'keys', label: 'Keys' },
   // Last, and part of this list rather than a dialog of its own: which daemons
   // the app talks to is a setting like the others.
   { id: 'hosts', label: 'Hosts' },
@@ -295,6 +298,8 @@ export function SettingsPane(): JSX.Element {
             </>
           )}
 
+          {section === 'keys' && <KeysPane />}
+
           {section === 'hosts' && <HostsPane />}
         </div>
     </div>
@@ -307,6 +312,85 @@ export function SettingsPane(): JSX.Element {
  * stacking all of them meant scrolling past three copies of the same four
  * toggles to reach the one machine you meant.
  */
+/**
+ * The vim switch, and what the keys currently do.
+ *
+ * Read-only for now: rebinding writes a `keymap.json` this pane does not have
+ * yet. Listing the bindings still earns its place — a keymap you cannot see is
+ * one you have to learn by pressing things.
+ */
+function KeysPane(): JSX.Element {
+  const enabled = useStore((s) => s.vimEnabled)
+
+  const groups = new Map<string, { keys: string; title: string; scope: string }[]>()
+  for (const binding of DEFAULT_BINDINGS) {
+    if (!binding.command) continue
+    const entry = command(binding.command)
+    const group = entry?.group ?? 'Other'
+    const zones = binding.when?.zones
+    const modes = binding.when?.modes
+    const scope = modes ? modes.join(', ') : zones ? zones.join(', ') : 'anywhere'
+    const rows = groups.get(group) ?? []
+    rows.push({ keys: spell(binding.keys), title: entry?.title ?? binding.command, scope })
+    groups.set(group, rows)
+  }
+
+  return (
+    <>
+      <section className="settings-group">
+        <h3>
+          Vim mode
+          <Info>
+            Every letter becomes a command outside a text field. Escape leaves a half-typed
+            sequence; inside a terminal nothing is taken but <code>⌃\ ⌃n</code>, so the agent keeps
+            its own Escape.
+          </Info>
+        </h3>
+
+        <label className="check">
+          <input type="checkbox" checked={enabled} onChange={(event) => store.setVimEnabled(event.target.checked)} />
+          <span>Use vim keys to move around</span>
+        </label>
+      </section>
+
+      {[...groups].map(([group, rows]) => (
+        <section key={group} className="settings-group">
+          <h3>{group}</h3>
+          <table className="keymap">
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${row.keys}:${row.title}`}>
+                  <td className="keymap-keys">
+                    <kbd>{row.keys}</kbd>
+                  </td>
+                  <td className="keymap-title">{row.title}</td>
+                  <td className="keymap-scope">{row.scope}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ))}
+    </>
+  )
+}
+
+/** `<C-w> s` reads as `⌃w s`, which is what the key caps say. */
+function spell(keys: string): string {
+  return keys
+    .split(' ')
+    .map((token) =>
+      token
+        .replace(/^<C-(.+)>$/, '⌃$1')
+        .replace(/^<M-(.+)>$/, '⌥$1')
+        .replace('<space>', '␣')
+        .replace('<leader>', '␣')
+        .replace('<CR>', '↵')
+        .replace('<Esc>', 'Esc'),
+    )
+    .join(' ')
+}
+
 function TerminalPane(): JSX.Element {
   const uploads = useStore((s) => s.terminalUploads)
 

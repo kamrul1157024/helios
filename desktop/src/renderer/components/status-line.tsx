@@ -5,7 +5,7 @@ import { PathLabel } from './path-label.tsx'
 import { SelectionMenu } from './selection-menu.tsx'
 import { modeActions } from './session-menu.ts'
 import { gitStatusQuery, providersQuery } from '../queries.ts'
-import { useStore } from '../store.ts'
+import { currentZone, useStore } from '../store.ts'
 import type { SegmentId } from '../../shared/status-line.ts'
 import { BUSY_STATUSES, statusLabel, type Session } from '../../shared/models.ts'
 
@@ -25,6 +25,10 @@ import { BUSY_STATUSES, statusLabel, type Session } from '../../shared/models.ts
 export function StatusLine({ hostId, session }: { hostId: string; session: Session }): JSX.Element | null {
   const order = useStore((s) => s.statusLine)
   const hosts = useStore((s) => s.hosts)
+  const vimEnabled = useStore((s) => s.vimEnabled)
+  const vimMode = useStore((s) => s.vimMode)
+  const vimPending = useStore((s) => s.vimPending)
+  const zone = useStore(currentZone)
   const [modeMenu, setModeMenu] = useState<{ x: number; y: number } | null>(null)
 
   const wanted = new Set(order)
@@ -43,7 +47,10 @@ export function StatusLine({ hostId, session }: { hostId: string; session: Sessi
   // bar that nobody has clicked should not pay for it.
   const { data: providers } = useQuery({ ...providersQuery(hostId), enabled: modeMenu !== null })
 
-  if (order.length === 0) return null
+  // Vim mode keeps the bar even when every session segment has been switched
+  // off: with the keymap on, what mode the keyboard is in is the one fact on
+  // this line you cannot work without.
+  if (order.length === 0 && !vimEnabled) return null
 
   const segment = (id: SegmentId): JSX.Element | null => {
     switch (id) {
@@ -121,8 +128,17 @@ export function StatusLine({ hostId, session }: { hostId: string; session: Sessi
   }
 
   return (
-    <footer className="status-line">
+    <footer className={vimEnabled ? `status-line vim ${vimMode}` : 'status-line'}>
+      {/* First, and coloured, because the mode changes what every key does —
+          the session facts beside it are true either way. */}
+      {vimEnabled && <span className="vim-mode">{vimMode.toUpperCase()}</span>}
+      {vimEnabled && <span className="vim-zone">{zone}</span>}
+
       {order.map(segment)}
+
+      {/* Last and hard right, so a half-typed sequence appears in the same
+          place whatever the segments in front of it are doing. */}
+      {vimEnabled && vimPending && <span className="vim-pending">{vimPending}</span>}
 
       {modeMenu && (
         <SelectionMenu

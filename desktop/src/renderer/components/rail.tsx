@@ -17,6 +17,7 @@ export function Rail(): JSX.Element {
   const item = (id: SidebarMode, label: string, icon: JSX.Element): JSX.Element => (
     <button
       className={mode === id ? 'rail-item on' : 'rail-item'}
+      data-vim-item=""
       // Pressed rather than current: these are three states of one control,
       // and only one of them is on at a time.
       aria-pressed={mode === id}
@@ -29,7 +30,7 @@ export function Rail(): JSX.Element {
   )
 
   return (
-    <nav className="rail" aria-label="Modes">
+    <nav className="rail" aria-label="Modes" data-vim-zone="rail" onFocusCapture={() => store.setColumn('rail')}>
       {item('sessions', 'Sessions', <ListRows />)}
       {item('schedules', 'Schedules', <Clock />)}
       <span className="grow" />

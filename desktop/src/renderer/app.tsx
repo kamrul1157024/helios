@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { bridge } from './bridge.ts'
 import { store, terminalId, useStore } from './store.ts'
+import { startVim } from './vim/driver.ts'
 import { Detail } from './components/detail.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
 import { Rail } from './components/rail.tsx'
@@ -31,6 +32,10 @@ export function App(): JSX.Element {
 
   // The Settings item in the app menu lives in the main process.
   useEffect(() => bridge.app.onOpenSettings(() => store.openSettings()), [])
+
+  // One listener for the whole window, whether or not vim mode is on: the
+  // driver reads the flag itself, so turning it on has to bind nothing.
+  useEffect(() => startVim(), [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -81,7 +86,7 @@ export function App(): JSX.Element {
             setDialog('new')
           }}
         />
-        <main className="main">
+        <main className="main" onFocusCapture={() => store.setColumn('main')}>
           <Detail />
         </main>
       </div>
