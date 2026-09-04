@@ -15,6 +15,8 @@ import type { GroupOrder, PathOrder } from './components/grouping.ts'
 import {
   defaultLayout,
   evenSizes,
+  groupOf,
+  isBeside,
   isVisible,
   moveItem,
   panelItem,
@@ -1236,6 +1238,35 @@ class Store {
   /** Shows a file in the Files panel, switching to it. */
   openFile(hostId: string, path: string): void {
     this.revealItem(this.state.selection, panelItem('files'))
+    this.set((s) => ({
+      fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open' },
+    }))
+  }
+
+  /**
+   * Shows a file in a Files panel beside the transcript, splitting one out if
+   * the panel is not already a pane of its own.
+   *
+   * Beside the transcript rather than in front of it, because what an agent
+   * changed and what it said about the change are read together. The panel
+   * drops its tree once it is there — see files.tsx — so the file gets the
+   * whole half.
+   */
+  openFileBeside(hostId: string, path: string): void {
+    const selection = this.state.selection
+    const files = panelItem('files')
+    if (selection) {
+      const layout = currentLayout(this.state)
+      // Already a pane of its own: splitting again would only halve it.
+      if (!isBeside(layout, files)) {
+        // Beside the transcript specifically. The focused group is the
+        // fallback for a layout with no chat in it at all, where "the side"
+        // can only mean the side of whatever is being looked at.
+        const host = groupOf(layout, panelItem('chat'))?.id ?? layout.focused
+        this.splitItem(selection, files, host, 'after')
+      }
+    }
+    this.revealItem(selection, files)
     this.set((s) => ({
       fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open' },
     }))

@@ -93,6 +93,17 @@ export function isVisible(layout: Layout, item: ItemId): boolean {
   return layout.groups.some((group) => group.active === item)
 }
 
+/**
+ * Whether the item is in front of a group of its own, beside another group.
+ *
+ * What "open to the side" asks about: the file the transcript names is worth a
+ * pane next to the transcript, but only once. A second request has nowhere new
+ * to put it.
+ */
+export function isBeside(layout: Layout, item: ItemId): boolean {
+  return layout.groups.length > 1 && isVisible(layout, item)
+}
+
 /** Every item the layout holds, whether or not it is in front. */
 export function placedItems(layout: Layout): ItemId[] {
   return layout.groups.flatMap((group) => group.items)

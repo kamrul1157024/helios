@@ -10,6 +10,7 @@ import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarge
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
 import { Chevron } from './icons.tsx'
+import { isBeside, panelItem } from './layout.ts'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
   extractFilePaths,
@@ -19,7 +20,7 @@ import {
   resolveFilePath,
 } from '../markdown.ts'
 import { useMermaid } from '../mermaid.ts'
-import { store, useStore } from '../store.ts'
+import { currentLayout, store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
   canResume,
@@ -471,6 +472,12 @@ function FileChip({
   const resolved = resolveFilePath(path, cwd)
   const name = label ?? path.split('/').filter(Boolean).pop() ?? path
   const isDir = !name.includes('.')
+  // Where the file could go, which is what decides whether there is a choice to
+  // offer: with the panel already a pane of its own, the other row would only
+  // undo the arrangement the reader has.
+  const beside = useStore((state) => isBeside(currentLayout(state), panelItem('files')))
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+
   return (
     <span className="file-chip">
       {/* Search, not open: the transcript's path is the checkout the agent ran
@@ -483,9 +490,42 @@ function FileChip({
         <span className="file-chip-icon">{isDir ? <Chevron dir="right" /> : '⌕'}</span>
         {name}
       </button>
-      <button className="file-chip-act" title={`Open ${resolved}`} onClick={() => store.openFile(hostId, resolved)}>
+      <button
+        className="file-chip-act"
+        title={beside ? `Open ${resolved} in the pane beside this` : `Open ${resolved}`}
+        onClick={(event) => {
+          if (beside) {
+            store.openFileBeside(hostId, resolved)
+            return
+          }
+          // Below the button, as the session strip's menu does: the chip has a
+          // fixed place in the transcript, and a menu at the pointer would read
+          // as unmoored from it.
+          const box = event.currentTarget.getBoundingClientRect()
+          setAt({ x: box.left, y: box.bottom + 4 })
+        }}
+      >
         ↗
       </button>
+      {at && (
+        <SelectionMenu
+          x={at.x}
+          y={at.y}
+          actions={[
+            {
+              label: 'Open to the side',
+              title: 'Beside the transcript, with the file tree out of the way',
+              run: () => store.openFileBeside(hostId, resolved),
+            },
+            {
+              label: 'Open in the Files tab',
+              title: 'In front of the transcript',
+              run: () => store.openFile(hostId, resolved),
+            },
+          ]}
+          onClose={() => setAt(null)}
+        />
+      )}
       <button
         className="file-chip-act"
         title="Copy path"

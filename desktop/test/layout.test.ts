@@ -5,6 +5,7 @@ import {
   defaultLayout,
   evenSizes,
   groupOf,
+  isBeside,
   isVisible,
   moveItem,
   panelItem,
@@ -118,6 +119,25 @@ test('both groups are visible at once', () => {
   assert.deepEqual(visibleItems(layout).sort(), [CHAT, FILES].sort())
   assert.equal(isVisible(layout, CHAT), true)
   assert.equal(isVisible(layout, FILES), true)
+})
+
+// What the transcript's file chip asks before it offers to open a file to the
+// side, and what the Files panel asks before it drops its tree.
+test('a panel is beside another only once it has a group of its own', () => {
+  assert.equal(isBeside(split(), FILES), true)
+  // One group is the whole width: the transcript is in front of it, not beside.
+  assert.equal(isBeside(defaultLayout(), CHAT), false)
+  assert.equal(isBeside(defaultLayout(), FILES), false)
+})
+
+test('a panel behind another in a split group is not beside anything', () => {
+  // Two groups, but the git panel has been dragged in front of the one holding
+  // files.
+  const beside = split()
+  const layout = moveItem(beside, GIT, g(beside, 1).id, 1)
+  assert.equal(groupOf(layout, FILES)?.id, groupOf(layout, GIT)?.id)
+  assert.equal(isBeside(layout, FILES), false)
+  assert.equal(isBeside(layout, GIT), true)
 })
 
 test('moving the last item out of a group collapses it and returns its weight', () => {
