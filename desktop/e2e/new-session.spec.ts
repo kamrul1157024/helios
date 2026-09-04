@@ -332,7 +332,44 @@ test('a file dropped anywhere on the dialog lands on it', async ({ window }) => 
   await expect(window.locator('.attachment-name')).toHaveText('trace.txt')
 })
 
-test('⌘U reaches for a file without touching the paperclip', async ({ window }) => {
+// The prompt box is where a file is aimed, and a textarea has drop behaviour of
+// its own: left to it, Chromium either inserts the path as text or navigates
+// away from the app entirely. The dialog's handlers are on the shell and catch
+// it on the way up, and this is what says they still do.
+test('a file dropped on the prompt itself lands on the dialog', async ({ window }) => {
+  await openComposer(window)
+
+  await window.evaluate(() => {
+    const carried = new DataTransfer()
+    carried.items.add(new File(['a stack trace'], 'dropped.txt', { type: 'text/plain' }))
+    const prompt = document.querySelector('.composer-prompt')
+    if (!prompt) throw new Error('no prompt box to drop on')
+    prompt.dispatchEvent(new DragEvent('dragover', { dataTransfer: carried, bubbles: true }))
+    prompt.dispatchEvent(new DragEvent('drop', { dataTransfer: carried, bubbles: true }))
+  })
+
+  await expect(window.locator('.attachment-name')).toHaveText('dropped.txt')
+  // Attached, not typed: the path must not also end up in the prompt.
+  await expect(window.locator('.composer-prompt')).toHaveValue('')
+})
+
+// Dragging over the prompt has to say the dialog will take it, or the only
+// feedback is the cursor and the user lets go somewhere else.
+test('dragging a file over the prompt lights the dialog up', async ({ window }) => {
+  await openComposer(window)
+
+  await window.evaluate(() => {
+    const carried = new DataTransfer()
+    carried.items.add(new File(['x'], 'hover.txt', { type: 'text/plain' }))
+    const prompt = document.querySelector('.composer-prompt')
+    if (!prompt) throw new Error('no prompt box to drag over')
+    prompt.dispatchEvent(new DragEvent('dragover', { dataTransfer: carried, bubbles: true }))
+  })
+
+  await expect(window.locator('.composer.dropping')).toHaveCount(1)
+})
+
+test('⌘U reaches for a file without touching the ⊕', async ({ window }) => {
   await openComposer(window)
 
   const chooser = window.waitForEvent('filechooser')

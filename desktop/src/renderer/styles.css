@@ -3898,17 +3898,34 @@ figure.mermaid svg {
   flex: none;
 }
 
-/* Sized to the buttons it stands beside, not to the 36px an icon button is
-   elsewhere: the foot of the dialog is a 30px row. */
-.composer-actions .attach-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
+/* The prompt box in the dialog is the dialog: the wrapper exists only to hang
+   the ⊕ over the text, as the transcript composer does, so it draws no surface
+   and no border of its own. */
+.modal-backdrop .composer-input {
+  margin: 0 12px;
+  border: none;
+  background: none;
 }
 
-.composer-actions .attach-btn .ui-icon {
-  width: 17px;
-  height: 17px;
+.modal-backdrop .composer-input:focus-within {
+  border-color: transparent;
+}
+
+/* One drop hint, not two: the dialog paints its own across the whole of
+   itself, and the inner box would sit inside that. */
+.modal-backdrop .composer.dropping .composer-input::after {
+  content: none;
+}
+
+.modal-backdrop .composer-prompt {
+  margin: 0;
+  /* Bottom padding is the strip the ⊕ floats over. */
+  padding: 8px 8px 40px;
+}
+
+.modal-backdrop .composer-bar {
+  left: 4px;
+  bottom: 4px;
 }
 
 /* The dialog has no inner box to outline, so the whole of it lights up. */
@@ -4028,6 +4045,15 @@ figure.mermaid svg {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 220px;
+}
+
+/* Provider, model and permissions read as one row of settings, so they get one
+   row. Three chips and two buttons do not fit 680px at the 220px above, and a
+   permission mode wrapping onto a line of its own reads as a separate control
+   rather than the third of three. Truncated instead — the chips are wide
+   enough for every mode name, and a long model name is the one that gives. */
+.composer-foot .composer-chip-name {
+  max-width: 130px;
 }
 
 .picker-body {

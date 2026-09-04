@@ -12,7 +12,7 @@ import {
   useAttachments,
   useDropTarget,
 } from './attach.tsx'
-import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
+import { Chevron, Console, Folder, Plus, Shield, Spark } from './icons.tsx'
 import { completionTarget, completionsIn, resolveTyped } from './dirpath.ts'
 import { tintOf } from './grouping.ts'
 import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
@@ -106,6 +106,12 @@ export function NewSessionDialog({
    * to return. So an attached prompt cannot be the one the agent launches
    * with: the session is started silent, the files go up against the id it
    * came back with, and the prompt naming them is sent after.
+   *
+   * That send lands while the agent is still coming up, which is the hardest
+   * moment to deliver a prompt in and used to be where this one was lost. The
+   * daemon holds it now — it waits for the agent's screen to settle before
+   * typing, and gives a booting agent a budget that matches how long one
+   * actually takes to read (internal/server/launch.go, awaitQuietScreen).
    *
    * Nothing here undoes the session. It is running by the time any of this can
    * fail, and killing an agent over an upload is a worse answer than a prompt
@@ -269,29 +275,43 @@ export function NewSessionDialog({
 
         <AttachmentChips files={files.files} onRemove={files.remove} />
 
-        <textarea
-          className="composer-prompt"
-          autoFocus
-          rows={4}
-          value={prompt}
-          placeholder="What do you want to work on?"
-          onChange={(event) => setPrompt(event.target.value)}
-          onPaste={(event) => {
-            // A screenshot on the clipboard comes through as a file. Let the
-            // default run when there is none, or pasted text is lost.
-            if (event.clipboardData.files.length > 0) {
+        {/* Over the prompt rather than in the foot, as the transcript composer
+            has it: attaching is something done to the text, so it belongs on
+            the box holding the text. It also gives the foot back the width the
+            three chips need to stay on one line. */}
+        <div className="composer-input">
+          <textarea
+            className="composer-prompt"
+            autoFocus
+            rows={4}
+            value={prompt}
+            placeholder="What do you want to work on?"
+            onChange={(event) => setPrompt(event.target.value)}
+            onPaste={(event) => {
+              // A screenshot on the clipboard comes through as a file. Let the
+              // default run when there is none, or pasted text is lost.
+              if (event.clipboardData.files.length > 0) {
+                event.preventDefault()
+                void files.attach(event.clipboardData.files)
+                return
+              }
+              files.noticePaste(event.clipboardData.getData('text'))
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
               event.preventDefault()
-              void files.attach(event.clipboardData.files)
-              return
-            }
-            files.noticePaste(event.clipboardData.getData('text'))
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-            event.preventDefault()
-            void start()
-          }}
-        />
+              void start()
+            }}
+          />
+          <div className="composer-bar">
+            <AttachButton
+              onFiles={(chosen) => void files.attach(chosen)}
+              disabled={starting}
+              shortcut
+              icon={<Plus />}
+            />
+          </div>
+        </div>
 
         <footer className="composer-foot">
           <div className="composer-chips">
@@ -395,18 +415,9 @@ export function NewSessionDialog({
                 )}
               </Picker>
             )}
-
           </div>
 
           <div className="composer-actions">
-            {/* With the actions rather than with the chips: the chips say what
-                the session will be, and the paperclip is something done to the
-                prompt, next to the button that sends it. */}
-            <AttachButton
-              onFiles={(chosen) => void files.attach(chosen)}
-              disabled={starting}
-              shortcut
-            />
             <button className="ghost" onClick={onClose}>
               Cancel
             </button>

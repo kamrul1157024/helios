@@ -166,6 +166,7 @@ export function AttachButton({
   onFiles,
   disabled = false,
   shortcut = false,
+  icon = <Paperclip />,
 }: {
   onFiles: (files: FileList | null) => void
   disabled?: boolean
@@ -177,6 +178,12 @@ export function AttachButton({
    * would answer the keystroke with a dialog of its own.
    */
   shortcut?: boolean
+  /**
+   * The glyph. A paperclip beside a running session means "add to this turn";
+   * the new-session dialog is building a first turn out of nothing, and a plus
+   * is what adding to nothing looks like.
+   */
+  icon?: React.ReactNode
 }): JSX.Element {
   const picker = useRef<HTMLInputElement | null>(null)
 
@@ -211,7 +218,7 @@ export function AttachButton({
         disabled={disabled}
         onClick={() => picker.current?.click()}
       >
-        <Paperclip />
+        {icon}
       </button>
     </>
   )
