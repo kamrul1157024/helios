@@ -95,7 +95,7 @@ what you want while working on it.
 | `make desktop-install-dev` | this checkout's Electron app | `/Applications/Helios.app` |
 | `make desktop-app` | Electron app | `desktop/release/*.dmg` (no install) |
 | `make apk-install` | Debug APK | the connected Android device |
-| `make apk-release` | Release APK | `~/.helios/helios.apk` |
+| `make apk-release VERSION=x.y.z` | Release APK, named that number | `~/.helios/helios.apk` |
 
 Prebuilt DMGs, an AppImage, a `.deb` and an APK are attached to every
 [release](https://github.com/kamrul1157024/helios/releases/latest).

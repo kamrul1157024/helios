@@ -1,5 +1,12 @@
 # One Version Number, and Builds That Do Not Lie About It
 
+> **Amended.** The claim held; the mechanism moved. The number no longer lives
+> in a `VERSION` file that PRs bump and CI pushes — the release works it out
+> from the newest published release, and releases are cut by hand rather than by
+> a green main. The sections below say so where they used to say otherwise. What
+> did not change: one number, carried by every artifact, stamped at build time,
+> and never typed.
+
 ## The claim
 
 A version number is a promise about what is running. Helios makes that promise
@@ -8,8 +15,8 @@ happens to be on disk — and no two of them have to agree. `make install` stamp
 `3.8.0` on a machine whose newest release was `3.9.0`, and nobody noticed until
 the desktop started reporting daemon versions and the number was read out loud.
 
-One number, declared in one file, carried by every client, and stamped into
-builds from git so a build cannot claim a release it is not.
+One number, worked out at release time, carried by every client, and stamped
+into builds so a build cannot claim a release it is not.
 
 ## Where we are
 
@@ -42,11 +49,23 @@ by mistake, is what people would get.
 
 ## The change
 
-### One declared number
+### No declared number
 
-`VERSION` at the repo root holds the number the next release will carry.
-`desktop/package.json` and `mobile/pubspec.yaml` carry the same one, because
-neither can read a file at build time. The daemon carries nothing: it is stamped.
+The repo declares nothing. A number checked into the tree is a number that
+drifts from the tag, needs a bot to move it, and has to be reviewed in PRs that
+are not about versioning. `scripts/next-version.sh` reads the newest published
+release and steps one past it instead — see *The release works out the number*.
+
+`desktop/package.json` and `mobile/pubspec.yaml` still have to hold a version
+key, because npm and Flutter require one, so both hold `0.0.0` and every build
+overrides it. That is the same placeholder that made the desktop app
+permanently out of date with itself before this spec, so the dialog is closed
+against it directly: `UpdateChecker.worthShowing` returns null when
+`app.isPackaged` is false. A build running out of a checkout is not one whose
+user is waiting to hear about a release. `latest()` skips that gate, because the
+Hosts pane's question is about the daemons it can see, not about this app.
+
+The daemon carries nothing at all: it is stamped.
 
 ### Builds stamp themselves from git
 
@@ -76,33 +95,56 @@ builds the checkout. Same pair for `desktop-install`.
 Inside the worktree `git describe` answers the tag, so no version is passed
 down — the build stamps itself correctly by construction.
 
-### CI moves the number instead of failing over it
+### The release works out the number
 
-`scripts/check-version.sh` resolves a target: whatever `VERSION` declares, as
-long as that is past the newest release; otherwise the release's patch plus one.
-Without arguments it reports and exits 1. With `--fix` it writes the target to
-all three files.
+`workflow_dispatch` has no `version` input. Typing a number is where the tag,
+the APK's build name and the app's own number become three different numbers.
+It has a `bump` dropdown instead — `patch`, `minor`, `major` — and
+`scripts/next-version.sh` turns that into a number:
 
-The `Version` job runs `--fix` on every PR, and when anything changed it commits
-`chore: bump version to x.y.z`, pushes it to the branch, and comments to say so.
-A commit the author did not write is one worth announcing.
+```
+3.11.0 + patch -> 3.11.1
+3.11.0 + minor -> 3.12.0
+3.11.0 + major -> 4.0.0
+```
 
-Incremental and automatic on purpose. The failure mode this is built for is a
-revert: a release goes out as 3.10.0, the change is reverted, and the next
-release must not try to be 3.10.0 again. Nobody has to remember that.
+The step is always one and everything to the right of it zeroes, so the illegal
+numbers are not rejected, they are unreachable. There is nothing to validate and
+nothing to correct.
 
-### The release reads the file
+The base is the newest **release**, not the newest tag: a prerelease, or a tag
+pushed by mistake, is not what people are running. An unreachable GitHub is
+fatal rather than a fallback — a number guessed from a stale base is a wrong
+number on a real tag, and no check downstream would catch it.
 
-`workflow_dispatch` loses its `version` input entirely. The number was decided
-in a PR, and typing it again at release time is where the tag, the APK's build
-name and the app's own number become three different numbers. Every job reads
-`VERSION`, and `make release-publish` refuses to tag anything else.
+The `Version` job resolves it once and the four build jobs read its output, so
+the tag, the APK, both DMGs, the AppImage and the deb cannot disagree.
 
-Nor is there anything to press. `Release` runs on `workflow_run` when `Test`
-succeeds on main, and a gate job asks whether `VERSION` names a release that
-already exists: if it does, nothing runs. So a merge that moved the number ships
-it while the change is still fresh, and a merge that did not costs one job that
-prints a line and stops.
+### Releases are cut by hand
+
+`Release` runs on `workflow_dispatch` alone. A merge to main is not a release;
+the work collects there until somebody looks at the batch and decides what it is
+worth.
+
+That is a reversal. The first cut of this spec had `Release` fire on
+`workflow_run` when `Test` went green on main, on the reasoning that a release
+nobody has to remember to cut goes out while the change is still fresh. What
+that bought in freshness it spent on judgement: a `feat` and a typo fix are the
+same event to a trigger, and the number they ship under was whatever the last
+PR happened to leave in `VERSION`. Choosing `minor` is a statement about the
+batch, and only a person reading the batch can make it.
+
+Two guards, because a button is pressable twice. The job fails when the tag it
+resolved already exists — a draft or a hand-pushed tag would otherwise be
+reused, putting this release on somebody else's commit. And it fails when no
+commits sit between the last tag and `HEAD`, which is what a second press looks
+like: without it, the base having moved means the second press cheerfully cuts
+`3.11.2` over `3.11.1` with an empty changelog behind it.
+
+`make release BUMP=minor` is the same path locally: it resolves the number once
+and hands it to both `apk-release` and `release-publish`. Both refuse anything
+that is not a plain `x.y.z`, so the `3.11.0-13-g0a6231c` that `git describe`
+hands back on a checkout past a tag cannot reach a tag or an asset name.
 
 ### The page hands the file over itself
 
@@ -122,9 +164,11 @@ never starts.
 
 ## What we are not doing
 
-- **Deriving the bump from conventional commits.** A `feat` should take the
-  minor, and an agent bumping the file by hand can do that. The automatic path
-  takes the patch, because the automatic path is a floor, not a judgment.
+- **Deriving the bump from conventional commits.** A `feat` in the batch should
+  take the minor, and the dropdown defaults to `patch`, so the two disagree
+  whenever nobody looks. Reading the commits and picking is a person's job:
+  `feat:` is a claim about a subject line, not about compatibility, and a
+  release cut on that reading would be wrong exactly when it mattered.
 - **Publishing a daemon binary.** `make install` and the installer both build
   from source; there is nothing to download. If that changes, `make install`
   becomes a download and this spec's worktree goes away.
@@ -133,9 +177,11 @@ never starts.
 
 ## Tests
 
-- `scripts/check-version.sh` against each way it goes wrong: a manifest edited
-  out of step, a `VERSION` equal to the newest release, and `--fix` writing all
-  three back. Unreachable GitHub leaves the number alone rather than failing.
+- `scripts/next-version.sh` for each of the three levels against a known newest
+  release, and its refusals: an unrecognised level, an unreachable GitHub, and a
+  newest release that is not a plain `x.y.z`.
+- A `Release` run with nothing merged since the last tag fails in the `Version`
+  job, before anything is built.
 - `make install-dev && helios version` prints `3.9.0-13-g0a6231c` on a checkout
   past a release; `make install && helios version` prints the release.
 - `/api/health` carries the same string the binary prints.
@@ -146,4 +192,5 @@ never starts.
 
 Every number a person can read — `helios version`, `/api/health`, the Hosts
 pane, the desktop's About, the APK's build name, the release tag — comes from
-either `VERSION` or `git describe`, and no two of them disagree.
+either the release the button resolved or `git describe`, and no two of them
+disagree.

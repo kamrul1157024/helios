@@ -1,7 +1,11 @@
 name: helios
 description: Helios mobile app — orchestrate AI coding agents from your phone.
 publish_to: 'none'
-version: 3.11.0+1
+# A placeholder. `make apk-release` passes the number the release resolved as
+# --build-name, and the build number as --build-number, so neither half of this
+# reaches a shipped APK. Flutter requires the key, which is the only reason it
+# is here.
+version: 0.0.0+1
 
 environment:
   sdk: ^3.8.0
