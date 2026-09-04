@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { completionTarget, completionsIn } from '../src/renderer/components/dirpath.ts'
+import { completionTarget, completionsIn, resolveTyped } from '../src/renderer/components/dirpath.ts'
 import { type FileEntry } from '../src/shared/models.ts'
 
 function dir(path: string): FileEntry {
@@ -26,6 +26,33 @@ test('a bare or relative path completes under home', () => {
   assert.deepEqual(completionTarget('works'), { parent: '~/', prefix: 'works' })
   assert.deepEqual(completionTarget('workspace/ac'), { parent: '~/workspace', prefix: 'ac' })
   assert.deepEqual(completionTarget(''), { parent: '~/', prefix: '' })
+})
+
+test('with a directory already picked, a relative path completes inside it', () => {
+  const at = '/home/dev/workspace/acme'
+  assert.deepEqual(completionTarget('desk', at), { parent: at, prefix: 'desk' })
+  assert.deepEqual(completionTarget('web/cli', at), { parent: `${at}/web`, prefix: 'cli' })
+  // The two spellings that say where they start from are not moved.
+  assert.deepEqual(completionTarget('/etc/ini', at), { parent: '/etc', prefix: 'ini' })
+  assert.deepEqual(completionTarget('~/works', at), { parent: '~/', prefix: 'works' })
+})
+
+test('what gets committed is absolute, because the daemon takes nothing else', () => {
+  const at = '/home/dev/workspace/acme'
+  assert.equal(resolveTyped('desk', at), `${at}/desk`)
+  assert.equal(resolveTyped('web/cli', at), `${at}/web/cli`)
+  assert.equal(resolveTyped('  desk  ', at), `${at}/desk`)
+  assert.equal(resolveTyped('desk', `${at}/`), `${at}/desk`)
+  // Already rooted, or nothing typed at all: left exactly as it is.
+  assert.equal(resolveTyped('/tmp/elsewhere', at), '/tmp/elsewhere')
+  assert.equal(resolveTyped('~/works', at), '~/works')
+  assert.equal(resolveTyped('~', at), '~')
+  assert.equal(resolveTyped('', at), '')
+})
+
+test('with no directory picked, home is what relative means', () => {
+  assert.deepEqual(completionTarget('works', ''), { parent: '~/', prefix: 'works' })
+  assert.equal(resolveTyped('works', ''), '~/works')
 })
 
 test('~ on its own is sent as ~/, which is the form the daemon expands', () => {

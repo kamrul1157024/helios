@@ -240,16 +240,17 @@ const WORKTREES: Worktree[] = [
 /**
  * Home, and the one directory under it with anything in it.
  *
- * The new-session picker completes a typed path against the disk, and a bare
- * segment completes under home — so `~/` has to answer with directories, not
- * with the flat list of files the other roots serve.
+ * The new-session picker completes a typed path against the disk, so the roots
+ * it can be sitting in have to answer with directories and not only with the
+ * flat list of files: `~/` for a picker with no directory picked, and `/repo`
+ * for one set to a session's.
  */
 export const HOME = '/home/dev'
 export const WORKSPACE = `${HOME}/workspace`
 
 /** One file per worktree, named after it, so a wrong root is visible on sight. */
 const TREES: Record<string, FileEntry[]> = {
-  [REPO]: [file(REPO, 'main.go'), file(REPO, 'README.md')],
+  [REPO]: [dir(REPO, 'desktop'), dir(REPO, 'docs'), file(REPO, 'main.go'), file(REPO, 'README.md')],
   [OTHER_WORKTREE]: [file(OTHER_WORKTREE, 'hotfix.go')],
   [HOME]: [dir(HOME, 'workspace'), dir(HOME, 'worktrees'), dir(HOME, '.config'), file(HOME, 'notes.md')],
   [WORKSPACE]: [dir(WORKSPACE, 'acme-api'), dir(WORKSPACE, 'acme-web')],
@@ -270,7 +271,7 @@ function resolveStubPath(asked: string): string {
 }
 
 function grepMatches(root: string, query: string): GrepMatch[] {
-  const entries = TREES[root] ?? []
+  const entries = (TREES[root] ?? []).filter((entry) => !entry.is_dir)
   return entries.map((entry, index) => ({
     path: entry.path,
     rel: entry.name,
