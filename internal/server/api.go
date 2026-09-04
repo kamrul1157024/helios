@@ -522,6 +522,17 @@ var (
 	// was handed. Short: the hook fires the moment the prompt is submitted,
 	// so silence past a few seconds means it was not.
 	promptAckTimeout = 8 * time.Second
+	// bootPromptAckTimeout is the same budget for an agent that has just
+	// started or just woken. Much longer, because it has been measured: an
+	// agent still finishing its boot took 14 seconds to read a prompt that had
+	// already been typed, and the 8 seconds above reported that working send
+	// as a failure while the turn it had started ran on.
+	bootPromptAckTimeout = 30 * time.Second
+	// screenSettleInterval, screenSettleTimeout and screenBlankGrace bound the
+	// wait for a booting agent's screen to stop moving. See awaitQuietScreen.
+	screenSettleInterval = 300 * time.Millisecond
+	screenSettleTimeout  = 12 * time.Second
+	screenBlankGrace     = 1 * time.Second
 )
 
 // handleSessionTouch records that a human is looking at this session.

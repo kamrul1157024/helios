@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -155,6 +156,50 @@ func (sh *Shared) awaitAgent(id string) error {
 	return nil
 }
 
+// awaitQuietScreen waits for a booting agent to finish painting its terminal.
+//
+// The ready hook fires from the agent process, which is running well before its
+// TUI has claimed the terminal, and the raw-mode switch that claim performs
+// discards whatever is sitting in the input buffer. Text typed into that window
+// is not late — it is gone, with no error anywhere and a session left looking
+// idle because nothing was ever asked of it. That is the failure this exists
+// for; a prompt merely read late is the ack budget's problem, not this one.
+//
+// A settled screen is the proof, and it costs nothing to ask for: the daemon
+// already mirrors every session, so this is a map lookup and a string compare.
+// A booting TUI repaints continuously; once two captures a settle apart agree,
+// the composer is up and reading.
+//
+// Giving up is deliberately silent and deliberately not an error. Typing at an
+// agent whose screen never settles is exactly what this did before, so the
+// worst case is the behaviour it replaced.
+func (sh *Shared) awaitQuietScreen(id string) {
+	deadline := time.Now().Add(screenSettleTimeout)
+	blankUntil := time.Now().Add(screenBlankGrace)
+	last := ""
+	for time.Now().Before(deadline) {
+		screen, err := sh.Backend.Capture(id)
+		if err != nil {
+			return
+		}
+		// Blank does not count as settled: a terminal shows nothing at all in
+		// the moment before its TUI paints, which is the moment this exists to
+		// wait out. But it cannot be waited on indefinitely either — a backend
+		// with no mirror to read answers empty forever, and holding every send
+		// for the full timeout to learn nothing from it is worse than typing.
+		if screen == "" {
+			if time.Now().After(blankUntil) {
+				return
+			}
+		} else if screen == last {
+			return
+		}
+		last = screen
+		time.Sleep(screenSettleInterval)
+	}
+	log.Printf("session-send: session %s was still repainting after %s", id, screenSettleTimeout)
+}
+
 // EndSession kills a session's terminal and records it as terminated.
 //
 // The handler used to be the only way to end one, so the scheduler — which ends
@@ -227,6 +272,9 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 	// `claude --resume -p`, which costs a fresh process per message and leaves
 	// nothing for the user to attach to afterwards.
 	resumed := false
+	// Whether this prompt is going at an agent that is still coming up, which
+	// is the case both timeouts below have to be generous about.
+	booting := false
 	if !live {
 		waker, ok := sh.Backend.(backend.Waker)
 		if !ok {
@@ -255,6 +303,7 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 			return PromptResult{Resumed: true}, statusError(http.StatusGatewayTimeout,
 				"the session is still starting up")
 		}
+		booting = resumed
 	} else if session.Status == "starting" {
 		// A launched session has the same gap as a woken one: StartSession
 		// returns as soon as the terminal is up, and "starting" means no
@@ -266,6 +315,14 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 		if err := sh.awaitAgent(id); err != nil {
 			return PromptResult{}, err
 		}
+		booting = true
+	}
+
+	// The hook says the agent process is alive. It does not say the terminal is
+	// being read, and the gap between the two is where a prompt is lost rather
+	// than merely late.
+	if booting {
+		sh.awaitQuietScreen(id)
 	}
 
 	// Likewise subscribed before typing. The agent's own hook is the only
@@ -278,7 +335,11 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 		return PromptResult{Resumed: resumed}, statusError(http.StatusInternalServerError, "failed to send: %v", err)
 	}
 
-	if !ack.Wait(promptAckTimeout) {
+	budget := promptAckTimeout
+	if booting {
+		budget = bootPromptAckTimeout
+	}
+	if !ack.Wait(budget) {
 		// No retype: the prompt may yet be sitting in a dialog or a composer,
 		// and a second copy would be a second turn. The session stays idle,
 		// which is what it looks like from here, and the caller can retry.
