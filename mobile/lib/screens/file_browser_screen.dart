@@ -44,12 +44,32 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   late String _rootPath;
   final List<String> _history = [];
 
+  /// Whether the read that [didChangeDependencies] owes the first build is done.
+  bool _readOnOpen = false;
+
   @override
   void initState() {
     super.initState();
     _currentPath = widget.startPath ?? widget.rootPath;
     _rootPath = widget.rootPath;
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// The first read, from the earliest place `ref` is allowed to work.
+  ///
+  /// Not `initState`. Riverpod resolves the enclosing scope lazily, on the
+  /// first `ref` call, through `dependOnInheritedWidgetOfExactType` — and
+  /// Flutter forbids that until `initState` has returned. The check is an
+  /// `assert`, so this throws a red screen in debug and passes silently in
+  /// release, which is how it survived being shipped.
+  ///
+  /// `didChangeDependencies` still runs before the first build, which is what
+  /// `_reread` needs.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_readOnOpen) return;
+    _readOnOpen = true;
     _reread();
   }
 
@@ -537,11 +557,22 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
 
   (String, String) get _fileKey => (widget.hostId, widget.path);
 
+  /// Whether the read that [didChangeDependencies] owes the first build is done.
+  bool _readOnOpen = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Same reasoning as the listing's: see _FileBrowserScreenState._reread.
+  }
+
+  /// Why the read waits for dependencies, and why it happens at all: see
+  /// `_FileBrowserScreenState.didChangeDependencies` and `_reread`.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_readOnOpen) return;
+    _readOnOpen = true;
     ref.invalidate(readFileProvider(_fileKey));
   }
 

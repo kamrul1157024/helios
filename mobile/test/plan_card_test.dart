@@ -2,12 +2,14 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:helios/models/notification.dart';
 import 'package:helios/providers/cards.dart';
+import 'package:helios/providers/daemon_providers.dart';
 import 'package:helios/screens/file_browser_screen.dart';
 import 'package:helios/services/api_client.dart';
 import 'package:helios/services/daemon_api_service.dart';
@@ -161,6 +163,52 @@ void main() {
     // Rooted where the plan lives, not at the project: "show in folder" from
     // the viewer has to land on a folder the file is in.
     expect(viewer.rootPath, '~/.claude/plans');
+  });
+
+  // The test above reads the route without running it, so it never caught
+  // that opening the viewer threw. This one builds the screen.
+  //
+  // What it threw: `ref` in `initState` resolves the ProviderScope through
+  // `dependOnInheritedWidgetOfExactType`, which Flutter forbids there. The
+  // check is an assert, so only a debug build shows the red screen.
+  testWidgets('the viewer the button opens actually builds', (tester) async {
+    await tester.pumpWidget(
+      rp.ProviderScope(
+        overrides: [
+          readFileProvider.overrideWith(
+            (ref, key) async => FileReadResult(
+              path: key.$2,
+              size: _plan.length,
+              content: _plan,
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: PermissionCard(
+                notification: _planNotification(),
+                sse: _serviceRecording([]),
+                selected: const <String>{},
+                onSelectionChanged: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('View plan'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // The plan is on screen as rendered markdown, which is the whole point of
+    // sending the reader here instead of printing it on the card.
+    expect(find.byType(FileViewerScreen), findsOneWidget);
+    expect(
+      find.textContaining('give plan approval its own rows'),
+      findsWidgets,
+    );
   });
 
   // A plan the CLI wrote nowhere leaves the card as the only copy, so it
