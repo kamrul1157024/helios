@@ -3837,7 +3837,11 @@ figure.mermaid svg {
    of its own: the prompt stopped growing with the window and stopped lining up
    with the messages above it. */
 .modal-backdrop .composer {
-  width: 680px;
+  /* 680 was the width before the foot held three chips. "Claude Code",
+     "Default model" and "Default permissions" want 471px between them and had
+     450, so every one of them was losing its last few characters to an
+     ellipsis at rest. */
+  width: 720px;
   max-width: 92vw;
   display: flex;
   flex-direction: column;
@@ -3959,6 +3963,15 @@ figure.mermaid svg {
   gap: 4px;
 }
 
+/* Held at the width of the widest thing it says, so pressing it does not
+   resize it. "Creating…" is 11px wider than "Create ↵", and the chips beside
+   it paid for those 11px: the permission mode dropped onto a line of its own
+   at the exact moment the user was watching for something to happen. */
+.composer-actions .filled {
+  min-width: 102px;
+  justify-content: center;
+}
+
 .composer-key {
   margin-left: 6px;
   font: inherit;
@@ -4048,12 +4061,22 @@ figure.mermaid svg {
 }
 
 /* Provider, model and permissions read as one row of settings, so they get one
-   row. Three chips and two buttons do not fit 680px at the 220px above, and a
-   permission mode wrapping onto a line of its own reads as a separate control
-   rather than the third of three. Truncated instead — the chips are wide
-   enough for every mode name, and a long model name is the one that gives. */
-.composer-foot .composer-chip-name {
-  max-width: 130px;
+   row. Three of them and two buttons do not fit 680px at full width — "Claude
+   Code", "Default model" and "Default permissions" are together already over
+   it — and a permission mode dropped onto a line of its own reads as a
+   separate control rather than the third of three.
+
+   So the chips give instead of wrapping. `flex: none` is what the chip row
+   wants everywhere else, where nothing should be cut; here they shrink and the
+   ellipsis lands wherever the width runs out. A cap would not do it: the names
+   are only just too wide together, so any cap tight enough to fit them cuts
+   names that had room. */
+.composer-foot .composer-chips {
+  flex-wrap: nowrap;
+}
+
+.composer-foot .composer-chips > * {
+  flex: 0 1 auto;
 }
 
 .picker-body {

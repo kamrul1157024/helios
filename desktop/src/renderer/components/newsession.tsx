@@ -146,7 +146,15 @@ export function NewSessionDialog({
         prompt: attached ? undefined : text || undefined,
         permission_mode: mode || undefined,
       })
-      if (attached) await firstTurn(result.session_id, text)
+      // Deliberately not awaited. The daemon holds a prompt until the agent is
+      // actually reading its terminal, which for a cold start is a good part of
+      // a minute, and a dialog sitting on "Creating…" for that long is a dialog
+      // that looks hung — over work the user has already been told is done.
+      // The session exists the moment the create returns, so it opens now and
+      // the prompt lands in it when it lands. Nothing is lost by not watching:
+      // a failure on either half arrives as a notification, which is where
+      // firstTurn already sends one.
+      if (attached) void firstTurn(result.session_id, text)
       // Filed before the refresh, so the list arrives with it already in the
       // group the + was pressed on. The directory only seeded the dialog; the
       // group is what the button actually promised.
