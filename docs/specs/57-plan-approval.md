@@ -33,9 +33,10 @@ in words rather than with a bare no. And the plan itself, which nobody could rea
 | Mobile / desktop | no | no | no |
 
 Every row but the first says no. This change makes the other two say yes on the first two
-columns. The third is answered differently on each surface: the phone and the desktop app
-have nowhere else to show the plan, so they show it. The terminal already has the CLI's
-own rendering of it directly above the box — see **The box does not reprint the plan**.
+columns. The third is answered differently on each surface. The desktop app has the width,
+so it shows the plan on the card. The phone names the plan and opens it in the file viewer,
+which renders the markdown on a whole screen. The terminal already has the CLI's own
+rendering of it directly above the box — see **The box does not reprint the plan**.
 
 ## What it looks like
 
@@ -118,9 +119,9 @@ above it. The alternative considered and rejected was a full-screen overlay with
 markdown renderer: a new protocol field, host-side scrolling, a renderer dependency, and
 at the end of it a copy that covers the CLI's own better one.
 
-This applies to the terminal alone. The phone and the desktop app have no transcript
-beside the card, so they still carry the plan; see **The phone and the desktop app get the
-same rows**.
+This applies to the terminal alone. The desktop app has no transcript beside the card, so
+it still carries the plan, and the phone hands the reading to its file viewer; see **The
+phone and the desktop app get the same rows**.
 
 ## What each part maps to
 
@@ -232,12 +233,26 @@ entry — the chosen mode was in force.
 
 `mobile/lib/providers/cards.dart` and
 `desktop/src/renderer/components/notification-card.tsx` draw the permission card. For
-`ExitPlanMode` both now show the plan as prose, the two mode rows, and a feedback field, and
-post `plan_choice` or `feedback` to `/api/notifications/{id}/action`. Approve stays disabled
-until a row is picked; typing words relabels Deny to `Send back`.
+`ExitPlanMode` both now show the two mode rows and a feedback field, and post `plan_choice`
+or `feedback` to `/api/notifications/{id}/action`. Approve stays disabled until a row is
+picked; typing words relabels Deny to `Send back`.
 
 Both drop the quick rules and the edit field for a plan: the CLI sends no
 `permission_suggestions` for this tool, and there is no command to edit.
+
+**The phone names the plan instead of printing it.** A card on a phone is a few hundred
+pixels that also have to hold the rows, and the plan went into them as raw markdown in a
+scroll box — a small window dragged over a long document, with the buttons that answer it
+below. The card now carries the plan's first heading, the file's name, and a **View plan**
+button that opens the file in `FileViewerScreen`, which renders the markdown on a whole
+screen and is already how any other file is read from the phone. The daemon serves it:
+`resolveSafePath` expands `~` and does not confine a read to the session's cwd, so
+`~/.claude/plans/….md` opens like a file in the project does. The viewer is rooted at the
+plan's own folder rather than at the project, because that is the folder the file is in.
+
+A plan with no `planFilePath` keeps the whole text on the card. There is nothing to open,
+so the card is the only copy. The desktop app keeps the plan on the card either way — it
+has the width for it, and the card sits beside no viewer to send the reader to.
 
 The daemon does not care which surface answered. `handlePermissionAction` and the terminal
 build the same `permissionAnswer`, so a plan approved from a phone is pressed onto the CLI's

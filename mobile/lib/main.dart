@@ -129,9 +129,7 @@ class _AuthGateState extends State<AuthGate> {
               child: Column(
                 children: [
                   const SizedBox(height: 60),
-                  for (int i = 0; i < 4; i++) ...[
-                    const SessionCardSkeleton(),
-                  ],
+                  for (int i = 0; i < 4; i++) ...[const SessionCardSkeleton()],
                 ],
               ),
             ),
@@ -175,15 +173,15 @@ class _PendingApprovalScreen extends StatelessWidget {
                   Text(
                     'helios',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'Waiting for approval...',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   const CircularProgressIndicator(),
@@ -192,20 +190,30 @@ class _PendingApprovalScreen extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.key, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.key,
+                            size: 16,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             'Device ID: $shortId...',
                             style: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -221,13 +229,21 @@ class _PendingApprovalScreen extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.terminal, color: Theme.of(context).colorScheme.onPrimaryContainer, size: 20),
+                        Icon(
+                          Icons.terminal,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onPrimaryContainer,
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'Press "y" in the terminal to approve this device.',
                             style: TextStyle(
-                              color: Theme.of(context).colorScheme.onPrimaryContainer,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onPrimaryContainer,
                               fontSize: 13,
                             ),
                           ),

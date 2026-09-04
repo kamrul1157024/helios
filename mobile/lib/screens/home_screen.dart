@@ -29,7 +29,8 @@ class HomeScreen extends rp.ConsumerStatefulWidget {
   rp.ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends rp.ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
   late HostManager _hm;
   final Map<String, StreamSubscription<SSEEvent>> _eventSubs = {};
   int _currentIndex = 0;
@@ -87,15 +88,18 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
       if (event.data is! Map) return;
       final id = (event.data as Map)['id']?.toString();
       if (id != null && id.isNotEmpty) {
-        NotificationService.instance
-            .cancel(NotificationService.notifKey(hostId, id));
+        NotificationService.instance.cancel(
+          NotificationService.notifKey(hostId, id),
+        );
       }
       return;
     }
 
     if (event.type != 'notification') return;
     if (event.data is! Map) {
-      debugPrint('[HomeScreen] notification data is not Map: ${event.data.runtimeType}');
+      debugPrint(
+        '[HomeScreen] notification data is not Map: ${event.data.runtimeType}',
+      );
       return;
     }
 
@@ -103,7 +107,9 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
     final type = data['type']?.toString() ?? '';
     final id = data['id']?.toString() ?? '';
     final status = data['status']?.toString();
-    debugPrint('[HomeScreen] notification: notifType=$type id=$id status=$status');
+    debugPrint(
+      '[HomeScreen] notification: notifType=$type id=$id status=$status',
+    );
 
     final key = NotificationService.notifKey(hostId, id);
     final shouldRaise = registry.shouldRaiseNotification(
@@ -176,8 +182,9 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
 
       // Answering from the notification's own buttons does not otherwise
       // retract it — the tray copy would sit there already answered.
-      NotificationService.instance
-          .cancel(NotificationService.notifKey(hostId, notificationId));
+      NotificationService.instance.cancel(
+        NotificationService.notifKey(hostId, notificationId),
+      );
 
       // Switch UI filter to this host
       _hm.setActiveHost(hostId);
@@ -277,19 +284,26 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
                   'Select Host',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               // "All Hosts" option
               ListTile(
                 leading: Icon(
-                  _hm.activeHostId == null ? Icons.radio_button_checked : Icons.radio_button_off,
+                  _hm.activeHostId == null
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
                   color: theme.colorScheme.primary,
                 ),
                 title: const Text('All Hosts'),
                 trailing: Text(
                   '${_hm.hosts.where((h) => _hm.serviceFor(h.id)?.connected == true).length}/${_hm.hosts.length}',
-                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 13),
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 13,
+                  ),
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -305,7 +319,9 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
 
                 return ListTile(
                   leading: Icon(
-                    isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                    isSelected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
                     color: host.color,
                   ),
                   title: Row(
@@ -315,7 +331,9 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
                         height: 10,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: host.color.withValues(alpha: isConnected ? 1.0 : 0.3),
+                          color: host.color.withValues(
+                            alpha: isConnected ? 1.0 : 0.3,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -324,7 +342,10 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
                   ),
                   subtitle: Text(
                     host.serverUrl,
-                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () {
@@ -384,7 +405,10 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
           const SizedBox(width: 4),
           const Icon(Icons.arrow_drop_down, size: 20),
         ],
@@ -402,7 +426,8 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
           return Padding(
             padding: const EdgeInsets.only(left: 3),
             child: Tooltip(
-              message: '${host.label}: ${isConnected ? 'connected' : 'offline'}',
+              message:
+                  '${host.label}: ${isConnected ? 'connected' : 'offline'}',
               child: Icon(
                 Icons.circle,
                 size: 10,
@@ -430,7 +455,10 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
     if (!mounted) return;
     // Closing by any route counts as read: a dialog that comes back tomorrow
     // because it was dismissed with the back button is one nobody trusts.
-    await showDialog<void>(context: context, builder: (ctx) => _ReleaseNotesDialog(update: info));
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _ReleaseNotesDialog(update: info),
+    );
     await UpdateService.instance.dismiss(info.latestVersion);
   }
 
@@ -442,12 +470,19 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
       color: theme.colorScheme.errorContainer,
       child: Row(
         children: [
-          Icon(Icons.notifications_off, size: 18, color: theme.colorScheme.onErrorContainer),
+          Icon(
+            Icons.notifications_off,
+            size: 18,
+            color: theme.colorScheme.onErrorContainer,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               'Notifications are disabled — you won\'t hear permission requests.',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onErrorContainer,
+              ),
             ),
           ),
           TextButton(
@@ -484,7 +519,9 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
             ref.watch(allHostNotificationsProvider).valueOrNull ?? const [];
         final allSessions =
             ref.watch(allHostSessionsProvider).valueOrNull ?? const [];
-        final pendingCount = allNotifications.where((n) => registry.needsAction(n)).length;
+        final pendingCount = allNotifications
+            .where((n) => registry.needsAction(n))
+            .length;
         final activeSessionCount = allSessions.where((s) => s.isActive).length;
 
         return Scaffold(
@@ -503,7 +540,9 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
                     tooltip: 'Settings',
                     onPressed: () {
                       Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ),
                       );
                     },
                   ),
@@ -529,26 +568,27 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen> with WidgetsBindingO
           ),
           floatingActionButton: switch (_currentIndex) {
             0 => FloatingActionButton(
-                onPressed: _showNewSessionSheet,
-                tooltip: 'New Session',
-                child: const Icon(Icons.add),
-              ),
+              onPressed: _showNewSessionSheet,
+              tooltip: 'New Session',
+              child: const Icon(Icons.add),
+            ),
             1 => FloatingActionButton(
-                onPressed: () {
-                  final hosts = ref.read(hostManagerProvider).hosts;
-                  if (hosts.isEmpty) return;
-                  // The fork: describe it and let an agent build it, or fill in
-                  // the form. Most people want the first.
-                  showNewScheduleSheet(context, hosts.first.id);
-                },
-                tooltip: 'New schedule',
-                child: const Icon(Icons.add_alarm),
-              ),
+              onPressed: () {
+                final hosts = ref.read(hostManagerProvider).hosts;
+                if (hosts.isEmpty) return;
+                // The fork: describe it and let an agent build it, or fill in
+                // the form. Most people want the first.
+                showNewScheduleSheet(context, hosts.first.id);
+              },
+              tooltip: 'New schedule',
+              child: const Icon(Icons.add_alarm),
+            ),
             _ => null,
           },
           bottomNavigationBar: NavigationBar(
             selectedIndex: _currentIndex,
-            onDestinationSelected: (index) => setState(() => _currentIndex = index),
+            onDestinationSelected: (index) =>
+                setState(() => _currentIndex = index),
             destinations: [
               NavigationDestination(
                 icon: Badge(
@@ -624,7 +664,10 @@ class _ReleaseNotesDialog extends StatelessWidget {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Got it')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Got it'),
+        ),
         FilledButton(
           onPressed: () {
             Navigator.pop(context);

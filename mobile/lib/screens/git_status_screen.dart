@@ -17,7 +17,12 @@ class GitStatusScreen extends rp.ConsumerStatefulWidget {
   final String cwd;
   final String? sessionId;
 
-  const GitStatusScreen({super.key, required this.hostId, required this.cwd, this.sessionId});
+  const GitStatusScreen({
+    super.key,
+    required this.hostId,
+    required this.cwd,
+    this.sessionId,
+  });
 
   @override
   rp.ConsumerState<GitStatusScreen> createState() => _GitStatusScreenState();
@@ -45,7 +50,9 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final status = await ref.read(gitStatusProvider((widget.hostId, _root)).future);
+    final status = await ref.read(
+      gitStatusProvider((widget.hostId, _root)).future,
+    );
     if (!mounted) return;
     setState(() {
       _status = status;
@@ -112,9 +119,18 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: SegmentedButton<_GitView>(
               segments: const [
-                ButtonSegment(value: _GitView.changes, label: Text('Changes', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: _GitView.commits, label: Text('Commits', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: _GitView.worktrees, label: Text('Worktrees', style: TextStyle(fontSize: 12))),
+                ButtonSegment(
+                  value: _GitView.changes,
+                  label: Text('Changes', style: TextStyle(fontSize: 12)),
+                ),
+                ButtonSegment(
+                  value: _GitView.commits,
+                  label: Text('Commits', style: TextStyle(fontSize: 12)),
+                ),
+                ButtonSegment(
+                  value: _GitView.worktrees,
+                  label: Text('Worktrees', style: TextStyle(fontSize: 12)),
+                ),
               ],
               selected: {_view},
               onSelectionChanged: (s) => setState(() => _view = s.first),
@@ -129,18 +145,18 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
       body: switch (_view) {
         _GitView.changes => _buildChanges(theme),
         _GitView.commits => _CommitsTab(
-            key: ValueKey('commits:$_root:$_reload'),
-            hostId: widget.hostId,
-            root: _root,
-            sessionId: widget.sessionId,
-          ),
+          key: ValueKey('commits:$_root:$_reload'),
+          hostId: widget.hostId,
+          root: _root,
+          sessionId: widget.sessionId,
+        ),
         _GitView.worktrees => _WorktreesTab(
-            key: ValueKey('worktrees:$_root:$_reload'),
-            hostId: widget.hostId,
-            root: _root,
-            active: _root,
-            onPick: _scopeTo,
-          ),
+          key: ValueKey('worktrees:$_root:$_reload'),
+          hostId: widget.hostId,
+          root: _root,
+          active: _root,
+          onPick: _scopeTo,
+        ),
       },
     );
   }
@@ -179,7 +195,11 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.fork_right, size: 20, color: theme.colorScheme.primary),
+                  Icon(
+                    Icons.fork_right,
+                    size: 20,
+                    color: theme.colorScheme.primary,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -194,12 +214,22 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
                   ),
                   if (!s.dirty)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.green.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: const Text('clean', style: TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.w600)),
+                      child: const Text(
+                        'clean',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.green,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -208,15 +238,35 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
                 Row(
                   children: [
                     if (s.ahead > 0) ...[
-                      Icon(Icons.arrow_upward, size: 14, color: Colors.green.shade400),
+                      Icon(
+                        Icons.arrow_upward,
+                        size: 14,
+                        color: Colors.green.shade400,
+                      ),
                       const SizedBox(width: 2),
-                      Text('${ s.ahead} ahead', style: TextStyle(fontSize: 12, color: Colors.green.shade400)),
+                      Text(
+                        '${s.ahead} ahead',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green.shade400,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                     ],
                     if (s.behind > 0) ...[
-                      Icon(Icons.arrow_downward, size: 14, color: Colors.orange.shade400),
+                      Icon(
+                        Icons.arrow_downward,
+                        size: 14,
+                        color: Colors.orange.shade400,
+                      ),
                       const SizedBox(width: 2),
-                      Text('${s.behind} behind', style: TextStyle(fontSize: 12, color: Colors.orange.shade400)),
+                      Text(
+                        '${s.behind} behind',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange.shade400,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -240,7 +290,10 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
             child: Center(
               child: Text(
                 'Working tree clean',
-                style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),
@@ -248,7 +301,13 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
     );
   }
 
-  Widget _buildSection(ThemeData theme, String title, List<GitChange> changes, Color color, bool staged) {
+  Widget _buildSection(
+    ThemeData theme,
+    String title,
+    List<GitChange> changes,
+    Color color,
+    bool staged,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -268,18 +327,23 @@ class _GitStatusScreenState extends rp.ConsumerState<GitStatusScreen> {
               const SizedBox(width: 6),
               Text(
                 '(${changes.length})',
-                style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
         ),
-        ...changes.map((c) => _ChangeTile(
-          change: c,
-          color: color,
-          onTap: c.status == '?'
-              ? () => _openFile(c.path)
-              : () => _openDiff(c, staged),
-        )),
+        ...changes.map(
+          (c) => _ChangeTile(
+            change: c,
+            color: color,
+            onTap: c.status == '?'
+                ? () => _openFile(c.path)
+                : () => _openDiff(c, staged),
+          ),
+        ),
         const SizedBox(height: 16),
       ],
     );
@@ -319,7 +383,11 @@ class _ChangeTile extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
 
-  const _ChangeTile({required this.change, required this.color, required this.onTap});
+  const _ChangeTile({
+    required this.change,
+    required this.color,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -356,7 +424,11 @@ class _ChangeTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+            Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -412,13 +484,21 @@ List<Widget> _statChips(int insertions, int deletions) {
     if (insertions > 0)
       Text(
         '+$insertions',
-        style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.green),
+        style: const TextStyle(
+          fontSize: 11,
+          fontFamily: 'monospace',
+          color: Colors.green,
+        ),
       ),
     if (insertions > 0 && deletions > 0) const SizedBox(width: 6),
     if (deletions > 0)
       Text(
         '-$deletions',
-        style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.red),
+        style: const TextStyle(
+          fontSize: 11,
+          fontFamily: 'monospace',
+          color: Colors.red,
+        ),
       ),
   ];
 }
@@ -434,7 +514,12 @@ class _CommitsTab extends rp.ConsumerStatefulWidget {
   final String root;
   final String? sessionId;
 
-  const _CommitsTab({super.key, required this.hostId, required this.root, this.sessionId});
+  const _CommitsTab({
+    super.key,
+    required this.hostId,
+    required this.root,
+    this.sessionId,
+  });
 
   @override
   rp.ConsumerState<_CommitsTab> createState() => _CommitsTabState();
@@ -460,7 +545,8 @@ class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
       _compareFrom = null;
     });
     final log = await ref.read(
-        gitLogProvider(GitLogKey(widget.hostId, widget.root, all: _all)).future);
+      gitLogProvider(GitLogKey(widget.hostId, widget.root, all: _all)).future,
+    );
     if (!mounted) return;
     setState(() {
       _log = log;
@@ -474,9 +560,11 @@ class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
   Future<void> _loadMore() async {
     if (_loadingMore) return;
     setState(() => _loadingMore = true);
-    final next = await ref.read(gitLogProvider(
-            GitLogKey(widget.hostId, widget.root, all: _all, skip: _commits.length))
-        .future);
+    final next = await ref.read(
+      gitLogProvider(
+        GitLogKey(widget.hostId, widget.root, all: _all, skip: _commits.length),
+      ).future,
+    );
     if (!mounted) return;
     setState(() {
       if (next != null) {
@@ -568,11 +656,16 @@ class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
                                   )
                                 : TextButton(
                                     onPressed: _loadMore,
-                                    child: const Text('Load more', style: TextStyle(fontSize: 13)),
+                                    child: const Text(
+                                      'Load more',
+                                      style: TextStyle(fontSize: 13),
+                                    ),
                                   ),
                           ),
                         );
@@ -602,7 +695,9 @@ class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant)),
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
       ),
       child: Row(
         children: [
@@ -624,15 +719,24 @@ class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
           Flexible(
             child: Text(
               label,
-              style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           const Spacer(),
           SegmentedButton<bool>(
             segments: const [
-              ButtonSegment(value: false, label: Text('Branch', style: TextStyle(fontSize: 11))),
-              ButtonSegment(value: true, label: Text('All', style: TextStyle(fontSize: 11))),
+              ButtonSegment(
+                value: false,
+                label: Text('Branch', style: TextStyle(fontSize: 11)),
+              ),
+              ButtonSegment(
+                value: true,
+                label: Text('All', style: TextStyle(fontSize: 11)),
+              ),
             ],
             selected: {_all},
             onSelectionChanged: (s) {
@@ -657,17 +761,28 @@ class _CommitsTabState extends rp.ConsumerState<_CommitsTab> {
       color: theme.colorScheme.primaryContainer,
       child: Row(
         children: [
-          Icon(Icons.compare_arrows, size: 16, color: theme.colorScheme.onPrimaryContainer),
+          Icon(
+            Icons.compare_arrows,
+            size: 16,
+            color: theme.colorScheme.onPrimaryContainer,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Comparing from $short — tap another commit',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onPrimaryContainer),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onPrimaryContainer,
+              ),
             ),
           ),
           GestureDetector(
             onTap: () => setState(() => _compareFrom = null),
-            child: Icon(Icons.close, size: 16, color: theme.colorScheme.onPrimaryContainer),
+            child: Icon(
+              Icons.close,
+              size: 16,
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
           ),
         ],
       ),
@@ -697,15 +812,24 @@ class _CommitTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: marked ? theme.colorScheme.primaryContainer.withValues(alpha: 0.4) : null,
-          border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5))),
+          color: marked
+              ? theme.colorScheme.primaryContainer.withValues(alpha: 0.4)
+              : null,
+          border: Border(
+            bottom: BorderSide(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               commit.subject,
-              style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
+              style: TextStyle(
+                fontSize: 14,
+                color: theme.colorScheme.onSurface,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -724,14 +848,20 @@ class _CommitTile extends StatelessWidget {
                 Flexible(
                   child: Text(
                     commit.author,
-                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   commit.timeAgo,
-                  style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
                 const Spacer(),
                 ..._statChips(commit.insertions, commit.deletions),
@@ -764,7 +894,8 @@ class CommitDetailScreen extends rp.ConsumerStatefulWidget {
   });
 
   @override
-  rp.ConsumerState<CommitDetailScreen> createState() => _CommitDetailScreenState();
+  rp.ConsumerState<CommitDetailScreen> createState() =>
+      _CommitDetailScreenState();
 }
 
 class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
@@ -779,9 +910,11 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final changes = await ref.read(gitChangesProvider(
-            GitChangesKey(widget.hostId, widget.root, widget.to, from: widget.from))
-        .future);
+    final changes = await ref.read(
+      gitChangesProvider(
+        GitChangesKey(widget.hostId, widget.root, widget.to, from: widget.from),
+      ).future,
+    );
     if (!mounted) return;
     setState(() {
       _changes = changes;
@@ -812,7 +945,9 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          changes?.single == true && changes!.subject.isNotEmpty ? changes.subject : widget.title,
+          changes?.single == true && changes!.subject.isNotEmpty
+              ? changes.subject
+              : widget.title,
           style: const TextStyle(fontSize: 15),
           overflow: TextOverflow.ellipsis,
         ),
@@ -821,7 +956,9 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
             icon: const Icon(Icons.chat_bubble_outline),
             tooltip: 'Back to chat',
             onPressed: () => Navigator.of(context).popUntil(
-              (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
+              (route) =>
+                  route.settings.name != '/file-browser' &&
+                  route.settings.name != '/git-status',
             ),
           ),
         ],
@@ -829,17 +966,21 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
       body: _loading
           ? const _GitStatusSkeleton()
           : changes == null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
-                      const SizedBox(height: 12),
-                      const Text('Failed to load commit'),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 40,
+                    color: theme.colorScheme.error,
                   ),
-                )
-              : _buildBody(theme, changes),
+                  const SizedBox(height: 12),
+                  const Text('Failed to load commit'),
+                ],
+              ),
+            )
+          : _buildBody(theme, changes),
     );
   }
 
@@ -859,7 +1000,9 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
               Row(
                 children: [
                   Text(
-                    changes.single ? changes.shortTo : '${changes.shortFrom}...${changes.shortTo}',
+                    changes.single
+                        ? changes.shortTo
+                        : '${changes.shortFrom}...${changes.shortTo}',
                     style: TextStyle(
                       fontSize: 12,
                       fontFamily: 'monospace',
@@ -871,7 +1014,10 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
                     Flexible(
                       child: Text(
                         changes.author,
-                        style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -880,7 +1026,10 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
                     const SizedBox(width: 8),
                     Text(
                       changes.timeAgo,
-                      style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                   const Spacer(),
@@ -920,17 +1069,25 @@ class _CommitDetailScreenState extends rp.ConsumerState<CommitDetailScreen> {
             child: Center(
               child: Text(
                 'No files — a merge commit',
-                style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),
-        ...changes.files.map((file) => _CommitFileTile(file: file, onTap: () => _openFile(file))),
+        ...changes.files.map(
+          (file) => _CommitFileTile(file: file, onTap: () => _openFile(file)),
+        ),
         if (changes.truncated)
           Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Text(
               'Showing the first ${changes.files.length} files.',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
       ],
@@ -974,13 +1131,21 @@ class _CommitFileTile extends StatelessWidget {
                 children: [
                   Text(
                     file.path,
-                    style: TextStyle(fontSize: 13, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontFamily: 'monospace',
+                      color: theme.colorScheme.onSurface,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (file.from.isNotEmpty)
                     Text(
                       'was ${file.from}',
-                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                 ],
@@ -988,7 +1153,11 @@ class _CommitFileTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             ..._statChips(file.insertions, file.deletions),
-            Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+            Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -1036,8 +1205,9 @@ class _WorktreesTabState extends rp.ConsumerState<_WorktreesTab> {
   }
 
   Future<void> _load() async {
-    final worktrees =
-        await ref.read(gitWorktreesProvider((widget.hostId, widget.root)).future);
+    final worktrees = await ref.read(
+      gitWorktreesProvider((widget.hostId, widget.root)).future,
+    );
     if (!mounted) return;
     setState(() => _worktrees = sortWorktreesByLastTouched(worktrees));
   }
@@ -1049,7 +1219,10 @@ class _WorktreesTabState extends rp.ConsumerState<_WorktreesTab> {
     if (worktrees == null) return const _GitStatusSkeleton();
     if (worktrees.isEmpty) {
       return Center(
-        child: Text('No worktrees', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+        child: Text(
+          'No worktrees',
+          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+        ),
       );
     }
     final matches = filterWorktrees(worktrees, _query);
@@ -1064,9 +1237,15 @@ class _WorktreesTabState extends rp.ConsumerState<_WorktreesTab> {
             decoration: InputDecoration(
               isDense: true,
               hintText: 'Search branch, path or subject',
-              hintStyle: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              hintStyle: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
               prefixIcon: const Icon(Icons.search, size: 18),
-              prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 36,
+                minHeight: 36,
+              ),
               suffixIcon: _query.isEmpty
                   ? null
                   : IconButton(
@@ -1077,7 +1256,10 @@ class _WorktreesTabState extends rp.ConsumerState<_WorktreesTab> {
                       },
                     ),
               border: const OutlineInputBorder(),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 10,
+              ),
             ),
           ),
         ),
@@ -1110,10 +1292,12 @@ List<Worktree> filterWorktrees(List<Worktree> worktrees, String query) {
   final needle = query.trim().toLowerCase();
   if (needle.isEmpty) return worktrees;
   return worktrees
-      .where((w) =>
-          w.branch.toLowerCase().contains(needle) ||
-          w.path.toLowerCase().contains(needle) ||
-          w.subject.toLowerCase().contains(needle))
+      .where(
+        (w) =>
+            w.branch.toLowerCase().contains(needle) ||
+            w.path.toLowerCase().contains(needle) ||
+            w.subject.toLowerCase().contains(needle),
+      )
       .toList();
 }
 
@@ -1122,7 +1306,11 @@ class _WorktreeTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
-  const _WorktreeTile({required this.worktree, required this.selected, required this.onTap});
+  const _WorktreeTile({
+    required this.worktree,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1132,8 +1320,14 @@ class _WorktreeTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? theme.colorScheme.primaryContainer.withValues(alpha: 0.35) : null,
-          border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5))),
+          color: selected
+              ? theme.colorScheme.primaryContainer.withValues(alpha: 0.35)
+              : null,
+          border: Border(
+            bottom: BorderSide(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1141,9 +1335,13 @@ class _WorktreeTile extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
                   size: 16,
-                  color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 8),
                 Flexible(
@@ -1152,7 +1350,9 @@ class _WorktreeTile extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 13,
                       fontFamily: 'monospace',
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                      fontWeight: selected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
                       color: theme.colorScheme.onSurface,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -1161,8 +1361,10 @@ class _WorktreeTile extends StatelessWidget {
                 const SizedBox(width: 6),
                 if (worktree.isMain) const _Pill(text: 'main'),
                 if (worktree.locked) const _Pill(text: 'locked'),
-                if (worktree.ahead > 0) _Pill(text: '↑${worktree.ahead}', color: Colors.green),
-                if (worktree.behind > 0) _Pill(text: '↓${worktree.behind}', color: Colors.orange),
+                if (worktree.ahead > 0)
+                  _Pill(text: '↑${worktree.ahead}', color: Colors.green),
+                if (worktree.behind > 0)
+                  _Pill(text: '↓${worktree.behind}', color: Colors.orange),
                 if (worktree.dirty > 0)
                   _Pill(text: '●${worktree.dirty}', color: Colors.orange)
                 else
@@ -1173,7 +1375,10 @@ class _WorktreeTile extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 worktree.subject,
-                style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1186,7 +1391,9 @@ class _WorktreeTile extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'monospace',
-                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.8,
+                ),
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -1216,7 +1423,11 @@ class _Pill extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: tint),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: tint,
+        ),
       ),
     );
   }
@@ -1267,6 +1478,7 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
     if (_selEnd == null || _selStart == _selEnd) return 'L$_selStart';
     return 'L$_selStart-$_selEnd';
   }
+
   int get _selCount {
     if (_selStart == null) return 0;
     if (_selEnd == null) return 1;
@@ -1326,7 +1538,9 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
     // is the current file, which is not what an old commit changed.
     if (_atRevision) return;
     final fullPath = '${widget.cwd}/${widget.change.path}';
-    final file = await ref.read(readFileProvider((widget.hostId, fullPath)).future);
+    final file = await ref.read(
+      readFileProvider((widget.hostId, fullPath)).future,
+    );
     if (mounted && file != null) {
       setState(() => _fullFile = file);
     }
@@ -1342,14 +1556,21 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.change.fileName, style: const TextStyle(fontSize: 15), overflow: TextOverflow.ellipsis),
+            Text(
+              widget.change.fileName,
+              style: const TextStyle(fontSize: 15),
+              overflow: TextOverflow.ellipsis,
+            ),
             if (_diff?.stat.isNotEmpty == true || _atRevision)
               Text(
                 [
                   if (_diff?.stat.isNotEmpty == true) _diff!.stat,
                   if (_atRevision) 'at ${_shortSha(widget.to!)}',
                 ].join(' · '),
-                style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
           ],
         ),
@@ -1362,7 +1583,11 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
                 Clipboard.setData(ClipboardData(text: _diff!.diff));
                 HapticFeedback.lightImpact();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Diff copied'), duration: Duration(seconds: 1), behavior: SnackBarBehavior.floating),
+                  const SnackBar(
+                    content: Text('Diff copied'),
+                    duration: Duration(seconds: 1),
+                    behavior: SnackBarBehavior.floating,
+                  ),
                 );
               },
             ),
@@ -1370,7 +1595,9 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
             icon: const Icon(Icons.chat_bubble_outline),
             tooltip: 'Back to chat',
             onPressed: () => Navigator.of(context).popUntil(
-              (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
+              (route) =>
+                  route.settings.name != '/file-browser' &&
+                  route.settings.name != '/git-status',
             ),
           ),
         ],
@@ -1380,12 +1607,21 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: SegmentedButton<DiffViewMode>(
               segments: [
-                const ButtonSegment(value: DiffViewMode.diff, label: Text('Diff', style: TextStyle(fontSize: 12))),
-                const ButtonSegment(value: DiffViewMode.unified, label: Text('Unified', style: TextStyle(fontSize: 12))),
+                const ButtonSegment(
+                  value: DiffViewMode.diff,
+                  label: Text('Diff', style: TextStyle(fontSize: 12)),
+                ),
+                const ButtonSegment(
+                  value: DiffViewMode.unified,
+                  label: Text('Unified', style: TextStyle(fontSize: 12)),
+                ),
                 // The file on disk is the current one, so "full" only makes
                 // sense for a working-tree diff.
                 if (!_atRevision)
-                  const ButtonSegment(value: DiffViewMode.full, label: Text('Full', style: TextStyle(fontSize: 12))),
+                  const ButtonSegment(
+                    value: DiffViewMode.full,
+                    label: Text('Full', style: TextStyle(fontSize: 12)),
+                  ),
               ],
               selected: {_mode},
               onSelectionChanged: (s) => setState(() => _mode = s.first),
@@ -1400,17 +1636,21 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
       body: _loading
           ? const _DiffSkeleton()
           : _diff == null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
-                      const SizedBox(height: 12),
-                      const Text('Failed to load diff'),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 40,
+                    color: theme.colorScheme.error,
                   ),
-                )
-              : _buildDiffView(theme),
+                  const SizedBox(height: 12),
+                  const Text('Failed to load diff'),
+                ],
+              ),
+            )
+          : _buildDiffView(theme),
       bottomNavigationBar: widget.sessionId != null
           ? _buildAskAIBar(theme)
           : null,
@@ -1419,15 +1659,21 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
 
   Widget _buildAskAIBar(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
+    final accentColor = isDark
+        ? const Color(0xFF58A6FF)
+        : const Color(0xFF0969DA);
     return Container(
       padding: EdgeInsets.only(
-        left: 12, right: 8, top: 8,
+        left: 12,
+        right: 8,
+        top: 8,
         bottom: MediaQuery.of(context).padding.bottom + 8,
       ),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
       ),
       child: Row(
         children: [
@@ -1436,17 +1682,31 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
           if (_hasSelection) ...[
             Text(
               '$_selLabel · $_selCount ${_selCount == 1 ? 'line' : 'lines'}',
-              style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: theme.colorScheme.onSurface,
+              ),
             ),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: () => setState(() { _selStart = null; _selEnd = null; }),
-              child: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
+              onTap: () => setState(() {
+                _selStart = null;
+                _selEnd = null;
+              }),
+              child: Icon(
+                Icons.close,
+                size: 14,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ] else
             Text(
               'Tap lines to select',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           const Spacer(),
           FilledButton.tonalIcon(
@@ -1466,14 +1726,20 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
   void _showAskAISheet(ThemeData theme) {
     final controller = TextEditingController();
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark ? const Color(0xFF58A6FF) : const Color(0xFF0969DA);
-    final label = _hasSelection ? '${widget.change.fileName}:$_selLabel' : widget.change.path;
+    final accentColor = isDark
+        ? const Color(0xFF58A6FF)
+        : const Color(0xFF0969DA);
+    final label = _hasSelection
+        ? '${widget.change.fileName}:$_selLabel'
+        : widget.change.path;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
         return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -1483,13 +1749,18 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.insert_drive_file, size: 16, color: accentColor),
+                      Icon(
+                        Icons.insert_drive_file,
+                        size: 16,
+                        color: accentColor,
+                      ),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
                           label,
                           style: TextStyle(
-                            fontSize: 13, fontFamily: 'monospace',
+                            fontSize: 13,
+                            fontFamily: 'monospace',
                             fontWeight: FontWeight.w600,
                             color: accentColor,
                           ),
@@ -1506,10 +1777,20 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
                     maxLines: 4,
                     style: const TextStyle(fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: _hasSelection ? 'Ask about this code...' : 'Ask about this diff...',
-                      hintStyle: TextStyle(fontSize: 14, color: theme.colorScheme.onSurfaceVariant),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      hintText: _hasSelection
+                          ? 'Ask about this code...'
+                          : 'Ask about this diff...',
+                      hintStyle: TextStyle(
+                        fontSize: 14,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.send, size: 20),
                         onPressed: () => _sendAskAI(ctx, controller.text),
@@ -1535,22 +1816,31 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
     final at = !_atRevision
         ? ''
         : widget.from == null || widget.from!.isEmpty
-            ? ' at ${_shortSha(widget.to!)}'
-            : ' between ${_shortSha(widget.from!)} and ${_shortSha(widget.to!)}';
+        ? ' at ${_shortSha(widget.to!)}'
+        : ' between ${_shortSha(widget.from!)} and ${_shortSha(widget.to!)}';
 
     String prompt;
     if (_hasSelection) {
       final allLines = _parseDiff(_diff!.diff);
       final start = (_selStart ?? 0).clamp(0, allLines.length);
       final end = ((_selEnd ?? _selStart ?? 0) + 1).clamp(0, allLines.length);
-      final selectedTexts = allLines.sublist(start, end).map((l) {
-        final prefix = l.type == _DiffLineType.added ? '+' : l.type == _DiffLineType.removed ? '-' : ' ';
-        return '$prefix${l.text}';
-      }).join('\n');
+      final selectedTexts = allLines
+          .sublist(start, end)
+          .map((l) {
+            final prefix = l.type == _DiffLineType.added
+                ? '+'
+                : l.type == _DiffLineType.removed
+                ? '-'
+                : ' ';
+            return '$prefix${l.text}';
+          })
+          .join('\n');
       final ext = _diff?.language ?? '';
-      prompt = 'Regarding diff of `${widget.change.path}`$at $_selLabel:\n```$ext\n$selectedTexts\n```\n${question.trim()}';
+      prompt =
+          'Regarding diff of `${widget.change.path}`$at $_selLabel:\n```$ext\n$selectedTexts\n```\n${question.trim()}';
     } else {
-      prompt = 'Regarding diff of `${widget.change.path}`$at:\n${question.trim()}';
+      prompt =
+          'Regarding diff of `${widget.change.path}`$at:\n${question.trim()}';
     }
 
     final nav = Navigator.of(context);
@@ -1558,7 +1848,9 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
     await svc.sendSessionPrompt(widget.sessionId!, prompt);
     if (!mounted) return;
     nav.popUntil(
-      (route) => route.settings.name != '/file-browser' && route.settings.name != '/git-status',
+      (route) =>
+          route.settings.name != '/file-browser' &&
+          route.settings.name != '/git-status',
     );
   }
 
@@ -1595,7 +1887,9 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
   // Diff mode: only show changed lines + hunk headers
   Widget _buildChangesOnly(ThemeData theme) {
     final lines = _parseDiff(_diff!.diff);
-    final filtered = lines.where((l) => l.type != _DiffLineType.context).toList();
+    final filtered = lines
+        .where((l) => l.type != _DiffLineType.context)
+        .toList();
     return _buildDiffListView(theme, filtered);
   }
 
@@ -1608,7 +1902,10 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
   Widget _buildDiffListView(ThemeData theme, List<_DiffLine> lines) {
     if (lines.isEmpty) {
       return Center(
-        child: Text('No changes', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+        child: Text(
+          'No changes',
+          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+        ),
       );
     }
 
@@ -1628,7 +1925,11 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
     // Syntax highlight the combined code.
     List<List<TextSpan>>? highlightedLines;
     if (language != null && codeTexts.isNotEmpty) {
-      highlightedLines = _highlightLines(codeTexts.join('\n'), language, isDark);
+      highlightedLines = _highlightLines(
+        codeTexts.join('\n'),
+        language,
+        isDark,
+      );
     }
 
     return ListView.builder(
@@ -1654,24 +1955,31 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
         final prefix = line.type == _DiffLineType.added
             ? '+'
             : line.type == _DiffLineType.removed
-                ? '-'
-                : ' ';
+            ? '-'
+            : ' ';
         final prefixColor = line.type == _DiffLineType.added
             ? Colors.green
             : line.type == _DiffLineType.removed
-                ? Colors.red
-                : theme.colorScheme.onSurfaceVariant;
+            ? Colors.red
+            : theme.colorScheme.onSurfaceVariant;
 
         // Find highlighted spans for this line.
         final codeIdx = codeLines.indexOf(i);
         Widget textWidget;
-        if (highlightedLines != null && codeIdx >= 0 && codeIdx < highlightedLines.length) {
+        if (highlightedLines != null &&
+            codeIdx >= 0 &&
+            codeIdx < highlightedLines.length) {
           textWidget = RichText(
             text: TextSpan(
               children: [
                 TextSpan(
                   text: '$prefix ',
-                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: prefixColor, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: prefixColor,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 ...highlightedLines[codeIdx],
               ],
@@ -1683,11 +1991,20 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
               children: [
                 TextSpan(
                   text: '$prefix ',
-                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: prefixColor, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: prefixColor,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 TextSpan(
                   text: line.text,
-                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.onSurface,
+                  ),
                 ),
               ],
             ),
@@ -1695,7 +2012,9 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
         }
 
         final selected = _isLineSelected(i);
-        final selectedBg = isDark ? const Color(0xFF1A3A5C) : const Color(0xFFD4E8FC);
+        final selectedBg = isDark
+            ? const Color(0xFF1A3A5C)
+            : const Color(0xFFD4E8FC);
 
         return GestureDetector(
           onTap: widget.sessionId != null ? () => _onLineTap(i) : null,
@@ -1703,7 +2022,14 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
             decoration: BoxDecoration(
               color: selected ? selectedBg : bgColor,
-              border: selected ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 3)) : null,
+              border: selected
+                  ? Border(
+                      left: BorderSide(
+                        color: theme.colorScheme.primary,
+                        width: 3,
+                      ),
+                    )
+                  : null,
             ),
             child: textWidget,
           ),
@@ -1765,7 +2091,11 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final firstChange = addedLines.reduce((a, b) => a < b ? a : b);
         final offset = (firstChange - 3).clamp(0, fileLines.length) * 18.0;
-        scrollController.animateTo(offset, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        scrollController.animateTo(
+          offset,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
       });
     }
 
@@ -1777,7 +2107,9 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
         final lineNum = i + 1;
         final isChanged = addedLines.contains(lineNum);
         final bgColor = isChanged
-            ? (isDark ? Colors.green.withValues(alpha: 0.12) : Colors.green.withValues(alpha: 0.08))
+            ? (isDark
+                  ? Colors.green.withValues(alpha: 0.12)
+                  : Colors.green.withValues(alpha: 0.08))
             : null;
 
         Widget textWidget;
@@ -1790,14 +2122,20 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
         } else {
           textWidget = Text(
             fileLines[i],
-            style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: theme.colorScheme.onSurface),
+            style: TextStyle(
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: theme.colorScheme.onSurface,
+            ),
             overflow: TextOverflow.clip,
             maxLines: 1,
           );
         }
 
         final selected = _isLineSelected(i);
-        final selectedBg = isDark ? const Color(0xFF1A3A5C) : const Color(0xFFD4E8FC);
+        final selectedBg = isDark
+            ? const Color(0xFF1A3A5C)
+            : const Color(0xFFD4E8FC);
 
         return GestureDetector(
           onTap: widget.sessionId != null ? () => _onLineTap(i) : null,
@@ -1806,10 +2144,17 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
             decoration: BoxDecoration(
               color: selected ? selectedBg : bgColor,
               border: selected
-                  ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))
+                  ? Border(
+                      left: BorderSide(
+                        color: theme.colorScheme.primary,
+                        width: 3,
+                      ),
+                    )
                   : isChanged
-                      ? Border(left: BorderSide(color: Colors.green.shade400, width: 3))
-                      : null,
+                  ? Border(
+                      left: BorderSide(color: Colors.green.shade400, width: 3),
+                    )
+                  : null,
             ),
             child: Row(
               children: [
@@ -1817,7 +2162,15 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
                   width: 36,
                   child: Text(
                     '$lineNum',
-                    style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: selected
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.5,
+                            ),
+                    ),
                     textAlign: TextAlign.right,
                   ),
                 ),
@@ -1834,16 +2187,24 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
   Color? _bgColorForType(_DiffLineType type, bool isDark) {
     switch (type) {
       case _DiffLineType.added:
-        return isDark ? Colors.green.withValues(alpha: 0.12) : Colors.green.withValues(alpha: 0.08);
+        return isDark
+            ? Colors.green.withValues(alpha: 0.12)
+            : Colors.green.withValues(alpha: 0.08);
       case _DiffLineType.removed:
-        return isDark ? Colors.red.withValues(alpha: 0.12) : Colors.red.withValues(alpha: 0.08);
+        return isDark
+            ? Colors.red.withValues(alpha: 0.12)
+            : Colors.red.withValues(alpha: 0.08);
       default:
         return null;
     }
   }
 
   /// Syntax-highlights code and splits into per-line TextSpan lists.
-  List<List<TextSpan>> _highlightLines(String code, String language, bool isDark) {
+  List<List<TextSpan>> _highlightLines(
+    String code,
+    String language,
+    bool isDark,
+  ) {
     final themeMap = isDark ? atomOneDarkTheme : atomOneLightTheme;
     final defaultStyle = TextStyle(
       fontSize: 12,
@@ -1877,11 +2238,19 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
       return lines;
     } catch (_) {
       // Fallback: plain text per line.
-      return code.split('\n').map((l) => [TextSpan(text: l, style: defaultStyle)]).toList();
+      return code
+          .split('\n')
+          .map((l) => [TextSpan(text: l, style: defaultStyle)])
+          .toList();
     }
   }
 
-  void _buildSpans(List<dynamic> nodes, Map<String, TextStyle> themeMap, TextStyle defaultStyle, List<TextSpan> out) {
+  void _buildSpans(
+    List<dynamic> nodes,
+    Map<String, TextStyle> themeMap,
+    TextStyle defaultStyle,
+    List<TextSpan> out,
+  ) {
     for (final node in nodes) {
       if (node.value != null) {
         TextStyle style = defaultStyle;
@@ -1892,38 +2261,73 @@ class _GitDiffScreenState extends rp.ConsumerState<GitDiffScreen> {
         }
         out.add(TextSpan(text: node.value as String, style: style));
       } else if (node.children != null) {
-        _buildSpans(node.children as List<dynamic>, themeMap, defaultStyle, out);
+        _buildSpans(
+          node.children as List<dynamic>,
+          themeMap,
+          defaultStyle,
+          out,
+        );
       }
     }
   }
 
   String? _langForExt(String ext) {
     switch (ext) {
-      case 'dart': return 'dart';
-      case 'go': return 'go';
-      case 'py': return 'python';
-      case 'js': return 'javascript';
-      case 'ts': case 'tsx': return 'typescript';
-      case 'jsx': return 'javascript';
-      case 'java': return 'java';
-      case 'kt': return 'kotlin';
-      case 'swift': return 'swift';
-      case 'rs': return 'rust';
-      case 'c': case 'h': return 'c';
-      case 'cpp': return 'cpp';
-      case 'cs': return 'cs';
-      case 'rb': return 'ruby';
-      case 'sh': case 'bash': case 'zsh': return 'bash';
-      case 'json': return 'json';
-      case 'yaml': case 'yml': return 'yaml';
-      case 'toml': return 'ini';
-      case 'xml': return 'xml';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'scss': return 'scss';
-      case 'sql': return 'sql';
-      case 'md': return 'markdown';
-      default: return null;
+      case 'dart':
+        return 'dart';
+      case 'go':
+        return 'go';
+      case 'py':
+        return 'python';
+      case 'js':
+        return 'javascript';
+      case 'ts':
+      case 'tsx':
+        return 'typescript';
+      case 'jsx':
+        return 'javascript';
+      case 'java':
+        return 'java';
+      case 'kt':
+        return 'kotlin';
+      case 'swift':
+        return 'swift';
+      case 'rs':
+        return 'rust';
+      case 'c':
+      case 'h':
+        return 'c';
+      case 'cpp':
+        return 'cpp';
+      case 'cs':
+        return 'cs';
+      case 'rb':
+        return 'ruby';
+      case 'sh':
+      case 'bash':
+      case 'zsh':
+        return 'bash';
+      case 'json':
+        return 'json';
+      case 'yaml':
+      case 'yml':
+        return 'yaml';
+      case 'toml':
+        return 'ini';
+      case 'xml':
+        return 'xml';
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'scss':
+        return 'scss';
+      case 'sql':
+        return 'sql';
+      case 'md':
+        return 'markdown';
+      default:
+        return null;
     }
   }
 }

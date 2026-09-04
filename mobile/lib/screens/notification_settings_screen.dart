@@ -17,7 +17,8 @@ class _NotificationSettingsScreenState
     _NotifType(
       kind: 'permission',
       label: 'Permission requests',
-      description: 'The agent is asking to use a tool that requires your approval.',
+      description:
+          'The agent is asking to use a tool that requires your approval.',
       blocking: true,
     ),
     _NotifType(
@@ -193,8 +194,8 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         title,
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-            ),
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
     );
   }

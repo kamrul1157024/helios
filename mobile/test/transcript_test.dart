@@ -10,11 +10,11 @@ import 'package:helios/providers/transcript.dart';
 /// interleave two conversations.
 
 Message msg(int seq) => Message(
-      seq: seq,
-      role: 'assistant',
-      content: 'm$seq',
-      timestamp: '2026-01-01T00:00:00Z',
-    );
+  seq: seq,
+  role: 'assistant',
+  content: 'm$seq',
+  timestamp: '2026-01-01T00:00:00Z',
+);
 
 TranscriptResult result(
   List<Message> messages, {
@@ -22,28 +22,26 @@ TranscriptResult result(
   bool hasMore = false,
   String epoch = 'e1',
   bool epochChanged = false,
-}) =>
-    TranscriptResult(
-      messages: messages,
-      total: total,
-      returned: messages.length,
-      offset: 0,
-      hasMore: hasMore,
-      epoch: epoch,
-      epochChanged: epochChanged,
-    );
+}) => TranscriptResult(
+  messages: messages,
+  total: total,
+  returned: messages.length,
+  offset: 0,
+  hasMore: hasMore,
+  epoch: epoch,
+  epochChanged: epochChanged,
+);
 
 void main() {
-  const held = Transcript(
-    messages: [],
-    total: 2,
-    hasMore: true,
-    epoch: 'e1',
-  );
+  const held = Transcript(messages: [], total: 2, hasMore: true, epoch: 'e1');
 
   group('appendDelta', () {
     test('adds new messages to the end', () {
-      final base = Transcript(messages: [msg(1), msg(2)], total: 2, epoch: 'e1');
+      final base = Transcript(
+        messages: [msg(1), msg(2)],
+        total: 2,
+        epoch: 'e1',
+      );
       final next = appendDelta(base, result([msg(3)], total: 3));
       expect(next.messages.map((m) => m.seq), [1, 2, 3]);
       expect(next.total, 3);
@@ -59,7 +57,11 @@ void main() {
     // The transcript those seq numbers counted against is gone — forked, or
     // replaced. Appending across that would interleave two conversations.
     test('an epoch change replaces rather than appends', () {
-      final base = Transcript(messages: [msg(1), msg(2)], total: 2, epoch: 'e1');
+      final base = Transcript(
+        messages: [msg(1), msg(2)],
+        total: 2,
+        epoch: 'e1',
+      );
       final next = appendDelta(
         base,
         result([msg(9)], total: 1, epoch: 'e2', epochChanged: true),
@@ -93,11 +95,14 @@ void main() {
       expect(next.messages.map((m) => m.seq), [3, 4, 5, 6]);
     });
 
-    test('takes the page hasMore, which is what says whether to keep going', () {
-      final base = Transcript(messages: [msg(5)], hasMore: true, epoch: 'e1');
-      final next = prependPage(base, result([msg(4)], hasMore: false));
-      expect(next.hasMore, isFalse);
-    });
+    test(
+      'takes the page hasMore, which is what says whether to keep going',
+      () {
+        final base = Transcript(messages: [msg(5)], hasMore: true, epoch: 'e1');
+        final next = prependPage(base, result([msg(4)], hasMore: false));
+        expect(next.hasMore, isFalse);
+      },
+    );
 
     test('keeps the epoch: paging back is the same parse', () {
       final base = Transcript(messages: [msg(5)], epoch: 'e1');

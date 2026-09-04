@@ -29,7 +29,6 @@ class HostManager extends ChangeNotifier {
   static const _hostsKey = 'helios_hosts';
   static const _activeHostKey = 'helios_active_host_id';
 
-
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   List<HostConnection> _hosts = [];
@@ -102,14 +101,18 @@ class HostManager extends ChangeNotifier {
       final raw = await _secureStorage.read(key: _hostsKey);
       if (raw != null) {
         final list = jsonDecode(raw) as List;
-        _hosts = list.map((h) => HostConnection.fromJson(h as Map<String, dynamic>)).toList();
+        _hosts = list
+            .map((h) => HostConnection.fromJson(h as Map<String, dynamic>))
+            .toList();
       }
 
       final prefs = await SharedPreferences.getInstance();
       _activeHostId = prefs.getString(_activeHostKey);
 
       // If active host was removed or never set, default to first host
-      if (_activeHostId == null || _activeHostId!.isEmpty || !_hosts.any((h) => h.id == _activeHostId)) {
+      if (_activeHostId == null ||
+          _activeHostId!.isEmpty ||
+          !_hosts.any((h) => h.id == _activeHostId)) {
         _activeHostId = _hosts.isNotEmpty ? _hosts.first.id : null;
         if (_activeHostId != null) {
           await prefs.setString(_activeHostKey, _activeHostId!);
@@ -128,7 +131,9 @@ class HostManager extends ChangeNotifier {
   }
 
   Future<void> _startServiceFor(HostConnection host) async {
-    final seedB64 = await _secureStorage.read(key: 'helios_host_${host.id}_key');
+    final seedB64 = await _secureStorage.read(
+      key: 'helios_host_${host.id}_key',
+    );
     if (seedB64 == null) return;
 
     final seed = _base64urlDecode(seedB64);
@@ -187,7 +192,9 @@ class HostManager extends ChangeNotifier {
 
       // 3. Get public key
       final publicKey = await keyPair.extractPublicKey();
-      final publicKeyB64 = _base64urlEncode(Uint8List.fromList(publicKey.bytes));
+      final publicKeyB64 = _base64urlEncode(
+        Uint8List.fromList(publicKey.bytes),
+      );
 
       // 4. Pair device
       onStatus?.call('Registering device...');
@@ -226,7 +233,9 @@ class HostManager extends ChangeNotifier {
             'Generate a new QR from the terminal with: helios start',
           );
         }
-        return SetupResult.error(pairData['message'] ?? 'Failed to register device');
+        return SetupResult.error(
+          pairData['message'] ?? 'Failed to register device',
+        );
       }
 
       // 5. Store private key seed
@@ -252,7 +261,10 @@ class HostManager extends ChangeNotifier {
       }
 
       // 8. Approved — now create and persist the host
-      final nextColorIndex = _hosts.isEmpty ? 0 : (_hosts.map((h) => h.colorIndex).reduce((a, b) => a > b ? a : b) + 1);
+      final nextColorIndex = _hosts.isEmpty
+          ? 0
+          : (_hosts.map((h) => h.colorIndex).reduce((a, b) => a > b ? a : b) +
+                1);
       final host = HostConnection(
         id: const Uuid().v4(),
         label: 'Host ${_hosts.length + 1}',
@@ -262,7 +274,10 @@ class HostManager extends ChangeNotifier {
         addedAt: DateTime.now(),
       );
 
-      await _secureStorage.write(key: 'helios_host_${host.id}_key', value: _base64urlEncode(seed));
+      await _secureStorage.write(
+        key: 'helios_host_${host.id}_key',
+        value: _base64urlEncode(seed),
+      );
       _hosts.add(host);
       await _saveHosts();
 
@@ -283,7 +298,9 @@ class HostManager extends ChangeNotifier {
       _pendingDeviceId = null;
       notifyListeners();
       final msg = e.toString();
-      if (msg.contains('SocketException') || msg.contains('ClientException') || msg.contains('Connection')) {
+      if (msg.contains('SocketException') ||
+          msg.contains('ClientException') ||
+          msg.contains('Connection')) {
         return SetupResult.error(_unreachableMessage(serverUrl));
       }
       return SetupResult.error('Setup failed: $e');
@@ -418,7 +435,10 @@ class HostManager extends ChangeNotifier {
       // Every host, not just the active one: a background host's approvals are
       // the ones most likely to have been answered elsewhere while the app was
       // suspended, and the reconcile sweep only runs on fetch.
-      _sseEvents.add((hostId: host.id, event: SSEEvent('notification_resolved', const {})));
+      _sseEvents.add((
+        hostId: host.id,
+        event: SSEEvent('notification_resolved', const {}),
+      ));
       final isActive = host.id == _activeHostId;
       await service.resume(asActiveHost: isActive);
     }
@@ -431,11 +451,18 @@ class HostManager extends ChangeNotifier {
     await _secureStorage.write(key: _hostsKey, value: json);
   }
 
-
-Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String deviceId) async {
+  Future<bool> _waitForApproval(
+    String serverUrl,
+    SimpleKeyPair keyPair,
+    String deviceId,
+  ) async {
     final extractedSeed = await keyPair.extractPrivateKeyBytes();
     final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
-    final api = ApiClient(serverUrl: serverUrl, deviceId: deviceId, privateKeySeed: seed);
+    final api = ApiClient(
+      serverUrl: serverUrl,
+      deviceId: deviceId,
+      privateKeySeed: seed,
+    );
     const maxAttempts = 150; // 5 minutes at 2s intervals
     for (var i = 0; i < maxAttempts; i++) {
       await Future.delayed(const Duration(seconds: 2));
@@ -456,7 +483,11 @@ Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String de
     return false;
   }
 
-  Future<void> _updateDeviceMetadata(String serverUrl, SimpleKeyPair keyPair, String deviceId) async {
+  Future<void> _updateDeviceMetadata(
+    String serverUrl,
+    SimpleKeyPair keyPair,
+    String deviceId,
+  ) async {
     String platform;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -474,12 +505,15 @@ Future<bool> _waitForApproval(String serverUrl, SimpleKeyPair keyPair, String de
     try {
       final extractedSeed = await keyPair.extractPrivateKeyBytes();
       final seed = Uint8List.fromList(extractedSeed.sublist(0, 32));
-      final api = ApiClient(serverUrl: serverUrl, deviceId: deviceId, privateKeySeed: seed);
-      await api.post('/api/auth/device/me', body: {
-        'name': name,
-        'platform': platform,
-        'browser': 'Helios App',
-      });
+      final api = ApiClient(
+        serverUrl: serverUrl,
+        deviceId: deviceId,
+        privateKeySeed: seed,
+      );
+      await api.post(
+        '/api/auth/device/me',
+        body: {'name': name, 'platform': platform, 'browser': 'Helios App'},
+      );
     } catch (_) {
       // Best effort
     }

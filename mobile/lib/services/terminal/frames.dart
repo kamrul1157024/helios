@@ -65,12 +65,12 @@ class TerminalStatus {
   });
 
   factory TerminalStatus.fromJson(Map<String, dynamic> json) => TerminalStatus(
-        state: json['state'] as String? ?? 'ready',
-        viewers: (json['viewers'] as num?)?.toInt() ?? 0,
-        cols: (json['cols'] as num?)?.toInt() ?? 0,
-        rows: (json['rows'] as num?)?.toInt() ?? 0,
-        writer: json['writer'] as String?,
-      );
+    state: json['state'] as String? ?? 'ready',
+    viewers: (json['viewers'] as num?)?.toInt() ?? 0,
+    cols: (json['cols'] as num?)?.toInt() ?? 0,
+    rows: (json['rows'] as num?)?.toInt() ?? 0,
+    writer: json['writer'] as String?,
+  );
 
   final String state;
   final int viewers;
@@ -103,14 +103,13 @@ Uint8List encodeHello({
   required int rows,
   int since = 0,
   String? name,
-}) =>
-    encodeJsonFrame(FrameType.hello, {
-      'role': role,
-      'cols': cols,
-      'rows': rows,
-      'since': since,
-      if (name != null && name.isNotEmpty) 'name': name,
-    });
+}) => encodeJsonFrame(FrameType.hello, {
+  'role': role,
+  'cols': cols,
+  'rows': rows,
+  'since': since,
+  if (name != null && name.isNotEmpty) 'name': name,
+});
 
 Uint8List encodeResize(int cols, int rows) {
   final out = Uint8List(4);
@@ -141,10 +140,7 @@ Uint8List encodeSnapshot(int seq, Uint8List ansi) {
     throw const FormatException('terminal: snapshot payload too short');
   }
   final view = ByteData.view(payload.buffer, payload.offsetInBytes);
-  return (
-    seq: view.getUint64(0),
-    ansi: Uint8List.sublistView(payload, 8),
-  );
+  return (seq: view.getUint64(0), ansi: Uint8List.sublistView(payload, 8));
 }
 
 int decodeExit(Uint8List payload) {
@@ -154,8 +150,9 @@ int decodeExit(Uint8List payload) {
   return ByteData.view(payload.buffer, payload.offsetInBytes).getInt32(0);
 }
 
-TerminalStatus decodeStatus(Uint8List payload) =>
-    TerminalStatus.fromJson(jsonDecode(utf8.decode(payload)) as Map<String, dynamic>);
+TerminalStatus decodeStatus(Uint8List payload) => TerminalStatus.fromJson(
+  jsonDecode(utf8.decode(payload)) as Map<String, dynamic>,
+);
 
 /// Reassembles frames from a byte stream, which arrives in whatever chunks the
 /// socket felt like: a frame can span several, and one chunk can hold many.
@@ -178,10 +175,12 @@ class FrameParser {
       final total = 4 + length;
       if (_buffer.length < total) break;
 
-      frames.add(Frame(
-        _buffer[4],
-        Uint8List.fromList(_buffer.sublist(headerSize, total)),
-      ));
+      frames.add(
+        Frame(
+          _buffer[4],
+          Uint8List.fromList(_buffer.sublist(headerSize, total)),
+        ),
+      );
       _buffer.removeRange(0, total);
     }
     return frames;

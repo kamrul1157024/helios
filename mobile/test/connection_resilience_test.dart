@@ -5,13 +5,13 @@ import 'package:helios/services/daemon_api_service.dart';
 import 'package:helios/services/host_manager.dart';
 
 HostConnection host(String id) => HostConnection(
-      id: id,
-      label: id,
-      serverUrl: 'http://$id.local:7655',
-      deviceId: 'device-$id',
-      colorIndex: 0,
-      addedAt: DateTime.utc(2026, 1, 1),
-    );
+  id: id,
+  label: id,
+  serverUrl: 'http://$id.local:7655',
+  deviceId: 'device-$id',
+  colorIndex: 0,
+  addedAt: DateTime.utc(2026, 1, 1),
+);
 
 void main() {
   group('offlineHostsForFilter', () {

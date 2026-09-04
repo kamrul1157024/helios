@@ -8,45 +8,44 @@ import 'package:http/testing.dart';
 
 import 'package:helios/models/notification.dart';
 import 'package:helios/providers/cards.dart';
+import 'package:helios/screens/file_browser_screen.dart';
 import 'package:helios/services/api_client.dart';
 import 'package:helios/services/daemon_api_service.dart';
 
 /// A plan is not a yes-or-no question, and the phone asked it as one: Approve
 /// or Deny, over a body of raw JSON. These pin the rows that replaced them.
 
-const _plan = '# Plan: give plan approval its own rows\n\n'
+const _plan =
+    '# Plan: give plan approval its own rows\n\n'
     '## Context\nThe card only offers Approve and Deny.\n';
 
 HeliosNotification _planNotification() => HeliosNotification(
-      id: 'n1',
-      source: 'claude',
-      sourceSession: 's1',
-      cwd: '/tmp/proj',
-      type: 'claude.permission',
-      status: 'pending',
-      createdAt: DateTime.now().toUtc().toIso8601String(),
-      payload: {
-        'tool_name': 'ExitPlanMode',
-        'tool_input': {
-          'plan': _plan,
-          'planFilePath': '~/.claude/plans/rows.md',
-        },
-      },
-    );
+  id: 'n1',
+  source: 'claude',
+  sourceSession: 's1',
+  cwd: '/tmp/proj',
+  type: 'claude.permission',
+  status: 'pending',
+  createdAt: DateTime.now().toUtc().toIso8601String(),
+  payload: {
+    'tool_name': 'ExitPlanMode',
+    'tool_input': {'plan': _plan, 'planFilePath': '~/.claude/plans/rows.md'},
+  },
+);
 
 HeliosNotification _bashNotification() => HeliosNotification(
-      id: 'n2',
-      source: 'claude',
-      sourceSession: 's1',
-      cwd: '/tmp/proj',
-      type: 'claude.permission',
-      status: 'pending',
-      createdAt: DateTime.now().toUtc().toIso8601String(),
-      payload: {
-        'tool_name': 'Bash',
-        'tool_input': {'command': 'ls -la'},
-      },
-    );
+  id: 'n2',
+  source: 'claude',
+  sourceSession: 's1',
+  cwd: '/tmp/proj',
+  type: 'claude.permission',
+  status: 'pending',
+  createdAt: DateTime.now().toUtc().toIso8601String(),
+  payload: {
+    'tool_name': 'Bash',
+    'tool_input': {'command': 'ls -la'},
+  },
+);
 
 /// A service whose action posts land in [sent] instead of on a daemon.
 DaemonAPIService _serviceRecording(List<Map<String, dynamic>> sent) {
@@ -81,13 +80,26 @@ DaemonAPIService _serviceRecording(List<Map<String, dynamic>> sent) {
   );
 }
 
+/// Records what the card pushes, so a screen that wants a daemon behind it can
+/// be inspected without being built.
+class _Pushes extends NavigatorObserver {
+  final List<Route<dynamic>> routes = [];
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previous) {
+    routes.add(route);
+  }
+}
+
 Future<void> _pumpCard(
   WidgetTester tester,
   HeliosNotification n,
-  DaemonAPIService sse,
-) async {
+  DaemonAPIService sse, {
+  NavigatorObserver? observer,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
+      navigatorObservers: observer == null ? const [] : [observer],
       home: Scaffold(
         body: SingleChildScrollView(
           child: PermissionCard(
@@ -113,12 +125,66 @@ void main() {
     expect(find.text('Yes, manually approve edits'), findsOneWidget);
     expect(find.text('Tell Claude what to change'), findsOneWidget);
 
-    // The plan itself, not the JSON it arrived in.
-    expect(find.textContaining('## Context'), findsOneWidget);
+    // The plan is named and left in its file. Printed in full it filled the
+    // screen before the rows that answer it, and as raw markdown at that.
+    expect(find.text('Plan: give plan approval its own rows'), findsOneWidget);
+    expect(find.text('rows.md'), findsOneWidget);
+    expect(find.text('View plan'), findsOneWidget);
+    expect(find.textContaining('## Context'), findsNothing);
 
     // There is no command to edit and the CLI sends no rule suggestions for
     // this tool, so the row that offers both would lead nowhere.
     expect(find.text('Edit before approving'), findsNothing);
+  });
+
+  // The plan has to be readable from the phone, and the viewer renders the
+  // markdown the card would have shown as characters.
+  testWidgets('View plan opens the file the CLI wrote', (tester) async {
+    final pushes = _Pushes();
+    await _pumpCard(
+      tester,
+      _planNotification(),
+      _serviceRecording([]),
+      observer: pushes,
+    );
+
+    await tester.tap(find.text('View plan'));
+
+    // The route is read rather than run: the viewer reads the file off the
+    // host, which is not what this test is about.
+    final route = pushes.routes.last as MaterialPageRoute;
+    expect(route.settings.name, '/file-viewer');
+    final viewer =
+        route.builder(tester.element(find.byType(PermissionCard)))
+            as FileViewerScreen;
+    expect(viewer.path, '~/.claude/plans/rows.md');
+    // Rooted where the plan lives, not at the project: "show in folder" from
+    // the viewer has to land on a folder the file is in.
+    expect(viewer.rootPath, '~/.claude/plans');
+  });
+
+  // A plan the CLI wrote nowhere leaves the card as the only copy, so it
+  // keeps the whole text.
+  testWidgets('a plan with no file is still readable on the card', (
+    tester,
+  ) async {
+    final n = HeliosNotification(
+      id: 'n3',
+      source: 'claude',
+      sourceSession: 's1',
+      cwd: '/tmp/proj',
+      type: 'claude.permission',
+      status: 'pending',
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      payload: {
+        'tool_name': 'ExitPlanMode',
+        'tool_input': {'plan': _plan},
+      },
+    );
+    await _pumpCard(tester, n, _serviceRecording([]));
+
+    expect(find.textContaining('## Context'), findsOneWidget);
+    expect(find.text('View plan'), findsNothing);
   });
 
   testWidgets('approving a plan waits for a mode, then sends it', (

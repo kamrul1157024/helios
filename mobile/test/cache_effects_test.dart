@@ -16,7 +16,10 @@ void main() {
   group('session_status', () {
     test('patches the row and then refetches the list', () {
       expect(
-        effectsFor(host, 'session_status', {'session_id': 's1', 'status': 'active'}),
+        effectsFor(host, 'session_status', {
+          'session_id': 's1',
+          'status': 'active',
+        }),
         const [
           PatchSession(hostId: host, sessionId: 's1', status: 'active'),
           InvalidateTarget(CacheTarget.sessions, host),
@@ -27,18 +30,21 @@ void main() {
     // A resume carries the new host handle. Taking it matters: the session is
     // cold in this client's copy until something says otherwise.
     test('carries the terminal handle when the event has one', () {
-      final effects = effectsFor(
-        host,
-        'session_status',
-        {'session_id': 's1', 'status': 'active', 'terminal': 't-9'},
-      );
+      final effects = effectsFor(host, 'session_status', {
+        'session_id': 's1',
+        'status': 'active',
+        'terminal': 't-9',
+      });
       expect((effects.first as PatchSession).terminal, 't-9');
     });
 
     // Most session_status events say nothing about the terminal, and an absent
     // handle is no evidence the host went away.
     test('leaves the handle alone when the event omits it', () {
-      final effects = effectsFor(host, 'session_status', {'session_id': 's1', 'status': 'idle'});
+      final effects = effectsFor(host, 'session_status', {
+        'session_id': 's1',
+        'status': 'idle',
+      });
       expect((effects.first as PatchSession).terminal, isNull);
     });
 
@@ -50,28 +56,23 @@ void main() {
 
   test('session_updated and session_deleted refetch the list', () {
     for (final type in ['session_updated', 'session_deleted']) {
-      expect(
-        effectsFor(host, type, {'session_id': 's1'}),
-        const [InvalidateTarget(CacheTarget.sessions, host)],
-        reason: type,
-      );
+      expect(effectsFor(host, type, {'session_id': 's1'}), const [
+        InvalidateTarget(CacheTarget.sessions, host),
+      ], reason: type);
     }
   });
 
   // The socket was down and the daemon keeps no replay buffer, so anything that
   // changed in the gap was announced to nobody.
   test('a reconnect refetches what the stream could have missed', () {
-    expect(
-      effectsFor(host, 'stream_reconnected', const {}),
-      const [
-        InvalidateTarget(CacheTarget.sessions, host),
-        InvalidateTarget(CacheTarget.notifications, host),
-        // Files and git for a second reason: a path whose watch expired while
-        // a screen sat open is not being swept, and re-reading re-registers it.
-        InvalidateTarget(CacheTarget.files, host),
-        InvalidateTarget(CacheTarget.git, host),
-      ],
-    );
+    expect(effectsFor(host, 'stream_reconnected', const {}), const [
+      InvalidateTarget(CacheTarget.sessions, host),
+      InvalidateTarget(CacheTarget.notifications, host),
+      // Files and git for a second reason: a path whose watch expired while
+      // a screen sat open is not being swept, and re-reading re-registers it.
+      InvalidateTarget(CacheTarget.files, host),
+      InvalidateTarget(CacheTarget.git, host),
+    ]);
   });
 
   // Every path the daemon names has changed *content*, not merely a changed
@@ -79,18 +80,19 @@ void main() {
   group('file_changed', () {
     const named = {
       'paths': [
-        {'path': '/repo/a.go', 'kind': 'file', 'mod_time': '2026-09-01T04:03:11.204Z'},
+        {
+          'path': '/repo/a.go',
+          'kind': 'file',
+          'mod_time': '2026-09-01T04:03:11.204Z',
+        },
       ],
     };
 
     test('takes out the files and the git reads', () {
-      expect(
-        effectsFor(host, 'file_changed', named),
-        const [
-          InvalidateTarget(CacheTarget.files, host),
-          InvalidateTarget(CacheTarget.git, host),
-        ],
-      );
+      expect(effectsFor(host, 'file_changed', named), const [
+        InvalidateTarget(CacheTarget.files, host),
+        InvalidateTarget(CacheTarget.git, host),
+      ]);
     });
 
     // A working-tree write moves `git status`, and a repo entry is a commit or
@@ -118,44 +120,42 @@ void main() {
     });
 
     test('another host is not answered for', () {
-      expect(
-        effectsFor(other, 'file_changed', named),
-        const [
-          InvalidateTarget(CacheTarget.files, other),
-          InvalidateTarget(CacheTarget.git, other),
-        ],
-      );
+      expect(effectsFor(other, 'file_changed', named), const [
+        InvalidateTarget(CacheTarget.files, other),
+        InvalidateTarget(CacheTarget.git, other),
+      ]);
     });
 
     test('an event naming nothing does nothing', () {
       expect(effectsFor(host, 'file_changed', const {}), isEmpty);
       expect(effectsFor(host, 'file_changed', const {'paths': []}), isEmpty);
-      expect(effectsFor(host, 'file_changed', const {'paths': 'nonsense'}), isEmpty);
+      expect(
+        effectsFor(host, 'file_changed', const {'paths': 'nonsense'}),
+        isEmpty,
+      );
       expect(effectsFor(host, 'file_changed', null), isEmpty);
     });
   });
 
   // A permission request writes waiting_permission to the session and announces
   // only the notification, so the list is the one way the UI hears of it.
-  test('a notification takes out the sessions as well as the notifications', () {
-    for (final type in ['notification', 'notification_resolved']) {
-      expect(
-        effectsFor(host, type, const {}),
-        const [
+  test(
+    'a notification takes out the sessions as well as the notifications',
+    () {
+      for (final type in ['notification', 'notification_resolved']) {
+        expect(effectsFor(host, type, const {}), const [
           InvalidateTarget(CacheTarget.notifications, host),
           InvalidateTarget(CacheTarget.sessions, host),
-        ],
-        reason: type,
-      );
-    }
-  });
+        ], reason: type);
+      }
+    },
+  );
 
   group('subagent_status', () {
     test('narrows to the session it names', () {
-      expect(
-        effectsFor(host, 'subagent_status', {'session_id': 's1'}),
-        const [InvalidateTarget(CacheTarget.subagents, host, sessionId: 's1')],
-      );
+      expect(effectsFor(host, 'subagent_status', {'session_id': 's1'}), const [
+        InvalidateTarget(CacheTarget.subagents, host, sessionId: 's1'),
+      ]);
     });
 
     test('without a session id it touches nothing', () {
@@ -164,13 +164,10 @@ void main() {
   });
 
   test('session_evicted takes out the host-wide lists', () {
-    expect(
-      effectsFor(host, 'session_evicted', const {}),
-      const [
-        InvalidateTarget(CacheTarget.sessions, host),
-        InvalidateTarget(CacheTarget.notifications, host),
-      ],
-    );
+    expect(effectsFor(host, 'session_evicted', const {}), const [
+      InvalidateTarget(CacheTarget.sessions, host),
+      InvalidateTarget(CacheTarget.notifications, host),
+    ]);
   });
 
   // 'show' instructs the window; the terminal events move connections and the
@@ -191,15 +188,29 @@ void main() {
     });
 
     test('a per-session target separates by session as well as by host', () {
-      const one = InvalidateTarget(CacheTarget.subagents, host, sessionId: 's1');
-      const two = InvalidateTarget(CacheTarget.subagents, host, sessionId: 's2');
+      const one = InvalidateTarget(
+        CacheTarget.subagents,
+        host,
+        sessionId: 's1',
+      );
+      const two = InvalidateTarget(
+        CacheTarget.subagents,
+        host,
+        sessionId: 's2',
+      );
       expect(one, isNot(equals(two)));
-      expect(one, equals(const InvalidateTarget(CacheTarget.subagents, host, sessionId: 's1')));
+      expect(
+        one,
+        equals(
+          const InvalidateTarget(CacheTarget.subagents, host, sessionId: 's1'),
+        ),
+      );
     });
   });
 
   group('patching one row', () {
-    Session row(String id, {String status = 'idle', String? terminal}) => Session(
+    Session row(String id, {String status = 'idle', String? terminal}) =>
+        Session(
           sessionId: id,
           source: 'claude',
           cwd: '/tmp/p',
@@ -217,27 +228,45 @@ void main() {
     });
 
     test('keeps the order', () {
-      final next = patchSessionRow([row('a'), row('b'), row('c')], 'b', 'active', null);
+      final next = patchSessionRow(
+        [row('a'), row('b'), row('c')],
+        'b',
+        'active',
+        null,
+      );
       expect(next.map((s) => s.sessionId), ['a', 'b', 'c']);
     });
 
     // A resume carries a new handle, and taking it is how the client learns the
     // session is warm again.
     test('takes a new terminal handle when the event carries one', () {
-      final next = patchSessionRow([row('a', terminal: 'old')], 'a', 'active', 'new');
+      final next = patchSessionRow(
+        [row('a', terminal: 'old')],
+        'a',
+        'active',
+        'new',
+      );
       expect(next.single.terminal, 'new');
     });
 
     // Most events carry none, and an absent handle is no evidence it went away.
     test('keeps the existing handle when the event carries none', () {
-      final next = patchSessionRow([row('a', terminal: 'old')], 'a', 'active', null);
+      final next = patchSessionRow(
+        [row('a', terminal: 'old')],
+        'a',
+        'active',
+        null,
+      );
       expect(next.single.terminal, 'old');
     });
 
     // A filtered list legitimately does not hold every session.
     test('an absent row leaves the list untouched', () {
       final held = [row('a')];
-      expect(identical(patchSessionRow(held, 'zzz', 'active', null), held), isTrue);
+      expect(
+        identical(patchSessionRow(held, 'zzz', 'active', null), held),
+        isTrue,
+      );
     });
 
     test('an empty list is survivable', () {
@@ -255,7 +284,13 @@ void main() {
     });
 
     test('non-string fields are ignored rather than coerced', () {
-      expect(effectsFor(host, 'session_status', {'session_id': 7, 'status': 'active'}), isEmpty);
+      expect(
+        effectsFor(host, 'session_status', {
+          'session_id': 7,
+          'status': 'active',
+        }),
+        isEmpty,
+      );
     });
   });
 }

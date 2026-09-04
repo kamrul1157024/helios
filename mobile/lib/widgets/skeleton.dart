@@ -17,7 +17,8 @@ class Skeleton extends StatefulWidget {
   State<Skeleton> createState() => _SkeletonState();
 }
 
-class _SkeletonState extends State<Skeleton> with SingleTickerProviderStateMixin {
+class _SkeletonState extends State<Skeleton>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
 
@@ -28,9 +29,10 @@ class _SkeletonState extends State<Skeleton> with SingleTickerProviderStateMixin
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat();
-    _animation = Tween<double>(begin: -1.0, end: 2.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _animation = Tween<double>(
+      begin: -1.0,
+      end: 2.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
   @override
@@ -86,7 +88,11 @@ class SessionCardSkeleton extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Skeleton(width: 14, height: 14, borderRadius: BorderRadius.all(Radius.circular(7))),
+                const Skeleton(
+                  width: 14,
+                  height: 14,
+                  borderRadius: BorderRadius.all(Radius.circular(7)),
+                ),
                 const SizedBox(width: 6),
                 const Skeleton(width: 70, height: 18),
                 const SizedBox(width: 8),

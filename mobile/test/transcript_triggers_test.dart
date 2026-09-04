@@ -31,14 +31,14 @@ const _host = 'h1';
 const _session = 's1';
 
 Session session() => Session(
-      hostId: _host,
-      sessionId: _session,
-      source: 'claude',
-      cwd: '/tmp/p',
-      project: 'p',
-      status: 'idle',
-      createdAt: '2026-01-01T00:00:00Z',
-    );
+  hostId: _host,
+  sessionId: _session,
+  source: 'claude',
+  cwd: '/tmp/p',
+  project: 'p',
+  status: 'idle',
+  createdAt: '2026-01-01T00:00:00Z',
+);
 
 /// Answers every transcript read with one more message than the last.
 class Daemon {
@@ -97,7 +97,7 @@ class Daemon {
             'role': 'assistant',
             'content': 'm$_seq',
             'timestamp': '2026-01-01T00:00:00Z',
-          }
+          },
         ],
         'total': _seq,
         'returned': 1,
@@ -117,8 +117,8 @@ class Daemon {
 /// being torn down — which is the situation these triggers exist for.
 class Harness {
   Harness(this.tester, {bool empty = false, int? gateAfter})
-      : daemon = Daemon(empty: empty, gateAfter: gateAfter),
-        hosts = HostManager() {
+    : daemon = Daemon(empty: empty, gateAfter: gateAfter),
+      hosts = HostManager() {
     final service = DaemonAPIService(
       hostId: _host,
       serverUrl: 'http://localhost:1',
@@ -184,22 +184,35 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('coming back to a session reads what arrived while it was closed',
-      (tester) async {
-    final h = harnessFor(tester);
+  testWidgets(
+    'coming back to a session reads what arrived while it was closed',
+    (tester) async {
+      final h = harnessFor(tester);
 
-    await h.openSession();
-    expect(h.daemon.asked, hasLength(1), reason: 'the first page, from build()');
-    expect(h.daemon.deltas, isEmpty,
-        reason: 'nothing held yet, so there is no cursor to quote');
+      await h.openSession();
+      expect(
+        h.daemon.asked,
+        hasLength(1),
+        reason: 'the first page, from build()',
+      );
+      expect(
+        h.daemon.deltas,
+        isEmpty,
+        reason: 'nothing held yet, so there is no cursor to quote',
+      );
 
-    await h.leaveSession();
-    await h.openSession();
+      await h.leaveSession();
+      await h.openSession();
 
-    expect(h.daemon.deltas, hasLength(1),
-        reason: 'the provider outlives the screen, so build() does not run '
-            'again — without this trigger, re-entering reads nothing');
-  });
+      expect(
+        h.daemon.deltas,
+        hasLength(1),
+        reason:
+            'the provider outlives the screen, so build() does not run '
+            'again — without this trigger, re-entering reads nothing',
+      );
+    },
+  );
 
   testWidgets('coming back to the foreground reads the tail', (tester) async {
     final h = harnessFor(tester);
@@ -210,13 +223,18 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(h.daemon.deltas.length, before + 1,
-        reason: 'a turn can finish while the phone is locked, and the event '
-            'that announced it is gone by the time the screen is back');
+    expect(
+      h.daemon.deltas.length,
+      before + 1,
+      reason:
+          'a turn can finish while the phone is locked, and the event '
+          'that announced it is gone by the time the screen is back',
+    );
   });
 
-  testWidgets('neither read puts the skeleton back over the conversation',
-      (tester) async {
+  testWidgets('neither read puts the skeleton back over the conversation', (
+    tester,
+  ) async {
     final h = harnessFor(tester);
     await h.openSession();
     await h.leaveSession();
@@ -229,20 +247,26 @@ void main() {
     expect(find.text('m2'), findsOneWidget);
   });
 
-  testWidgets('a session with nothing written yet re-reads without a skeleton',
-      (tester) async {
-    // Nothing is held, so there is no epoch to quote and the catch-up falls
-    // back to reading the page again. That is a refresh, and a refreshing
-    // AsyncValue still reports isLoading while carrying its previous value.
-    // The catch-up read is held open, so the screen is observed while the
-    // refresh is still out rather than after it has landed.
-    final h = harnessFor(tester, empty: true, gateAfter: 1);
-    await h.openSession();
-    await h.leaveSession();
-    await h.openSession();
+  testWidgets(
+    'a session with nothing written yet re-reads without a skeleton',
+    (tester) async {
+      // Nothing is held, so there is no epoch to quote and the catch-up falls
+      // back to reading the page again. That is a refresh, and a refreshing
+      // AsyncValue still reports isLoading while carrying its previous value.
+      // The catch-up read is held open, so the screen is observed while the
+      // refresh is still out rather than after it has landed.
+      final h = harnessFor(tester, empty: true, gateAfter: 1);
+      await h.openSession();
+      await h.leaveSession();
+      await h.openSession();
 
-    expect(find.byType(MessageListSkeleton), findsNothing,
-        reason: 'the skeleton belongs to a first load; drawing it on a refresh '
-            'is what threw away the reader place this whole change protects');
-  });
+      expect(
+        find.byType(MessageListSkeleton),
+        findsNothing,
+        reason:
+            'the skeleton belongs to a first load; drawing it on a refresh '
+            'is what threw away the reader place this whole change protects',
+      );
+    },
+  );
 }

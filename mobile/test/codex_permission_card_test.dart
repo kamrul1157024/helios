@@ -16,18 +16,18 @@ import 'package:helios/services/daemon_api_service.dart';
 /// that replaced it.
 
 HeliosNotification _permission(String source) => HeliosNotification(
-      id: 'n1',
-      source: source,
-      sourceSession: 's1',
-      cwd: '/tmp/proj',
-      type: '$source.permission',
-      status: 'pending',
-      createdAt: DateTime.now().toUtc().toIso8601String(),
-      payload: {
-        'tool_name': 'shell',
-        'tool_input': {'command': 'rm -rf build'},
-      },
-    );
+  id: 'n1',
+  source: source,
+  sourceSession: 's1',
+  cwd: '/tmp/proj',
+  type: '$source.permission',
+  status: 'pending',
+  createdAt: DateTime.now().toUtc().toIso8601String(),
+  payload: {
+    'tool_name': 'shell',
+    'tool_input': {'command': 'rm -rf build'},
+  },
+);
 
 /// A service whose action posts land in [sent] instead of on a daemon.
 DaemonAPIService _serviceRecording(List<Map<String, dynamic>> sent) {

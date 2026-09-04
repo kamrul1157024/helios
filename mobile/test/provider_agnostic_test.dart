@@ -68,10 +68,13 @@ void main() {
       'a-kind-nobody-has-written-yet',
       '',
     ]) {
-      test('kind ${kind.isEmpty ? '(empty)' : kind} has a label and a body', () {
-        expect(registry.labelForKind(kind), isNotEmpty);
-        expect(registry.bodyForKind(kind), isNotEmpty);
-      });
+      test(
+        'kind ${kind.isEmpty ? '(empty)' : kind} has a label and a body',
+        () {
+          expect(registry.labelForKind(kind), isNotEmpty);
+          expect(registry.bodyForKind(kind), isNotEmpty);
+        },
+      );
     }
 
     test('the fallback names no particular agent', () {
@@ -81,7 +84,10 @@ void main() {
           isNot(contains('claude')),
           reason: 'the label for $kind names one provider',
         );
-        expect(registry.bodyForKind(kind).toLowerCase(), isNot(contains('claude')));
+        expect(
+          registry.bodyForKind(kind).toLowerCase(),
+          isNot(contains('claude')),
+        );
       }
     });
   });
@@ -91,8 +97,14 @@ void main() {
     // nobody hears. This must survive any later refactor of the settings
     // screen.
     test('an unknown provider is noisy rather than silent', () {
-      expect(NotificationService.instance.isAlertEnabled('codex.permission'), isTrue);
-      expect(NotificationService.instance.isAlertEnabled('nobody.knows'), isTrue);
+      expect(
+        NotificationService.instance.isAlertEnabled('codex.permission'),
+        isTrue,
+      );
+      expect(
+        NotificationService.instance.isAlertEnabled('nobody.knows'),
+        isTrue,
+      );
     });
   });
 
@@ -129,10 +141,16 @@ void _migrationTests() {
         'claude.permission': false,
         'claude.done': true,
       });
-      expect(migrated['permission'], isFalse,
-          reason: 'the silence the user chose must survive');
-      expect(migrated.containsKey('claude.permission'), isFalse,
-          reason: 'the stale key must not linger and override the switch');
+      expect(
+        migrated['permission'],
+        isFalse,
+        reason: 'the silence the user chose must survive',
+      );
+      expect(
+        migrated.containsKey('claude.permission'),
+        isFalse,
+        reason: 'the stale key must not linger and override the switch',
+      );
       expect(migrated['done'], isTrue);
     });
 
@@ -145,13 +163,20 @@ void _migrationTests() {
     });
 
     test('keys already stored by kind pass through', () {
-      final migrated = NotificationService.migrateLegacyAlertKeys({'permission': false});
+      final migrated = NotificationService.migrateLegacyAlertKeys({
+        'permission': false,
+      });
       expect(migrated['permission'], isFalse);
     });
 
-    test('a key naming no kind we know is kept verbatim rather than guessed', () {
-      final migrated = NotificationService.migrateLegacyAlertKeys({'weird.thing': false});
-      expect(migrated['weird.thing'], isFalse);
-    });
+    test(
+      'a key naming no kind we know is kept verbatim rather than guessed',
+      () {
+        final migrated = NotificationService.migrateLegacyAlertKeys({
+          'weird.thing': false,
+        });
+        expect(migrated['weird.thing'], isFalse);
+      },
+    );
   });
 }

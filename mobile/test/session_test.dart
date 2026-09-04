@@ -3,14 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:helios/models/session.dart';
 
 Session sessionWithStatus(String status, {bool queue = false}) => Session(
-      sessionId: 's1',
-      source: 'claude',
-      cwd: '/tmp/proj',
-      project: 'proj',
-      status: status,
-      supportsPromptQueue: queue,
-      createdAt: '2026-01-01T00:00:00Z',
-    );
+  sessionId: 's1',
+  source: 'claude',
+  cwd: '/tmp/proj',
+  project: 'proj',
+  status: status,
+  supportsPromptQueue: queue,
+  createdAt: '2026-01-01T00:00:00Z',
+);
 
 void main() {
   group('canSendPrompt', () {
@@ -30,11 +30,22 @@ void main() {
     });
 
     test('a busy session only accepts a prompt when it can queue', () {
-      for (final status in ['active', 'waiting_permission', 'compacting', 'starting']) {
-        expect(sessionWithStatus(status).canSendPrompt, isFalse,
-            reason: '$status without queueing');
-        expect(sessionWithStatus(status, queue: true).canSendPrompt, isTrue,
-            reason: '$status with queueing');
+      for (final status in [
+        'active',
+        'waiting_permission',
+        'compacting',
+        'starting',
+      ]) {
+        expect(
+          sessionWithStatus(status).canSendPrompt,
+          isFalse,
+          reason: '$status without queueing',
+        );
+        expect(
+          sessionWithStatus(status, queue: true).canSendPrompt,
+          isTrue,
+          reason: '$status with queueing',
+        );
       }
     });
 
@@ -61,9 +72,17 @@ void main() {
     });
 
     test('every mid-turn state asks first', () {
-      for (final status in ['active', 'waiting_permission', 'compacting', 'starting']) {
-        expect(needsTerminateConfirm([sessionWithStatus(status)]), isTrue,
-            reason: status);
+      for (final status in [
+        'active',
+        'waiting_permission',
+        'compacting',
+        'starting',
+      ]) {
+        expect(
+          needsTerminateConfirm([sessionWithStatus(status)]),
+          isTrue,
+          reason: status,
+        );
       }
     });
 
@@ -89,13 +108,13 @@ void main() {
   // user which session is worth closing.
   group('memoryLabel', () {
     Session withMemory(int? bytes) => Session.fromJson({
-          'session_id': 's1',
-          'source': 'claude',
-          'cwd': '/tmp/proj',
-          'status': 'idle',
-          'created_at': '2026-01-01T00:00:00Z',
-          'memory_bytes': ?bytes,
-        });
+      'session_id': 's1',
+      'source': 'claude',
+      'cwd': '/tmp/proj',
+      'status': 'idle',
+      'created_at': '2026-01-01T00:00:00Z',
+      'memory_bytes': ?bytes,
+    });
 
     test('megabytes below a gigabyte', () {
       expect(withMemory(412 * 1024 * 1024).memoryLabel, '412 MB');

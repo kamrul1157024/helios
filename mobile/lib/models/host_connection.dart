@@ -32,14 +32,14 @@ class HostConnection {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'label': label,
-        'serverUrl': serverUrl,
-        'deviceId': deviceId,
-        'colorIndex': colorIndex,
-        'hostname': hostname,
-        'addedAt': addedAt.toIso8601String(),
-      };
+    'id': id,
+    'label': label,
+    'serverUrl': serverUrl,
+    'deviceId': deviceId,
+    'colorIndex': colorIndex,
+    'hostname': hostname,
+    'addedAt': addedAt.toIso8601String(),
+  };
 
   factory HostConnection.fromJson(Map<String, dynamic> json) {
     return HostConnection(

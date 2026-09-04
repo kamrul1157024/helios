@@ -51,7 +51,9 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
           }
         }
 
-        if (pendingActions.isEmpty && activeStatuses.isEmpty && resolved.isEmpty) {
+        if (pendingActions.isEmpty &&
+            activeStatuses.isEmpty &&
+            resolved.isEmpty) {
           return _buildEmptyState();
         }
 
@@ -62,7 +64,8 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (pendingActions.isNotEmpty) _buildBatchActions(pendingActions, hm),
+              if (pendingActions.isNotEmpty)
+                _buildBatchActions(pendingActions, hm),
               if (pendingActions.isNotEmpty) ...[
                 _sectionHeader('Pending (${pendingActions.length})'),
                 ...pendingActions.map((n) => _buildNotificationCard(n, hm)),
@@ -91,7 +94,9 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
     final match = held.where((s) => s.sessionId == sourceSession);
     if (match.isEmpty) return;
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => SessionDetailScreen(session: match.first)),
+      MaterialPageRoute(
+        builder: (_) => SessionDetailScreen(session: match.first),
+      ),
     );
   }
 
@@ -107,7 +112,12 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
     return _wrapWithHostBar(n, hm, card ?? _buildStatusCard(n, hm));
   }
 
-  Widget _wrapWithHostBar(HeliosNotification n, HostManager hm, Widget child, {double opacity = 0.4}) {
+  Widget _wrapWithHostBar(
+    HeliosNotification n,
+    HostManager hm,
+    Widget child, {
+    double opacity = 0.4,
+  }) {
     final host = hm.hostById(n.hostId);
     final hostColor = host?.color ?? Theme.of(context).colorScheme.primary;
 
@@ -135,21 +145,25 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
           Icon(
             Icons.notifications_none,
             size: 48,
-            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
           ),
           const SizedBox(height: 16),
           Text(
             'No notifications yet.',
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
             'Start a Claude session with helios hooks installed.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                ),
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+            ),
           ),
         ],
       ),
@@ -162,8 +176,8 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
       child: Text(
         title,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -184,7 +198,9 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
                   byHost.putIfAbsent(n.hostId, () => []).add(n.id);
                 }
                 for (final entry in byHost.entries) {
-                  hm.serviceFor(entry.key)?.batchAction(entry.value, {'action': 'approve'});
+                  hm.serviceFor(entry.key)?.batchAction(entry.value, {
+                    'action': 'approve',
+                  });
                 }
               },
               child: Text('Approve All (${permissionIds.length})'),
@@ -202,7 +218,9 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
                   }
                 }
                 for (final entry in byHost.entries) {
-                  hm.serviceFor(entry.key)?.batchAction(entry.value, {'action': 'approve'});
+                  hm.serviceFor(entry.key)?.batchAction(entry.value, {
+                    'action': 'approve',
+                  });
                 }
                 setState(() => _selected.clear());
               },
@@ -284,7 +302,11 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
                 ),
                 Text(
                   hostLabel,
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: hostColor),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: hostColor,
+                  ),
                 ),
               ],
             ),
@@ -330,30 +352,46 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
                   title: Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: badgeColor.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text(n.status, style: TextStyle(fontSize: 11, color: badgeColor)),
+                        child: Text(
+                          n.status,
+                          style: TextStyle(fontSize: 11, color: badgeColor),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           n.displayTitle,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       Text(
                         hostLabel,
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: hostColor),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: hostColor,
+                        ),
                       ),
                     ],
                   ),
                   subtitle: Text(
                     '${n.displayDetail}  ${n.timeAgo}${n.resolvedSource != null ? '  via ${n.resolvedSource}' : ''}',
-                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),

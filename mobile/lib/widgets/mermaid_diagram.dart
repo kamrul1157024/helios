@@ -87,7 +87,9 @@ class _MermaidDiagramState extends State<MermaidDiagram> {
       ..setBackgroundColor(Colors.transparent)
       ..addJavaScriptChannel('HeliosMermaid', onMessageReceived: _onDrawn)
       ..setNavigationDelegate(
-        NavigationDelegate(onNavigationRequest: (_) => NavigationDecision.prevent),
+        NavigationDelegate(
+          onNavigationRequest: (_) => NavigationDecision.prevent,
+        ),
       )
       ..loadHtmlString(_document(library));
 

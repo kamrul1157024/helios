@@ -36,14 +36,26 @@ void main() {
     test('resolves a relative reference against the file that holds it', () {
       expect(resolveAsset(page, './chart.png', root), '$root/docs/chart.png');
       expect(resolveAsset(page, 'chart.png', root), '$root/docs/chart.png');
-      expect(resolveAsset(page, 'img/chart.png', root), '$root/docs/img/chart.png');
-      expect(resolveAsset(page, '../assets/logo.svg', root), '$root/assets/logo.svg');
+      expect(
+        resolveAsset(page, 'img/chart.png', root),
+        '$root/docs/img/chart.png',
+      );
+      expect(
+        resolveAsset(page, '../assets/logo.svg', root),
+        '$root/assets/logo.svg',
+      );
       expect(resolveAsset(page, './x.png?v=2#frag', root), '$root/docs/x.png');
-      expect(resolveAsset(page, 'my%20chart.png', root), '$root/docs/my chart.png');
+      expect(
+        resolveAsset(page, 'my%20chart.png', root),
+        '$root/docs/my chart.png',
+      );
     });
 
     test('reads an absolute reference against the checkout', () {
-      expect(resolveAsset(page, '/assets/logo.svg', root), '$root/assets/logo.svg');
+      expect(
+        resolveAsset(page, '/assets/logo.svg', root),
+        '$root/assets/logo.svg',
+      );
       // Which is also what stops a leading slash reaching outside it.
       expect(resolveAsset(page, '/etc/passwd', root), '$root/etc/passwd');
     });
@@ -83,12 +95,16 @@ void main() {
 
   group('planAssets', () {
     test('dedupes by path and keeps the order it found them', () {
-      final planned = planAssets(const [
-        AssetRef('img', './a.png'),
-        AssetRef('img', 'a.png'),
-        AssetRef('style', './s.css'),
-        AssetRef('img', './b.png'),
-      ], page, root);
+      final planned = planAssets(
+        const [
+          AssetRef('img', './a.png'),
+          AssetRef('img', 'a.png'),
+          AssetRef('style', './s.css'),
+          AssetRef('img', './b.png'),
+        ],
+        page,
+        root,
+      );
 
       expect(planned.map((a) => '${a.kind} ${a.path}'), [
         'img $root/docs/a.png',
@@ -98,18 +114,25 @@ void main() {
     });
 
     test('drops what it cannot resolve rather than failing', () {
-      final planned = planAssets(const [
-        AssetRef('img', 'https://example.com/x.png'),
-        AssetRef('img', './good.png'),
-        AssetRef('img', '../../../../etc/passwd'),
-      ], page, root);
+      final planned = planAssets(
+        const [
+          AssetRef('img', 'https://example.com/x.png'),
+          AssetRef('img', './good.png'),
+          AssetRef('img', '../../../../etc/passwd'),
+        ],
+        page,
+        root,
+      );
 
       expect(planned.length, 1);
       expect(planned.first.path, '$root/docs/good.png');
     });
 
     test('stops at the cap', () {
-      final refs = List.generate(maxAssets + 10, (i) => AssetRef('img', './img-$i.png'));
+      final refs = List.generate(
+        maxAssets + 10,
+        (i) => AssetRef('img', './img-$i.png'),
+      );
       expect(planAssets(refs, page, root).length, maxAssets);
     });
   });

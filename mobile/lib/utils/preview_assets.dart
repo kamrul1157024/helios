@@ -93,7 +93,11 @@ String? resolveAsset(String basePath, String href, String root) {
 
 /// Which references to read, in order, within the caps. Deduped by path: a page
 /// that uses one icon forty times is one read.
-List<PlannedAsset> planAssets(List<AssetRef> refs, String basePath, String root) {
+List<PlannedAsset> planAssets(
+  List<AssetRef> refs,
+  String basePath,
+  String root,
+) {
   final seen = <String>{};
   final planned = <PlannedAsset>[];
 

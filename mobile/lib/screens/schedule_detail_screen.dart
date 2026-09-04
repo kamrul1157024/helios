@@ -19,10 +19,15 @@ class ScheduleDetailScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
   final String scheduleId;
 
-  const ScheduleDetailScreen({super.key, required this.hostId, required this.scheduleId});
+  const ScheduleDetailScreen({
+    super.key,
+    required this.hostId,
+    required this.scheduleId,
+  });
 
   @override
-  rp.ConsumerState<ScheduleDetailScreen> createState() => _ScheduleDetailScreenState();
+  rp.ConsumerState<ScheduleDetailScreen> createState() =>
+      _ScheduleDetailScreenState();
 }
 
 class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
@@ -43,7 +48,9 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
       await work();
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$error')));
       }
     } finally {
       ref.invalidate(schedulesProvider(widget.hostId));
@@ -53,12 +60,18 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
 
   @override
   Widget build(BuildContext context) {
-    final schedules = ref.watch(schedulesProvider(widget.hostId)).valueOrNull ?? const <Schedule>[];
-    final schedule = schedules.where((sc) => sc.id == widget.scheduleId).firstOrNull;
+    final schedules =
+        ref.watch(schedulesProvider(widget.hostId)).valueOrNull ??
+        const <Schedule>[];
+    final schedule = schedules
+        .where((sc) => sc.id == widget.scheduleId)
+        .firstOrNull;
     final service = ref.read(serviceProvider(widget.hostId));
 
     if (schedule == null) {
-      return const Scaffold(body: Center(child: Text('That schedule is gone.')));
+      return const Scaffold(
+        body: Center(child: Text('That schedule is gone.')),
+      );
     }
 
     return Scaffold(
@@ -78,16 +91,21 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
           TextButton(
             onPressed: _busy
                 ? null
-                : () => _act(() async => service?.saveSchedule(
-                      schedule.id,
-                      {'enabled': !schedule.enabled},
-                    )),
+                : () => _act(
+                    () async => service?.saveSchedule(schedule.id, {
+                      'enabled': !schedule.enabled,
+                    }),
+                  ),
             child: Text(schedule.enabled ? '● on' : '○ paused'),
           ),
         ],
         bottom: TabBar(
           controller: _tabs,
-          tabs: const [Tab(text: 'overview'), Tab(text: 'runs'), Tab(text: 'log')],
+          tabs: const [
+            Tab(text: 'overview'),
+            Tab(text: 'runs'),
+            Tab(text: 'log'),
+          ],
         ),
       ),
       body: TabBarView(
@@ -102,7 +120,9 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
         child: Row(
           children: [
             TextButton(
-              onPressed: _busy ? null : () => _act(() async => service?.runSchedule(schedule.id)),
+              onPressed: _busy
+                  ? null
+                  : () => _act(() async => service?.runSchedule(schedule.id)),
               child: const Text('Run now'),
             ),
             if (schedule.isMonitor)
@@ -110,7 +130,9 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
                 onPressed: _busy
                     ? null
                     : () => _act(() async {
-                        final result = await service?.checkSchedule(schedule.id);
+                        final result = await service?.checkSchedule(
+                          schedule.id,
+                        );
                         if (!mounted) return;
                         setState(() => _check = result);
                         _tabs.animateTo(0);
@@ -119,7 +141,11 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
               ),
             const Spacer(),
             TextButton(
-              onPressed: () => openScheduleEditor(context, widget.hostId, scheduleId: schedule.id),
+              onPressed: () => openScheduleEditor(
+                context,
+                widget.hostId,
+                scheduleId: schedule.id,
+              ),
               child: const Text('Edit'),
             ),
             IconButton(
@@ -142,18 +168,22 @@ class _ScheduleDetailScreenState extends rp.ConsumerState<ScheduleDetailScreen>
                           ),
                           actions: [
                             TextButton(
-                              onPressed: () => Navigator.pop(dialogContext, false),
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, false),
                               child: const Text('Cancel'),
                             ),
                             TextButton(
-                              onPressed: () => Navigator.pop(dialogContext, true),
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, true),
                               child: const Text('Delete'),
                             ),
                           ],
                         ),
                       );
                       if (ok != true) return;
-                      await _act(() async => service?.deleteSchedule(schedule.id));
+                      await _act(
+                        () async => service?.deleteSchedule(schedule.id),
+                      );
                       navigator.pop();
                     },
             ),
@@ -196,11 +226,14 @@ class _Overview extends StatelessWidget {
           const SizedBox(height: 16),
         ],
         _fact(theme, 'Runs', target),
-        _dim(theme, [
-          schedule.provider.isEmpty ? 'the default agent' : schedule.provider,
-          if (schedule.model.isNotEmpty) schedule.model,
-          if (schedule.permissionMode.isNotEmpty) schedule.permissionMode,
-        ].join(' · ')),
+        _dim(
+          theme,
+          [
+            schedule.provider.isEmpty ? 'the default agent' : schedule.provider,
+            if (schedule.model.isNotEmpty) schedule.model,
+            if (schedule.permissionMode.isNotEmpty) schedule.permissionMode,
+          ].join(' · '),
+        ),
         const SizedBox(height: 16),
         _fact(theme, 'Prompt', ''),
         Container(
@@ -226,7 +259,7 @@ class _Overview extends StatelessWidget {
               check!.failed
                   ? 'the check failed — ${check!.error}'
                   : 'exit ${check!.exit} — ${check!.matched ? 'MATCH, this would fire' : 'quiet, this would not fire'}'
-                      '${check!.output.isEmpty ? '' : '\n---\n${check!.output}'}',
+                        '${check!.output.isEmpty ? '' : '\n---\n${check!.output}'}',
               style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
             ),
           ),
@@ -236,32 +269,38 @@ class _Overview extends StatelessWidget {
   }
 
   Widget _fact(ThemeData theme, String label, String value) => Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: theme.textTheme.labelSmall),
-            if (value.isNotEmpty) Text(value, style: theme.textTheme.bodyMedium),
-          ],
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: theme.textTheme.labelSmall),
+        if (value.isNotEmpty) Text(value, style: theme.textTheme.bodyMedium),
+      ],
+    ),
+  );
 
   Widget _dim(ThemeData theme, String text) => text.isEmpty
       ? const SizedBox.shrink()
       : Text(
           text,
-          style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         );
 }
 
 String _footNote(Schedule sc) {
   final parts = <String>[];
   if (sc.nextRunAt.isNotEmpty && sc.enabled && sc.doneAt.isEmpty) {
-    parts.add('${sc.isMonitor ? 'next check' : 'next run'} ${untilWords(sc.nextRunAt)}');
+    parts.add(
+      '${sc.isMonitor ? 'next check' : 'next run'} ${untilWords(sc.nextRunAt)}',
+    );
   }
-  if (sc.lastFiredAt.isNotEmpty) parts.add('last ran ${agoWords(sc.lastFiredAt)}');
+  if (sc.lastFiredAt.isNotEmpty)
+    parts.add('last ran ${agoWords(sc.lastFiredAt)}');
   if (sc.firesToday > 0) parts.add('fired ${sc.firesToday}× today');
-  if (sc.failStreak > 1) parts.add('failing since ${agoWords(sc.failingSince)}');
+  if (sc.failStreak > 1)
+    parts.add('failing since ${agoWords(sc.failingSince)}');
   return parts.join(' · ');
 }
 
@@ -287,8 +326,16 @@ class _Runs extends rp.ConsumerWidget {
             final run = list[i];
             return ListTile(
               dense: true,
-              leading: Icon(Icons.circle, size: 8, color: _runColour(context, run.status)),
-              title: Text(run.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+              leading: Icon(
+                Icons.circle,
+                size: 8,
+                color: _runColour(context, run.status),
+              ),
+              title: Text(
+                run.displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               subtitle: Text('${run.status} · ${agoWords(run.createdAt)}'),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
@@ -338,7 +385,10 @@ class _LogState extends rp.ConsumerState<_Log> {
   void initState() {
     super.initState();
     unawaited(_read());
-    _poll = Timer.periodic(const Duration(seconds: 2), (_) => unawaited(_read()));
+    _poll = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_read()),
+    );
   }
 
   @override
@@ -364,7 +414,11 @@ class _LogState extends rp.ConsumerState<_Log> {
       padding: const EdgeInsets.all(12),
       child: SelectableText(
         _lines.isEmpty ? '(nothing yet)' : _lines.join('\n'),
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.5),
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          height: 1.5,
+        ),
       ),
     );
   }

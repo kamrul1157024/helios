@@ -150,9 +150,18 @@ class Schedule {
     if (RegExp(r'^\d+$').hasMatch(min) && RegExp(r'^\d+$').hasMatch(hour)) {
       final time = '${hour.padLeft(2, '0')}:${min.padLeft(2, '0')}';
       if (everyDay) return 'every day at $time';
-      if (dom == '*' && month == '*' && dow == '1-5') return 'weekdays at $time';
+      if (dom == '*' && month == '*' && dow == '1-5')
+        return 'weekdays at $time';
       if (dom == '*' && month == '*' && RegExp(r'^\d$').hasMatch(dow)) {
-        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const days = [
+          'Sunday',
+          'Monday',
+          'Tuesday',
+          'Wednesday',
+          'Thursday',
+          'Friday',
+          'Saturday',
+        ];
         return '${days[int.parse(dow)]}s at $time';
       }
     }
@@ -200,7 +209,8 @@ String untilWords(String stamp) {
   if (until.isNegative) return 'due';
   if (until.inMinutes < 1) return 'in ${until.inSeconds}s';
   if (until.inMinutes < 60) return 'in ${until.inMinutes}m';
-  if (until.inHours < 12) return 'in ${until.inHours}h ${until.inMinutes % 60}m';
+  if (until.inHours < 12)
+    return 'in ${until.inHours}h ${until.inMinutes % 60}m';
   return '${_weekday(at)} ${at.hour.toString().padLeft(2, '0')}:'
       '${at.minute.toString().padLeft(2, '0')}';
 }
@@ -239,10 +249,10 @@ class CheckResult {
   });
 
   factory CheckResult.fromJson(Map<String, dynamic> json) => CheckResult(
-        exit: json['exit'] as int? ?? 0,
-        output: (json['output'] as String?) ?? '',
-        matched: json['matched'] as bool? ?? false,
-        failed: json['failed'] as bool? ?? false,
-        error: (json['error'] as String?) ?? '',
-      );
+    exit: json['exit'] as int? ?? 0,
+    output: (json['output'] as String?) ?? '',
+    matched: json['matched'] as bool? ?? false,
+    failed: json['failed'] as bool? ?? false,
+    error: (json['error'] as String?) ?? '',
+  );
 }

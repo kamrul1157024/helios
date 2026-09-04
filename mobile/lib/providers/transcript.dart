@@ -50,11 +50,11 @@ Transcript appendDelta(Transcript held, TranscriptResult delta) {
 
 /// Adds the page before the oldest message held, for a reader scrolling back.
 Transcript prependPage(Transcript held, TranscriptResult older) => Transcript(
-      messages: [...older.messages, ...held.messages],
-      total: older.total,
-      hasMore: older.hasMore,
-      epoch: held.epoch,
-    );
+  messages: [...older.messages, ...held.messages],
+  total: older.total,
+  hasMore: older.hasMore,
+  epoch: held.epoch,
+);
 
 /// One session's conversation, paged backwards from the newest message.
 ///
@@ -182,5 +182,9 @@ class TranscriptNotifier
   }
 }
 
-final transcriptProvider = AsyncNotifierProvider.family<TranscriptNotifier,
-    Transcript, (String, String)>(TranscriptNotifier.new);
+final transcriptProvider =
+    AsyncNotifierProvider.family<
+      TranscriptNotifier,
+      Transcript,
+      (String, String)
+    >(TranscriptNotifier.new);

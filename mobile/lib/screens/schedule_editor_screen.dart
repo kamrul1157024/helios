@@ -16,13 +16,19 @@ class ScheduleEditorScreen extends rp.ConsumerStatefulWidget {
   /// Empty for a new one.
   final String scheduleId;
 
-  const ScheduleEditorScreen({super.key, required this.hostId, this.scheduleId = ''});
+  const ScheduleEditorScreen({
+    super.key,
+    required this.hostId,
+    this.scheduleId = '',
+  });
 
   @override
-  rp.ConsumerState<ScheduleEditorScreen> createState() => _ScheduleEditorScreenState();
+  rp.ConsumerState<ScheduleEditorScreen> createState() =>
+      _ScheduleEditorScreenState();
 }
 
-class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> {
+class _ScheduleEditorScreenState
+    extends rp.ConsumerState<ScheduleEditorScreen> {
   final _name = TextEditingController();
   final _cron = TextEditingController(text: '0 9 * * 1-5');
   final _runAt = TextEditingController();
@@ -81,8 +87,12 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
       'run_at': _kind == 'once' ? _runAt.text.trim() : '',
       'after_id': _kind == 'after' ? _afterId : '',
       'after_when': _kind == 'after' ? _afterWhen : '',
-      'check_cmd': _kind == 'monitor' && _checkSource == 'command' ? _check.text : '',
-      'check_file': _kind == 'monitor' && _checkSource == 'file' ? _check.text.trim() : '',
+      'check_cmd': _kind == 'monitor' && _checkSource == 'command'
+          ? _check.text
+          : '',
+      'check_file': _kind == 'monitor' && _checkSource == 'file'
+          ? _check.text.trim()
+          : '',
       'check_match': _kind == 'monitor' ? _match.text : '',
     };
 
@@ -93,7 +103,8 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
     } catch (error) {
       // The daemon refuses at save what would be found at 3am otherwise, and
       // says which — so its words go on screen rather than a generic failure.
-      if (mounted) setState(() => _error = '$error'.replaceFirst('Exception: ', ''));
+      if (mounted)
+        setState(() => _error = '$error'.replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -102,14 +113,18 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final schedules = ref.watch(schedulesProvider(widget.hostId)).valueOrNull ?? const <Schedule>[];
+    final schedules =
+        ref.watch(schedulesProvider(widget.hostId)).valueOrNull ??
+        const <Schedule>[];
     _load(schedules);
 
     final monitor = _kind == 'monitor';
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.scheduleId.isEmpty ? 'New schedule' : 'Edit schedule'),
+        title: Text(
+          widget.scheduleId.isEmpty ? 'New schedule' : 'Edit schedule',
+        ),
         actions: [
           TextButton(
             onPressed: _saving ? null : _save,
@@ -122,7 +137,10 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
         children: [
           TextField(
             controller: _name,
-            decoration: const InputDecoration(labelText: 'Name', hintText: 'build-watch'),
+            decoration: const InputDecoration(
+              labelText: 'Name',
+              hintText: 'build-watch',
+            ),
           ),
           const SizedBox(height: 16),
 
@@ -183,7 +201,9 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
               initialValue: _afterId.isEmpty ? null : _afterId,
               decoration: const InputDecoration(labelText: 'After'),
               items: [
-                for (final sc in schedules.where((s) => s.id != widget.scheduleId))
+                for (final sc in schedules.where(
+                  (s) => s.id != widget.scheduleId,
+                ))
                   DropdownMenuItem(value: sc.id, child: Text(sc.name)),
               ],
               onChanged: (v) => setState(() => _afterId = v ?? ''),
@@ -193,7 +213,10 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
               initialValue: _afterWhen,
               decoration: const InputDecoration(labelText: 'Runs'),
               items: const [
-                DropdownMenuItem(value: 'success', child: Text('only if it succeeds')),
+                DropdownMenuItem(
+                  value: 'success',
+                  child: Text('only if it succeeds'),
+                ),
                 DropdownMenuItem(value: 'any', child: Text('either way')),
               ],
               onChanged: (v) => setState(() => _afterWhen = v ?? 'success'),
@@ -224,7 +247,9 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
             TextField(
               controller: _check,
               decoration: InputDecoration(
-                hintText: _checkSource == 'command' ? 'make test 2>&1' : '~/checks/queue.py',
+                hintText: _checkSource == 'command'
+                    ? 'make test 2>&1'
+                    : '~/checks/queue.py',
               ),
             ),
             const SizedBox(height: 8),
@@ -246,7 +271,8 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
             controller: _cwd,
             decoration: const InputDecoration(
               labelText: 'Where',
-              hintText: 'optional — empty for work that is not about a directory',
+              hintText:
+                  'optional — empty for work that is not about a directory',
             ),
           ),
           const SizedBox(height: 16),
@@ -257,7 +283,9 @@ class _ScheduleEditorScreenState extends rp.ConsumerState<ScheduleEditorScreen> 
             decoration: InputDecoration(
               labelText: 'Prompt',
               alignLabelWithHint: true,
-              helperText: monitor ? '{{output}} is replaced with what the check printed.' : null,
+              helperText: monitor
+                  ? '{{output}} is replaced with what the check printed.'
+                  : null,
               hintText: monitor
                   ? 'The check found something:\n\n{{output}}\n\nLook into it.'
                   : 'What to do',

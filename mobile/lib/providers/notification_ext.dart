@@ -79,6 +79,18 @@ extension NotificationPayload on HeliosNotification {
     return null;
   }
 
+  /// What to call the plan in one line: its first heading, marks taken off.
+  ///
+  /// Read from the plan rather than from the notification's own detail, which
+  /// is written by the daemon and so is missing from a card built by hand.
+  String? get planHeadline {
+    for (final line in (planText ?? '').split('\n')) {
+      final text = line.replaceFirst(RegExp(r'^\s*#+\s*'), '').trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
   // Payload accessors for a question
   List<dynamic>? get questions => payload?['questions'] as List?;
 

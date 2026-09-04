@@ -36,8 +36,8 @@ class SchedulesScreen extends rp.ConsumerWidget {
               child: Text(
                 host.label,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           _HostSchedules(hostId: host.id),
@@ -137,14 +137,17 @@ class ScheduleTile extends rp.ConsumerWidget {
       child: InkWell(
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => ScheduleDetailScreen(hostId: hostId, scheduleId: schedule.id),
+            builder: (_) =>
+                ScheduleDetailScreen(hostId: hostId, scheduleId: schedule.id),
           ),
         ),
         child: Container(
           padding: EdgeInsets.fromLTRB(16.0 + depth * 16, 10, 16, 10),
           decoration: BoxDecoration(
             border: Border(
-              bottom: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
+              bottom: BorderSide(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+              ),
             ),
           ),
           child: Column(
@@ -152,18 +155,25 @@ class ScheduleTile extends rp.ConsumerWidget {
             children: [
               Row(
                 children: [
-                  Text(kindGlyph(schedule), style: const TextStyle(fontSize: 12)),
+                  Text(
+                    kindGlyph(schedule),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       schedule.name,
-                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   Text(
                     schedule.stateWord,
-                    style: theme.textTheme.labelSmall?.copyWith(color: stateColour(theme, schedule)),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: stateColour(theme, schedule),
+                    ),
                   ),
                 ],
               ),
@@ -179,7 +189,9 @@ class ScheduleTile extends rp.ConsumerWidget {
               if (schedule.lastError.isNotEmpty)
                 Text(
                   schedule.lastError,
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.error),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -232,10 +244,15 @@ Color? stateColour(ThemeData theme, Schedule sc) {
 }
 
 /// The button the schedules tab floats: a new one starts in the editor.
-void openScheduleEditor(BuildContext context, String hostId, {String scheduleId = ''}) {
+void openScheduleEditor(
+  BuildContext context,
+  String hostId, {
+  String scheduleId = '',
+}) {
   Navigator.of(context).push(
     MaterialPageRoute(
-      builder: (_) => ScheduleEditorScreen(hostId: hostId, scheduleId: scheduleId),
+      builder: (_) =>
+          ScheduleEditorScreen(hostId: hostId, scheduleId: scheduleId),
     ),
   );
 }
