@@ -13,24 +13,52 @@ export const HOME = '~/'
 /** How many completions are worth showing before the list is just a directory. */
 export const MAX_COMPLETIONS = 40
 
+/** True of the two spellings that already say where they start from. */
+function rooted(path: string): boolean {
+  return path.startsWith('/') || path === '~' || path.startsWith('~/')
+}
+
+/** Where a relative path starts: the picker's directory, or home without one. */
+function startFrom(base: string): string {
+  return base.trim() || HOME
+}
+
+/**
+ * The absolute path a typed string means, read from where the picker already is.
+ *
+ * A relative path is relative to the directory the chip names, the way it would
+ * be in a shell sitting in it. Two things depend on that being written down
+ * once. Completion has to read the directory the typing is actually inside, or
+ * typing `desk` in a picker set to `~/workspace/helios` offers whatever home
+ * happens to hold and calls it an answer. And the escape hatch has to hand the
+ * daemon a path it accepts: `resolveCWD` refuses anything not absolute
+ * (internal/server/cwd.go), so committing the raw text would make "anything
+ * typed is committable" true only of the paths that were already absolute.
+ */
+export function resolveTyped(typed: string, base: string): string {
+  const path = typed.trim()
+  if (path === '' || rooted(path)) return path
+  const from = startFrom(base)
+  return from.endsWith('/') ? from + path : `${from}/${path}`
+}
+
 /**
  * The directory a half-typed path is completing inside, and the prefix to keep.
  *
  * Everything up to the last separator names a directory to read; what follows
  * is what the entries in it have to start with. A path with no separator in it
- * yet, or a relative one, completes under home — which is where a session with
- * no directory of its own starts anyway, so it is the same place the composer
- * would have used.
+ * yet, or a relative one, completes under `base` — the directory the composer
+ * is set to. With no directory set that is home, which is where a session
+ * without one starts anyway.
  */
-export function completionTarget(typed: string): { parent: string; prefix: string } {
+export function completionTarget(typed: string, base: string = HOME): { parent: string; prefix: string } {
   const cut = typed.lastIndexOf('/')
   const prefix = typed.slice(cut + 1)
-  if (cut === -1) return { parent: HOME, prefix }
+  if (cut === -1) return { parent: startFrom(base), prefix }
   const parent = typed.slice(0, cut)
   if (parent === '') return { parent: '/', prefix }
   if (parent === '~') return { parent: HOME, prefix }
-  if (!parent.startsWith('/') && !parent.startsWith('~')) return { parent: HOME + parent, prefix }
-  return { parent, prefix }
+  return { parent: resolveTyped(parent, base), prefix }
 }
 
 /**
