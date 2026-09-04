@@ -93,13 +93,10 @@ func TestPlan_PaintsTheModeRowsAndTheFeedbackRow(t *testing.T) {
 		t.Errorf("input row = %v, want one labelled %q", o.Input, planFeedback)
 	}
 
-	// The plan is one body entry per line. Passed whole it would be reflowed
-	// into a single paragraph and the headings would vanish.
-	if len(o.Body) < 5 {
-		t.Errorf("body = %v, want the plan split across lines", o.Body)
-	}
-	if o.Body[0] != "# Plan: give plan approval its own rows" {
-		t.Errorf("body[0] = %q, want the plan's first line", o.Body[0])
+	// The plan is not repeated over the CLI's own rendering of it. All the box
+	// adds above the rows is where the plan is written down.
+	if len(o.Body) != 1 || o.Body[0] != "~/.claude/plans/rows.md" {
+		t.Errorf("body = %v, want the plan's path and nothing else", o.Body)
 	}
 
 	hitlCtl.HandleInput("sess-1", []byte("\x1b"))
@@ -252,35 +249,32 @@ func TestPlan_OrdinaryToolsKeepAllowAndDeny(t *testing.T) {
 	}
 }
 
-func TestPlan_LongPlanIsCappedAndPointsAtTheFile(t *testing.T) {
-	long := strings.Repeat("a line of the plan\n", planBodyMaxLines+6)
+// The box used to reprint the plan the CLI had just rendered above it, in raw
+// markdown and cut off partway. However long the plan, the box says where it
+// lives and leaves the reading to the transcript.
+func TestPlan_ThePlanIsNotReprintedOverTheCLIsOwnCopy(t *testing.T) {
+	long := strings.Repeat("a line of the plan\n", 40)
 	body := planBody(planInput(long, "~/.claude/plans/rows.md"))
 
-	// One line over the cap: the cap line itself.
-	if len(body) != planBodyMaxLines+1 {
-		t.Fatalf("body has %d lines, want %d plus the cap line", len(body), planBodyMaxLines)
+	if len(body) != 1 || body[0] != "~/.claude/plans/rows.md" {
+		t.Fatalf("body = %v, want the path alone", body)
 	}
-	tail := body[len(body)-1]
-	if !strings.Contains(tail, "6 more lines") {
-		t.Errorf("tail = %q, want the count of what was cut", tail)
-	}
-	// The overlay clips from the bottom of the viewport upwards, so a capped
-	// plan has to say where the whole one lives.
-	if !strings.Contains(tail, "~/.claude/plans/rows.md") {
-		t.Errorf("tail = %q, want the plan's path", tail)
+	if strings.Contains(body[0], "a line of the plan") {
+		t.Errorf("body = %v, want none of the plan's own text", body)
 	}
 }
 
-func TestPlan_ShortPlanShowsThePathAlone(t *testing.T) {
-	body := planBody(planInput("# Small\n", "~/.claude/plans/small.md"))
-	if got := body[len(body)-1]; got != "~/.claude/plans/small.md" {
-		t.Errorf("tail = %q, want the path with no cut-count", got)
+// A plan the CLI wrote nowhere leaves the box with nothing to point at, and a
+// path is not worth inventing.
+func TestPlan_APlanWithNoFileShowsNoBody(t *testing.T) {
+	if body := planBody(planInput("# Small\n", "")); len(body) != 0 {
+		t.Errorf("body = %v, want nothing above the rows", body)
 	}
 }
 
-// The cap exists for the screen, so it is checked on the screen: the box is
-// anchored to the bottom of the viewport and clipped from the top, and a plan
-// long enough to push the rows off would leave nothing to answer with.
+// The rows are the point of the box, and they are checked on the screen: it is
+// anchored to the bottom of the viewport and clipped from the top, so anything
+// above them that grows with the plan would push them off.
 func TestPlan_TheRowsSurviveALongPlanOnASmallScreen(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")

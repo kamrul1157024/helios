@@ -32,7 +32,10 @@ in words rather than with a bare no. And the plan itself, which nobody could rea
 | Terminal overlay | no | no | no — raw JSON, 100 chars |
 | Mobile / desktop | no | no | no |
 
-Every row but the first says no. This change makes the other two say yes.
+Every row but the first says no. This change makes the other two say yes on the first two
+columns. The third is answered differently on each surface: the phone and the desktop app
+have nowhere else to show the plan, so they show it. The terminal already has the CLI's
+own rendering of it directly above the box — see **The box does not reprint the plan**.
 
 ## What it looks like
 
@@ -58,16 +61,7 @@ After:
 
 ```
 ┌─ Ready to code? ───────────────────────────────────────────────────────────┐
-│ # Plan: give plan approval its own rows                                    │
-│                                                                            │
-│ ## Context                                                                 │
-│ The terminal offers Allow once and Deny. Plan approval needs the two       │
-│ mode rows and a way to disagree in words.                                  │
-│                                                                            │
-│ ## Implementation                                                          │
-│ 1. Branch on ExitPlanMode in showPermissionPrompt.                         │
-│ 2. Carry the typed text into the deny message.                             │
-│ …14 more lines · ~/.claude/plans/give-plan-approval-its-own-rows.md        │
+│ ~/.claude/plans/give-plan-approval-its-own-rows.md                         │
 │                                                                            │
 │ ❯ Yes, and use auto mode                                                   │
 │     Claude edits and runs commands without asking, for the rest of this    │
@@ -84,7 +78,7 @@ After Enter on the third row:
 
 ```
 ┌─ Ready to code? ───────────────────────────────────────────────────────────┐
-│ …14 more lines · ~/.claude/plans/give-plan-approval-its-own-rows.md        │
+│ ~/.claude/plans/give-plan-approval-its-own-rows.md                         │
 │                                                                            │
 │   Yes, and use auto mode                                                   │
 │     Claude edits and runs commands without asking, for the rest of this    │
@@ -93,32 +87,50 @@ After Enter on the third row:
 │     Claude asks before each edit, as it does now                           │
 │ ❯ Tell Claude what to change                                               │
 │   ┌──────────────────────────────────────────────────────────────────────┐ │
-│   │ split the plan on newlines, do not reflow it█                        │ │
+│   │ answer the CLI's dialog too, a hook cannot decide this█              │ │
 │   └──────────────────────────────────────────────────────────────────────┘ │
 │                                                                            │
 │ enter send · esc back to the list                                          │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The plan is down to one line in the second state. That is not a mockup shortcut:
-`RenderOverlay` anchors the box to the bottom of the viewport and clips from the top, so
-the three rows the field adds push the plan off. The user reads the plan, then trades it
-for the field. Capping the plan harder from the start would hold the height still, at the
-cost of showing less plan to the person who has not opened the field at all — and by the
-time they type, they have read it.
+The box holds its height when the field opens: nothing above the rows grows with the plan,
+so there is nothing for the three rows the field adds to push off. That matters because
+`RenderOverlay` anchors the box to the bottom of the viewport and clips from the top.
+
+## The box does not reprint the plan
+
+The first build of this put the plan in the box — `tool_input.plan` split into one
+`Prompt.Body` line each, capped at 14 with a `…57 more lines` tail. On screen it was
+unreadable, and the reason is not the cap:
+
+- The CLI has **already rendered the plan** into the transcript directly above, with
+  headings, colour and tables. The box repainted the same plan a second time, worse.
+- The overlay has no markdown renderer. It is box-drawn text assembled in
+  `internal/terminal/overlay.go` and written straight to every viewer's terminal, so
+  `#`, backticks and pipe-tables arrive as themselves.
+- There is nowhere to scroll to the rest, so a plan of any size was cut mid-sentence.
+- The height it took came out of the rows, on exactly the short screens where the rows
+  are hardest to fit.
+
+So the box says where the plan is written down and leaves the reading to the transcript
+above it. The alternative considered and rejected was a full-screen overlay with a
+markdown renderer: a new protocol field, host-side scrolling, a renderer dependency, and
+at the end of it a copy that covers the CLI's own better one.
+
+This applies to the terminal alone. The phone and the desktop app have no transcript
+beside the card, so they still carry the plan; see **The phone and the desktop app get the
+same rows**.
 
 ## What each part maps to
 
 **Title.** `ExitPlanMode` becomes `Ready to code?`, the CLI's own words. A tool name is
 right for `Bash`. For this tool it names the mechanism, not the decision.
 
-**Body.** `tool_input.plan` split on newlines into one `Prompt.Body` entry per line. This
-is load-bearing rather than cosmetic: `wrapLine` runs `strings.Fields`, so a whole plan
-passed as one entry collapses into a single paragraph and the headings vanish.
-
-**The cap line.** `…14 more lines · <planFilePath>` is not decoration. Without a cap the
-plan pushes the rows themselves off the screen. `planFilePath` is already in the hook
-payload, and it is where the whole plan lives.
+**Body.** `planFilePath` from the hook payload, one line, and nothing else. It is the one
+thing the transcript above does not say. A payload with no `plan` at all is the exception:
+the CLI printed nothing to read either, so the box falls back to `summarizeToolInput`.
+A payload with a plan but no path leaves the body empty rather than inventing one.
 
 **The rows.** Two mode rows. The text under each is `Prompt.Details`, which the overlay
 already draws and caps at two lines.

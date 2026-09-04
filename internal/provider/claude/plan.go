@@ -2,7 +2,6 @@ package claude
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -51,16 +50,15 @@ func planPrompt(input *hookInput) hitl.Prompt {
 	}
 }
 
-// planBodyMaxLines caps how much of the plan the box shows. The overlay is
-// anchored to the bottom of the viewport and clips from the top, so an uncapped
-// plan pushes the rows themselves off the screen.
-const planBodyMaxLines = 14
-
-// planBody renders the plan for the overlay, one entry per line of markdown.
+// planBody is what the box says above the rows: where the plan is written down,
+// and nothing else.
 //
-// The line-per-entry part is not cosmetic: the box wraps on words and would
-// reflow a whole plan passed as one entry into a single paragraph, taking the
-// headings with it.
+// The plan itself is not repeated. The CLI has already printed it into the
+// transcript immediately above — headings, tables, colour — and the overlay is
+// plain box-drawn text with no markdown renderer and nowhere to scroll. What it
+// drew was a worse second copy of a good first one: raw markdown, capped
+// mid-plan, and paid for in the rows it pushed off a short screen. The path is
+// kept because it is the one thing the transcript does not say.
 func planBody(toolInput json.RawMessage) []string {
 	var in struct {
 		Plan     string `json:"plan"`
@@ -71,33 +69,15 @@ func planBody(toolInput json.RawMessage) []string {
 			log.Printf("hook: parse plan: %v", err)
 		}
 	}
+	// No plan text means the CLI printed nothing to read either, so the box is
+	// the only place left to say what is being approved.
 	if strings.TrimSpace(in.Plan) == "" {
 		return []string{summarizeToolInput(toolInput)}
 	}
-
-	lines := strings.Split(strings.TrimRight(in.Plan, "\n"), "\n")
-	hidden := 0
-	if len(lines) > planBodyMaxLines {
-		hidden = len(lines) - planBodyMaxLines
-		lines = lines[:planBodyMaxLines]
+	if in.FilePath == "" {
+		return nil
 	}
-	if tail := planTail(hidden, in.FilePath); tail != "" {
-		lines = append(lines, tail)
-	}
-	return lines
-}
-
-// planTail says what was cut and where the whole plan lives, so a box that
-// shows part of a plan is not the only copy the reader can reach.
-func planTail(hidden int, path string) string {
-	switch {
-	case hidden > 0 && path != "":
-		return fmt.Sprintf("…%d more lines · %s", hidden, path)
-	case hidden > 0:
-		return fmt.Sprintf("…%d more lines", hidden)
-	default:
-		return path
-	}
+	return []string{in.FilePath}
 }
 
 // planHeadlineMax keeps the one-line form short enough for a phone's push
