@@ -1,10 +1,10 @@
 // Opening a file the transcript names, without losing the transcript.
 //
 // The rules here live in components, so there is nowhere else in this repo to
-// drive them: the chip's menu, the split it asks for, and the file tree that
-// gets out of the way while the panel is a pane on the side. That last one is
-// the point of the feature — a tree beside a file in half a window leaves the
-// file a quarter of it.
+// drive them: the chip's two buttons, the split one of them asks for, and the
+// file tree that gets out of the way while the panel is a pane on the side.
+// That last one is the point of the feature — a tree beside a file in half a
+// window leaves the file a quarter of it.
 import type { Locator, Page } from '@playwright/test'
 
 import { ALPHA, REPO, appendTranscript, pushEvent, resetTranscripts } from './daemon.ts'
@@ -35,9 +35,14 @@ function chip(window: Page, name: string): Locator {
   return shown(window).locator('.file-chip').filter({ hasText: name })
 }
 
-/** The chip's open button — the one that asks where the file should go. */
-function arrow(window: Page, name: string): Locator {
-  return chip(window, name).locator('.file-chip-act').first()
+/** The chip's ◨ — open the file beside the transcript. */
+function sideButton(window: Page, name: string): Locator {
+  return chip(window, name).locator('.file-chip-side')
+}
+
+/** The chip's ↗ — open the file in the Files tab, in front of the transcript. */
+function tabButton(window: Page, name: string): Locator {
+  return chip(window, name).locator('.file-chip-tab')
 }
 
 /**
@@ -60,10 +65,9 @@ async function openAlpha(window: Page): Promise<void> {
   await expect(shown(window).locator('.file-chip')).toHaveCount(2)
 }
 
-/** ↗ on a chip, then the menu row, leaving the file open beside the transcript. */
+/** One click on ◨, leaving the file open beside the transcript. */
 async function openToTheSide(window: Page, name: string): Promise<void> {
-  await arrow(window, name).click()
-  await window.locator('.line-menu button', { hasText: 'Open to the side' }).click()
+  await sideButton(window, name).click()
   await expect(window.locator('.panel-tabs')).toHaveCount(2)
 }
 
@@ -86,28 +90,32 @@ test('a chip opens its file beside the transcript, with the tree out of the way'
   await expect(files(window).locator('.ws-side')).toBeHidden()
 })
 
-test('with the pane already there, a second chip skips the menu', async ({ window, daemon }) => {
+test('with the pane already there, the tab button drops out', async ({ window, daemon }) => {
   // Distinct from main.go, so "the file opened" cannot pass on the file that
   // was already in the pane.
   daemon.setFile(README, '# the readme\n')
   await openAlpha(window)
+  // Both buttons while the panel is still in front of the transcript.
+  await expect(tabButton(window, 'main.go')).toBeVisible()
   await openToTheSide(window, 'main.go')
 
-  await arrow(window, 'README.md').click()
+  // Every chip loses it, not only the one that was clicked: the button is
+  // about where the panel is, and the panel is one panel.
+  await expect(tabButton(window, 'main.go')).toHaveCount(0)
+  await expect(tabButton(window, 'README.md')).toHaveCount(0)
 
-  // No menu at all: with the pane open, the other row would only undo it.
-  await expect(window.locator('.line-menu')).toHaveCount(0)
+  await sideButton(window, 'README.md').click()
+
   // The panel, not `.cm-content`: a Markdown file opens in the preview, and
   // the heading is what the reader ends up looking at.
   await expect(files(window)).toContainText('the readme')
   await expect(window.locator('.panel-tabs')).toHaveCount(2)
 })
 
-test('the other row puts the panel in front of the transcript, tree and all', async ({ window }) => {
+test('the other button puts the panel in front of the transcript, tree and all', async ({ window }) => {
   await openAlpha(window)
 
-  await arrow(window, 'main.go').click()
-  await window.locator('.line-menu button', { hasText: 'Open in the Files tab' }).click()
+  await tabButton(window, 'main.go').click()
 
   await expect(window.locator('.panel-tabs')).toHaveCount(1)
   await expect(files(window).locator('.cm-content')).toContainText('package main')
@@ -142,7 +150,7 @@ test('a tree the reader opens in the pane stays open', async ({ window, daemon }
   await files(window).locator('.ws-side-toggle').click()
   await expect(files(window).locator('.ws-side')).toBeVisible()
 
-  await arrow(window, 'README.md').click()
+  await sideButton(window, 'README.md').click()
 
   // The panel, not `.cm-content`: a Markdown file opens in the preview, and
   // the heading is what the reader ends up looking at.
