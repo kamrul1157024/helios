@@ -1,13 +1,13 @@
-# Approving a Plan From the Terminal
+# Approving a Plan From a Phone
 
 ## The claim
 
 A plan is not a yes-or-no question, and helios asked it as one.
 
 When Claude finishes planning it calls `ExitPlanMode`. On the wire that is a permission
-like any other, so the `PermissionRequest` hook intercepts it and helios paints its own
-box over the CLI's. The box helios painted said `ExitPlanMode`, showed the raw tool input
-cut at 100 characters, and offered `Allow once` and `Deny`.
+like any other, so the `PermissionRequest` hook intercepts it, and the phone and the
+desktop app got a card saying `ExitPlanMode` with the raw tool input cut at 100 characters
+and two buttons: Approve and Deny.
 
 The CLI's own dialog, in the same moment, offers three rows:
 
@@ -20,152 +20,82 @@ Claude has written up a plan and is ready to execute. Would you like to proceed?
   ctrl+g to edit in Vim · ~/.claude/plans/give-plan-approval-its-own-rows.md
 ```
 
-Three things were lost. The mode the session continues in — the difference between
-approving one plan and approving every edit that follows from it. The ability to disagree
-in words rather than with a bare no. And the plan itself, which nobody could read.
+Three things were lost on the remote surfaces. The mode the session continues in — the
+difference between approving one plan and approving every edit that follows from it. The
+ability to disagree in words rather than with a bare no. And the plan itself, which nobody
+could read.
 
 ## Where we were
 
 | | Mode choice | Disagree with a reason | Plan readable |
 | --- | --- | --- | --- |
 | CLI's own dialog | yes, two rows | yes | yes |
-| Terminal overlay | no | no | no — raw JSON, 100 chars |
-| Mobile / desktop | no | no | no |
+| Mobile / desktop | no | no | no — raw JSON, 100 chars |
 
-Every row but the first says no. This change makes the other two say yes on the first two
-columns. The third is answered differently on each surface. The desktop app has the width,
-so it shows the plan on the card. The phone names the plan and opens it in the file viewer,
-which renders the markdown on a whole screen. The terminal already has the CLI's own
-rendering of it directly above the box — see **The box does not reprint the plan**.
+The CLI's row already says yes to all three. This change makes the phone and the desktop
+match it, and leaves the terminal alone.
 
-## What it looks like
+## The terminal keeps the CLI's dialog, and nothing else
 
-Drawn at the overlay's real geometry: 74-column content, the 4-column detail indent, and
-the nested field from `inputRows`. Three things ASCII cannot show — the selected row is a
-reverse-video bar across the full width, the descriptions are dim, and the footer is dim.
+Helios paints its own approval box over a session's terminal for every other tool. For a
+plan it paints nothing.
 
-Before:
+The first build of this did paint one — `Ready to code?`, the two mode rows, an answer
+field — and it made the terminal worse in two ways at once:
 
-```
-┌─ ExitPlanMode ─────────────────────────────────────────────────────────────┐
-│ {"plan":"# Plan: give plan approval its own rows\n\n## Context\nThe        │
-│ terminal only offers Allow onc...                                          │
-│                                                                            │
-│ ❯ Allow once                                                               │
-│   Deny                                                                     │
-│                                                                            │
-│ ↑↓ select · enter confirm · esc cancel                                     │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+- **The screen became unreadable.** The CLI's dialog is already there. Helios's box is
+  composited over it by the host, so the two interleave character by character:
+  `Clau│ealreadyiwritten,aonlyntoncommiteady to execute. Would you like to proceed?`
+- **Helios could no longer read the screen it had to press.** The same capture feeds
+  `answerPlanDialog`, which is how a phone's answer reaches the CLI. With two boxes in it,
+  no row matched, and approving from the phone silently did nothing.
 
-After:
+There was nothing to gain for the cost. The CLI's dialog offers the same three rows, the
+same feedback path, and renders the plan above itself in full. A second copy of a better
+original is not worth an unreadable screen.
 
-```
-┌─ Ready to code? ───────────────────────────────────────────────────────────┐
-│ ~/.claude/plans/give-plan-approval-its-own-rows.md                         │
-│                                                                            │
-│ ❯ Yes, and use auto mode                                                   │
-│     Claude edits and runs commands without asking, for the rest of this    │
-│     session                                                                │
-│   Yes, manually approve edits                                              │
-│     Claude asks before each edit, as it does now                           │
-│   Tell Claude what to change                                               │
-│                                                                            │
-│ ↑↓ select · enter confirm · esc cancel                                     │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+So `showPermissionPrompt` returns a no-op for `ExitPlanMode`. The person at the keyboard
+answers the CLI directly, exactly as they did before helios existed.
 
-After Enter on the third row:
-
-```
-┌─ Ready to code? ───────────────────────────────────────────────────────────┐
-│ ~/.claude/plans/give-plan-approval-its-own-rows.md                         │
-│                                                                            │
-│   Yes, and use auto mode                                                   │
-│     Claude edits and runs commands without asking, for the rest of this    │
-│     session                                                                │
-│   Yes, manually approve edits                                              │
-│     Claude asks before each edit, as it does now                           │
-│ ❯ Tell Claude what to change                                               │
-│   ┌──────────────────────────────────────────────────────────────────────┐ │
-│   │ answer the CLI's dialog too, a hook cannot decide this█              │ │
-│   └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                            │
-│ enter send · esc back to the list                                          │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-The box holds its height when the field opens: nothing above the rows grows with the plan,
-so there is nothing for the three rows the field adds to push off. That matters because
-`RenderOverlay` anchors the box to the bottom of the viewport and clips from the top.
-
-## The box does not reprint the plan
-
-The first build of this put the plan in the box — `tool_input.plan` split into one
-`Prompt.Body` line each, capped at 14 with a `…57 more lines` tail. On screen it was
-unreadable, and the reason is not the cap:
-
-- The CLI has **already rendered the plan** into the transcript directly above, with
-  headings, colour and tables. The box repainted the same plan a second time, worse.
-- The overlay has no markdown renderer. It is box-drawn text assembled in
-  `internal/terminal/overlay.go` and written straight to every viewer's terminal, so
-  `#`, backticks and pipe-tables arrive as themselves.
-- There is nowhere to scroll to the rest, so a plan of any size was cut mid-sentence.
-- The height it took came out of the rows, on exactly the short screens where the rows
-  are hardest to fit.
-
-So the box says where the plan is written down and leaves the reading to the transcript
-above it. The alternative considered and rejected was a full-screen overlay with a
-markdown renderer: a new protocol field, host-side scrolling, a renderer dependency, and
-at the end of it a copy that covers the CLI's own better one.
-
-This applies to the terminal alone. The desktop app has no transcript beside the card, so
-it still carries the plan, and the phone hands the reading to its file viewer; see **The
-phone and the desktop app get the same rows**.
-
-## What each part maps to
-
-**Title.** `ExitPlanMode` becomes `Ready to code?`, the CLI's own words. A tool name is
-right for `Bash`. For this tool it names the mechanism, not the decision.
-
-**Body.** `planFilePath` from the hook payload, one line, and nothing else. It is the one
-thing the transcript above does not say. A payload with no `plan` at all is the exception:
-the CLI printed nothing to read either, so the box falls back to `summarizeToolInput`.
-A payload with a plan but no path leaves the body empty rather than inventing one.
-
-**The rows.** Two mode rows. The text under each is `Prompt.Details`, which the overlay
-already draws and caps at two lines.
-
-**The third row is not an option.** It is `Prompt.AllowText` with
-`TextLabel: "Tell Claude what to change"`. Enter opens the field, Enter sends, and the
-text becomes the hook's deny message.
-
-**Escape** still denies, and gets a written reason in place of `"Denied via helios"`.
-
-## A plan is the one permission a hook cannot decide
+## Pressing the row a phone picked
 
 The CLI ignores an `allow` for `ExitPlanMode`. It shows its own dialog anyway and the plan
 does not start. That is measured, not assumed — see Evidence. So helios cannot answer a
 plan the way it answers `Bash`.
 
-What it does instead: it collects the answer on its own overlay, replies `ask` to get out
-of the CLI's way, and then presses the matching row on the CLI's dialog. The keystroke has
-to follow the reply rather than accompany it, because the CLI does not draw that dialog
-until the hook has answered. `answerPlanDialog` therefore runs in a goroutine and polls for
-up to 15 seconds, reusing `provider.ConfirmChoice` — the same screen-scraping row picker
-that answers the workspace trust dialog.
+What it does instead: it replies `ask` to get out of the CLI's way, then presses the row
+the phone chose. The keystroke has to follow the reply rather than accompany it, because
+the CLI does not draw that dialog until the hook has answered. `answerPlanDialog` therefore
+runs in a goroutine and polls for up to 15 seconds.
 
-The match is a substring of the CLI's row, kept to the words that carry the meaning:
-`auto mode` and `manually approve`. Failing to find it is survivable and deliberately
-quiet: the CLI's dialog is on screen, fully usable, and the person at the terminal answers
-it by hand. A renamed row degrades to that, not to a hung session.
+**It presses the row's number, not its highlight.** `provider.ConfirmChoice` — the
+screen-scraping picker that answers the workspace trust dialog — walks the highlight onto a
+row with arrow keys, and finds the highlight by looking for a cursor mark. Under a plan
+dialog sits the composer, carrying a `❯` of its own, and `locateChoice` takes the *lowest*
+match. It read the composer as the selection, pressed Up eight times, and gave up. The CLI
+numbers these rows and tells the user to press the number; helios presses the same key.
 
-| Row | Hook response | Then |
+**Nothing is pressed until the CLI's own question is on screen.** `would you like to
+proceed` has to appear in the capture first. A numbered list is an ordinary shape for a
+terminal to hold, and a digit sent at the wrong moment is a digit typed into the composer.
+
+The row is then found by wording. There is more than one candidate per row, because the
+copy belongs to the CLI and has already moved: 2.1.259 offers `Yes, and use auto mode`,
+2.1.126 offers `Yes, auto-accept edits`. Helios tries `auto-accept` then `auto mode` for
+the first, and `manually approve` for the second. Matching only the newer wording made
+approval a no-op on 2.1.126, and the log said no more than that no row was found — so a
+miss now prints the screen it looked at.
+
+Failing to find a row is survivable and deliberately quiet: the CLI's dialog is on screen,
+fully usable, and the person at the terminal answers it by hand. A renamed row degrades to
+that, not to a hung session.
+
+| The card's answer | Hook response | Then |
 | --- | --- | --- |
-| Yes, and use auto mode | `ask` | Enter on the CLI's `auto mode` row; record `auto` |
-| Yes, manually approve edits | `ask` | Enter on the CLI's `manually approve` row; record `manual` |
-| Tell Claude what to change | `deny`, `message` = a line naming the user, then their words | — |
-| Esc | `deny`, message says the plan was rejected and asks Claude to plan again | — |
+| Yes, and use auto mode | `ask` | press the CLI's `1`; record `auto` |
+| Yes, manually approve edits | `ask` | press the CLI's `2`; record `manual` |
+| Feedback typed, Send back | `deny`, `message` = a line naming the user, then their words | — |
+| Deny | `deny`, message says the plan was rejected and asks Claude to plan again | — |
 
 A denied tool reaches the model as `Error: <message>`, so the feedback needs someone
 attached to it. Bare text there reads as a malfunction rather than as a person talking.
@@ -254,12 +184,12 @@ A plan with no `planFilePath` keeps the whole text on the card. There is nothing
 so the card is the only copy. The desktop app keeps the plan on the card either way — it
 has the width for it, and the card sits beside no viewer to send the reader to.
 
-The daemon does not care which surface answered. `handlePermissionAction` and the terminal
-build the same `permissionAnswer`, so a plan approved from a phone is pressed onto the CLI's
-dialog exactly as one approved at the keyboard is.
+Either surface builds the same `permissionAnswer`, so the daemon does not care which one
+answered: `handlePermissionAction` turns it into a decision, and the decision presses the
+CLI's dialog.
 
 ## Known limit
 
-An older ptyhost reports overlay protocol < 2. `hitl.Ask` then drops `AllowText`, so the
-feedback row disappears and only the two mode rows remain. That is the established
-behaviour for the answer field, not a new failure.
+A plan answered at the keyboard is invisible to helios. The CLI's dialog is the CLI's, so
+the notification stays pending until it is dismissed or the session moves on — helios
+learns the mode only when a later hook reports it.

@@ -2,13 +2,15 @@ package claude
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/hitl"
+	"github.com/kamrul1157024/helios/internal/notifications"
+	"github.com/kamrul1157024/helios/internal/provider"
 	"github.com/kamrul1157024/helios/internal/store"
-	"github.com/kamrul1157024/helios/internal/terminal"
 )
 
 // samplePlan is what the CLI puts in tool_input.plan: markdown, several lines.
@@ -35,12 +37,28 @@ func planHook(plan string) hookInput {
 // cliPlanDialog is the dialog Claude Code 2.1.259 draws for a plan, which
 // helios answers with a keystroke because the CLI ignores an allow for
 // ExitPlanMode. Copied from a real session.
+//
+// The composer sits under it, carrying a cursor mark of its own. That mark is
+// why the row is pressed by number: a highlight walk reads the lowest "❯" on
+// the screen as the dialog's selection and marches away from the rows.
 const cliPlanDialog = `Claude has written up a plan and is ready to execute. Would you like to proceed?
 ❯ 1. Yes, and use auto mode
   2. Yes, manually approve edits
   3. Tell Claude what to change
       shift+tab to approve with this feedback
-  ctrl+g to edit in Vim · ~/.claude/plans/rows.md`
+  ctrl+g to edit in Vim · ~/.claude/plans/rows.md
+────────────────────────────────────────────────
+❯ what shall we do next
+────────────────────────────────────────────────`
+
+// The same dialog on Claude Code 2.1.126, which words the first row
+// differently. Approving was a no-op against this build: the match looked for
+// "auto mode" and the row says "auto-accept edits".
+const cliPlanDialogAutoAccept = `Claude has written up a plan and is ready to execute. Would you like to proceed?
+❯ 1. Yes, auto-accept edits
+  2. Yes, manually approve edits
+  3. Tell Claude what to change
+      shift+tab to approve with this feedback`
 
 // awaitKeys waits for the handoff goroutine to finish pressing rows.
 func awaitKeys(t *testing.T, f *fakeBackend, want int) []string {
@@ -69,61 +87,79 @@ func sessionMode(t *testing.T, db *store.Store, sessionID string) string {
 	return *sess.PermissionMode
 }
 
-// The bug this closes: a plan is not a yes-or-no question, but helios painted
-// Allow once / Deny over it, so neither mode could be picked and disagreeing
-// meant a bare no.
-func TestPlan_PaintsTheModeRowsAndTheFeedbackRow(t *testing.T) {
+// answerFromPhone runs the permission hook and resolves its notification the
+// way a remote surface does. A plan has no terminal box to answer any more, so
+// this is the only way in besides the CLI's own dialog.
+func answerFromPhone(t *testing.T, ctx *provider.HookContext, input hookInput,
+	decision notifications.Decision) permResponse {
+	t.Helper()
+	ids := captureNotifIDs(ctx)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- callHook(handlePermission, ctx, input) }()
+
+	if err := ctx.Mgr.Resolve(awaitNotifID(t, ids), decision, "mobile"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	return permDecision(t, awaitResponse(t, done))
+}
+
+// The bug this closes: helios drew its own approval box over the dialog the CLI
+// draws for a plan. The two composite into one unreadable screen — which is
+// also the screen helios reads back when it presses a row for the phone.
+func TestPlan_PaintsNoBoxOverTheCLIsOwnDialog(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	overlays, _ := withTerminal(ctx)
+	terminalOf(ctx).setScreen(cliPlanDialog)
+
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "denied"})
+
+	select {
+	case o := <-overlays.painted:
+		t.Errorf("helios painted %q over the CLI's own plan dialog", o.Title)
+	default:
+	}
+}
+
+// An ordinary tool keeps its box: only a plan has a dialog of the CLI's own to
+// leave alone.
+func TestPlan_OrdinaryToolsKeepTheirBox(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
 	overlays, hitlCtl := withTerminal(ctx)
 
-	done, o := askPermission(t, ctx, overlays, planHook(samplePlan))
-
-	if o.Title != planTitle {
-		t.Errorf("title = %q, want %q — the tool name names the mechanism, not the decision", o.Title, planTitle)
+	done, o := askPermission(t, ctx, overlays, hookInput{
+		SessionID: "sess-1", CWD: "/tmp/proj", ToolName: "Bash",
+		ToolInput: json.RawMessage(`{"command":"ls"}`),
+	})
+	if o.Title != "Bash" {
+		t.Errorf("title = %q, want the tool name", o.Title)
 	}
-	want := []string{planAutoMode, planManualEdits}
-	if len(o.Options) != len(want) || o.Options[0] != want[0] || o.Options[1] != want[1] {
-		t.Errorf("options = %v, want %v", o.Options, want)
-	}
-	if len(o.Details) != 2 || o.Details[0] == "" || o.Details[1] == "" {
-		t.Errorf("details = %v, want a line under each mode", o.Details)
-	}
-	if o.Input == nil || o.Input.Label != planFeedback {
-		t.Errorf("input row = %v, want one labelled %q", o.Input, planFeedback)
-	}
-
-	// The plan is not repeated over the CLI's own rendering of it. All the box
-	// adds above the rows is where the plan is written down.
-	if len(o.Body) != 1 || o.Body[0] != "~/.claude/plans/rows.md" {
-		t.Errorf("body = %v, want the plan's path and nothing else", o.Body)
-	}
-
 	hitlCtl.HandleInput("sess-1", []byte("\x1b"))
 	awaitResponse(t, done)
 }
 
 // The CLI will not let a hook approve a plan: an allow for ExitPlanMode is
 // ignored and its own dialog is shown regardless. So helios answers "ask" and
-// presses the row the user picked.
-func TestPlan_AutoModeIsPressedOnTheCLIsOwnDialog(t *testing.T) {
+// presses the row the phone picked.
+func TestPlan_AutoModePressesTheFirstRow(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	overlays, hitlCtl := withTerminal(ctx)
+	withTerminal(ctx)
 	terminalOf(ctx).setScreen(cliPlanDialog)
 
-	done, _ := askPermission(t, ctx, overlays, planHook(samplePlan))
-	hitlCtl.HandleInput("sess-1", []byte("\r")) // the first row is preselected
+	resp := answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"auto"}`)})
 
-	decision := permDecision(t, awaitResponse(t, done)).HookSpecificOutput.Decision
 	// Not "allow": the CLI ignores that here, and claiming it would hide the
 	// keystroke that does the work.
-	if decision.Behavior != "ask" {
-		t.Fatalf("behavior = %q, want ask", decision.Behavior)
+	if got := resp.HookSpecificOutput.Decision.Behavior; got != "ask" {
+		t.Fatalf("behavior = %q, want ask", got)
 	}
-	// Row one is already highlighted, so Enter is the whole answer.
-	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:enter" {
-		t.Errorf("keys = %v, want Enter on the highlighted row", got)
+	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:1" {
+		t.Errorf("keys = %v, want the first row pressed by number", got)
 	}
 	// The CLI applies the mode to itself. Helios repeats --permission-mode from
 	// the record on resume, so it has to know too, or the session wakes back up
@@ -133,24 +169,39 @@ func TestPlan_AutoModeIsPressedOnTheCLIsOwnDialog(t *testing.T) {
 	}
 }
 
-func TestPlan_ManualApprovalWalksToTheSecondRow(t *testing.T) {
+// The row's copy belongs to the CLI and has already moved once.
+func TestPlan_AutoModeIsPressedWhateverTheCLICallsIt(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	overlays, hitlCtl := withTerminal(ctx)
+	withTerminal(ctx)
+	terminalOf(ctx).setScreen(cliPlanDialogAutoAccept)
+
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"auto"}`)})
+
+	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:1" {
+		t.Errorf("keys = %v, want the first row pressed by number", got)
+	}
+	if got := sessionMode(t, db, "sess-1"); got != "auto" {
+		t.Errorf("recorded mode = %q, want auto", got)
+	}
+}
+
+func TestPlan_ManualApprovalPressesTheSecondRow(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	withTerminal(ctx)
 	terminalOf(ctx).setScreen(cliPlanDialog)
 
-	done, _ := askPermission(t, ctx, overlays, planHook(samplePlan))
-	hitlCtl.HandleInput("sess-1", []byte("\x1b[B"))
-	awaitOverlay(t, overlays)
-	hitlCtl.HandleInput("sess-1", []byte("\r"))
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"manual"}`)})
 
-	if got := permDecision(t, awaitResponse(t, done)).HookSpecificOutput.Decision.Behavior; got != "ask" {
-		t.Fatalf("behavior = %q, want ask", got)
-	}
-	// The highlight starts on row one, so row two is a Down and then Enter.
-	got := awaitKeys(t, terminalOf(ctx), 2)
-	if got[0] != "sess-1:down" || got[1] != "sess-1:enter" {
-		t.Errorf("keys = %v, want the highlight walked down, then Enter", got)
+	// Two, not "one Down then Enter": the highlight is not walked, so the
+	// composer's own cursor mark cannot be mistaken for the dialog's.
+	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:2" {
+		t.Errorf("keys = %v, want the second row pressed by number", got)
 	}
 	if got := sessionMode(t, db, "sess-1"); got != "manual" {
 		t.Errorf("recorded mode = %q, want manual", got)
@@ -163,13 +214,14 @@ func TestPlan_ManualApprovalWalksToTheSecondRow(t *testing.T) {
 func TestPlan_AnUnreachableDialogLeavesTheSessionAnswerable(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	overlays, hitlCtl := withTerminal(ctx)
+	withTerminal(ctx)
 	terminalOf(ctx).setScreen("a screen with no plan dialog on it")
 
-	done, _ := askPermission(t, ctx, overlays, planHook(samplePlan))
-	hitlCtl.HandleInput("sess-1", []byte("\r"))
+	resp := answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"auto"}`)})
 
-	if got := permDecision(t, awaitResponse(t, done)).HookSpecificOutput.Decision.Behavior; got != "ask" {
+	if got := resp.HookSpecificOutput.Decision.Behavior; got != "ask" {
 		t.Errorf("behavior = %q, want ask so the CLI keeps its own dialog", got)
 	}
 	if got := terminalOf(ctx).sentKeys(); len(got) != 0 {
@@ -177,29 +229,34 @@ func TestPlan_AnUnreachableDialogLeavesTheSessionAnswerable(t *testing.T) {
 	}
 }
 
-// Disagreeing with a plan is the point of the feedback row: Claude re-plans
+// The rows alone are not enough to press one: a numbered list is an ordinary
+// shape, and a digit typed into the composer is a digit in the next prompt.
+func TestPlan_RowsWithoutTheCLIsQuestionArePressedNothing(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	withTerminal(ctx)
+	terminalOf(ctx).setScreen("1. Yes, and use auto mode\n2. Yes, manually approve edits")
+
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"auto"}`)})
+
+	if got := terminalOf(ctx).sentKeys(); len(got) != 0 {
+		t.Errorf("keys = %v, want nothing pressed without the CLI's own question", got)
+	}
+}
+
+// Disagreeing with a plan is the point of the feedback field: Claude re-plans
 // from the words rather than stopping.
 func TestPlan_TypedFeedbackReachesClaude(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	overlays, hitlCtl := withTerminal(ctx)
+	withTerminal(ctx)
 
-	done, _ := askPermission(t, ctx, overlays, planHook(samplePlan))
+	resp := answerFromPhone(t, ctx, planHook(samplePlan),
+		deniedWithFeedback("split the plan on newlines"))
 
-	// Down past both modes onto the feedback row, Enter to open the field.
-	hitlCtl.HandleInput("sess-1", []byte("\x1b[B"))
-	awaitOverlay(t, overlays)
-	hitlCtl.HandleInput("sess-1", []byte("\x1b[B"))
-	awaitOverlay(t, overlays)
-	hitlCtl.HandleInput("sess-1", []byte("\r"))
-	if o := awaitOverlay(t, overlays); o.Input == nil || !o.Input.Active {
-		t.Fatalf("input = %v, want the field open after Enter on its row", o.Input)
-	}
-	hitlCtl.HandleInput("sess-1", []byte("split the plan on newlines"))
-	awaitOverlay(t, overlays)
-	hitlCtl.HandleInput("sess-1", []byte("\r"))
-
-	decision := permDecision(t, awaitResponse(t, done)).HookSpecificOutput.Decision
+	decision := resp.HookSpecificOutput.Decision
 	if decision.Behavior != "deny" {
 		t.Fatalf("behavior = %q, want deny — feedback sends the plan back", decision.Behavior)
 	}
@@ -216,90 +273,22 @@ func TestPlan_TypedFeedbackReachesClaude(t *testing.T) {
 	}
 }
 
-// Escape on a plan is a refusal without a word. A bare "Denied via helios"
-// reads as stop; the plan is how Claude asks to start.
-func TestPlan_EscapeAsksClaudeWhatToChange(t *testing.T) {
+// A refusal without a word. A bare "Denied via helios" reads as stop; the plan
+// is how Claude asks to start.
+func TestPlan_ABareRefusalAsksClaudeWhatToChange(t *testing.T) {
 	ctx, db, _ := setupCtx(t)
 	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	overlays, hitlCtl := withTerminal(ctx)
+	withTerminal(ctx)
 
-	done, _ := askPermission(t, ctx, overlays, planHook(samplePlan))
-	hitlCtl.HandleInput("sess-1", []byte("\x1b"))
+	resp := answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "denied"})
 
-	decision := permDecision(t, awaitResponse(t, done)).HookSpecificOutput.Decision
+	decision := resp.HookSpecificOutput.Decision
 	if decision.Behavior != "deny" {
 		t.Fatalf("behavior = %q, want deny", decision.Behavior)
 	}
 	if !strings.Contains(decision.Message, exitPlanModeTool) {
 		t.Errorf("message = %q, want it to name the way back", decision.Message)
-	}
-}
-
-// An ordinary tool keeps the rows it had; only ExitPlanMode changes.
-func TestPlan_OrdinaryToolsKeepAllowAndDeny(t *testing.T) {
-	p := permissionPrompt(&hookInput{
-		ToolName:  "Bash",
-		ToolInput: json.RawMessage(`{"command":"ls"}`),
-	})
-	if p.Title != "Bash" || p.AllowText {
-		t.Errorf("prompt = %+v, want the tool name and no answer field", p)
-	}
-	if len(p.Choices) != 2 || p.Choices[0] != allowOnce || p.Choices[1] != denyChoice {
-		t.Errorf("choices = %v, want allow/deny", p.Choices)
-	}
-}
-
-// The box used to reprint the plan the CLI had just rendered above it, in raw
-// markdown and cut off partway. However long the plan, the box says where it
-// lives and leaves the reading to the transcript.
-func TestPlan_ThePlanIsNotReprintedOverTheCLIsOwnCopy(t *testing.T) {
-	long := strings.Repeat("a line of the plan\n", 40)
-	body := planBody(planInput(long, "~/.claude/plans/rows.md"))
-
-	if len(body) != 1 || body[0] != "~/.claude/plans/rows.md" {
-		t.Fatalf("body = %v, want the path alone", body)
-	}
-	if strings.Contains(body[0], "a line of the plan") {
-		t.Errorf("body = %v, want none of the plan's own text", body)
-	}
-}
-
-// A plan the CLI wrote nowhere leaves the box with nothing to point at, and a
-// path is not worth inventing.
-func TestPlan_APlanWithNoFileShowsNoBody(t *testing.T) {
-	if body := planBody(planInput("# Small\n", "")); len(body) != 0 {
-		t.Errorf("body = %v, want nothing above the rows", body)
-	}
-}
-
-// The rows are the point of the box, and they are checked on the screen: it is
-// anchored to the bottom of the viewport and clipped from the top, so anything
-// above them that grows with the plan would push them off.
-func TestPlan_TheRowsSurviveALongPlanOnASmallScreen(t *testing.T) {
-	ctx, db, _ := setupCtx(t)
-	seedSession(t, db, "sess-1", "/tmp/proj", "active")
-	overlays, hitlCtl := withTerminal(ctx)
-
-	long := "# Plan\n" + strings.Repeat("a line of the plan\n", 60)
-	done, o := askPermission(t, ctx, overlays, planHook(long))
-
-	// 80x24 is the small end of a real terminal, not a corner case.
-	painted := string(terminal.RenderOverlay(o, 80, 24))
-	for _, want := range []string{planAutoMode, planManualEdits, planFeedback} {
-		if !strings.Contains(painted, want) {
-			t.Errorf("the row %q was clipped off an 80x24 screen:\n%s", want, painted)
-		}
-	}
-
-	hitlCtl.HandleInput("sess-1", []byte("\x1b"))
-	awaitResponse(t, done)
-}
-
-// A plan with no text at all still has to paint something.
-func TestPlan_WithoutAPlanFallsBackToTheToolInput(t *testing.T) {
-	body := planBody(json.RawMessage(`{"other":"field"}`))
-	if len(body) != 1 || body[0] == "" {
-		t.Errorf("body = %v, want a single summary line", body)
 	}
 }
 
@@ -313,11 +302,10 @@ func TestPlan_NotificationDetailReadsAsThePlansTitle(t *testing.T) {
 }
 
 // A typed answer carries Index -1, so indexing the choices with it would read
-// off the front of the list. Nothing set AllowText on a permission before, so
-// this was latent until the feedback row.
+// off the front of the list.
 func TestPlan_ATypedAnswerDoesNotIndexTheChoices(t *testing.T) {
-	choices := []string{planAutoMode, planManualEdits}
-	got := terminalDecision(choices, hitl.Answer{Index: -1, Text: "  change it  "})
+	got := terminalDecision([]string{allowOnce, denyChoice},
+		hitl.Answer{Index: -1, Text: "  change it  "})
 
 	if got.Status != "denied" {
 		t.Fatalf("status = %q, want denied", got.Status)
@@ -339,24 +327,8 @@ func TestPlan_AnAnswerOffTheEndDenies(t *testing.T) {
 	}
 }
 
-// A row's label is the CLI's copy and changes with its releases, so what
-// travels between surfaces is the short name.
-func TestPlan_PlanChoiceNames(t *testing.T) {
-	cases := map[string]string{
-		planAutoMode:    planChoiceAuto,
-		planManualEdits: planChoiceManual,
-		planFeedback:    "",
-		allowOnce:       "",
-	}
-	for row, want := range cases {
-		if got := planChoiceOf(row); got != want {
-			t.Errorf("planChoiceOf(%q) = %q, want %q", row, got, want)
-		}
-	}
-}
-
-// The phone answers over the same contract as the terminal, so it can pick a
-// mode or send the plan back in words.
+// The phone answers over the same contract as before, so it can pick a mode or
+// send the plan back in words.
 func TestPlan_ThePhoneCanAnswerAPlan(t *testing.T) {
 	approve, err := handlePermissionAction(nil, json.RawMessage(
 		`{"action":"approve","plan_choice":"auto"}`))

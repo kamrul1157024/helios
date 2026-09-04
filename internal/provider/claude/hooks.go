@@ -339,20 +339,24 @@ const (
 
 // showPermissionPrompt paints the approval over the session's terminal so the
 // person sitting at it can answer, and returns the function that takes it down.
+//
+// A plan gets no box. The CLI draws its own dialog for one — the mode rows, the
+// feedback row and all — and painting over it cost more than it gave: the two
+// boxes composite into one unreadable screen, which is also the screen helios
+// reads back when it presses a row for the phone. The person at the keyboard
+// answers the CLI directly; the phone still gets its card.
 func showPermissionPrompt(ctx *provider.HookContext, input *hookInput, notifID string) func() {
+	if input.ToolName == exitPlanModeTool {
+		return func() {}
+	}
 	p := permissionPrompt(input)
 	return showPrompt(ctx, input.SessionID, p, func(a hitl.Answer) {
 		resolvePermissionFromTerminal(ctx, notifID, p.Choices, a)
 	})
 }
 
-// permissionPrompt is the box a tool's approval gets. A plan is asking
-// something else than "may I run this", so it gets its own; see planPrompt.
+// permissionPrompt is the box a tool's approval gets.
 func permissionPrompt(input *hookInput) hitl.Prompt {
-	if input.ToolName == exitPlanModeTool {
-		return planPrompt(input)
-	}
-
 	choices := []string{allowOnce, denyChoice}
 	// "Don't ask again" is only offerable when the CLI told us what rule it
 	// would write; there is nothing to apply otherwise.
@@ -418,8 +422,6 @@ func terminalDecision(choices []string, a hitl.Answer) notifications.Decision {
 			Status:   "approved",
 			Response: json.RawMessage(`{"apply_permission":0}`),
 		}
-	case planAutoMode, planManualEdits:
-		return approvedWithPlanChoice(planChoiceOf(choices[a.Index]))
 	}
 	return notifications.Decision{Status: "denied"}
 }
