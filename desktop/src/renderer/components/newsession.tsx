@@ -13,7 +13,7 @@ import {
   useDropTarget,
 } from './attach.tsx'
 import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
-import { completionTarget, completionsIn } from './dirpath.ts'
+import { completionTarget, completionsIn, resolveTyped } from './dirpath.ts'
 import { tintOf } from './grouping.ts'
 import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
 
@@ -455,7 +455,11 @@ function DirectoryList({
   const search = useRef<HTMLInputElement | null>(null)
   const wanted = typed.trim()
   const needle = wanted.toLowerCase()
-  const { parent, prefix } = completionTarget(wanted)
+  const { parent, prefix } = completionTarget(wanted, cwd)
+  // Where the typed text would actually start, which for a relative path is
+  // under the directory the chip already names. The daemon takes absolute
+  // paths only, so this is the form that gets committed.
+  const target = resolveTyped(wanted, cwd)
 
   const recents = useMemo(
     () =>
@@ -482,7 +486,7 @@ function DirectoryList({
     [listing, prefix, recents],
   )
 
-  const exact = directories.some((dir) => dir.cwd === wanted)
+  const exact = directories.some((dir) => dir.cwd === target)
   // Home stays reachable while it is being spelled: it is a row like any other,
   // and hiding it the moment a key is pressed hides what was being reached for.
   const showHome = needle === '' || 'home'.startsWith(needle) || needle === '~'
@@ -520,14 +524,19 @@ function DirectoryList({
           event.preventDefault()
           // What is in the box wins over what is under it. Anything else makes
           // the escape hatch conditional on the list agreeing.
-          if (wanted !== '') onPick(wanted)
+          if (wanted !== '') onPick(target)
         }}
       />
       <div className="picker-list">
         {wanted !== '' && !exact && (
-          <button className="composer-option use-typed" onClick={() => onPick(wanted)}>
+          <button className="composer-option use-typed" onClick={() => onPick(target)}>
             <span className="composer-option-name">Use “{wanted}”</span>
-            <span className="composer-option-hint">Start here whether or not it is listed</span>
+            {/* A relative path says where it lands, because the reader cannot
+                see it from the text: the same three letters mean a different
+                directory depending on which one the chip names. */}
+            <span className="composer-option-hint">
+              {target === wanted ? 'Start here whether or not it is listed' : target}
+            </span>
           </button>
         )}
         {showHome && (

@@ -139,14 +139,50 @@ test('the directory filter narrows the list and takes a typed path', async ({ wi
 // The picker's whole job, and the reason #154 was reverted: a directory that
 // has never had a session in it is not in the recents, so the only way to it is
 // the one the list cannot offer.
-test('a relative path is committable, which the recents cannot offer', async ({ window }) => {
+//
+// It reaches the daemon absolute. `resolveCWD` rejects anything else with a
+// 400 (internal/server/cwd.go), so committing the typed text as it stands would
+// be an escape hatch that only works for the paths that did not need one.
+test('a relative path is committable, and lands under the directory in the chip', async ({
+  window,
+  daemon,
+}) => {
   await openComposer(window)
   await openPlace(window)
 
   await window.locator('.picker-search').fill('workspace/acme-mobile')
   await window.locator('.composer-option', { hasText: 'Use' }).click()
-
   await expect(window.locator('.composer-place')).toContainText('acme-mobile')
+
+  await window.locator('.composer-prompt').fill('start here')
+  await window.locator('.composer .filled').click()
+
+  await expect.poll(() => daemon.writes().map((write) => write.kind)).toEqual(['create'])
+  const [created] = daemon.writes()
+  if (created?.kind !== 'create') throw new Error('the daemon recorded something other than a create')
+  expect(created.spec.cwd).toBe('/repo/workspace/acme-mobile')
+})
+
+// The complaint the fix is for: the chip says one directory and the typing used
+// to be answered from another. A bare segment is relative to what the chip
+// names, the way it would be in a shell sitting there.
+test('a bare name completes inside the directory the chip names', async ({ window }) => {
+  await openComposer(window)
+  await openPlace(window)
+
+  await window.locator('.picker-search').fill('desk')
+  await expect(window.locator('.picker-section', { hasText: 'In /repo' })).toBeVisible()
+
+  const offered = window.locator('.picker-list .composer-option', { hasText: 'desktop' })
+  await expect(offered).toHaveCount(1)
+  await expect(offered).toContainText('/repo/desktop')
+
+  // And the escape hatch above it says where it would land, rather than leaving
+  // the reader to guess which directory three letters are relative to.
+  await expect(window.locator('.composer-option.use-typed')).toContainText('/repo/desk')
+
+  await offered.click()
+  await expect(window.locator('.composer-place')).toContainText('desktop')
 })
 
 test('enter commits what is typed, with nothing under it agreeing', async ({ window }) => {
@@ -165,8 +201,9 @@ test('typing completes against the filesystem, not against the recents', async (
   await openPlace(window)
 
   // `work` is in no recent — the stub daemon has one session directory, /repo —
-  // so every row here came from a directory listing.
-  await window.locator('.picker-search').fill('work')
+  // so every row here came from a directory listing. Spelled from home, because
+  // a bare segment is relative to /repo, which is the chip's directory.
+  await window.locator('.picker-search').fill('~/work')
   const completions = window.locator('.picker-list .composer-option', { hasText: /workspace|worktrees/ })
   await expect(completions).toHaveCount(2)
   await expect(window.locator('.picker-section', { hasText: 'In /home/dev' })).toBeVisible()
@@ -189,7 +226,7 @@ test('tab fills in the top completion', async ({ window }) => {
   await openPlace(window)
 
   const search = window.locator('.picker-search')
-  await search.fill('worksp')
+  await search.fill('~/worksp')
   await expect(window.locator('.picker-list .composer-option', { hasText: 'workspace' })).toBeVisible()
   await search.press('Tab')
 
