@@ -138,12 +138,16 @@ jobs:
           set -e
           test ! -e /usr/local/bin/helios || { echo "the older install survived"; exit 1; }
           test -x "$HOME/.local/bin/helios" || { echo "nothing was installed"; exit 1; }
-          grep -q 'added by helios' "$HOME/.bashrc" || { echo "PATH line not written"; exit 1; }
           "$HOME/.local/bin/helios" version | grep -q '^helios' || {
             echo "the installed binary is not helios"; exit 1; }
-          # An interactive shell, because that is the only kind that reads
-          # .bashrc — Ubuntu's returns early for every other kind, so sourcing
-          # it here would prove nothing about the line that was added.
+          # The outcome, not the mechanism. A runner already has ~/.local/bin on
+          # its PATH, so ensure-path.sh rightly writes nothing here and there is
+          # no rc line to look for — install_test.sh covers the machines where
+          # there is. What has to be true either way is this.
+          #
+          # Asked of an interactive shell, because Ubuntu's .bashrc returns
+          # early for every other kind: a non-interactive check would pass
+          # whether the line worked or not.
           found=$(bash -ic 'command -v helios' 2> /dev/null | tr -d '\r')
           test "$found" = "$HOME/.local/bin/helios" || {
             echo "a new shell resolves helios to '$found'"; exit 1; }
