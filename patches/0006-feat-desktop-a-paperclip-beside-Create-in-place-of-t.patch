@@ -1,0 +1,194 @@
+From 1719dd398152cc60ad801c9e0db705a9f76c5cd4 Mon Sep 17 00:00:00 2001
+From: Rakibul Islam <33988342+raykibul@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 01:59:26 +0600
+Subject: [PATCH 6/8] =?UTF-8?q?feat(desktop):=20a=20paperclip=20beside=20C?=
+ =?UTF-8?q?reate,=20in=20place=20of=20the=20=E2=8A=95=20among=20the=20chip?=
+ =?UTF-8?q?s?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The chips say what the session will be — where it runs, on what model,
+under which permissions. Attaching a file is not one of those; it is
+something done to the prompt, so it belongs at the other end of the
+foot, next to the button that sends it.
+
+A paperclip rather than a ⊕, which read as "another chip", and ⌘U as
+well as the click. The shortcut is asked for rather than assumed: the
+listener is on the window, and the chat panel is mounted once per tab,
+so every hidden one would answer the keystroke with a file dialog of
+its own.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ desktop/e2e/new-session.spec.ts               | 14 ++++++++
+ desktop/src/renderer/components/attach.tsx    | 32 ++++++++++++++++---
+ desktop/src/renderer/components/icons.tsx     |  9 ++++++
+ .../src/renderer/components/newsession.tsx    |  9 +++++-
+ desktop/src/renderer/styles.css               | 12 ++++---
+ 5 files changed, 66 insertions(+), 10 deletions(-)
+
+diff --git a/desktop/e2e/new-session.spec.ts b/desktop/e2e/new-session.spec.ts
+index 7c6ee84..669effe 100644
+--- a/desktop/e2e/new-session.spec.ts
++++ b/desktop/e2e/new-session.spec.ts
+@@ -279,3 +279,17 @@ test('a file dropped anywhere on the dialog lands on it', async ({ window }) =>
+ 
+   await expect(window.locator('.attachment-name')).toHaveText('trace.txt')
+ })
++
++test('⌘U reaches for a file without touching the paperclip', async ({ window }) => {
++  await openComposer(window)
++
++  const chooser = window.waitForEvent('filechooser')
++  await window.keyboard.press('Meta+u')
++  await (await chooser).setFiles({
++    name: 'note.txt',
++    mimeType: 'text/plain',
++    buffer: Buffer.from('a note'),
++  })
++
++  await expect(window.locator('.attachment-name')).toHaveText('note.txt')
++})
+diff --git a/desktop/src/renderer/components/attach.tsx b/desktop/src/renderer/components/attach.tsx
+index 459f853..83eaadc 100644
+--- a/desktop/src/renderer/components/attach.tsx
++++ b/desktop/src/renderer/components/attach.tsx
+@@ -7,9 +7,10 @@
+ // time because a dropped File does not stay valid, and the upload happens
+ // before the send because a prompt naming a path the daemon never stored sends
+ // the agent looking for a file that is not there.
+-import { useRef, useState } from 'react'
++import { useEffect, useRef, useState } from 'react'
+ 
+ import { api } from '../bridge.ts'
++import { Paperclip } from './icons.tsx'
+ import {
+   isLargePaste,
+   needingUpload,
+@@ -160,15 +161,36 @@ export function useDropTarget(onFiles: (files: FileList) => void): {
+   }
+ }
+ 
+-/** The ⊕, and the file input hiding behind it. */
++/** The paperclip, and the file input hiding behind it. */
+ export function AttachButton({
+   onFiles,
+   disabled = false,
++  shortcut = false,
+ }: {
+   onFiles: (files: FileList | null) => void
+   disabled?: boolean
++  /**
++   * Whether ⌘U opens the picker as well as the click.
++   *
++   * Off by default because the listener is on the window: a panel that is
++   * mounted per tab has several of itself alive at once, and every one of them
++   * would answer the keystroke with a dialog of its own.
++   */
++  shortcut?: boolean
+ }): JSX.Element {
+   const picker = useRef<HTMLInputElement | null>(null)
++
++  useEffect(() => {
++    if (!shortcut || disabled) return
++    const onKey = (event: KeyboardEvent): void => {
++      if (!(event.metaKey || event.ctrlKey) || event.key !== 'u') return
++      event.preventDefault()
++      picker.current?.click()
++    }
++    window.addEventListener('keydown', onKey)
++    return () => window.removeEventListener('keydown', onKey)
++  }, [shortcut, disabled])
++
+   return (
+     <>
+       <input
+@@ -184,12 +206,12 @@ export function AttachButton({
+       />
+       <button
+         className="icon-btn attach-btn"
+-        title="Attach files — or paste and drop them here"
+-        aria-label="Attach files"
++        title={shortcut ? 'Add attachment (⌘U) — or paste and drop them here' : 'Add attachment — or paste and drop them here'}
++        aria-label="Add attachment"
+         disabled={disabled}
+         onClick={() => picker.current?.click()}
+       >
+-        ⊕
++        <Paperclip />
+       </button>
+     </>
+   )
+diff --git a/desktop/src/renderer/components/icons.tsx b/desktop/src/renderer/components/icons.tsx
+index e0704b9..fe501de 100644
+--- a/desktop/src/renderer/components/icons.tsx
++++ b/desktop/src/renderer/components/icons.tsx
+@@ -182,6 +182,15 @@ export function Shield({ className = '' }: { className?: string }): JSX.Element
+   )
+ }
+ 
++/** A paperclip: files going with the prompt. */
++export function Paperclip({ className = '' }: { className?: string }): JSX.Element {
++  return (
++    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
++      <path d="M18.5 11.5l-6.8 6.8a4 4 0 01-5.7-5.7l7.5-7.5a2.7 2.7 0 013.8 3.8l-7.5 7.5a1.4 1.4 0 01-1.9-1.9l6.6-6.6" />
++    </svg>
++  )
++}
++
+ /** A folder, for a directory the composer offers rather than one it remembers. */
+ export function Folder({ className = '' }: { className?: string }): JSX.Element {
+   return (
+diff --git a/desktop/src/renderer/components/newsession.tsx b/desktop/src/renderer/components/newsession.tsx
+index bab5954..99c3075 100644
+--- a/desktop/src/renderer/components/newsession.tsx
++++ b/desktop/src/renderer/components/newsession.tsx
+@@ -396,10 +396,17 @@ export function NewSessionDialog({
+               </Picker>
+             )}
+ 
+-            <AttachButton onFiles={(chosen) => void files.attach(chosen)} disabled={starting} />
+           </div>
+ 
+           <div className="composer-actions">
++            {/* With the actions rather than with the chips: the chips say what
++                the session will be, and the paperclip is something done to the
++                prompt, next to the button that sends it. */}
++            <AttachButton
++              onFiles={(chosen) => void files.attach(chosen)}
++              disabled={starting}
++              shortcut
++            />
+             <button className="ghost" onClick={onClose}>
+               Cancel
+             </button>
+diff --git a/desktop/src/renderer/styles.css b/desktop/src/renderer/styles.css
+index ab91ce3..350f0b6 100644
+--- a/desktop/src/renderer/styles.css
++++ b/desktop/src/renderer/styles.css
+@@ -3894,13 +3894,17 @@ figure.mermaid svg {
+   flex: none;
+ }
+ 
+-/* The ⊕ is a chip among the chips here, not the corner button it is in the
+-   chat composer: there is no box for it to sit inside. */
+-.composer-chips .attach-btn {
++/* Sized to the buttons it stands beside, not to the 36px an icon button is
++   elsewhere: the foot of the dialog is a 30px row. */
++.composer-actions .attach-btn {
+   width: 30px;
+   height: 30px;
+   border-radius: 999px;
+-  font-size: 15px;
++}
++
++.composer-actions .attach-btn .ui-icon {
++  width: 17px;
++  height: 17px;
+ }
+ 
+ /* The dialog has no inner box to outline, so the whole of it lights up. */
+-- 
+2.53.0
+

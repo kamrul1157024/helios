@@ -1,0 +1,624 @@
+From 8ede4412b3dc33b4bf5071bed3d38bdac55921fc Mon Sep 17 00:00:00 2001
+From: Rakibul Islam <33988342+raykibul@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 00:44:18 +0600
+Subject: [PATCH 2/8] feat(desktop): complete the composer's directory against
+ the filesystem
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The recents list and the search were one control doing two jobs, and it
+could only ever do the first. `ListDirectories` returns the distinct CWDs
+that already have a session, so a directory nobody has worked in yet was
+unreachable — the list said "these are your options" and meant it.
+
+Typing now completes against the disk. The typed path is split at its
+last separator, the parent is listed through GET /api/files, and the
+directories in it whose name starts with the rest are offered under a
+section naming where they came from. A bare or relative path completes
+under home, which is where a session with no directory starts anyway.
+Tab fills in the top match, as a shell does.
+
+The recents keep their own section above that, tinted and counted as
+before. They are the answer to "back to where I was working", which
+completion is not, and they are the only rows that can carry a project
+name or say what is running there.
+
+And the escape hatch the free-text input had is back: whatever is in the
+box is committable as it stands, absolute or not, on Enter or on the row
+at the top. A path this end has never heard of — a fresh checkout, a
+mount, a directory made a second ago — must not need the list's
+agreement. Two more losses go with it: the typed path is held by the
+dialog rather than by the popover, so it survives the chip closing, and
+Home stays on the list while it is being spelled.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ desktop/e2e/daemon.ts                         |  30 ++++-
+ desktop/e2e/new-session.spec.ts               |  88 +++++++++++-
+ desktop/src/renderer/components/dirpath.ts    |  55 ++++++++
+ desktop/src/renderer/components/icons.tsx     |   9 ++
+ .../src/renderer/components/newsession.tsx    | 126 +++++++++++++++---
+ desktop/src/renderer/styles.css               |  25 ++++
+ desktop/test/dirpath.test.ts                  |  76 +++++++++++
+ 7 files changed, 385 insertions(+), 24 deletions(-)
+ create mode 100644 desktop/src/renderer/components/dirpath.ts
+ create mode 100644 desktop/test/dirpath.test.ts
+
+diff --git a/desktop/e2e/daemon.ts b/desktop/e2e/daemon.ts
+index c9454c3..431ea3f 100644
+--- a/desktop/e2e/daemon.ts
++++ b/desktop/e2e/daemon.ts
+@@ -219,16 +219,38 @@ const WORKTREES: Worktree[] = [
+   },
+ ]
+ 
++/**
++ * Home, and the one directory under it with anything in it.
++ *
++ * The new-session picker completes a typed path against the disk, and a bare
++ * segment completes under home — so `~/` has to answer with directories, not
++ * with the flat list of files the other roots serve.
++ */
++export const HOME = '/home/dev'
++export const WORKSPACE = `${HOME}/workspace`
++
+ /** One file per worktree, named after it, so a wrong root is visible on sight. */
+ const TREES: Record<string, FileEntry[]> = {
+   [REPO]: [file(REPO, 'main.go'), file(REPO, 'README.md')],
+   [OTHER_WORKTREE]: [file(OTHER_WORKTREE, 'hotfix.go')],
++  [HOME]: [dir(HOME, 'workspace'), dir(HOME, 'worktrees'), dir(HOME, '.config'), file(HOME, 'notes.md')],
++  [WORKSPACE]: [dir(WORKSPACE, 'acme-api'), dir(WORKSPACE, 'acme-web')],
+ }
+ 
+ function file(root: string, name: string): FileEntry {
+   return { name, path: `${root}/${name}`, is_dir: false, size: 12, mod_time: '2026-01-01T00:00:00Z' }
+ }
+ 
++function dir(root: string, name: string): FileEntry {
++  return { ...file(root, name), is_dir: true, size: 0 }
++}
++
++/** What the daemon's resolveSafePath does to a path before it reads it. */
++function resolveStubPath(asked: string): string {
++  const expanded = asked.startsWith('~/') ? `${HOME}/${asked.slice(2)}` : asked
++  return expanded.length > 1 ? expanded.replace(/\/+$/, '') : expanded
++}
++
+ function grepMatches(root: string, query: string): GrepMatch[] {
+   const entries = TREES[root] ?? []
+   return entries.map((entry, index) => ({
+@@ -365,8 +387,12 @@ function answer(
+       // No base branch and no commits: the git panel then opens on the working
+       // tree, which is the view these tests drive.
+       return { root: q('path'), branch: 'main', base: '', scope: 'all', commits: [], has_more: false }
+-    case '/api/files':
+-      return { path: q('path'), entries: TREES[q('path')] ?? [] }
++    case '/api/files': {
++      // `~/` is expanded before the listing is read, and the answer says which
++      // directory it turned out to be (internal/server/files.go).
++      const root = resolveStubPath(q('path'))
++      return { path: root, entries: TREES[root] ?? [] }
++    }
+     case '/api/file': {
+       const { content, modTime } = held(q('path'))
+       return { path: q('path'), size: content.length, mod_time: modTime, content }
+diff --git a/desktop/e2e/new-session.spec.ts b/desktop/e2e/new-session.spec.ts
+index e55cab8..4f9d719 100644
+--- a/desktop/e2e/new-session.spec.ts
++++ b/desktop/e2e/new-session.spec.ts
+@@ -14,6 +14,11 @@ async function openChip(window: Page, name: RegExp): Promise<void> {
+   await expect(window.locator('.picker[open] .picker-body')).toBeVisible()
+ }
+ 
++async function openPlace(window: Page): Promise<void> {
++  await window.locator('.composer-place > summary').click()
++  await expect(window.locator('.composer-place .picker-body')).toBeVisible()
++}
++
+ async function backdrop(window: Page): Promise<{ x: number; y: number }> {
+   const box = await window.locator('.composer').boundingBox()
+   if (!box) throw new Error('composer has no box')
+@@ -116,7 +121,7 @@ test('escape hands focus back to the chip', async ({ window }) => {
+ 
+ test('the directory filter narrows the list and takes a typed path', async ({ window }) => {
+   await openComposer(window)
+-  await window.locator('.composer-place > summary').click()
++  await openPlace(window)
+ 
+   const search = window.locator('.picker-search')
+   await expect(search).toBeFocused()
+@@ -129,3 +134,84 @@ test('the directory filter narrows the list and takes a typed path', async ({ wi
+ 
+   await expect(window.locator('.composer-place')).toContainText('elsewhere')
+ })
++
++// The picker's whole job, and the reason #154 was reverted: a directory that
++// has never had a session in it is not in the recents, so the only way to it is
++// the one the list cannot offer.
++test('a relative path is committable, which the recents cannot offer', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  await window.locator('.picker-search').fill('workspace/acme-mobile')
++  await window.locator('.composer-option', { hasText: 'Use' }).click()
++
++  await expect(window.locator('.composer-place')).toContainText('acme-mobile')
++})
++
++test('enter commits what is typed, with nothing under it agreeing', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  await window.locator('.picker-search').fill('srv/deploys/tonight')
++  await window.keyboard.press('Enter')
++
++  await expect(window.locator('.picker[open]')).toHaveCount(0)
++  await expect(window.locator('.composer-place')).toContainText('tonight')
++})
++
++test('typing completes against the filesystem, not against the recents', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  // `work` is in no recent — the stub daemon has one session directory, /repo —
++  // so every row here came from a directory listing.
++  await window.locator('.picker-search').fill('work')
++  const completions = window.locator('.picker-list .composer-option', { hasText: /workspace|worktrees/ })
++  await expect(completions).toHaveCount(2)
++  await expect(window.locator('.picker-section', { hasText: 'In /home/dev' })).toBeVisible()
++
++  await completions.first().click()
++  await expect(window.locator('.composer-place')).toContainText('workspace')
++})
++
++test('completion walks down into a directory it just offered', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  await window.locator('.picker-search').fill('/home/dev/workspace/acme-')
++  await expect(window.locator('.picker-list .composer-option', { hasText: 'acme-api' })).toBeVisible()
++  await expect(window.locator('.picker-list .composer-option', { hasText: 'acme-web' })).toBeVisible()
++})
++
++test('tab fills in the top completion', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  const search = window.locator('.picker-search')
++  await search.fill('worksp')
++  await expect(window.locator('.picker-list .composer-option', { hasText: 'workspace' })).toBeVisible()
++  await search.press('Tab')
++
++  await expect(search).toHaveValue('/home/dev/workspace/')
++  await expect(window.locator('.picker-list .composer-option', { hasText: 'acme-api' })).toBeVisible()
++})
++
++test('a half-typed path is still there when the chip is reopened', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  await window.locator('.picker-search').fill('/home/dev/works')
++  await window.keyboard.press('Escape')
++  await expect(window.locator('.picker[open]')).toHaveCount(0)
++
++  await openPlace(window)
++  await expect(window.locator('.picker-search')).toHaveValue('/home/dev/works')
++})
++
++test('home does not disappear while it is being typed', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  await window.locator('.picker-search').fill('hom')
++  await expect(window.locator('.composer-option', { hasText: 'Home' })).toBeVisible()
++})
+diff --git a/desktop/src/renderer/components/dirpath.ts b/desktop/src/renderer/components/dirpath.ts
+new file mode 100644
+index 0000000..4694254
+--- /dev/null
++++ b/desktop/src/renderer/components/dirpath.ts
+@@ -0,0 +1,55 @@
++// Completing a directory path against the filesystem, for the new-session
++// composer's place chip.
++//
++// Kept out of the component because it is the part with rules in it, and the
++// rules are worth stating once: what the daemon will expand, what a relative
++// path means to a client that has no working directory of its own, and which
++// entries a half-typed name is offering to become.
++import { type FileEntry } from '../../shared/models.ts'
++
++/** Home, in the form the daemon expands. A bare `~` it does not (files.go). */
++export const HOME = '~/'
++
++/** How many completions are worth showing before the list is just a directory. */
++export const MAX_COMPLETIONS = 40
++
++/**
++ * The directory a half-typed path is completing inside, and the prefix to keep.
++ *
++ * Everything up to the last separator names a directory to read; what follows
++ * is what the entries in it have to start with. A path with no separator in it
++ * yet, or a relative one, completes under home — which is where a session with
++ * no directory of its own starts anyway, so it is the same place the composer
++ * would have used.
++ */
++export function completionTarget(typed: string): { parent: string; prefix: string } {
++  const cut = typed.lastIndexOf('/')
++  const prefix = typed.slice(cut + 1)
++  if (cut === -1) return { parent: HOME, prefix }
++  const parent = typed.slice(0, cut)
++  if (parent === '') return { parent: '/', prefix }
++  if (parent === '~') return { parent: HOME, prefix }
++  if (!parent.startsWith('/') && !parent.startsWith('~')) return { parent: HOME + parent, prefix }
++  return { parent, prefix }
++}
++
++/**
++ * The directories in a listing that a typed prefix is reaching for.
++ *
++ * Files are not offered: a session runs in a directory. Dot directories are
++ * not either, until the prefix asks for one by name — `.claude` and
++ * `.worktrees` are real answers, but they are not what an empty prefix means.
++ * Anything already shown as a recent is left out rather than printed twice.
++ */
++export function completionsIn(entries: FileEntry[], prefix: string, exclude: Set<string>): FileEntry[] {
++  const want = prefix.toLowerCase()
++  return entries
++    .filter(
++      (entry) =>
++        entry.is_dir &&
++        entry.name.toLowerCase().startsWith(want) &&
++        (want.startsWith('.') || !entry.name.startsWith('.')) &&
++        !exclude.has(entry.path),
++    )
++    .slice(0, MAX_COMPLETIONS)
++}
+diff --git a/desktop/src/renderer/components/icons.tsx b/desktop/src/renderer/components/icons.tsx
+index 58d6289..e0704b9 100644
+--- a/desktop/src/renderer/components/icons.tsx
++++ b/desktop/src/renderer/components/icons.tsx
+@@ -182,6 +182,15 @@ export function Shield({ className = '' }: { className?: string }): JSX.Element
+   )
+ }
+ 
++/** A folder, for a directory the composer offers rather than one it remembers. */
++export function Folder({ className = '' }: { className?: string }): JSX.Element {
++  return (
++    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
++      <path d="M3.5 6.5A1.5 1.5 0 015 5h4l2 2.5h8A1.5 1.5 0 0120.5 9v8.5A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-11z" />
++    </svg>
++  )
++}
++
+ /** A terminal, for the one action a row offers under the pointer. */
+ export function Console({ className = '' }: { className?: string }): JSX.Element {
+   return (
+diff --git a/desktop/src/renderer/components/newsession.tsx b/desktop/src/renderer/components/newsession.tsx
+index 17f5347..92d7a03 100644
+--- a/desktop/src/renderer/components/newsession.tsx
++++ b/desktop/src/renderer/components/newsession.tsx
+@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
+ import { useQuery } from '@tanstack/react-query'
+ 
+ import { api } from '../bridge.ts'
+-import { directoriesQuery, modelsQuery, providersQuery } from '../queries.ts'
++import { directoriesQuery, dirQuery, modelsQuery, providersQuery } from '../queries.ts'
+ import { store, useStore } from '../store.ts'
+-import { Chevron, Console, Shield, Spark } from './icons.tsx'
++import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
++import { completionTarget, completionsIn } from './dirpath.ts'
+ import { tintOf } from './grouping.ts'
+ import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
+ 
+@@ -32,6 +33,9 @@ export function NewSessionDialog({
+   const [cwd, setCwd] = useState('')
+   const [mode, setMode] = useState('')
+   const [prompt, setPrompt] = useState('')
++  // Held out here rather than in the picker, which unmounts with its popover: a
++  // half-typed path must still be there when the chip is opened again.
++  const [typed, setTyped] = useState('')
+   const [starting, setStarting] = useState(false)
+   const shell = useRef<HTMLDivElement | null>(null)
+   const dismissing = useRef(false)
+@@ -160,8 +164,11 @@ export function NewSessionDialog({
+           >
+             {(close) => (
+               <DirectoryList
++                hostId={hostId}
+                 directories={directories}
+                 cwd={cwd}
++                typed={typed}
++                onType={setTyped}
+                 onPick={(next) => {
+                   setCwd(next)
+                   close()
+@@ -335,19 +342,43 @@ export function NewSessionDialog({
+   )
+ }
+ 
++/**
++ * Where to start the session: the directories in use, and the filesystem.
++ *
++ * Two jobs that read as one control. The recents answer "back to where I was
++ * working" and are what an untouched picker shows — they are the only rows that
++ * can carry a project name and a count of what is running there. Typing is the
++ * other job, "somewhere new", and that is completion against the disk: the
++ * recents cannot answer it, because a directory only joins them once a session
++ * has already been started in it.
++ *
++ * Whatever is typed stays committable as it stands, absolute or not. It is the
++ * one thing the free-text input this replaced did better than any list, and no
++ * amount of completion is worth losing it: a path the daemon knows about and
++ * this end does not — a mount, a symlink, a directory made a second ago — has
++ * to be reachable by typing it.
++ */
+ function DirectoryList({
++  hostId,
+   directories,
+   cwd,
++  typed,
++  onType,
+   onPick,
+ }: {
++  hostId: string
+   directories: DirectoryInfo[]
+   cwd: string
++  typed: string
++  onType: (typed: string) => void
+   onPick: (cwd: string) => void
+ }): JSX.Element {
+-  const [query, setQuery] = useState('')
+-  const needle = query.trim().toLowerCase()
++  const search = useRef<HTMLInputElement | null>(null)
++  const wanted = typed.trim()
++  const needle = wanted.toLowerCase()
++  const { parent, prefix } = completionTarget(wanted)
+ 
+-  const matches = useMemo(
++  const recents = useMemo(
+     () =>
+       directories.filter(
+         (dir) =>
+@@ -358,43 +389,77 @@ function DirectoryList({
+     [directories, needle],
+   )
+ 
+-  const typed = query.trim()
+-  const custom = typed.startsWith('/') || typed.startsWith('~')
+-  const known = directories.some((dir) => dir.cwd === typed)
++  // Keyed on the parent, so walking along one path re-reads a directory only
++  // when the typing crosses a separator. An unreadable parent — a path that
++  // does not exist yet, which is every path halfway through being typed — is
++  // not an error worth reporting: there is simply nothing to complete with.
++  const { data: listing, isFetching } = useQuery({
++    ...dirQuery(hostId, wanted === '' ? '' : parent),
++    retry: false,
++  })
++
++  const children = useMemo(
++    () => completionsIn(listing?.entries ?? [], prefix, new Set(recents.map((dir) => dir.cwd))),
++    [listing, prefix, recents],
++  )
+ 
+-  const first = (): void => {
+-    if (custom && !known) onPick(typed)
+-    else if (matches[0]) onPick(matches[0].cwd)
++  const exact = directories.some((dir) => dir.cwd === wanted)
++  // Home stays reachable while it is being spelled: it is a row like any other,
++  // and hiding it the moment a key is pressed hides what was being reached for.
++  const showHome = needle === '' || 'home'.startsWith(needle) || needle === '~'
++  const nothing = children.length === 0 && recents.length === 0 && !showHome
++
++  /** Fills in the top completion, as a shell does, and leaves the cursor going. */
++  const complete = (): void => {
++    const first = children[0]
++    if (!first) return
++    // The daemon's own absolute path, not the typed prefix with a name stuck on
++    // the end: completing `wor` under home has to leave behind something that
++    // still means the same directory when it is completed again.
++    onType(`${first.path}/`)
++    search.current?.focus()
+   }
+ 
+   return (
+     <>
+       <input
+         className="picker-search"
++        ref={search}
+         autoFocus
+         spellCheck={false}
+-        value={query}
+-        placeholder="Filter, or type a path…"
+-        onChange={(event) => setQuery(event.target.value)}
++        autoComplete="off"
++        value={typed}
++        placeholder="Type a path, or search…"
++        onChange={(event) => onType(event.target.value)}
+         onKeyDown={(event) => {
++          if (event.key === 'Tab' && children.length > 0) {
++            event.preventDefault()
++            complete()
++            return
++          }
+           if (event.key !== 'Enter') return
+           event.preventDefault()
+-          first()
++          // What is in the box wins over what is under it. Anything else makes
++          // the escape hatch conditional on the list agreeing.
++          if (wanted !== '') onPick(wanted)
+         }}
+       />
+       <div className="picker-list">
+-        {custom && !known && (
+-          <button className="composer-option" onClick={() => onPick(typed)}>
+-            <span className="composer-option-name">Use “{typed}”</span>
++        {wanted !== '' && !exact && (
++          <button className="composer-option use-typed" onClick={() => onPick(wanted)}>
++            <span className="composer-option-name">Use “{wanted}”</span>
++            <span className="composer-option-hint">Start here whether or not it is listed</span>
+           </button>
+         )}
+-        {!needle && (
++        {showHome && (
+           <button className={`composer-option ${cwd === '' ? 'is-on' : ''}`} onClick={() => onPick('')}>
+             <span className="composer-option-name">Home</span>
+             <span className="composer-option-hint">~</span>
+           </button>
+         )}
+-        {matches.map((dir) => (
++
++        {recents.length > 0 && <p className="picker-section">Recent</p>}
++        {recents.map((dir) => (
+           <button
+             key={dir.cwd}
+             className={`composer-option ${dir.cwd === cwd ? 'is-on' : ''}`}
+@@ -408,7 +473,26 @@ function DirectoryList({
+             <span className="composer-option-hint">{dir.cwd}</span>
+           </button>
+         ))}
+-        {matches.length === 0 && !custom && <p className="picker-empty">No matching directory. Type a path to use one.</p>}
++
++        {children.length > 0 && <p className="picker-section">In {listing?.path ?? parent}</p>}
++        {children.map((entry) => (
++          <button
++            key={entry.path}
++            className={`composer-option ${entry.path === cwd ? 'is-on' : ''}`}
++            onClick={() => onPick(entry.path)}
++          >
++            <span className="composer-option-name">
++              <Folder />
++              {entry.name}
++            </span>
++            <span className="composer-option-hint">{entry.path}</span>
++          </button>
++        ))}
++
++        {nothing && isFetching && <p className="picker-empty">Looking…</p>}
++        {nothing && !isFetching && (
++          <p className="picker-empty">Nothing here by that name — the path above is still yours to use.</p>
++        )}
+       </div>
+     </>
+   )
+diff --git a/desktop/src/renderer/styles.css b/desktop/src/renderer/styles.css
+index 4c9fd13..fc48267 100644
+--- a/desktop/src/renderer/styles.css
++++ b/desktop/src/renderer/styles.css
+@@ -4092,6 +4092,31 @@ figure.mermaid svg {
+   color: var(--on-surface-variant);
+ }
+ 
++/* What the rows under it are: the directories in use, or what is on the disk. */
++.picker-section {
++  margin: 6px 10px 2px;
++  font-size: 11px;
++  font-weight: 500;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
++  color: var(--on-surface-variant);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++/* The escape hatch, and it reads as one: a path nothing has offered. */
++.composer-option.use-typed .composer-option-name {
++  color: var(--primary);
++}
++
++.composer-place .composer-option .ui-icon {
++  width: 14px;
++  height: 14px;
++  flex: none;
++  opacity: 0.7;
++}
++
+ .host-row {
+   display: flex;
+   align-items: center;
+diff --git a/desktop/test/dirpath.test.ts b/desktop/test/dirpath.test.ts
+new file mode 100644
+index 0000000..6879ec8
+--- /dev/null
++++ b/desktop/test/dirpath.test.ts
+@@ -0,0 +1,76 @@
++// Where a half-typed directory completes, and what it completes to. The picker
++// is the only place a session's directory is chosen, so the rules here are the
++// difference between "somewhere new" being reachable and not.
++import assert from 'node:assert/strict'
++import { test } from 'node:test'
++
++import { completionTarget, completionsIn } from '../src/renderer/components/dirpath.ts'
++import { type FileEntry } from '../src/shared/models.ts'
++
++function dir(path: string): FileEntry {
++  const name = path.split('/').filter(Boolean).pop() ?? path
++  return { name, path, is_dir: true, size: 0, mod_time: '2026-01-01T00:00:00Z' }
++}
++
++function file(path: string): FileEntry {
++  return { ...dir(path), is_dir: false }
++}
++
++test('completes inside the parent of what has been typed', () => {
++  assert.deepEqual(completionTarget('/home/dev/works'), { parent: '/home/dev', prefix: 'works' })
++  assert.deepEqual(completionTarget('/home/dev/'), { parent: '/home/dev', prefix: '' })
++  assert.deepEqual(completionTarget('~/workspace/ac'), { parent: '~/workspace', prefix: 'ac' })
++})
++
++test('a bare or relative path completes under home', () => {
++  assert.deepEqual(completionTarget('works'), { parent: '~/', prefix: 'works' })
++  assert.deepEqual(completionTarget('workspace/ac'), { parent: '~/workspace', prefix: 'ac' })
++  assert.deepEqual(completionTarget(''), { parent: '~/', prefix: '' })
++})
++
++test('~ on its own is sent as ~/, which is the form the daemon expands', () => {
++  assert.deepEqual(completionTarget('~/'), { parent: '~/', prefix: '' })
++  assert.deepEqual(completionTarget('~/w'), { parent: '~/', prefix: 'w' })
++})
++
++test('the root is its own parent', () => {
++  assert.deepEqual(completionTarget('/ho'), { parent: '/', prefix: 'ho' })
++})
++
++test('offers the directories a prefix reaches, and not the files', () => {
++  const entries = [dir('/w/api'), dir('/w/apidocs'), dir('/w/worker'), file('/w/api.md')]
++  assert.deepEqual(
++    completionsIn(entries, 'api', new Set()).map((e) => e.path),
++    ['/w/api', '/w/apidocs'],
++  )
++})
++
++test('an empty prefix offers the whole directory', () => {
++  const entries = [dir('/w/api'), dir('/w/worker')]
++  assert.equal(completionsIn(entries, '', new Set()).length, 2)
++})
++
++test('dot directories wait to be asked for by name', () => {
++  const entries = [dir('/w/.claude'), dir('/w/api')]
++  assert.deepEqual(
++    completionsIn(entries, '', new Set()).map((e) => e.name),
++    ['api'],
++  )
++  assert.deepEqual(
++    completionsIn(entries, '.', new Set()).map((e) => e.name),
++    ['.claude'],
++  )
++})
++
++test('what the recents already show is not shown twice', () => {
++  const entries = [dir('/w/api'), dir('/w/worker')]
++  assert.deepEqual(
++    completionsIn(entries, '', new Set(['/w/api'])).map((e) => e.name),
++    ['worker'],
++  )
++})
++
++test('matches whatever case the directory is spelled in', () => {
++  const entries = [dir('/w/Acme')]
++  assert.equal(completionsIn(entries, 'ac', new Set()).length, 1)
++})
+-- 
+2.53.0
+

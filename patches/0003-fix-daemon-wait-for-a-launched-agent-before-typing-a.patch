@@ -1,0 +1,186 @@
+From 1be2d62bf22e0387421f98ba239a8642fdc7507c Mon Sep 17 00:00:00 2001
+From: Rakibul Islam <33988342+raykibul@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 00:56:34 +0600
+Subject: [PATCH 3/8] fix(daemon): wait for a launched agent before typing at
+ it
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A woken session waits for its SessionStart hook before anything is typed
+into its terminal, because the host's socket exists seconds before the
+agent is reading. A freshly launched one has the same gap and did not
+wait: StartSession returns once the terminal is up, and "starting" means
+no hook has arrived yet.
+
+Nothing reached that gap while the only way to prompt a new session was
+the prompt it launched with. Attaching a file to a new session is the
+way in — the upload needs a session id, which only the create call can
+give, so the first turn has to be sent afterwards.
+
+The status is read again after subscribing to the signal, in that order:
+a signal nobody is waiting on is not remembered, so a check made only
+beforehand would wait out the whole boot timeout for an agent that
+reported in a moment earlier.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ internal/server/launch.go    | 32 +++++++++++++
+ internal/server/send_test.go | 87 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 119 insertions(+)
+
+diff --git a/internal/server/launch.go b/internal/server/launch.go
+index c5d33ab..5f5e0e0 100644
+--- a/internal/server/launch.go
++++ b/internal/server/launch.go
+@@ -134,6 +134,27 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
+ 	return &StartedSession{SessionID: sessionID, Terminal: handle, CWD: req.CWD}, nil
+ }
+ 
++// awaitAgent waits for a spawned agent to report in before anything is typed
++// at it.
++//
++// The status is read again after subscribing, and that order is the point: the
++// hook fires the signal and writes the status, and nothing is remembered by a
++// signal nobody was waiting on. Checking only before would wait out the full
++// timeout for an agent that reported in a moment earlier.
++func (sh *Shared) awaitAgent(id string) error {
++	ready := sh.Signals.Await(SignalAgentReady, id)
++	defer ready.Release()
++
++	if session, err := sh.DB.GetSession(id); err == nil && session != nil && session.Status != "starting" {
++		return nil
++	}
++	if !ready.Wait(agentBootTimeout) {
++		log.Printf("session-send: session %s never reported in within %s", id, agentBootTimeout)
++		return statusError(http.StatusGatewayTimeout, "the session is still starting up")
++	}
++	return nil
++}
++
+ // EndSession kills a session's terminal and records it as terminated.
+ //
+ // The handler used to be the only way to end one, so the scheduler — which ends
+@@ -234,6 +255,17 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
+ 			return PromptResult{Resumed: true}, statusError(http.StatusGatewayTimeout,
+ 				"the session is still starting up")
+ 		}
++	} else if session.Status == "starting" {
++		// A launched session has the same gap as a woken one: StartSession
++		// returns as soon as the terminal is up, and "starting" means no
++		// SessionStart hook has arrived, so the agent is spawned but not yet
++		// reading. The gap is only reachable through the API — the app creates
++		// a session and prompts it a moment later, which is what attaching a
++		// file to a new session has to do, because the upload needs an id that
++		// only the create returns.
++		if err := sh.awaitAgent(id); err != nil {
++			return PromptResult{}, err
++		}
+ 	}
+ 
+ 	// Likewise subscribed before typing. The agent's own hook is the only
+diff --git a/internal/server/send_test.go b/internal/server/send_test.go
+index 1f1e9c8..a9f7202 100644
+--- a/internal/server/send_test.go
++++ b/internal/server/send_test.go
+@@ -58,6 +58,12 @@ func (b *sendBackend) sentTexts() []string {
+ 	return append([]string(nil), b.sent...)
+ }
+ 
++func (b *sendBackend) wokenNone() bool {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	return len(b.woken) == 0
++}
++
+ func (b *sendBackend) wakeCount() int {
+ 	b.mu.Lock()
+ 	defer b.mu.Unlock()
+@@ -297,3 +303,84 @@ func (q *queueingProvider) QueuePrompt(sessionID, resumeID, text string) error {
+ 	q.sent = append(q.sent, text)
+ 	return nil
+ }
++
++// A session created a moment ago is live but not yet listening: StartSession
++// returns when the terminal is up, and the agent reads from it some time after
++// that. Typing into that gap loses the prompt exactly as typing into a waking
++// session does — and the app reaches it whenever a new session is given files,
++// because the upload needs an id only the create can hand back.
++func TestSend_NewSessionTypesOnlyAfterTheAgentIsUp(t *testing.T) {
++	s, shared, be := newSendTest(t)
++	seedSessionWithStatus(t, shared.DB, "sess-1", "starting")
++	be.handles["sess-1"] = "sock-sess-1"
++
++	var mu sync.Mutex
++	agentUp, typedTooEarly := false, false
++
++	// What handleSessionStart does when the agent finally reports in.
++	go func() {
++		time.Sleep(30 * time.Millisecond)
++		mu.Lock()
++		agentUp = true
++		mu.Unlock()
++		shared.Signals.Fire(SignalAgentReady, "sess-1")
++		shared.DB.UpdateSessionStatus("sess-1", "idle", "SessionStart")
++	}()
++	be.onSend = func() {
++		mu.Lock()
++		if !agentUp {
++			typedTooEarly = true
++		}
++		mu.Unlock()
++		shared.Signals.Fire(SignalPromptSubmitted, "sess-1")
++	}
++
++	rec, _ := sendPrompt(t, s, "sess-1", "look at ~/.helios/uploads/sess-1/shot.png")
++	if rec.Code != http.StatusOK {
++		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
++	}
++	mu.Lock()
++	defer mu.Unlock()
++	if typedTooEarly {
++		t.Error("prompt was typed before the agent reported in")
++	}
++	if !be.wokenNone() {
++		t.Error("a live session was woken, and waking one kills the terminal it already has")
++	}
++}
++
++// The signal is not remembered, so an agent that reported in between the read
++// and the subscribe would leave the caller waiting out the whole boot timeout
++// for something that has already happened.
++func TestSend_NewSessionThatIsAlreadyUpDoesNotWait(t *testing.T) {
++	s, shared, be := newSendTest(t)
++	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
++	be.handles["sess-1"] = "sock-sess-1"
++	be.onSend = func() { shared.Signals.Fire(SignalPromptSubmitted, "sess-1") }
++
++	start := time.Now()
++	rec, _ := sendPrompt(t, s, "sess-1", "hello")
++
++	if rec.Code != http.StatusOK {
++		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
++	}
++	if waited := time.Since(start); waited >= agentBootTimeout {
++		t.Errorf("waited %s for an agent that was already up", waited)
++	}
++}
++
++// A session that never reports in is not typed into, however live its terminal.
++func TestSend_NewSessionThatNeverReportsIsRefused(t *testing.T) {
++	s, shared, be := newSendTest(t)
++	seedSessionWithStatus(t, shared.DB, "sess-1", "starting")
++	be.handles["sess-1"] = "sock-sess-1"
++
++	rec, _ := sendPrompt(t, s, "sess-1", "hello")
++
++	if rec.Code != http.StatusGatewayTimeout {
++		t.Errorf("status = %d, want 504", rec.Code)
++	}
++	if got := be.sentTexts(); len(got) != 0 {
++		t.Errorf("typed %q into a session that was not up", got)
++	}
++}
+-- 
+2.53.0
+

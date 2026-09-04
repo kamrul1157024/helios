@@ -1,0 +1,77 @@
+From a88514c147a26e5e10fc90d5fe7c42c54b0a6f25 Mon Sep 17 00:00:00 2001
+From: kamrul1157024 <kamrul1157024@gmail.com>
+Date: Fri, 4 Sep 2026 12:42:41 +0000
+Subject: [PATCH 8/8] fix(desktop): keep the dialog's card off the transcript's
+ prompt
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`.composer` names two things: the new-session dialog's card, and the box
+the prompt is typed into in a session (chat.tsx). The card's rule was
+written on the bare class, so the transcript's prompt took the dialog's
+width — 680px instead of the full column, 240px narrower at a 1280px
+window, and fixed, so it stopped growing when the window did. It also
+picked up the card's shadow and corners, which put a drop shadow over the
+bottom of the transcript.
+
+Scoping the rule to `.modal-backdrop .composer` leaves the dialog exactly
+as it was and gives the prompt its column back: measured against the
+pre-composer revision, every region of the session view is now
+pixel-identical apart from the paperclip that replaced the ⊕.
+
+The e2e case measures the prompt against the transcript it sits in, which
+is the relationship that broke. Opening the dialog cannot see it.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ desktop/e2e/new-session.spec.ts | 15 +++++++++++++++
+ desktop/src/renderer/styles.css |  6 +++++-
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/desktop/e2e/new-session.spec.ts b/desktop/e2e/new-session.spec.ts
+index 8994ad5..81f1c57 100644
+--- a/desktop/e2e/new-session.spec.ts
++++ b/desktop/e2e/new-session.spec.ts
+@@ -35,6 +35,21 @@ test('every chip opens on its own value', async ({ window }) => {
+   await expect(window.locator('.composer-foot')).toContainText('Default model')
+ })
+ 
++// `.composer` names two things: this dialog's card, and the transcript's prompt
++// box (chat.tsx). A width on the bare class pins the second to the size of the
++// first, which cost the transcript 240px of input and stopped the prompt
++// growing with the window — invisible to every test that only opens the dialog.
++test('the dialog card does not follow the class onto the transcript', async ({ window }) => {
++  await window.setViewportSize({ width: 1280, height: 900 })
++  await window.locator('.session-row').first().click()
++  await expect(window.locator('.panel-tabs')).toBeVisible()
++
++  const chat = await window.locator('.chat').boundingBox()
++  const prompt = await window.locator('.chat .composer').boundingBox()
++  if (!chat || !prompt) throw new Error('no transcript to measure')
++  expect(prompt.width).toBe(chat.width)
++})
++
+ test('picking a model puts it on the chip', async ({ window }) => {
+   await openComposer(window)
+   await openChip(window, /model/i)
+diff --git a/desktop/src/renderer/styles.css b/desktop/src/renderer/styles.css
+index 350f0b6..4a655e2 100644
+--- a/desktop/src/renderer/styles.css
++++ b/desktop/src/renderer/styles.css
+@@ -3832,7 +3832,11 @@ figure.mermaid svg {
+   color: var(--on-surface-variant);
+ }
+ 
+-.composer {
++/* Scoped to the dialog, because `.composer` is also the transcript's prompt box
++   (chat.tsx). Unscoped, this card pinned that one to 680px and gave it a shadow
++   of its own: the prompt stopped growing with the window and stopped lining up
++   with the messages above it. */
++.modal-backdrop .composer {
+   width: 680px;
+   max-width: 92vw;
+   display: flex;
+-- 
+2.53.0
+

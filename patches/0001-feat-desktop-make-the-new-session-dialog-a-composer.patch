@@ -1,0 +1,1028 @@
+From af4f143894cd6141207c99e8a65c7ddd6e2d4679 Mon Sep 17 00:00:00 2001
+From: Rakibul Islam <33988342+raykibul@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 00:36:46 +0600
+Subject: [PATCH 1/8] feat(desktop): make the new-session dialog a composer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Restores #154, reverted in #156 over the directory picker. The picker is
+rebuilt in the commits that follow; this is the composer as it was.
+
+The prompt is the dialog now — a single box that takes focus on open —
+and the labelled selects become chips around it: the working directory
+and the host across the top, provider, model and permissions along the
+bottom. Each chip says its own value, so none of them needs a label.
+
+The host chip shows even on a single host, because its dot is the
+machine's connection state and "is it up" is worth answering before a
+prompt is written rather than after the session fails to start.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ desktop/e2e/new-session.spec.ts               | 131 +++++
+ desktop/src/renderer/components/icons.tsx     |  18 +
+ .../src/renderer/components/newsession.tsx    | 485 ++++++++++++++----
+ desktop/src/renderer/styles.css               | 260 ++++++++++
+ 4 files changed, 805 insertions(+), 89 deletions(-)
+ create mode 100644 desktop/e2e/new-session.spec.ts
+
+diff --git a/desktop/e2e/new-session.spec.ts b/desktop/e2e/new-session.spec.ts
+new file mode 100644
+index 0000000..e55cab8
+--- /dev/null
++++ b/desktop/e2e/new-session.spec.ts
+@@ -0,0 +1,131 @@
++import type { Page } from '@playwright/test'
++
++import { expect, test } from './fixtures.ts'
++
++async function openComposer(window: Page): Promise<void> {
++  await window.locator('button[aria-label="New session"]').first().click()
++  await expect(window.locator('.composer')).toBeVisible()
++  await expect(window.locator('.composer-place')).toContainText('repo')
++  await expect(window.locator('.composer-foot')).toContainText('Default permissions')
++}
++
++async function openChip(window: Page, name: RegExp): Promise<void> {
++  await window.locator('.composer-foot .picker > summary').filter({ hasText: name }).click()
++  await expect(window.locator('.picker[open] .picker-body')).toBeVisible()
++}
++
++async function backdrop(window: Page): Promise<{ x: number; y: number }> {
++  const box = await window.locator('.composer').boundingBox()
++  if (!box) throw new Error('composer has no box')
++  return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height + 120) }
++}
++
++test('every chip opens on its own value', async ({ window }) => {
++  await openComposer(window)
++
++  await expect(window.locator('.composer-place')).toContainText('repo')
++  await expect(window.locator('.composer-host')).toContainText('stub')
++  await expect(window.locator('.composer-foot')).toContainText('Claude')
++  await expect(window.locator('.composer-foot')).toContainText('Default model')
++})
++
++test('picking a model puts it on the chip', async ({ window }) => {
++  await openComposer(window)
++  await openChip(window, /model/i)
++
++  await window.locator('.composer-option', { hasText: 'Sonnet' }).click()
++
++  await expect(window.locator('.picker[open]')).toHaveCount(0)
++  await expect(window.locator('.composer-foot')).toContainText('Sonnet')
++})
++
++test('dismissing a chip does not take the dialog with it', async ({ window }) => {
++  await openComposer(window)
++  await openChip(window, /model/i)
++
++  const at = await backdrop(window)
++  await window.mouse.click(at.x, at.y)
++
++  await expect(window.locator('.picker[open]')).toHaveCount(0)
++  await expect(window.locator('.composer')).toBeVisible()
++})
++
++test('the backdrop still closes an untouched dialog', async ({ window }) => {
++  await openComposer(window)
++
++  const at = await backdrop(window)
++  await window.mouse.click(at.x, at.y)
++
++  await expect(window.locator('.composer')).toHaveCount(0)
++})
++
++test('a written prompt survives a stray click on the backdrop', async ({ window }) => {
++  await openComposer(window)
++  await window.locator('.composer-prompt').fill('something worth keeping')
++
++  const at = await backdrop(window)
++  await window.mouse.click(at.x, at.y)
++
++  await expect(window.locator('.composer-prompt')).toHaveValue('something worth keeping')
++})
++
++test('escape closes the chip first and the dialog second', async ({ window }) => {
++  await openComposer(window)
++  await openChip(window, /model/i)
++
++  await window.keyboard.press('Escape')
++  await expect(window.locator('.picker[open]')).toHaveCount(0)
++  await expect(window.locator('.composer')).toBeVisible()
++
++  await window.keyboard.press('Escape')
++  await expect(window.locator('.composer')).toHaveCount(0)
++})
++
++test('arrows walk the options and wrap', async ({ window }) => {
++  await openComposer(window)
++  await openChip(window, /model/i)
++
++  const options = window.locator('.picker[open] .composer-option')
++  await expect(options).toHaveCount(3)
++
++  await window.keyboard.press('ArrowDown')
++  await expect(options.nth(0)).toBeFocused()
++
++  await window.keyboard.press('ArrowDown')
++  await expect(options.nth(1)).toBeFocused()
++
++  await window.keyboard.press('End')
++  await expect(options.nth(2)).toBeFocused()
++
++  await window.keyboard.press('ArrowDown')
++  await expect(options.nth(0)).toBeFocused()
++
++  await window.keyboard.press('ArrowUp')
++  await expect(options.nth(2)).toBeFocused()
++})
++
++test('escape hands focus back to the chip', async ({ window }) => {
++  await openComposer(window)
++  await openChip(window, /model/i)
++
++  await window.keyboard.press('Escape')
++
++  const summary = window.locator('.composer-foot .picker > summary').filter({ hasText: /model/i })
++  await expect(summary).toBeFocused()
++})
++
++test('the directory filter narrows the list and takes a typed path', async ({ window }) => {
++  await openComposer(window)
++  await window.locator('.composer-place > summary').click()
++
++  const search = window.locator('.picker-search')
++  await expect(search).toBeFocused()
++
++  await search.fill('nothing-matches-this')
++  await expect(window.locator('.picker-empty')).toBeVisible()
++
++  await search.fill('/tmp/elsewhere')
++  await window.locator('.composer-option', { hasText: 'Use' }).click()
++
++  await expect(window.locator('.composer-place')).toContainText('elsewhere')
++})
+diff --git a/desktop/src/renderer/components/icons.tsx b/desktop/src/renderer/components/icons.tsx
+index 6a05e4c..58d6289 100644
+--- a/desktop/src/renderer/components/icons.tsx
++++ b/desktop/src/renderer/components/icons.tsx
+@@ -135,6 +135,15 @@ export function ListRows({ className = '' }: { className?: string }): JSX.Elemen
+   )
+ }
+ 
++/** A four-pointed spark: the model a session runs on. */
++export function Spark({ className = '' }: { className?: string }): JSX.Element {
++  return (
++    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
++      <path d="M12 3.5c0 4.7 3.8 8.5 8.5 8.5-4.7 0-8.5 3.8-8.5 8.5 0-4.7-3.8-8.5-8.5-8.5 4.7 0 8.5-3.8 8.5-8.5z" />
++    </svg>
++  )
++}
++
+ /** A clock, for what runs on one. */
+ export function Clock({ className = '' }: { className?: string }): JSX.Element {
+   return (
+@@ -164,6 +173,15 @@ export function Pencil({ className = '' }: { className?: string }): JSX.Element
+   )
+ }
+ 
++/** A shield, for how much the agent may do without asking. */
++export function Shield({ className = '' }: { className?: string }): JSX.Element {
++  return (
++    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
++      <path d="M12 3.5l7 2.5v6c0 4-3 7.3-7 8.5-4-1.2-7-4.5-7-8.5V6l7-2.5z" />
++    </svg>
++  )
++}
++
+ /** A terminal, for the one action a row offers under the pointer. */
+ export function Console({ className = '' }: { className?: string }): JSX.Element {
+   return (
+diff --git a/desktop/src/renderer/components/newsession.tsx b/desktop/src/renderer/components/newsession.tsx
+index f7014d2..17f5347 100644
+--- a/desktop/src/renderer/components/newsession.tsx
++++ b/desktop/src/renderer/components/newsession.tsx
+@@ -1,10 +1,12 @@
+-import { useEffect, useRef, useState } from 'react'
++import { useEffect, useMemo, useRef, useState } from 'react'
+ import { useQuery } from '@tanstack/react-query'
+ 
+ import { api } from '../bridge.ts'
+ import { directoriesQuery, modelsQuery, providersQuery } from '../queries.ts'
+ import { store, useStore } from '../store.ts'
+-import type { DirectoryInfo, ModelInfo, ProviderInfo } from '../../shared/models.ts'
++import { Chevron, Console, Shield, Spark } from './icons.tsx'
++import { tintOf } from './grouping.ts'
++import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
+ 
+ const NO_PROVIDERS: ProviderInfo[] = []
+ const NO_MODELS: ModelInfo[] = []
+@@ -23,6 +25,7 @@ export function NewSessionDialog({
+   onClose: () => void
+ }): JSX.Element {
+   const hosts = useStore((s) => s.hosts)
++  const hostStatus = useStore((s) => s.hostStatus)
+   const [hostId, setHostId] = useState(seed?.hostId ?? hosts[0]?.id ?? '')
+   const [provider, setProvider] = useState('claude')
+   const [model, setModel] = useState('')
+@@ -30,6 +33,8 @@ export function NewSessionDialog({
+   const [mode, setMode] = useState('')
+   const [prompt, setPrompt] = useState('')
+   const [starting, setStarting] = useState(false)
++  const shell = useRef<HTMLDivElement | null>(null)
++  const dismissing = useRef(false)
+   // Spent on the first load and not again: switching hosts after that has to
+   // reset the directory, because a path from one machine is not a path on the
+   // next, and the seed was a path on the machine it came from.
+@@ -45,7 +50,7 @@ export function NewSessionDialog({
+     enabled: !!hostId,
+     select: onlyReady,
+   })
+-  const { data: directories = NO_DIRECTORIES } = useQuery({
++  const { data: directories = NO_DIRECTORIES, isPending: findingDirectories } = useQuery({
+     ...directoriesQuery(hostId ?? ''),
+     enabled: !!hostId,
+   })
+@@ -60,7 +65,7 @@ export function NewSessionDialog({
+    */
+   const settled = useRef<string | null>(null)
+   useEffect(() => {
+-    if (!hostId || providers.length === 0 || settled.current === hostId) return
++    if (!hostId || providers.length === 0 || findingDirectories || settled.current === hostId) return
+     settled.current = hostId
+     const first = providers[0]
+     if (first && !providers.some((p) => p.id === provider)) setProvider(first.id)
+@@ -68,7 +73,7 @@ export function NewSessionDialog({
+     seeded.current = ''
+     // provider and cwd are deliberately not dependencies: this settles them.
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [hostId, providers, directories])
++  }, [hostId, providers, directories, findingDirectories])
+ 
+   const { data: models = NO_MODELS } = useQuery({
+     ...modelsQuery(hostId ?? '', provider),
+@@ -106,102 +111,404 @@ export function NewSessionDialog({
+     }
+   }
+ 
++  useEffect(() => {
++    const onKey = (event: KeyboardEvent): void => {
++      if (event.key !== 'Escape') return
++      if (shell.current?.querySelector('details.picker[open]')) return
++      onClose()
++    }
++    window.addEventListener('keydown', onKey, true)
++    return () => window.removeEventListener('keydown', onKey, true)
++  }, [onClose])
++
++  useEffect(() => {
++    const onDown = (): void => {
++      dismissing.current = shell.current?.querySelector('details.picker[open]') != null
++    }
++    window.addEventListener('mousedown', onDown, true)
++    return () => window.removeEventListener('mousedown', onDown, true)
++  }, [])
++
++  const place = directories.find((dir) => dir.cwd === cwd)
++  const where = place?.project || basename(cwd) || 'Home'
++  const tint = tintOf(tintKey(place, cwd))
++  const host = hosts.find((h) => h.id === hostId)
++  const modelName = models.find((m) => m.id === model)?.name ?? 'Default model'
++
+   return (
+-    <Modal title="New session" onClose={onClose}>
+-      {hosts.length > 1 && (
+-        <label className="field">
+-          <span>Host</span>
+-          <select value={hostId} onChange={(event) => setHostId(event.target.value)}>
+-            {hosts.map((host) => (
+-              <option key={host.id} value={host.id}>
+-                {host.name}
+-              </option>
+-            ))}
+-          </select>
+-        </label>
+-      )}
++    <div
++      className="modal-backdrop"
++      onClick={() => {
++        if (dismissing.current) {
++          dismissing.current = false
++          return
++        }
++        if (!prompt.trim()) onClose()
++      }}
++    >
++      <div className="composer" ref={shell} onClick={(event) => event.stopPropagation()}>
++        <header className="composer-head">
++          <Picker
++            title="Working directory"
++            trigger={
++              <>
++                <span className="composer-dot" style={{ background: tint }} />
++                <span className="composer-chip-name">{where}</span>
++              </>
++            }
++            className="composer-place"
++          >
++            {(close) => (
++              <DirectoryList
++                directories={directories}
++                cwd={cwd}
++                onPick={(next) => {
++                  setCwd(next)
++                  close()
++                }}
++              />
++            )}
++          </Picker>
+ 
+-      <label className="field">
+-        <span>Provider</span>
+-        <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+-          {providers.map((p) => (
+-            <option key={p.id} value={p.id}>
+-              {p.name}
+-            </option>
+-          ))}
+-        </select>
+-      </label>
+-
+-      <label className="field">
+-        <span>Directory</span>
+-        <input
+-          list="known-directories"
+-          value={cwd}
+-          placeholder="~ (home)"
+-          spellCheck={false}
+-          onChange={(event) => setCwd(event.target.value)}
+-        />
+-        {/* The daemon sends objects, not paths: cwd is the value, and the
+-            project name is the label that tells two checkouts of the same
+-            repository apart. */}
+-        <datalist id="known-directories">
+-          {directories.map((dir) => (
+-            <option key={dir.cwd} value={dir.cwd} label={dir.project || undefined} />
+-          ))}
+-        </datalist>
+-      </label>
+-
+-      <label className="field">
+-        <span>Model</span>
+-        <select value={model} onChange={(event) => setModel(event.target.value)}>
+-          <option value="">Default</option>
+-          {models.map((m) => (
+-            <option key={m.id} value={m.id}>
+-              {m.name}
+-            </option>
+-          ))}
+-        </select>
+-      </label>
+-
+-      {modes.length > 0 && (
+-        <label className="field">
+-          <span>Permission mode</span>
+-          <select value={mode} onChange={(event) => setMode(event.target.value)}>
+-            <option value="">Provider default</option>
+-            {modes.map((m) => (
+-              <option key={m} value={m}>
+-                {m}
+-              </option>
+-            ))}
+-          </select>
+-        </label>
+-      )}
++          <Picker
++            title="Host"
++            align="right"
++            className="composer-host"
++            trigger={
++              <>
++                <span className={`dot ${hostStatus[hostId]?.state ?? 'offline'}`} />
++                <span className="composer-chip-name">{host?.name ?? 'Pick a host'}</span>
++              </>
++            }
++          >
++            {(close) =>
++              hosts.map((option) => (
++                <button
++                  key={option.id}
++                  className={`composer-option ${option.id === hostId ? 'is-on' : ''}`}
++                  onClick={() => {
++                    setHostId(option.id)
++                    close()
++                  }}
++                >
++                  <span className="composer-option-name">
++                    <span className={`dot ${hostStatus[option.id]?.state ?? 'offline'}`} />
++                    {option.name}
++                  </span>
++                </button>
++              ))
++            }
++          </Picker>
++        </header>
+ 
+-      <label className="field">
+-        <span>First prompt (optional)</span>
+-        {/* The box says a field; the placeholder says what the field is for.
+-            Without it this reads as a note to self rather than the first thing
+-            the agent will be asked. */}
+         <textarea
++          className="composer-prompt"
++          autoFocus
+           rows={4}
+           value={prompt}
+-          placeholder="What should the agent start on? Left empty, the session opens at a prompt."
++          placeholder="What do you want to work on?"
+           onChange={(event) => setPrompt(event.target.value)}
++          onKeyDown={(event) => {
++            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
++            event.preventDefault()
++            void start()
++          }}
+         />
+-      </label>
+-
+-      <div className="modal-actions">
+-        <button className="ghost" onClick={onClose}>
+-          Cancel
+-        </button>
+-        <button disabled={!hostId || starting} onClick={() => void start()}>
+-          {starting ? 'Starting…' : 'Start session'}
+-        </button>
++
++        <footer className="composer-foot">
++          <div className="composer-chips">
++            <Picker
++              title="Provider"
++              trigger={
++                <>
++                  <Console />
++                  <span className="composer-chip-name">{selected?.name ?? provider}</span>
++                </>
++              }
++            >
++              {(close) =>
++                providers.map((option) => (
++                  <button
++                    key={option.id}
++                    className={`composer-option ${option.id === provider ? 'is-on' : ''}`}
++                    onClick={() => {
++                      setProvider(option.id)
++                      close()
++                    }}
++                  >
++                    <span className="composer-option-name">{option.name}</span>
++                  </button>
++                ))
++              }
++            </Picker>
++
++            <Picker
++              title="Model"
++              trigger={
++                <>
++                  <Spark />
++                  <span className="composer-chip-name">{modelName}</span>
++                </>
++              }
++            >
++              {(close) => (
++                <>
++                  <button
++                    className={`composer-option ${model === '' ? 'is-on' : ''}`}
++                    onClick={() => {
++                      setModel('')
++                      close()
++                    }}
++                  >
++                    <span className="composer-option-name">Default model</span>
++                    <span className="composer-option-hint">Whatever the provider picks</span>
++                  </button>
++                  {models.map((option) => (
++                    <button
++                      key={option.id}
++                      className={`composer-option ${option.id === model ? 'is-on' : ''}`}
++                      onClick={() => {
++                        setModel(option.id)
++                        close()
++                      }}
++                    >
++                      <span className="composer-option-name">{option.name}</span>
++                      {option.description && <span className="composer-option-hint">{option.description}</span>}
++                    </button>
++                  ))}
++                </>
++              )}
++            </Picker>
++
++            {modes.length > 0 && (
++              <Picker
++                title="Permission mode"
++                trigger={
++                  <>
++                    <Shield />
++                    <span className="composer-chip-name">{mode || 'Default permissions'}</span>
++                  </>
++                }
++              >
++                {(close) => (
++                  <>
++                    <button
++                      className={`composer-option ${mode === '' ? 'is-on' : ''}`}
++                      onClick={() => {
++                        setMode('')
++                        close()
++                      }}
++                    >
++                      <span className="composer-option-name">Default permissions</span>
++                    </button>
++                    {modes.map((option) => (
++                      <button
++                        key={option}
++                        className={`composer-option ${option === mode ? 'is-on' : ''}`}
++                        onClick={() => {
++                          setMode(option)
++                          close()
++                        }}
++                      >
++                        <span className="composer-option-name">{option}</span>
++                      </button>
++                    ))}
++                  </>
++                )}
++              </Picker>
++            )}
++
++          </div>
++
++          <div className="composer-actions">
++            <button className="ghost" onClick={onClose}>
++              Cancel
++            </button>
++            <button className="filled" disabled={!hostId || starting} onClick={() => void start()}>
++              {starting ? 'Creating…' : 'Create'}
++              {!starting && <kbd className="composer-key">↵</kbd>}
++            </button>
++          </div>
++        </footer>
+       </div>
+-    </Modal>
++    </div>
+   )
+ }
+ 
++function DirectoryList({
++  directories,
++  cwd,
++  onPick,
++}: {
++  directories: DirectoryInfo[]
++  cwd: string
++  onPick: (cwd: string) => void
++}): JSX.Element {
++  const [query, setQuery] = useState('')
++  const needle = query.trim().toLowerCase()
++
++  const matches = useMemo(
++    () =>
++      directories.filter(
++        (dir) =>
++          !needle ||
++          dir.project.toLowerCase().includes(needle) ||
++          dir.cwd.toLowerCase().includes(needle),
++      ),
++    [directories, needle],
++  )
++
++  const typed = query.trim()
++  const custom = typed.startsWith('/') || typed.startsWith('~')
++  const known = directories.some((dir) => dir.cwd === typed)
++
++  const first = (): void => {
++    if (custom && !known) onPick(typed)
++    else if (matches[0]) onPick(matches[0].cwd)
++  }
++
++  return (
++    <>
++      <input
++        className="picker-search"
++        autoFocus
++        spellCheck={false}
++        value={query}
++        placeholder="Filter, or type a path…"
++        onChange={(event) => setQuery(event.target.value)}
++        onKeyDown={(event) => {
++          if (event.key !== 'Enter') return
++          event.preventDefault()
++          first()
++        }}
++      />
++      <div className="picker-list">
++        {custom && !known && (
++          <button className="composer-option" onClick={() => onPick(typed)}>
++            <span className="composer-option-name">Use “{typed}”</span>
++          </button>
++        )}
++        {!needle && (
++          <button className={`composer-option ${cwd === '' ? 'is-on' : ''}`} onClick={() => onPick('')}>
++            <span className="composer-option-name">Home</span>
++            <span className="composer-option-hint">~</span>
++          </button>
++        )}
++        {matches.map((dir) => (
++          <button
++            key={dir.cwd}
++            className={`composer-option ${dir.cwd === cwd ? 'is-on' : ''}`}
++            onClick={() => onPick(dir.cwd)}
++          >
++            <span className="composer-option-name">
++              <span className="composer-dot" style={{ background: tintOf(tintKey(dir, dir.cwd)) }} />
++              {dir.project || basename(dir.cwd)}
++              {dir.active_count > 0 && <span className="composer-option-count">{dir.active_count} active</span>}
++            </span>
++            <span className="composer-option-hint">{dir.cwd}</span>
++          </button>
++        ))}
++        {matches.length === 0 && !custom && <p className="picker-empty">No matching directory. Type a path to use one.</p>}
++      </div>
++    </>
++  )
++}
++
++function Picker({
++  title,
++  trigger,
++  align = 'left',
++  className = '',
++  children,
++}: {
++  title: string
++  trigger: React.ReactNode
++  align?: 'left' | 'right'
++  className?: string
++  children: (close: () => void) => React.ReactNode
++}): JSX.Element {
++  const box = useRef<HTMLDetailsElement | null>(null)
++  const [open, setOpen] = useState(false)
++
++  useEffect(() => {
++    const dismiss = (event: Event): void => {
++      const element = box.current
++      if (!element?.open) return
++      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
++      if (event.type === 'mousedown' && event.target instanceof Node && element.contains(event.target)) return
++      element.open = false
++      setOpen(false)
++      if (event.type === 'keydown') element.querySelector('summary')?.focus()
++    }
++    window.addEventListener('mousedown', dismiss)
++    window.addEventListener('keydown', dismiss)
++    window.addEventListener('blur', dismiss)
++    return () => {
++      window.removeEventListener('mousedown', dismiss)
++      window.removeEventListener('keydown', dismiss)
++      window.removeEventListener('blur', dismiss)
++    }
++  }, [])
++
++  const close = (): void => {
++    if (box.current) box.current.open = false
++    setOpen(false)
++    box.current?.querySelector('summary')?.focus()
++  }
++
++  const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
++    const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
++    if (!keys.includes(event.key)) return
++    const typing = document.activeElement instanceof HTMLInputElement
++    if (typing && (event.key === 'Home' || event.key === 'End')) return
++
++    const options = Array.from(
++      box.current?.querySelectorAll<HTMLElement>('.picker-body .composer-option') ?? [],
++    )
++    if (options.length === 0) return
++    event.preventDefault()
++
++    const at = options.indexOf(document.activeElement as HTMLElement)
++    const to =
++      event.key === 'Home'
++        ? 0
++        : event.key === 'End'
++          ? options.length - 1
++          : event.key === 'ArrowDown'
++            ? (at + 1) % options.length
++            : at <= 0
++              ? options.length - 1
++              : at - 1
++    options[to]?.focus()
++  }
++
++  return (
++    <details
++      className={`picker ${className}`.trim()}
++      ref={box}
++      onKeyDown={onKeyDown}
++      onToggle={() => setOpen(box.current?.open ?? false)}
++    >
++      <summary title={title}>
++        {trigger}
++        <Chevron dir="down" className="picker-caret" />
++      </summary>
++      {open && (
++        <div className={`picker-body ${align === 'right' ? 'to-right' : ''}`}>{children(close)}</div>
++      )}
++    </details>
++  )
++}
++
++function tintKey(dir: DirectoryInfo | undefined, cwd: string): string {
++  if (dir) return (dir.project || dir.cwd).toLowerCase()
++  return cwd.toLowerCase() || 'home'
++}
++
++function basename(path: string): string {
++  return path.replace(/\/+$/, '').split('/').pop() ?? ''
++}
++
+ export function Modal({
+   title,
+   onClose,
+diff --git a/desktop/src/renderer/styles.css b/desktop/src/renderer/styles.css
+index 867f98a..4c9fd13 100644
+--- a/desktop/src/renderer/styles.css
++++ b/desktop/src/renderer/styles.css
+@@ -3832,6 +3832,266 @@ figure.mermaid svg {
+   color: var(--on-surface-variant);
+ }
+ 
++.composer {
++  width: 680px;
++  max-width: 92vw;
++  display: flex;
++  flex-direction: column;
++  background: var(--surface-high);
++  border-radius: var(--r-lg);
++  box-shadow: 0 24px 64px var(--shadow-strong);
++}
++
++.composer-head {
++  display: flex;
++  align-items: center;
++  gap: 4px;
++  padding: 10px 10px 2px;
++}
++
++.composer-host {
++  margin-left: auto;
++}
++
++.composer-prompt {
++  min-height: 132px;
++  max-height: 40vh;
++  margin: 0 12px;
++  padding: 8px 8px 12px;
++  background: none;
++  border: none;
++  border-radius: 0;
++  resize: none;
++  font-size: 15px;
++  line-height: 1.5;
++}
++
++.composer-prompt:focus {
++  border: none;
++  outline: none;
++}
++
++.composer-prompt::placeholder {
++  color: color-mix(in srgb, var(--on-surface-variant) 55%, transparent);
++}
++
++.composer-foot {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  padding: 2px 10px 10px;
++}
++
++.composer-chips {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 4px 2px;
++  min-width: 0;
++}
++
++.composer-chips > * {
++  flex: none;
++}
++
++.composer-actions {
++  margin-left: auto;
++  display: flex;
++  align-items: center;
++  gap: 4px;
++}
++
++.composer-key {
++  margin-left: 6px;
++  font: inherit;
++  font-size: 12px;
++  opacity: 0.65;
++}
++
++.composer-dot {
++  width: 10px;
++  height: 10px;
++  border-radius: 3px;
++  flex: none;
++}
++
++.composer .dot {
++  width: 8px;
++  height: 8px;
++  border-radius: 50%;
++  flex: none;
++  background: var(--s-off);
++}
++
++.composer .dot.online {
++  background: var(--s-active);
++}
++
++.composer .dot.connecting {
++  background: var(--s-waiting);
++}
++
++.composer .dot.offline,
++.composer .dot.unpaired {
++  background: var(--error);
++}
++
++.picker {
++  position: relative;
++  min-width: 0;
++}
++
++.picker > summary {
++  list-style: none;
++  cursor: pointer;
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  height: 30px;
++  padding: 0 8px;
++  border-radius: 999px;
++  font-size: 13px;
++  color: var(--on-surface-variant);
++  white-space: nowrap;
++}
++
++.picker > summary::-webkit-details-marker {
++  display: none;
++}
++
++.picker > summary:hover,
++.picker[open] > summary {
++  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
++  color: var(--on-surface);
++}
++
++.picker .ui-icon {
++  width: 15px;
++  height: 15px;
++}
++
++.picker-caret {
++  width: 0.8em;
++  height: 0.8em;
++  opacity: 0.7;
++}
++
++.composer-place > summary {
++  font-size: 14px;
++  font-weight: 500;
++  color: var(--on-surface);
++}
++
++.composer-chip-name {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  max-width: 220px;
++}
++
++.picker-body {
++  position: absolute;
++  top: 100%;
++  left: 0;
++  margin-top: 6px;
++  z-index: 30;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  width: 300px;
++  max-height: 320px;
++  padding: 8px;
++  background: var(--surface-highest);
++  border-radius: var(--r-md);
++  box-shadow: 0 8px 24px var(--shadow-soft);
++  overflow-y: auto;
++}
++
++.picker-body.to-right {
++  left: auto;
++  right: 0;
++}
++
++.composer-foot .picker-body {
++  top: auto;
++  bottom: 100%;
++  margin: 0 0 6px;
++}
++
++.composer-place .picker-body {
++  width: 380px;
++}
++
++.picker-search {
++  flex: none;
++  font-size: 13px;
++  padding: 7px 10px;
++  background: var(--surface-high);
++}
++
++.picker-list {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  overflow-y: auto;
++}
++
++.composer-option {
++  display: flex;
++  flex-direction: column;
++  align-items: flex-start;
++  justify-content: flex-start;
++  flex: none;
++  gap: 2px;
++  width: 100%;
++  padding: 7px 10px;
++  border-radius: var(--r-sm);
++  font-size: 13px;
++  font-weight: 400;
++  color: var(--on-surface);
++  text-align: left;
++}
++
++.composer-option:hover {
++  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
++}
++
++.composer-option.is-on {
++  background: color-mix(in srgb, var(--primary) 16%, transparent);
++}
++
++.composer-option-name {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  max-width: 100%;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  font-weight: 500;
++}
++
++.composer-option-hint {
++  max-width: 100%;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  font-size: 11px;
++  color: var(--on-surface-variant);
++}
++
++.composer-option-count {
++  font-size: 11px;
++  font-weight: 400;
++  color: var(--s-active);
++}
++
++.picker-empty {
++  margin: 4px 10px;
++  font-size: 12px;
++  color: var(--on-surface-variant);
++}
++
+ .host-row {
+   display: flex;
+   align-items: center;
+-- 
+2.53.0
+

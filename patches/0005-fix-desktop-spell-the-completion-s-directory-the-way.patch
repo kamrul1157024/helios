@@ -1,0 +1,55 @@
+From 5702c08897f588be1d465147ef9ee93de6eae773 Mon Sep 17 00:00:00 2001
+From: Rakibul Islam <33988342+raykibul@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 01:03:41 +0600
+Subject: [PATCH 5/8] fix(desktop): spell the completion's directory the way
+ the disk does
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The section header is small caps, and a path put through it comes out as
+/HOME/DEV — which is not the directory, on any filesystem that cares.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ desktop/src/renderer/components/newsession.tsx | 6 +++++-
+ desktop/src/renderer/styles.css                | 6 ++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/desktop/src/renderer/components/newsession.tsx b/desktop/src/renderer/components/newsession.tsx
+index 3ed6f46..bab5954 100644
+--- a/desktop/src/renderer/components/newsession.tsx
++++ b/desktop/src/renderer/components/newsession.tsx
+@@ -546,7 +546,11 @@ function DirectoryList({
+           </button>
+         ))}
+ 
+-        {children.length > 0 && <p className="picker-section">In {listing?.path ?? parent}</p>}
++        {children.length > 0 && (
++          <p className="picker-section">
++            In <span className="picker-section-path">{listing?.path ?? parent}</span>
++          </p>
++        )}
+         {children.map((entry) => (
+           <button
+             key={entry.path}
+diff --git a/desktop/src/renderer/styles.css b/desktop/src/renderer/styles.css
+index ec8461f..ab91ce3 100644
+--- a/desktop/src/renderer/styles.css
++++ b/desktop/src/renderer/styles.css
+@@ -4138,6 +4138,12 @@ figure.mermaid svg {
+   white-space: nowrap;
+ }
+ 
++/* A path is spelled the way the disk spells it, small caps or not. */
++.picker-section-path {
++  text-transform: none;
++  letter-spacing: 0;
++}
++
+ /* The escape hatch, and it reads as one: a path nothing has offered. */
+ .composer-option.use-typed .composer-option-name {
+   color: var(--primary);
+-- 
+2.53.0
+

@@ -1,0 +1,327 @@
+From 3e2c8e743108ad0762a38bcc8b963a51c8d9bf93 Mon Sep 17 00:00:00 2001
+From: kamrul1157024 <kamrul1157024@gmail.com>
+Date: Fri, 4 Sep 2026 12:32:59 +0000
+Subject: [PATCH 7/8] fix(desktop): complete a typed path from the directory
+ the chip names
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The picker completed against the filesystem but always from home: a path
+with no leading `/` or `~` was resolved under `~/`, whatever the chip was
+set to. So with the chip on `~/workspace/helios`, typing `int` offered
+whatever home happens to hold — nothing, usually — and the one thing the
+typing is for, walking down from where you already are, was the one thing
+it could not do.
+
+A relative path is now relative to the directory the picker is set to, the
+way it is in a shell sitting in it. `completionTarget` takes that directory
+as its base; without one it is home, which is where a session with no
+directory starts anyway. `/…` and `~/…` say where they start from and are
+untouched.
+
+The same rule fixes the escape hatch, which was only half a hatch. It
+committed the raw text, and `resolveCWD` refuses anything not absolute
+(internal/server/cwd.go), so "anything typed is committable" held only for
+the paths that did not need it: `Use "int"` produced a 400. `resolveTyped`
+is what gets committed now, and the row prints the absolute path it will
+land on, because three letters do not say which directory they are under.
+
+The stub daemon grows two directories under /repo — a picker sitting in a
+session's directory has to have something to complete — and stops matching
+grep against directories, which it never should have.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ desktop/e2e/daemon.ts                         | 11 +++--
+ desktop/e2e/new-session.spec.ts               | 47 +++++++++++++++++--
+ desktop/src/renderer/components/dirpath.ts    | 42 ++++++++++++++---
+ .../src/renderer/components/newsession.tsx    | 21 ++++++---
+ desktop/test/dirpath.test.ts                  | 29 +++++++++++-
+ 5 files changed, 126 insertions(+), 24 deletions(-)
+
+diff --git a/desktop/e2e/daemon.ts b/desktop/e2e/daemon.ts
+index d94ea36..df59ec7 100644
+--- a/desktop/e2e/daemon.ts
++++ b/desktop/e2e/daemon.ts
+@@ -240,16 +240,17 @@ const WORKTREES: Worktree[] = [
+ /**
+  * Home, and the one directory under it with anything in it.
+  *
+- * The new-session picker completes a typed path against the disk, and a bare
+- * segment completes under home — so `~/` has to answer with directories, not
+- * with the flat list of files the other roots serve.
++ * The new-session picker completes a typed path against the disk, so the roots
++ * it can be sitting in have to answer with directories and not only with the
++ * flat list of files: `~/` for a picker with no directory picked, and `/repo`
++ * for one set to a session's.
+  */
+ export const HOME = '/home/dev'
+ export const WORKSPACE = `${HOME}/workspace`
+ 
+ /** One file per worktree, named after it, so a wrong root is visible on sight. */
+ const TREES: Record<string, FileEntry[]> = {
+-  [REPO]: [file(REPO, 'main.go'), file(REPO, 'README.md')],
++  [REPO]: [dir(REPO, 'desktop'), dir(REPO, 'docs'), file(REPO, 'main.go'), file(REPO, 'README.md')],
+   [OTHER_WORKTREE]: [file(OTHER_WORKTREE, 'hotfix.go')],
+   [HOME]: [dir(HOME, 'workspace'), dir(HOME, 'worktrees'), dir(HOME, '.config'), file(HOME, 'notes.md')],
+   [WORKSPACE]: [dir(WORKSPACE, 'acme-api'), dir(WORKSPACE, 'acme-web')],
+@@ -270,7 +271,7 @@ function resolveStubPath(asked: string): string {
+ }
+ 
+ function grepMatches(root: string, query: string): GrepMatch[] {
+-  const entries = TREES[root] ?? []
++  const entries = (TREES[root] ?? []).filter((entry) => !entry.is_dir)
+   return entries.map((entry, index) => ({
+     path: entry.path,
+     rel: entry.name,
+diff --git a/desktop/e2e/new-session.spec.ts b/desktop/e2e/new-session.spec.ts
+index 669effe..8994ad5 100644
+--- a/desktop/e2e/new-session.spec.ts
++++ b/desktop/e2e/new-session.spec.ts
+@@ -139,14 +139,50 @@ test('the directory filter narrows the list and takes a typed path', async ({ wi
+ // The picker's whole job, and the reason #154 was reverted: a directory that
+ // has never had a session in it is not in the recents, so the only way to it is
+ // the one the list cannot offer.
+-test('a relative path is committable, which the recents cannot offer', async ({ window }) => {
++//
++// It reaches the daemon absolute. `resolveCWD` rejects anything else with a
++// 400 (internal/server/cwd.go), so committing the typed text as it stands would
++// be an escape hatch that only works for the paths that did not need one.
++test('a relative path is committable, and lands under the directory in the chip', async ({
++  window,
++  daemon,
++}) => {
+   await openComposer(window)
+   await openPlace(window)
+ 
+   await window.locator('.picker-search').fill('workspace/acme-mobile')
+   await window.locator('.composer-option', { hasText: 'Use' }).click()
+-
+   await expect(window.locator('.composer-place')).toContainText('acme-mobile')
++
++  await window.locator('.composer-prompt').fill('start here')
++  await window.locator('.composer .filled').click()
++
++  await expect.poll(() => daemon.writes().map((write) => write.kind)).toEqual(['create'])
++  const [created] = daemon.writes()
++  if (created?.kind !== 'create') throw new Error('the daemon recorded something other than a create')
++  expect(created.spec.cwd).toBe('/repo/workspace/acme-mobile')
++})
++
++// The complaint the fix is for: the chip says one directory and the typing used
++// to be answered from another. A bare segment is relative to what the chip
++// names, the way it would be in a shell sitting there.
++test('a bare name completes inside the directory the chip names', async ({ window }) => {
++  await openComposer(window)
++  await openPlace(window)
++
++  await window.locator('.picker-search').fill('desk')
++  await expect(window.locator('.picker-section', { hasText: 'In /repo' })).toBeVisible()
++
++  const offered = window.locator('.picker-list .composer-option', { hasText: 'desktop' })
++  await expect(offered).toHaveCount(1)
++  await expect(offered).toContainText('/repo/desktop')
++
++  // And the escape hatch above it says where it would land, rather than leaving
++  // the reader to guess which directory three letters are relative to.
++  await expect(window.locator('.composer-option.use-typed')).toContainText('/repo/desk')
++
++  await offered.click()
++  await expect(window.locator('.composer-place')).toContainText('desktop')
+ })
+ 
+ test('enter commits what is typed, with nothing under it agreeing', async ({ window }) => {
+@@ -165,8 +201,9 @@ test('typing completes against the filesystem, not against the recents', async (
+   await openPlace(window)
+ 
+   // `work` is in no recent — the stub daemon has one session directory, /repo —
+-  // so every row here came from a directory listing.
+-  await window.locator('.picker-search').fill('work')
++  // so every row here came from a directory listing. Spelled from home, because
++  // a bare segment is relative to /repo, which is the chip's directory.
++  await window.locator('.picker-search').fill('~/work')
+   const completions = window.locator('.picker-list .composer-option', { hasText: /workspace|worktrees/ })
+   await expect(completions).toHaveCount(2)
+   await expect(window.locator('.picker-section', { hasText: 'In /home/dev' })).toBeVisible()
+@@ -189,7 +226,7 @@ test('tab fills in the top completion', async ({ window }) => {
+   await openPlace(window)
+ 
+   const search = window.locator('.picker-search')
+-  await search.fill('worksp')
++  await search.fill('~/worksp')
+   await expect(window.locator('.picker-list .composer-option', { hasText: 'workspace' })).toBeVisible()
+   await search.press('Tab')
+ 
+diff --git a/desktop/src/renderer/components/dirpath.ts b/desktop/src/renderer/components/dirpath.ts
+index 4694254..966e76a 100644
+--- a/desktop/src/renderer/components/dirpath.ts
++++ b/desktop/src/renderer/components/dirpath.ts
+@@ -13,24 +13,52 @@ export const HOME = '~/'
+ /** How many completions are worth showing before the list is just a directory. */
+ export const MAX_COMPLETIONS = 40
+ 
++/** True of the two spellings that already say where they start from. */
++function rooted(path: string): boolean {
++  return path.startsWith('/') || path === '~' || path.startsWith('~/')
++}
++
++/** Where a relative path starts: the picker's directory, or home without one. */
++function startFrom(base: string): string {
++  return base.trim() || HOME
++}
++
++/**
++ * The absolute path a typed string means, read from where the picker already is.
++ *
++ * A relative path is relative to the directory the chip names, the way it would
++ * be in a shell sitting in it. Two things depend on that being written down
++ * once. Completion has to read the directory the typing is actually inside, or
++ * typing `desk` in a picker set to `~/workspace/helios` offers whatever home
++ * happens to hold and calls it an answer. And the escape hatch has to hand the
++ * daemon a path it accepts: `resolveCWD` refuses anything not absolute
++ * (internal/server/cwd.go), so committing the raw text would make "anything
++ * typed is committable" true only of the paths that were already absolute.
++ */
++export function resolveTyped(typed: string, base: string): string {
++  const path = typed.trim()
++  if (path === '' || rooted(path)) return path
++  const from = startFrom(base)
++  return from.endsWith('/') ? from + path : `${from}/${path}`
++}
++
+ /**
+  * The directory a half-typed path is completing inside, and the prefix to keep.
+  *
+  * Everything up to the last separator names a directory to read; what follows
+  * is what the entries in it have to start with. A path with no separator in it
+- * yet, or a relative one, completes under home — which is where a session with
+- * no directory of its own starts anyway, so it is the same place the composer
+- * would have used.
++ * yet, or a relative one, completes under `base` — the directory the composer
++ * is set to. With no directory set that is home, which is where a session
++ * without one starts anyway.
+  */
+-export function completionTarget(typed: string): { parent: string; prefix: string } {
++export function completionTarget(typed: string, base: string = HOME): { parent: string; prefix: string } {
+   const cut = typed.lastIndexOf('/')
+   const prefix = typed.slice(cut + 1)
+-  if (cut === -1) return { parent: HOME, prefix }
++  if (cut === -1) return { parent: startFrom(base), prefix }
+   const parent = typed.slice(0, cut)
+   if (parent === '') return { parent: '/', prefix }
+   if (parent === '~') return { parent: HOME, prefix }
+-  if (!parent.startsWith('/') && !parent.startsWith('~')) return { parent: HOME + parent, prefix }
+-  return { parent, prefix }
++  return { parent: resolveTyped(parent, base), prefix }
+ }
+ 
+ /**
+diff --git a/desktop/src/renderer/components/newsession.tsx b/desktop/src/renderer/components/newsession.tsx
+index 99c3075..303bfbd 100644
+--- a/desktop/src/renderer/components/newsession.tsx
++++ b/desktop/src/renderer/components/newsession.tsx
+@@ -13,7 +13,7 @@ import {
+   useDropTarget,
+ } from './attach.tsx'
+ import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
+-import { completionTarget, completionsIn } from './dirpath.ts'
++import { completionTarget, completionsIn, resolveTyped } from './dirpath.ts'
+ import { tintOf } from './grouping.ts'
+ import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
+ 
+@@ -455,7 +455,11 @@ function DirectoryList({
+   const search = useRef<HTMLInputElement | null>(null)
+   const wanted = typed.trim()
+   const needle = wanted.toLowerCase()
+-  const { parent, prefix } = completionTarget(wanted)
++  const { parent, prefix } = completionTarget(wanted, cwd)
++  // Where the typed text would actually start, which for a relative path is
++  // under the directory the chip already names. The daemon takes absolute
++  // paths only, so this is the form that gets committed.
++  const target = resolveTyped(wanted, cwd)
+ 
+   const recents = useMemo(
+     () =>
+@@ -482,7 +486,7 @@ function DirectoryList({
+     [listing, prefix, recents],
+   )
+ 
+-  const exact = directories.some((dir) => dir.cwd === wanted)
++  const exact = directories.some((dir) => dir.cwd === target)
+   // Home stays reachable while it is being spelled: it is a row like any other,
+   // and hiding it the moment a key is pressed hides what was being reached for.
+   const showHome = needle === '' || 'home'.startsWith(needle) || needle === '~'
+@@ -520,14 +524,19 @@ function DirectoryList({
+           event.preventDefault()
+           // What is in the box wins over what is under it. Anything else makes
+           // the escape hatch conditional on the list agreeing.
+-          if (wanted !== '') onPick(wanted)
++          if (wanted !== '') onPick(target)
+         }}
+       />
+       <div className="picker-list">
+         {wanted !== '' && !exact && (
+-          <button className="composer-option use-typed" onClick={() => onPick(wanted)}>
++          <button className="composer-option use-typed" onClick={() => onPick(target)}>
+             <span className="composer-option-name">Use “{wanted}”</span>
+-            <span className="composer-option-hint">Start here whether or not it is listed</span>
++            {/* A relative path says where it lands, because the reader cannot
++                see it from the text: the same three letters mean a different
++                directory depending on which one the chip names. */}
++            <span className="composer-option-hint">
++              {target === wanted ? 'Start here whether or not it is listed' : target}
++            </span>
+           </button>
+         )}
+         {showHome && (
+diff --git a/desktop/test/dirpath.test.ts b/desktop/test/dirpath.test.ts
+index 6879ec8..93fce54 100644
+--- a/desktop/test/dirpath.test.ts
++++ b/desktop/test/dirpath.test.ts
+@@ -4,7 +4,7 @@
+ import assert from 'node:assert/strict'
+ import { test } from 'node:test'
+ 
+-import { completionTarget, completionsIn } from '../src/renderer/components/dirpath.ts'
++import { completionTarget, completionsIn, resolveTyped } from '../src/renderer/components/dirpath.ts'
+ import { type FileEntry } from '../src/shared/models.ts'
+ 
+ function dir(path: string): FileEntry {
+@@ -28,6 +28,33 @@ test('a bare or relative path completes under home', () => {
+   assert.deepEqual(completionTarget(''), { parent: '~/', prefix: '' })
+ })
+ 
++test('with a directory already picked, a relative path completes inside it', () => {
++  const at = '/home/dev/workspace/acme'
++  assert.deepEqual(completionTarget('desk', at), { parent: at, prefix: 'desk' })
++  assert.deepEqual(completionTarget('web/cli', at), { parent: `${at}/web`, prefix: 'cli' })
++  // The two spellings that say where they start from are not moved.
++  assert.deepEqual(completionTarget('/etc/ini', at), { parent: '/etc', prefix: 'ini' })
++  assert.deepEqual(completionTarget('~/works', at), { parent: '~/', prefix: 'works' })
++})
++
++test('what gets committed is absolute, because the daemon takes nothing else', () => {
++  const at = '/home/dev/workspace/acme'
++  assert.equal(resolveTyped('desk', at), `${at}/desk`)
++  assert.equal(resolveTyped('web/cli', at), `${at}/web/cli`)
++  assert.equal(resolveTyped('  desk  ', at), `${at}/desk`)
++  assert.equal(resolveTyped('desk', `${at}/`), `${at}/desk`)
++  // Already rooted, or nothing typed at all: left exactly as it is.
++  assert.equal(resolveTyped('/tmp/elsewhere', at), '/tmp/elsewhere')
++  assert.equal(resolveTyped('~/works', at), '~/works')
++  assert.equal(resolveTyped('~', at), '~')
++  assert.equal(resolveTyped('', at), '')
++})
++
++test('with no directory picked, home is what relative means', () => {
++  assert.deepEqual(completionTarget('works', ''), { parent: '~/', prefix: 'works' })
++  assert.equal(resolveTyped('works', ''), '~/works')
++})
++
+ test('~ on its own is sent as ~/, which is the form the daemon expands', () => {
+   assert.deepEqual(completionTarget('~/'), { parent: '~/', prefix: '' })
+   assert.deepEqual(completionTarget('~/w'), { parent: '~/', prefix: 'w' })
+-- 
+2.53.0
+

@@ -1,0 +1,941 @@
+From b74aaebd17b3956e9733cb3a46547abb15650cf6 Mon Sep 17 00:00:00 2001
+From: Rakibul Islam <33988342+raykibul@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 00:56:47 +0600
+Subject: [PATCH 4/8] feat(desktop): let the new-session dialog take files, as
+ the chat composer does
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The dialog reads as the same control as the session prompt, so a
+screenshot dragged onto it should land on it. Until now nothing
+happened: no ⊕, no drop target, no paste.
+
+It is one composer's worth of behaviour used twice, so it moves out of
+chat.tsx rather than being written a second time. attach.tsx holds the
+hook that owns the files, the drop target, the ⊕ and its hidden input,
+the chips and the paste offer; chat.tsx now uses those and is 140 lines
+shorter for it. The terminal's own drop is left alone — it types paths
+into a pty and has no chips to share.
+
+The one part that is not the chat composer: POST /api/sessions/{id}/files
+needs a session that exists, and in this dialog none does yet. So the
+files are held in memory, the session is created silent, the upload goes
+against the id it hands back, and the prompt naming the paths is sent as
+the first turn. An upload that fails after that point does not undo the
+session — it is running, and killing an agent over an attachment is the
+worse answer — so the prompt goes without the paths and the failure is
+said out loud.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ desktop/e2e/daemon.ts                         |  62 ++++
+ desktop/e2e/new-session.spec.ts               |  64 +++++
+ desktop/src/renderer/components/attach.tsx    | 264 ++++++++++++++++++
+ desktop/src/renderer/components/chat.tsx      | 178 ++----------
+ .../src/renderer/components/newsession.tsx    |  78 +++++-
+ desktop/src/renderer/styles.css               |  33 +++
+ 6 files changed, 517 insertions(+), 162 deletions(-)
+ create mode 100644 desktop/src/renderer/components/attach.tsx
+
+diff --git a/desktop/e2e/daemon.ts b/desktop/e2e/daemon.ts
+index 431ea3f..d94ea36 100644
+--- a/desktop/e2e/daemon.ts
++++ b/desktop/e2e/daemon.ts
+@@ -47,9 +47,27 @@ export interface StubDaemon {
+    * how a test knows the refetch it provoked has happened at all.
+    */
+   greps(): number
++  /**
++   * What the app asked the daemon to do, in the order it asked.
++   *
++   * A session with files on its first prompt is three calls that have to
++   * happen in one order — create, upload, send — because the upload needs an
++   * id that only the create can give it. Nothing on screen shows the order, so
++   * the record of what arrived is the only thing that can.
++   */
++  writes(): DaemonWrite[]
+   close(): Promise<void>
+ }
+ 
++/** One thing the app asked of the daemon. */
++export type DaemonWrite =
++  | { kind: 'create'; spec: Record<string, unknown> }
++  | { kind: 'upload'; sessionId: string; names: string[] }
++  | { kind: 'send'; sessionId: string; message: string }
++
++/** The session every create in these tests hands back. */
++export const CREATED = 's-created'
++
+ /** What `/api/file` answers before a test has said otherwise. */
+ const DEFAULT_CONTENT = 'package main\n'
+ 
+@@ -294,6 +312,8 @@ export async function startDaemon(): Promise<StubDaemon> {
+     }
+   }
+ 
++  const writes: DaemonWrite[] = []
++
+   const server = http.createServer((req, res) => {
+     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+     const path = url.pathname
+@@ -307,6 +327,16 @@ export async function startDaemon(): Promise<StubDaemon> {
+       return
+     }
+ 
++    if (req.method === 'POST' && written(path)) {
++      const chunks: Buffer[] = []
++      req.on('data', (chunk: Buffer) => chunks.push(chunk))
++      req.on('end', () => {
++        res.setHeader('Content-Type', 'application/json')
++        res.end(JSON.stringify(record(writes, path, Buffer.concat(chunks))))
++      })
++      return
++    }
++
+     if (path === '/api/files/grep') grepCount += 1
+     res.setHeader('Content-Type', 'application/json')
+     res.end(JSON.stringify(answer(path, q, held, statusOf)))
+@@ -323,6 +353,7 @@ export async function startDaemon(): Promise<StubDaemon> {
+     },
+     reads: (target) => readCount.get(target) ?? 0,
+     greps: () => grepCount,
++    writes: () => [...writes],
+     setFile: (target, content) => {
+       contents.set(target, content)
+       revision += 1
+@@ -336,6 +367,37 @@ export async function startDaemon(): Promise<StubDaemon> {
+   }
+ }
+ 
++/** The three calls that start a session and give it its first turn. */
++function written(path: string): boolean {
++  return path === '/api/sessions' || path.endsWith('/files') || path.endsWith('/send')
++}
++
++/**
++ * Takes down what the app asked for, and answers as the daemon would.
++ *
++ * The upload is multipart, and a stub has no business parsing it properly: the
++ * filenames are what a test asserts on, and they are in the part headers.
++ */
++function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
++  if (path === '/api/sessions') {
++    writes.push({ kind: 'create', spec: JSON.parse(body.toString() || '{}') })
++    return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
++  }
++
++  const id = path.slice('/api/sessions/'.length, path.lastIndexOf('/'))
++  if (path.endsWith('/send')) {
++    const { message } = JSON.parse(body.toString() || '{}')
++    writes.push({ kind: 'send', sessionId: id, message: String(message ?? '') })
++    return { success: true }
++  }
++
++  const names = [...body.toString('latin1').matchAll(/filename="([^"]*)"/g)].map((m) => m[1] ?? '')
++  writes.push({ kind: 'upload', sessionId: id, names })
++  return {
++    files: names.map((name) => ({ name, path: `${HOME}/.helios/uploads/${id}/${name}`, size: 1 })),
++  }
++}
++
+ /**
+  * Every read a panel makes, and an empty object for the rest.
+  *
+diff --git a/desktop/e2e/new-session.spec.ts b/desktop/e2e/new-session.spec.ts
+index 4f9d719..7c6ee84 100644
+--- a/desktop/e2e/new-session.spec.ts
++++ b/desktop/e2e/new-session.spec.ts
+@@ -1,5 +1,6 @@
+ import type { Page } from '@playwright/test'
+ 
++import { CREATED } from './daemon.ts'
+ import { expect, test } from './fixtures.ts'
+ 
+ async function openComposer(window: Page): Promise<void> {
+@@ -215,3 +216,66 @@ test('home does not disappear while it is being typed', async ({ window }) => {
+   await window.locator('.picker-search').fill('hom')
+   await expect(window.locator('.composer-option', { hasText: 'Home' })).toBeVisible()
+ })
++
++// The one part of the composer that is not the chat composer with different
++// chips. An upload needs a session to belong to, and the session does not
++// exist until Create is pressed — so the first turn cannot be the one the
++// agent launches with, and the order below is the whole of the feature.
++test('files go up once the session exists, and the first prompt names them', async ({ window, daemon }) => {
++  await openComposer(window)
++
++  await window.locator('.composer input[type="file"]').setInputFiles({
++    name: 'shot.png',
++    mimeType: 'image/png',
++    buffer: Buffer.from('not really a png'),
++  })
++  await expect(window.locator('.attachment-name')).toHaveText('shot.png')
++
++  await window.locator('.composer-prompt').fill('what is wrong with this')
++  await window.locator('.composer .filled').click()
++  await expect(window.locator('.composer')).toHaveCount(0)
++
++  await expect
++    .poll(() => daemon.writes().map((write) => write.kind))
++    .toEqual(['create', 'upload', 'send'])
++
++  const [created, uploaded, sent] = daemon.writes()
++  if (created?.kind !== 'create' || uploaded?.kind !== 'upload' || sent?.kind !== 'send') {
++    throw new Error('the daemon recorded something other than a create, an upload and a send')
++  }
++  // Silent on purpose: launching with the prompt would send the agent looking
++  // for paths that are only decided by the upload below it.
++  expect(created.spec.prompt).toBeUndefined()
++  expect(uploaded.names).toEqual(['shot.png'])
++  expect(uploaded.sessionId).toBe(CREATED)
++  expect(sent.message).toContain(`/home/dev/.helios/uploads/${CREATED}/shot.png`)
++  expect(sent.message).toContain('what is wrong with this')
++})
++
++test('a session with nothing attached still launches with its prompt', async ({ window, daemon }) => {
++  await openComposer(window)
++
++  await window.locator('.composer-prompt').fill('just get on with it')
++  await window.locator('.composer .filled').click()
++  await expect(window.locator('.composer')).toHaveCount(0)
++
++  await expect.poll(() => daemon.writes().map((write) => write.kind)).toEqual(['create'])
++  const [created] = daemon.writes()
++  if (created?.kind !== 'create') throw new Error('the daemon recorded something other than a create')
++  expect(created.spec.prompt).toBe('just get on with it')
++})
++
++test('a file dropped anywhere on the dialog lands on it', async ({ window }) => {
++  await openComposer(window)
++
++  await window.evaluate(() => {
++    const carried = new DataTransfer()
++    carried.items.add(new File(['a stack trace'], 'trace.txt', { type: 'text/plain' }))
++    const composer = document.querySelector('.composer')
++    if (!composer) throw new Error('no composer to drop on')
++    composer.dispatchEvent(new DragEvent('dragover', { dataTransfer: carried, bubbles: true }))
++    composer.dispatchEvent(new DragEvent('drop', { dataTransfer: carried, bubbles: true }))
++  })
++
++  await expect(window.locator('.attachment-name')).toHaveText('trace.txt')
++})
+diff --git a/desktop/src/renderer/components/attach.tsx b/desktop/src/renderer/components/attach.tsx
+new file mode 100644
+index 0000000..459f853
+--- /dev/null
++++ b/desktop/src/renderer/components/attach.tsx
+@@ -0,0 +1,264 @@
++// The composer's files: the ⊕, the drop target, the paste, and the chips they
++// all end up as.
++//
++// Written out of chat.tsx when the new-session dialog became the second box
++// that takes a prompt, and would otherwise have become the second copy of this.
++// The order matters more than any of the pieces — bytes are read at attach
++// time because a dropped File does not stay valid, and the upload happens
++// before the send because a prompt naming a path the daemon never stored sends
++// the agent looking for a file that is not there.
++import { useRef, useState } from 'react'
++
++import { api } from '../bridge.ts'
++import {
++  isLargePaste,
++  needingUpload,
++  pastedName,
++  pastedTextAttachment,
++  promptWithAttachments,
++  withStoredPaths,
++  type Attachment,
++} from '../attachments.ts'
++
++export interface AttachmentBag {
++  /** What is on the composer right now. */
++  files: Attachment[]
++  /** Reads the files into memory now: a dropped File is not valid for long. */
++  attach: (files: FileList | File[] | null) => Promise<void>
++  remove: (attachment: Attachment) => void
++  /** The block just pasted, while the offer to file it instead is up. */
++  pasted: string | null
++  /** Notes what was pasted, so a large block can be offered as a file. */
++  noticePaste: (text: string) => void
++  /** Files the pasted block, and answers with the text to take out of the draft. */
++  fileThePaste: () => string | null
++  keepThePaste: () => void
++  /**
++   * Stores whatever the daemon has not stored yet, and answers with the prompt
++   * that names it.
++   *
++   * Only what is unstored: a send can fail after a successful upload — a cold
++   * session that never acknowledges the prompt is the usual way — and
++   * uploading the same bytes on the retry would leave a numbered copy behind
++   * for every attempt.
++   */
++  store: (hostId: string, sessionId: string, text: string) => Promise<string>
++  /** After a send has landed: the chips go and their previews are released. */
++  clear: () => void
++}
++
++export function useAttachments(): AttachmentBag {
++  const [files, setFiles] = useState<Attachment[]>([])
++  const [pasted, setPasted] = useState<string | null>(null)
++  const next = useRef(0)
++
++  const attach = async (chosen: FileList | File[] | null): Promise<void> => {
++    const picked = [...(chosen ?? [])]
++    if (picked.length === 0) return
++    const read = await Promise.all(
++      picked.map(async (file) => ({
++        id: ++next.current,
++        // A pasted screenshot arrives unnamed, and the name becomes the
++        // filename on disk and the path in the prompt.
++        name: file.name || pastedName(file.type),
++        type: file.type,
++        size: file.size,
++        bytes: new Uint8Array(await file.arrayBuffer()),
++        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
++        path: null,
++      })),
++    )
++    setFiles((current) => [...current, ...read])
++  }
++
++  const remove = (attachment: Attachment): void => {
++    if (attachment.preview) URL.revokeObjectURL(attachment.preview)
++    setFiles((current) => current.filter((a) => a.id !== attachment.id))
++  }
++
++  const fileThePaste = (): string | null => {
++    if (!pasted) return null
++    setFiles((current) => [...current, pastedTextAttachment(++next.current, pasted)])
++    setPasted(null)
++    return pasted
++  }
++
++  const store = async (hostId: string, sessionId: string, text: string): Promise<string> => {
++    let ready = files
++    const pending = needingUpload(files)
++    if (pending.length > 0) {
++      const stored = await api(hostId).uploadFiles(
++        sessionId,
++        pending.map(({ name, type, bytes }) => ({ name, type, bytes })),
++      )
++      ready = withStoredPaths(files, pending, stored.map((file) => file.path))
++      // Recorded before the send, which is the call that fails.
++      setFiles(ready)
++    }
++    return promptWithAttachments(ready, text)
++  }
++
++  const clear = (): void => {
++    for (const attachment of files) {
++      if (attachment.preview) URL.revokeObjectURL(attachment.preview)
++    }
++    setFiles([])
++    setPasted(null)
++  }
++
++  return {
++    files,
++    attach,
++    remove,
++    pasted,
++    // A large block is only offered, never intercepted: the paste lands in the
++    // composer as it always has, and ignoring the offer leaves the prompt
++    // exactly as the user typed it.
++    noticePaste: (text) => setPasted(isLargePaste(text) ? text : null),
++    fileThePaste,
++    keepThePaste: () => setPasted(null),
++    store,
++    clear,
++  }
++}
++
++/**
++ * Files dropped on a box, without the box swallowing every other drag.
++ *
++ * All three handlers are gated on the drag carrying files, because a session
++ * dragged out of the sidebar is a drag too and the composer is not where it
++ * goes.
++ */
++export function useDropTarget(onFiles: (files: FileList) => void): {
++  dropping: boolean
++  handlers: {
++    onDragOver: (event: React.DragEvent) => void
++    onDragLeave: (event: React.DragEvent) => void
++    onDrop: (event: React.DragEvent) => void
++  }
++} {
++  const [dropping, setDropping] = useState(false)
++  return {
++    dropping,
++    handlers: {
++      onDragOver: (event) => {
++        if (!event.dataTransfer.types.includes('Files')) return
++        event.preventDefault()
++        setDropping(true)
++      },
++      onDragLeave: (event) => {
++        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
++        setDropping(false)
++      },
++      onDrop: (event) => {
++        if (!event.dataTransfer.types.includes('Files')) return
++        event.preventDefault()
++        setDropping(false)
++        onFiles(event.dataTransfer.files)
++      },
++    },
++  }
++}
++
++/** The ⊕, and the file input hiding behind it. */
++export function AttachButton({
++  onFiles,
++  disabled = false,
++}: {
++  onFiles: (files: FileList | null) => void
++  disabled?: boolean
++}): JSX.Element {
++  const picker = useRef<HTMLInputElement | null>(null)
++  return (
++    <>
++      <input
++        ref={picker}
++        type="file"
++        multiple
++        hidden
++        onChange={(event) => {
++          onFiles(event.target.files)
++          // Cleared so picking the same file twice fires onChange twice.
++          event.target.value = ''
++        }}
++      />
++      <button
++        className="icon-btn attach-btn"
++        title="Attach files — or paste and drop them here"
++        aria-label="Attach files"
++        disabled={disabled}
++        onClick={() => picker.current?.click()}
++      >
++        ⊕
++      </button>
++    </>
++  )
++}
++
++export function AttachmentChips({
++  files,
++  onRemove,
++}: {
++  files: Attachment[]
++  onRemove: (attachment: Attachment) => void
++}): JSX.Element | null {
++  if (files.length === 0) return null
++  return (
++    <div className="attachments">
++      {files.map((attachment) => (
++        <span key={attachment.id} className="attachment">
++          {attachment.preview ? (
++            <img className="attachment-thumb" src={attachment.preview} alt="" />
++          ) : (
++            <span className="attachment-icon">◫</span>
++          )}
++          <span className="attachment-name" title={attachment.name}>
++            {attachment.name}
++          </span>
++          <span className="attachment-size">{fileSize(attachment.size)}</span>
++          <button
++            className="attachment-drop"
++            aria-label={`Remove ${attachment.name}`}
++            title="Remove"
++            onClick={() => onRemove(attachment)}
++          >
++            ✕
++          </button>
++        </span>
++      ))}
++    </div>
++  )
++}
++
++export function PasteOffer({
++  text,
++  onFile,
++  onKeep,
++}: {
++  text: string
++  onFile: () => void
++  onKeep: () => void
++}): JSX.Element {
++  return (
++    <div className="paste-offer">
++      <span className="paste-offer-text">Pasted {fileSize(new Blob([text]).size)} of text</span>
++      <button className="ghost" onClick={onFile}>
++        Attach as file
++      </button>
++      <button
++        className="attachment-drop"
++        aria-label="Keep the paste in the prompt"
++        title="Keep it in the prompt"
++        onClick={onKeep}
++      >
++        ✕
++      </button>
++    </div>
++  )
++}
++
++export function fileSize(bytes: number): string {
++  if (bytes < 1024) return `${bytes} B`
++  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
++  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
++}
+diff --git a/desktop/src/renderer/components/chat.tsx b/desktop/src/renderer/components/chat.tsx
+index f17d0dd..f3e4592 100644
+--- a/desktop/src/renderer/components/chat.tsx
++++ b/desktop/src/renderer/components/chat.tsx
+@@ -5,16 +5,8 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+ import { api, statusOf } from '../bridge.ts'
+ import { keys } from '../keys.ts'
+ import { appendDelta, transcriptMessages, transcriptQuery } from '../queries.ts'
+-import {
+-  isLargePaste,
+-  needingUpload,
+-  pastedName,
+-  pastedTextAttachment,
+-  promptWithAttachments,
+-  removeFirst,
+-  withStoredPaths,
+-  type Attachment,
+-} from '../attachments.ts'
++import { removeFirst } from '../attachments.ts'
++import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarget } from './attach.tsx'
+ import { multiEditDiff, unifiedDiff } from '../diff.ts'
+ import { DiffView } from './diff-view.tsx'
+ import { Chevron } from './icons.tsx'
+@@ -68,13 +60,9 @@ export function ChatPanel({
+   const loaded = transcript.isSuccess
+   const [draft, setDraft] = useState('')
+   const [sending, setSending] = useState(false)
+-  const [attachments, setAttachments] = useState<Attachment[]>([])
+-  // The block the user just pasted, while the offer to file it instead is up.
+-  const [pasted, setPasted] = useState<string | null>(null)
+-  const [dropping, setDropping] = useState(false)
+-  const picker = useRef<HTMLInputElement | null>(null)
++  const files = useAttachments()
++  const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
+   const retries = useRef<ReturnType<typeof setTimeout>[]>([])
+-  const nextAttachment = useRef(0)
+   const scroller = useRef<HTMLDivElement | null>(null)
+   const composer = useRef<HTMLTextAreaElement | null>(null)
+   const pinnedToBottom = useRef(true)
+@@ -193,68 +181,25 @@ export function ChatPanel({
+     }
+   }
+ 
+-  /** Reads the files into memory now: a dropped File is not valid for long. */
+-  const attach = async (files: FileList | File[] | null): Promise<void> => {
+-    const chosen = [...(files ?? [])]
+-    if (chosen.length === 0) return
+-    const read = await Promise.all(
+-      chosen.map(async (file) => ({
+-        id: ++nextAttachment.current,
+-        // A pasted screenshot arrives unnamed, and the name becomes the
+-        // filename on disk and the path in the prompt.
+-        name: file.name || pastedName(file.type),
+-        type: file.type,
+-        size: file.size,
+-        bytes: new Uint8Array(await file.arrayBuffer()),
+-        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+-        path: null,
+-      })),
+-    )
+-    setAttachments((current) => [...current, ...read])
+-  }
+-
+-  const drop = (attachment: Attachment): void => {
+-    if (attachment.preview) URL.revokeObjectURL(attachment.preview)
+-    setAttachments((current) => current.filter((a) => a.id !== attachment.id))
+-  }
+-
+   /** Moves the block the user just pasted out of the composer and into a file. */
+   const fileThePaste = (): void => {
+-    if (!pasted) return
+-    setAttachments((current) => [...current, pastedTextAttachment(++nextAttachment.current, pasted)])
+-    setDraft((current) => removeFirst(current, pasted))
+-    setPasted(null)
++    const text = files.fileThePaste()
++    if (text === null) return
++    setDraft((current) => removeFirst(current, text))
+   }
+ 
+   const send = async (): Promise<void> => {
+     const text = draft.trim()
+-    if ((!text && attachments.length === 0) || sending) return
++    if ((!text && files.files.length === 0) || sending) return
+     setSending(true)
+     try {
+       // Upload first: a prompt naming a path the daemon never stored is worse
+-      // than no prompt, and the agent would go looking for it. Only what has
+-      // not been stored yet — the send below may have failed once already, and
+-      // uploading the same bytes again would leave a numbered copy per try.
+-      let ready = attachments
+-      const pending = needingUpload(attachments)
+-      if (pending.length > 0) {
+-        const stored = await api(hostId).uploadFiles(
+-          session.session_id,
+-          pending.map(({ name, type, bytes }) => ({ name, type, bytes })),
+-        )
+-        ready = withStoredPaths(attachments, pending, stored.map((file) => file.path))
+-        // Recorded before the send, which is the call that fails.
+-        setAttachments(ready)
+-      }
+-      const message = promptWithAttachments(ready, text)
++      // than no prompt, and the agent would go looking for it.
++      const message = await files.store(hostId, session.session_id, text)
+ 
+       const result = await api(hostId).sendPrompt(session.session_id, message)
+       setDraft('')
+-      setPasted(null)
+-      for (const attachment of attachments) {
+-        if (attachment.preview) URL.revokeObjectURL(attachment.preview)
+-      }
+-      setAttachments([])
++      files.clear()
+       if (result.queued) store.notify('Queued — the agent is mid-turn')
+       void store.invalidateSessionsFor(hostId)
+       // The agent writes the prompt to its transcript a moment after accepting
+@@ -364,81 +309,14 @@ export function ChatPanel({
+           </button>
+         </div>
+       ) : (
+-        <div
+-          className={dropping ? 'composer dropping' : 'composer'}
+-          onDragOver={(event) => {
+-            if (!event.dataTransfer.types.includes('Files')) return
+-            event.preventDefault()
+-            setDropping(true)
+-          }}
+-          onDragLeave={(event) => {
+-            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+-            setDropping(false)
+-          }}
+-          onDrop={(event) => {
+-            if (!event.dataTransfer.types.includes('Files')) return
+-            event.preventDefault()
+-            setDropping(false)
+-            void attach(event.dataTransfer.files)
+-          }}
+-        >
+-          {pasted !== null && draft.includes(pasted) && (
+-            <div className="paste-offer">
+-              <span className="paste-offer-text">
+-                Pasted {fileSize(new Blob([pasted]).size)} of text
+-              </span>
+-              <button className="ghost" onClick={fileThePaste}>
+-                Attach as file
+-              </button>
+-              <button
+-                className="attachment-drop"
+-                aria-label="Keep the paste in the prompt"
+-                title="Keep it in the prompt"
+-                onClick={() => setPasted(null)}
+-              >
+-                ✕
+-              </button>
+-            </div>
++        <div className={dropping ? 'composer dropping' : 'composer'} {...dropHandlers}>
++          {files.pasted !== null && draft.includes(files.pasted) && (
++            <PasteOffer text={files.pasted} onFile={fileThePaste} onKeep={files.keepThePaste} />
+           )}
+ 
+-          {attachments.length > 0 && (
+-            <div className="attachments">
+-              {attachments.map((attachment) => (
+-                <span key={attachment.id} className="attachment">
+-                  {attachment.preview ? (
+-                    <img className="attachment-thumb" src={attachment.preview} alt="" />
+-                  ) : (
+-                    <span className="attachment-icon">◫</span>
+-                  )}
+-                  <span className="attachment-name" title={attachment.name}>
+-                    {attachment.name}
+-                  </span>
+-                  <span className="attachment-size">{fileSize(attachment.size)}</span>
+-                  <button
+-                    className="attachment-drop"
+-                    aria-label={`Remove ${attachment.name}`}
+-                    title="Remove"
+-                    onClick={() => drop(attachment)}
+-                  >
+-                    ✕
+-                  </button>
+-                </span>
+-              ))}
+-            </div>
+-          )}
++          <AttachmentChips files={files.files} onRemove={files.remove} />
+ 
+           <div className="composer-input">
+-            <input
+-              ref={picker}
+-              type="file"
+-              multiple
+-              hidden
+-              onChange={(event) => {
+-                void attach(event.target.files)
+-                // Cleared so picking the same file twice fires onChange twice.
+-                event.target.value = ''
+-              }}
+-            />
+             <textarea
+               ref={composer}
+               value={draft}
+@@ -454,14 +332,10 @@ export function ChatPanel({
+                 // the default run when there is none, or pasted text is lost.
+                 if (event.clipboardData.files.length > 0) {
+                   event.preventDefault()
+-                  void attach(event.clipboardData.files)
++                  void files.attach(event.clipboardData.files)
+                   return
+                 }
+-                // A large block is only offered, never intercepted: the paste
+-                // lands in the composer as it always has, and ignoring the
+-                // offer leaves the prompt exactly as the user typed it.
+-                const text = event.clipboardData.getData('text')
+-                setPasted(isLargePaste(text) ? text : null)
++                files.noticePaste(event.clipboardData.getData('text'))
+               }}
+               onKeyDown={(event) => {
+                 if (event.key !== 'Enter') return
+@@ -474,15 +348,7 @@ export function ChatPanel({
+               }}
+             />
+             <div className="composer-bar">
+-              <button
+-                className="icon-btn attach-btn"
+-                title="Attach files — or paste and drop them here"
+-                aria-label="Attach files"
+-                disabled={sending}
+-                onClick={() => picker.current?.click()}
+-              >
+-                ⊕
+-              </button>
++              <AttachButton onFiles={(chosen) => void files.attach(chosen)} disabled={sending} />
+               {busy && (
+                 <button
+                   className="icon-btn stop-btn"
+@@ -495,7 +361,7 @@ export function ChatPanel({
+               )}
+               <button
+                 className="filled send-btn"
+-                disabled={(!draft.trim() && attachments.length === 0) || sending}
++                disabled={(!draft.trim() && files.files.length === 0) || sending}
+                 title={cold ? 'Wake and send' : 'Send (↵)'}
+                 aria-label={cold ? 'Wake and send' : 'Send'}
+                 onClick={() => void send()}
+@@ -510,12 +376,6 @@ export function ChatPanel({
+   )
+ }
+ 
+-function fileSize(bytes: number): string {
+-  if (bytes < 1024) return `${bytes} B`
+-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+-}
+-
+ /** Quoted, so the composer keeps the lines apart from what is typed about them. */
+ function quote(text: string): string {
+   return `${text
+diff --git a/desktop/src/renderer/components/newsession.tsx b/desktop/src/renderer/components/newsession.tsx
+index 92d7a03..3ed6f46 100644
+--- a/desktop/src/renderer/components/newsession.tsx
++++ b/desktop/src/renderer/components/newsession.tsx
+@@ -2,8 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
+ import { useQuery } from '@tanstack/react-query'
+ 
+ import { api } from '../bridge.ts'
++import { removeFirst } from '../attachments.ts'
+ import { directoriesQuery, dirQuery, modelsQuery, providersQuery } from '../queries.ts'
+ import { store, useStore } from '../store.ts'
++import {
++  AttachButton,
++  AttachmentChips,
++  PasteOffer,
++  useAttachments,
++  useDropTarget,
++} from './attach.tsx'
+ import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
+ import { completionTarget, completionsIn } from './dirpath.ts'
+ import { tintOf } from './grouping.ts'
+@@ -36,6 +44,8 @@ export function NewSessionDialog({
+   // Held out here rather than in the picker, which unmounts with its popover: a
+   // half-typed path must still be there when the chip is opened again.
+   const [typed, setTyped] = useState('')
++  const files = useAttachments()
++  const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
+   const [starting, setStarting] = useState(false)
+   const shell = useRef<HTMLDivElement | null>(null)
+   const dismissing = useRef(false)
+@@ -87,17 +97,50 @@ export function NewSessionDialog({
+   const selected = providers.find((p) => p.id === provider)
+   const modes = selected?.permission_modes ?? []
+ 
++  /**
++   * The first turn, when there are files on it.
++   *
++   * An upload needs a session to belong to — it lands in
++   * ~/.helios/uploads/{id} and the handler 404s without the record
++   * (internal/server/uploads.go) — and the id is what the create call is there
++   * to return. So an attached prompt cannot be the one the agent launches
++   * with: the session is started silent, the files go up against the id it
++   * came back with, and the prompt naming them is sent after.
++   *
++   * Nothing here undoes the session. It is running by the time any of this can
++   * fail, and killing an agent over an upload is a worse answer than a prompt
++   * that arrives without its attachments.
++   */
++  const firstTurn = async (sessionId: string, text: string): Promise<void> => {
++    let message = text
++    try {
++      message = await files.store(hostId, sessionId, text)
++    } catch (err) {
++      const why = err instanceof Error ? err.message : String(err)
++      store.notify(`Session started, but the files did not upload: ${why}`, 'error')
++    }
++    if (!message) return
++    try {
++      await api(hostId).sendPrompt(sessionId, message)
++    } catch (err) {
++      store.fail(err)
++    }
++  }
++
+   const start = async (): Promise<void> => {
+     if (!hostId || starting) return
+     setStarting(true)
+     try {
++      const text = prompt.trim()
++      const attached = files.files.length > 0
+       const result = await api(hostId).createSession({
+         provider,
+         cwd: cwd || undefined,
+         model: model || undefined,
+-        prompt: prompt || undefined,
++        prompt: attached ? undefined : text || undefined,
+         permission_mode: mode || undefined,
+       })
++      if (attached) await firstTurn(result.session_id, text)
+       // Filed before the refresh, so the list arrives with it already in the
+       // group the + was pressed on. The directory only seeded the dialog; the
+       // group is what the button actually promised.
+@@ -147,10 +190,15 @@ export function NewSessionDialog({
+           dismissing.current = false
+           return
+         }
+-        if (!prompt.trim()) onClose()
++        if (!prompt.trim() && files.files.length === 0) onClose()
+       }}
+     >
+-      <div className="composer" ref={shell} onClick={(event) => event.stopPropagation()}>
++      <div
++        className={dropping ? 'composer dropping' : 'composer'}
++        ref={shell}
++        onClick={(event) => event.stopPropagation()}
++        {...dropHandlers}
++      >
+         <header className="composer-head">
+           <Picker
+             title="Working directory"
+@@ -208,6 +256,19 @@ export function NewSessionDialog({
+           </Picker>
+         </header>
+ 
++        {files.pasted !== null && prompt.includes(files.pasted) && (
++          <PasteOffer
++            text={files.pasted}
++            onFile={() => {
++              const text = files.fileThePaste()
++              if (text !== null) setPrompt((current) => removeFirst(current, text))
++            }}
++            onKeep={files.keepThePaste}
++          />
++        )}
++
++        <AttachmentChips files={files.files} onRemove={files.remove} />
++
+         <textarea
+           className="composer-prompt"
+           autoFocus
+@@ -215,6 +276,16 @@ export function NewSessionDialog({
+           value={prompt}
+           placeholder="What do you want to work on?"
+           onChange={(event) => setPrompt(event.target.value)}
++          onPaste={(event) => {
++            // A screenshot on the clipboard comes through as a file. Let the
++            // default run when there is none, or pasted text is lost.
++            if (event.clipboardData.files.length > 0) {
++              event.preventDefault()
++              void files.attach(event.clipboardData.files)
++              return
++            }
++            files.noticePaste(event.clipboardData.getData('text'))
++          }}
+           onKeyDown={(event) => {
+             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+             event.preventDefault()
+@@ -325,6 +396,7 @@ export function NewSessionDialog({
+               </Picker>
+             )}
+ 
++            <AttachButton onFiles={(chosen) => void files.attach(chosen)} disabled={starting} />
+           </div>
+ 
+           <div className="composer-actions">
+diff --git a/desktop/src/renderer/styles.css b/desktop/src/renderer/styles.css
+index fc48267..ec8461f 100644
+--- a/desktop/src/renderer/styles.css
++++ b/desktop/src/renderer/styles.css
+@@ -3894,6 +3894,39 @@ figure.mermaid svg {
+   flex: none;
+ }
+ 
++/* The ⊕ is a chip among the chips here, not the corner button it is in the
++   chat composer: there is no box for it to sit inside. */
++.composer-chips .attach-btn {
++  width: 30px;
++  height: 30px;
++  border-radius: 999px;
++  font-size: 15px;
++}
++
++/* The dialog has no inner box to outline, so the whole of it lights up. */
++.modal-backdrop .composer {
++  position: relative;
++}
++
++.modal-backdrop .composer.dropping::after {
++  content: 'Drop to attach';
++  position: absolute;
++  inset: 0;
++  display: grid;
++  place-items: center;
++  border: 1px dashed var(--primary);
++  border-radius: var(--r-lg);
++  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
++  font-size: 13px;
++  color: var(--primary);
++  pointer-events: none;
++}
++
++.modal-backdrop .attachments,
++.modal-backdrop .paste-offer {
++  margin: 2px 12px 0;
++}
++
+ .composer-actions {
+   margin-left: auto;
+   display: flex;
+-- 
+2.53.0
+
