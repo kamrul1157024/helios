@@ -8,9 +8,10 @@
 # this over /api/health and the clients compare it with the newest release, so
 # a build carrying unreleased work must not answer with the release's number.
 VERSION ?= $(shell git describe --tags 2>/dev/null | sed 's/^v//')
-# What the next release will be called, decided in the PR that earns it. Only
-# the release path reads it; see AGENTS.md.
-NEXT_VERSION = $(shell cat VERSION 2>/dev/null)
+# Which part of the number `make release` moves. The repo holds no version —
+# `scripts/next-version.sh` reads the newest release and steps one past it, the
+# same way the Release workflow's dropdown does. See AGENTS.md.
+BUMP ?= patch
 REPO = kamrul1157024/helios
 UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
@@ -117,11 +118,13 @@ apk-rebuild:
 	@echo "Copied to ~/.helios/helios.apk"
 
 ## Build release APK
-# The declared number rather than $(VERSION): this APK is what a release ships,
-# and --build-name takes a plain x.y.z, not the tag-commits-sha a build off a
-# tag describes itself as.
+# --build-name takes a plain x.y.z, not the tag-commits-sha a build off a tag
+# describes itself as, and this APK is what a release ships. So the number is
+# demanded rather than guessed: the release path passes the one it resolved.
 apk-release:
-	cd mobile && flutter build apk --release --build-name=$(NEXT_VERSION) --build-number=$(shell git rev-list --count HEAD)
+	@printf '%s' "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+		(echo "Error: apk-release needs a plain x.y.z — pass VERSION=\`./scripts/next-version.sh patch\`, or run make release." >&2 && exit 1)
+	cd mobile && flutter build apk --release --build-name=$(VERSION) --build-number=$(shell git rev-list --count HEAD)
 	mkdir -p ~/.helios
 	cp $(APK_RELEASE) ~/.helios/helios.apk
 	@echo "APK: $(APK_RELEASE)"
@@ -286,18 +289,16 @@ changelog:
 ## Split out from `release` because the macOS and Linux packages are built on
 ## runners of their own: CI stages them into $(DIST) and calls this directly.
 release-publish:
-	@test -n "$(VERSION)" || \
-		(echo "Error: VERSION is empty and this checkout has no tags — pass VERSION=x.y.z." >&2 && exit 1)
-	# The number was decided in the PR that earned it. Releasing a different one
-	# leaves the file claiming a release that never happened, and the clients
-	# shipping a number nothing was tagged with.
-	@test "$(VERSION)" = "$(NEXT_VERSION)" || \
-		(echo "Error: releasing $(VERSION) but VERSION says $(NEXT_VERSION) — bump the file, or pass the number it holds." >&2 && exit 1)
+	# A plain x.y.z, and never the tag-commits-sha `git describe` hands back on a
+	# checkout past a tag: that number goes on the tag, into the changelog and
+	# onto every asset, and there is nothing downstream that would catch it.
+	@printf '%s' "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+		(echo "Error: VERSION is \"$(VERSION)\", not a plain x.y.z — pass VERSION=\`./scripts/next-version.sh patch\`." >&2 && exit 1)
 	@ls $(DIST)/* > /dev/null 2>&1 || \
 		(echo "Error: nothing staged in $(DIST)/ — build the artifacts first." >&2 && exit 1)
 	@echo "Creating GitHub release v$(VERSION)..."
 	@if gh release view v$(VERSION) --repo $(REPO) > /dev/null 2>&1; then \
-		echo "Error: Release v$(VERSION) already exists — pass a new one: make release VERSION=x.y.z" >&2; \
+		echo "Error: Release v$(VERSION) already exists — move a bigger part of the number: make release BUMP=minor" >&2; \
 		exit 1; \
 	fi
 	@./scripts/changelog.sh > /tmp/helios-changelog.md
@@ -317,13 +318,18 @@ release-publish:
 	@echo "Release created: https://github.com/$(REPO)/releases/tag/v$(VERSION)"
 
 ## Build the APK, stage it with any DMG already built, and publish the release
-release: apk-release
-	@mkdir -p $(DIST)
-	cp $(APK_RELEASE) $(DIST)/helios.apk
-	@if [ -f "$(DMG_PATH)" ]; then \
+## The number is worked out, not typed: `make release BUMP=minor`. Resolved once
+## here and handed to both halves, so the APK and the tag cannot disagree.
+release:
+	@v=$$(./scripts/next-version.sh $(BUMP)) && \
+	echo "Releasing v$$v ($(BUMP))" && \
+	$(MAKE) apk-release VERSION=$$v && \
+	mkdir -p $(DIST) && \
+	cp $(APK_RELEASE) $(DIST)/helios.apk && \
+	{ if [ -f "$(DMG_PATH)" ]; then \
 		cp $(DMG_PATH) $(DIST)/helios.dmg; \
 		echo "Including $(DMG_PATH)"; \
 	else \
 		echo "$(DMG_PATH) not found — releasing without it (run 'make dmg' first to include it)"; \
-	fi
-	@$(MAKE) release-publish VERSION=$(NEXT_VERSION)
+	fi; } && \
+	$(MAKE) release-publish VERSION=$$v

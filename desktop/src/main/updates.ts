@@ -56,7 +56,7 @@ export class UpdateChecker {
    * request every time a component mounts.
    */
   async check(): Promise<UpdateInfo | null> {
-    if (this.checked) return this.suppressDismissed(this.checked)
+    if (this.checked) return this.worthShowing(this.checked)
 
     try {
       const response = await fetch(RELEASES, {
@@ -78,7 +78,7 @@ export class UpdateChecker {
       if (!newest) return null
 
       this.checked = { version: newest.version, url: newest.url, notes }
-      return this.suppressDismissed(this.checked)
+      return this.worthShowing(this.checked)
     } catch {
       // An update notice is not worth a word to the user when the network is
       // the thing that failed.
@@ -110,7 +110,19 @@ export class UpdateChecker {
     }
   }
 
-  private suppressDismissed(info: UpdateInfo): UpdateInfo | null {
+  /**
+   * Whether this notice is one to put in front of the reader.
+   *
+   * Two reasons it is not. They waved this version away, or this is a build
+   * running out of a checkout, which reports package.json's placeholder and so
+   * reads as behind every release ever cut. Nobody gets there by missing an
+   * update notice, and the daemon already treats its own `dev` the same way.
+   *
+   * `latest` deliberately skips this: the Hosts pane asks about the daemons it
+   * can see, and that question stays worth answering in both cases.
+   */
+  private worthShowing(info: UpdateInfo): UpdateInfo | null {
+    if (!app.isPackaged) return null
     return info.version === this.dismissed ? null : info
   }
 }

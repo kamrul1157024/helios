@@ -1,59 +1,81 @@
 name: Release
 
-# No version input: the number was decided in the PR that earned it and lives in
-# VERSION. Typing it again here is where the tag, the APK's build name and the
-# app's own number end up as three different numbers.
+# Cut by hand, on purpose. A merge to main is not a release: the work collects
+# there until somebody decides the batch is worth shipping and presses the
+# button.
 #
-# Runs itself once main is green. A release nobody has to remember to cut is one
-# that goes out while the change is still fresh, and the gate below makes it a
-# no-op when the number in VERSION is already released.
+# No version to type either — only which part of the number moves. The step is
+# always one, everything to the right of it goes to zero, and the base is the
+# newest release. So the number cannot be mistyped, cannot skip, and cannot
+# collide with a release that is already out.
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: [Test]
-    types: [completed]
-    branches: [main]
+    inputs:
+      bump:
+        description: Which part of the number this release moves
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
 
 jobs:
-  # Whether there is anything to release, decided once rather than in four jobs.
-  gate:
-    name: Release?
+  # What this release is called, decided once rather than in four jobs.
+  version:
+    name: Version
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     outputs:
-      release: ${{ steps.check.outputs.release }}
-      version: ${{ steps.check.outputs.version }}
+      version: ${{ steps.resolve.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # The tags, and the history behind them: the guard below asks whether
+          # anything has landed since the newest one.
+          fetch-depth: 0
 
-      - id: check
+      - id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          v=$(cat VERSION)
+          v=$(./scripts/next-version.sh "${{ inputs.bump }}")
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if gh release view "v$v" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            echo "v$v is already released — nothing to do."
-            echo "release=false" >> "$GITHUB_OUTPUT"
+
+          # A tag without a release behind it — a draft, or one pushed by hand —
+          # would otherwise be reused, and this release would carry somebody
+          # else's commit.
+          if git rev-parse "v$v" > /dev/null 2>&1; then
+            echo "Tag v$v already exists, but no release is published for it." >&2
+            echo "Delete the tag or pick a different part of the number." >&2
+            exit 1
+          fi
+
+          # Pressing twice in a row would otherwise cut a second release with an
+          # empty changelog behind it.
+          last=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$last" ]; then
+            count=$(git rev-list "$last..HEAD" --count)
+            if [ "$count" -eq 0 ]; then
+              echo "Nothing to release: no commits since $last." >&2
+              exit 1
+            fi
+            echo "Releasing **v$v** (\`${{ inputs.bump }}\`) — $count commits since $last." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "v$v has not been released yet."
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing **v$v** (\`${{ inputs.bump }}\`) — the first release." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   apk:
     name: Android APK
-    needs: gate
-    if: needs.gate.outputs.release == 'true'
+    needs: version
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           # `make apk-release` derives the Android build number from
           # `git rev-list --count HEAD`, which a shallow clone reports as 1.
           fetch-depth: 0
@@ -86,19 +108,14 @@ jobs:
 
   desktop-mac:
     name: Desktop (macOS)
-    needs: gate
-    if: needs.gate.outputs.release == 'true'
+    needs: version
     runs-on: macos-latest
+    # electron-builder stamps this into the app, which reports it to the update
+    # check; the number in package.json is a placeholder the build overrides.
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
-
-      # electron-builder stamps this into the app, which reports it to the
-      # update check; a checkout past a tag would otherwise describe itself as
-      # the release it sits above.
-      - name: Read the version
-        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -131,16 +148,12 @@ jobs:
 
   desktop-linux:
     name: Desktop (Linux)
-    needs: gate
-    if: needs.gate.outputs.release == 'true'
+    needs: version
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
-
-      - name: Read the version
-        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -167,18 +180,16 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [gate, apk, desktop-mac, desktop-linux]
+    needs: [version, apk, desktop-mac, desktop-linux]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           # The changelog covers the commits since the last tag, so both the
           # tags and the history behind them have to be here.
           fetch-depth: 0
-
-      - name: Read the version
-        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
         with:

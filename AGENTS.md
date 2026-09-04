@@ -25,22 +25,35 @@ make dmg                 # Build macOS DMG
 
 ## Versioning
 
-One number lives in `VERSION`, and it is the number the next release will carry.
-`desktop/package.json` and `mobile/pubspec.yaml` carry the same one. Bump it in
-the PR when you know what the change is worth — a `feat` takes the minor — but
-you do not have to: CI runs `./scripts/check-version.sh --fix` on every PR, and
-if the number is not past the newest release it takes the release's patch plus
-one, pushes that to the branch, and says so in a comment. Run the script without
-`--fix` to see where things stand before pushing.
+The repo holds no version number. Nothing to bump in a PR, and nothing to keep
+in sync: the numbers in `desktop/package.json` and `mobile/pubspec.yaml` are
+`0.0.0` placeholders that every build overrides.
 
-The daemon is never edited by hand: `internal/version.Current` is stamped at
-build time from `git describe`, so a release build says `3.9.0` and a build
-above one says `3.9.0-13-g0a6231c` rather than claiming a release it is not.
+The release decides the number. `scripts/next-version.sh` reads the newest
+published release and steps one past it at the part you ask for — the step is
+always one, and everything to the right of it goes to zero.
 
-Releases cut themselves. Once `Test` passes on main, `Release` checks whether
-`VERSION` names a number that is not out yet, and publishes it if so — tag,
-changelog, APK, DMGs, AppImage and deb. Nothing to trigger by hand; a merge that
-does not move the number does not release.
+```bash
+./scripts/next-version.sh patch   # 3.11.0 -> 3.11.1
+./scripts/next-version.sh minor   # 3.11.0 -> 3.12.0
+./scripts/next-version.sh major   # 3.11.0 -> 4.0.0
+```
+
+Every build stamps that one number: the daemon through `-ldflags` into
+`internal/version.Current`, the desktop app through
+`--config.extraMetadata.version`, the APK through `--build-name`. A checkout
+that was not built by the release path says `3.11.0-13-g0a6231c` or `dev`,
+which is the point — a dev build must not claim a release it is not.
+
+Releases are cut by hand. Merging to main does not ship anything; the work
+collects there. Run the **Release** workflow from the Actions tab, pick `patch`,
+`minor` or `major`, and it tags, writes the changelog and builds the APK, both
+DMGs, the AppImage and the deb. It refuses when nothing has landed since the
+last tag, so a second press cannot cut a hollow release. Locally the same thing
+is `make release BUMP=minor`.
+
+Which part to move is a judgement about the whole batch, not about one PR. The
+run's changelog lists every commit since the last tag — read it before you pick.
 
 ## Procedures
 
