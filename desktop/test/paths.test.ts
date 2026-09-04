@@ -16,6 +16,21 @@ Also desktop/src/renderer/styles.css, but not src/main or plain words.`
   ])
 })
 
+test('a two-segment path counts when it names a file', () => {
+  // "Updated: `scratch/report.md`" got no chip while the rule wanted three
+  // segments, which is how most agents write a path they just wrote to.
+  const text = 'Updated: `scratch/opus5-refusal-customer-report.md` and mobile/pubspec.yaml.'
+  assert.deepEqual(extractFilePaths(text), [
+    'scratch/opus5-refusal-customer-report.md',
+    'mobile/pubspec.yaml',
+  ])
+})
+
+test('two words with a slash between them are not a path', () => {
+  const text = 'the and/or case, N/A, 24/7, km/h, and src/main stay prose'
+  assert.deepEqual(extractFilePaths(text), [])
+})
+
 test('dedupes and keeps the order of first mention', () => {
   const text = 'see a/b/c.go, then a/b/c.go again, then a/b/d.go'
   assert.deepEqual(extractFilePaths(text), ['a/b/c.go', 'a/b/d.go'])

@@ -85,10 +85,23 @@ class _UserMessageCard extends StatelessWidget {
 }
 
 /// Extracts unique file paths from message content for display as tappable chips.
+///
+/// `~/a/b`, `/a/b`, a relative path of three segments or more, or a
+/// two-segment one whose last part carries a file extension —
+/// `scratch/report.md` is a file, `and/or` is two words. The three-segment
+/// branch comes first so a deep path is matched whole rather than cut down to
+/// its first two segments.
+///
+/// Shared with the desktop app (src/renderer/markdown.ts): a change here is a
+/// change to both clients.
 final _filePathPattern = RegExp(
-  r'(^|[\s:,;(`])(~/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+|/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+|[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_.-]+){2,})',
+  r'(^|[\s:,;(`])(~/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+|/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+|[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_.-]+){2,}|[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]*[a-zA-Z0-9_-]\.[a-zA-Z0-9]{1,8})',
   multiLine: true,
 );
+
+/// Sentence punctuation is not part of the path, and a path that ends in a
+/// stray period is one the daemon will fail to open.
+final _trailingPunctuation = RegExp(r'[.,;:)]+$');
 
 /// Resolves a path the way the transcript means it: absolute paths as written,
 /// relative ones against the session's directory.
@@ -135,7 +148,8 @@ List<String> _extractFilePaths(String content) {
   final seen = <String>{};
   final paths = <String>[];
   for (final m in _filePathPattern.allMatches(content)) {
-    final path = m.group(2)!;
+    final path = m.group(2)!.replaceFirst(_trailingPunctuation, '');
+    if (path.isEmpty) continue;
     if (seen.add(path)) paths.add(path);
   }
   return paths;

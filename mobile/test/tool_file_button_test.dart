@@ -14,7 +14,7 @@ Message _toolUse({String? filePath, String tool = 'Edit'}) => Message(
       tool: tool,
       summary: 'specs/46-codex-provider.md',
       metadata: {
-        if (filePath != null) 'file_path': filePath,
+        'file_path': ?filePath,
         'new_string': 'a line',
       },
     );
@@ -71,6 +71,38 @@ void main() {
     // there; whatever the screen says about a daemon it has no way to call is
     // its own business.
     while (tester.takeException() != null) {}
+  });
+
+  testWidgets('a path in prose becomes a chip on two segments', (
+    tester,
+  ) async {
+    // "Updated: `scratch/report.md`" got nothing while the rule wanted three
+    // segments, which is how most agents name a file they just wrote.
+    await _pumpRow(
+      tester,
+      Message(
+        role: 'assistant',
+        timestamp: '2026-09-04T10:51:49Z',
+        content: 'Updated: `scratch/opus5-refusal-customer-report.md`',
+      ),
+    );
+
+    expect(find.text('opus5-refusal-customer-report.md'), findsOneWidget);
+  });
+
+  testWidgets('two words with a slash between them stay prose', (
+    tester,
+  ) async {
+    await _pumpRow(
+      tester,
+      Message(
+        role: 'assistant',
+        timestamp: '2026-09-04T10:51:49Z',
+        content: 'The and/or case, N/A, and src/main are not files.',
+      ),
+    );
+
+    expect(find.byIcon(Icons.insert_drive_file), findsNothing);
   });
 
   testWidgets('a tool that named no file offers nothing', (tester) async {
