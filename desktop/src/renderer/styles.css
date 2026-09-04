@@ -3832,7 +3832,11 @@ figure.mermaid svg {
   color: var(--on-surface-variant);
 }
 
-.composer {
+/* Scoped to the dialog, because `.composer` is also the transcript's prompt box
+   (chat.tsx). Unscoped, this card pinned that one to 680px and gave it a shadow
+   of its own: the prompt stopped growing with the window and stopped lining up
+   with the messages above it. */
+.modal-backdrop .composer {
   width: 680px;
   max-width: 92vw;
   display: flex;
