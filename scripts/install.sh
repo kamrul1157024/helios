@@ -10,7 +10,7 @@
 # POSIX sh on purpose: piped into `sh` on Debian this is dash, not bash.
 #
 # Knobs, for a test run that touches nothing real:
-#   HELIOS_PREFIX   where the binary goes         (default /usr/local/bin)
+#   HELIOS_PREFIX   where the binary goes         (default ~/.local/bin)
 #   HELIOS_APP_DIR  where the macOS app goes      (default /Applications)
 #   HELIOS_SRC      where the checkout lives      (default ~/.helios/src)
 #   HELIOS_REF      what to build                 (default the newest release)
@@ -21,7 +21,9 @@ REPO_URL="https://github.com/kamrul1157024/helios.git"
 GO_MIN_MINOR=26   # go1.26+, matching go.mod
 NODE_MIN=22       # matching .nvmrc and the Makefile
 
-PREFIX="${HELIOS_PREFIX:-/usr/local/bin}"
+# A directory the user already owns, so the install has nothing to ask for.
+# Point it at /usr/local/bin and it still works — that path wants a password.
+PREFIX="${HELIOS_PREFIX:-$HOME/.local/bin}"
 APP_DIR="${HELIOS_APP_DIR:-/Applications}"
 SRC="${HELIOS_SRC:-$HOME/.helios/src}"
 
@@ -189,39 +191,28 @@ install_daemon() {
 }
 
 step "Installing the daemon to $PREFIX"
-if [ -w "$PREFIX" ] || mkdir -p "$PREFIX" 2> /dev/null && [ -w "$PREFIX" ]; then
-  install_daemon "$PREFIX" ""
-  BIN="$PREFIX/helios"
-elif have sudo; then
-  note "$PREFIX belongs to the system, so this one step needs your password."
+# The default needs no permission. This only bites when HELIOS_PREFIX names
+# somewhere the system owns, and then it is asked for plainly rather than
+# quietly installing somewhere else and leaving two copies behind.
+SUDO=''
+if ! mkdir -p "$PREFIX" 2> /dev/null || [ ! -w "$PREFIX" ]; then
+  have sudo || fail "$PREFIX is not writable and there is no sudo here. Set HELIOS_PREFIX to a directory you own."
+  note "$PREFIX belongs to the system, so this step needs your password."
   note "It copies a single file: $PREFIX/helios. Nothing else is touched."
-  if sudo -v; then
-    install_daemon "$PREFIX" sudo
-    BIN="$PREFIX/helios"
-  else
-    BIN=''
-  fi
-else
-  warn "No sudo on this machine, and $PREFIX is not writable."
-  BIN=''
+  sudo -v || fail "Without that, $PREFIX cannot be written. Set HELIOS_PREFIX to a directory you own."
+  SUDO=sudo
 fi
-
-# Somewhere that needs no permission, when the usual place did not work out.
-if [ -z "${BIN:-}" ]; then
-  FALLBACK="$HOME/.local/bin"
-  warn "Installing to $FALLBACK instead — no administrator rights needed."
-  install_daemon "$FALLBACK" ""
-  BIN="$FALLBACK/helios"
-  case ":$PATH:" in
-    *":$FALLBACK:"*) ;;
-    *)
-      case "${SHELL##*/}" in zsh) RC="~/.zshrc" ;; bash) RC="~/.bashrc" ;; *) RC="your shell's rc file" ;; esac
-      warn "$FALLBACK is not on your PATH. Add this line to $RC:"
-      note "export PATH=\"\$HOME/.local/bin:\$PATH\""
-      ;;
-  esac
-fi
+install_daemon "$PREFIX" "$SUDO"
+BIN="$PREFIX/helios"
 note "installed $BIN"
+
+# The rest of what an install owes you: one copy on the machine, on a PATH the
+# shell reads, and a daemon running the build that was just fetched. Guarded
+# because $SRC sits on the newest release, and a release older than these
+# scripts does not carry them — this file is fetched from main.
+[ -f "$SRC/scripts/remove-old-installs.sh" ] && sh "$SRC/scripts/remove-old-installs.sh" "$BIN"
+[ -f "$SRC/scripts/ensure-path.sh" ] && sh "$SRC/scripts/ensure-path.sh" "$PREFIX" helios
+[ -f "$SRC/scripts/restart-daemon.sh" ] && sh "$SRC/scripts/restart-daemon.sh" "$BIN"
 
 # ─── The desktop app ────────────────────────────────────────────────────────
 
