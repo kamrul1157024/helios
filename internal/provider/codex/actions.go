@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/kamrul1157024/helios/internal/backend"
 	"github.com/kamrul1157024/helios/internal/notifications"
@@ -42,9 +43,15 @@ func (p *Provider) ActionRoutes() map[string]provider.ActionRoute {
 	}
 }
 
+// handlePermissionAction turns a remote surface's answer into a decision.
+//
+// A refusal may carry words, the way the terminal overlay's text field does.
+// An approval that carried them would send Codex a complaint about work it was
+// just cleared to do, so they are read on the deny path only.
 func handlePermissionAction(notif *store.Notification, body json.RawMessage) (notifications.Decision, error) {
 	var req struct {
 		Action string `json:"action"`
+		permissionAnswer
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return notifications.Decision{}, fmt.Errorf("invalid body: %w", err)
@@ -53,6 +60,9 @@ func handlePermissionAction(notif *store.Notification, body json.RawMessage) (no
 	case "approve":
 		return notifications.Decision{Status: "approved"}, nil
 	case "deny":
+		if text := strings.TrimSpace(req.Feedback); text != "" {
+			return deniedWithFeedback(text), nil
+		}
 		return notifications.Decision{Status: "denied"}, nil
 	default:
 		return notifications.Decision{}, fmt.Errorf("action must be approve/deny")

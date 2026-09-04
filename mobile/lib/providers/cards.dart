@@ -231,21 +231,24 @@ class _PermissionCardState extends State<PermissionCard> {
                 ),
               ),
             ],
-            // How to say yes to a plan, and how to disagree with one
+            // How to say yes to a plan
             if (n.isPlan) ...[
               const SizedBox(height: 12),
               ..._planRows.map(_planRow),
-              const SizedBox(height: 4),
+            ],
+            // How to disagree in words rather than with a bare no
+            if (_takesFeedback) ...[
+              SizedBox(height: n.isPlan ? 4 : 12),
               TextField(
                 controller: _feedback,
                 maxLines: 3,
                 minLines: 1,
                 style: const TextStyle(fontSize: 13),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  labelText: 'Tell Claude what to change',
-                  hintText: 'Send the plan back in your own words',
-                  border: OutlineInputBorder(),
+                  labelText: _feedbackLabel,
+                  hintText: _feedbackHint,
+                  border: const OutlineInputBorder(),
                 ),
                 onChanged: (_) => setState(() {}),
               ),
@@ -290,10 +293,10 @@ class _PermissionCardState extends State<PermissionCard> {
                       backgroundColor: Theme.of(context).colorScheme.error,
                       foregroundColor: Theme.of(context).colorScheme.onError,
                     ),
-                    // Words turn a refusal into a re-plan, so the button says
-                    // what it will do with them.
+                    // Words turn a refusal into another attempt, so the button
+                    // says what it will do with them.
                     child: Text(
-                      n.isPlan && _feedback.text.trim().isNotEmpty
+                      _takesFeedback && _feedback.text.trim().isNotEmpty
                           ? 'Send back'
                           : 'Deny',
                     ),
@@ -322,6 +325,21 @@ class _PermissionCardState extends State<PermissionCard> {
       ),
     );
   }
+
+  /// Whether this card takes words as well as a yes or a no.
+  ///
+  /// A plan is not a yes-or-no question. Neither is a Codex approval: the
+  /// dialog Codex draws under helios offers "No, and tell Codex what to do
+  /// differently", so the card has to offer it too.
+  bool get _takesFeedback => n.isPlan || n.isCodex;
+
+  String get _feedbackLabel => n.isPlan
+      ? 'Tell Claude what to change'
+      : 'Tell Codex what to do differently';
+
+  String get _feedbackHint => n.isPlan
+      ? 'Send the plan back in your own words'
+      : 'Say what to do instead';
 
   /// One way of saying yes to a plan, with the mode it leaves behind spelled
   /// out under it.
