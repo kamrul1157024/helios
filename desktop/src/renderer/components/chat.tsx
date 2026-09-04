@@ -554,20 +554,28 @@ function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
 
   return (
     <div className="msg tool-call">
-      <button className="tool-head" onClick={() => setOpen(!open)}>
-        <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
-        <span className="tool-name">{tool}</span>
-        <span className="tool-summary">{oneLine(message.summary)}</span>
-        <Chevron className="chevron" open={open} />
-      </button>
+      {/* The head is a row rather than one button: the file chip is three
+          buttons of its own, and a button cannot hold a button. */}
+      <div className="tool-head">
+        <button className="tool-toggle" onClick={() => setOpen(!open)}>
+          <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
+          <span className="tool-name">{tool}</span>
+          <span className="tool-summary">{oneLine(message.summary)}</span>
+        </button>
+        {/* On the head, not at the foot of the expansion: the file is what the
+            row is about, and reaching it should not cost an expand first. */}
+        {filePath && <FileChip hostId={hostId} cwd={cwd} path={filePath} label={filePath.split('/').pop()} />}
+        <button
+          className="tool-chevron"
+          title={open ? 'Collapse' : 'Expand'}
+          onClick={() => setOpen(!open)}
+        >
+          <Chevron className="chevron" open={open} />
+        </button>
+      </div>
       {open && (
         <div className="tool-detail">
           <ToolInput tool={tool} input={input} />
-          {filePath && (
-            <div className="file-chips">
-              <FileChip hostId={hostId} cwd={cwd} path={filePath} label={filePath.split('/').pop()} />
-            </div>
-          )}
         </div>
       )}
     </div>

@@ -33,7 +33,11 @@ class MessageCard extends StatelessWidget {
           sessionCwd: sessionCwd,
         );
       case 'tool_use':
-        return _ToolUseCard(message: message);
+        return _ToolUseCard(
+          message: message,
+          hostId: hostId,
+          sessionCwd: sessionCwd,
+        );
       case 'tool_result':
         return _ToolResultCard(message: message);
       default:
@@ -86,6 +90,47 @@ final _filePathPattern = RegExp(
   multiLine: true,
 );
 
+/// Resolves a path the way the transcript means it: absolute paths as written,
+/// relative ones against the session's directory.
+///
+/// A relative path often repeats the last segment of the directory — cwd
+/// `.../helios/mobile` with `mobile/lib/...` — so that duplicate is dropped
+/// rather than joined into a directory that does not exist.
+String _resolveAgainstCwd(String path, String sessionCwd) {
+  if (path.startsWith('/') || path.startsWith('~')) return path;
+  final cwdLastSegment =
+      sessionCwd.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '';
+  final firstSegment = path.split('/').first;
+  if (cwdLastSegment.isNotEmpty && firstSegment == cwdLastSegment) {
+    final parent = sessionCwd.substring(0, sessionCwd.lastIndexOf('/'));
+    return '$parent/$path';
+  }
+  return '$sessionCwd/$path';
+}
+
+/// Opens a file the agent touched.
+///
+/// Straight to the viewer, with no listing pushed underneath it: back from a
+/// file reached in the transcript belongs to the transcript. The folder is a
+/// button in the viewer for whoever wants it.
+void _openTranscriptFile(
+  BuildContext context, {
+  required String hostId,
+  required String sessionCwd,
+  required String path,
+}) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      settings: const RouteSettings(name: '/file-viewer'),
+      builder: (_) => FileViewerScreen(
+        hostId: hostId,
+        path: _resolveAgainstCwd(path, sessionCwd),
+        rootPath: sessionCwd,
+      ),
+    ),
+  );
+}
+
 List<String> _extractFilePaths(String content) {
   final seen = <String>{};
   final paths = <String>[];
@@ -119,38 +164,12 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
     }
   }
 
-  void _openFilePath(String path) {
-    String resolvedPath;
-    if (path.startsWith('/') || path.startsWith('~')) {
-      resolvedPath = path;
-    } else {
-      // Relative path — try to resolve against sessionCwd.
-      // If the first segment of the relative path matches the last segment of
-      // sessionCwd (e.g. cwd=".../helios/mobile" and path="mobile/lib/..."),
-      // strip that duplicate segment.
-      final cwdLastSegment = widget.sessionCwd.split('/').where((s) => s.isNotEmpty).lastOrNull ?? '';
-      final firstSegment = path.split('/').first;
-      if (cwdLastSegment.isNotEmpty && firstSegment == cwdLastSegment) {
-        final parent = widget.sessionCwd.substring(0, widget.sessionCwd.lastIndexOf('/'));
-        resolvedPath = '$parent/$path';
-      } else {
-        resolvedPath = '${widget.sessionCwd}/$path';
-      }
-    }
-    // Straight to the viewer, with no listing pushed underneath it: back from
-    // a file tapped in the transcript belongs to the transcript. The folder is
-    // a button in the viewer for whoever wants it.
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/file-viewer'),
-        builder: (_) => FileViewerScreen(
-          hostId: widget.hostId,
-          path: resolvedPath,
-          rootPath: widget.sessionCwd,
-        ),
-      ),
-    );
-  }
+  void _openFilePath(String path) => _openTranscriptFile(
+        context,
+        hostId: widget.hostId,
+        sessionCwd: widget.sessionCwd,
+        path: path,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -288,7 +307,13 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
 
 class _ToolUseCard extends StatefulWidget {
   final Message message;
-  const _ToolUseCard({required this.message});
+  final String hostId;
+  final String sessionCwd;
+  const _ToolUseCard({
+    required this.message,
+    required this.hostId,
+    required this.sessionCwd,
+  });
 
   @override
   State<_ToolUseCard> createState() => _ToolUseCardState();
@@ -297,11 +322,24 @@ class _ToolUseCard extends StatefulWidget {
 class _ToolUseCardState extends State<_ToolUseCard> {
   bool _expanded = false;
 
+  /// The file this call touched, when it named one. A tool row says what was
+  /// edited and then leaves the reader to go and find it; this is the way
+  /// there.
+  String? get _filePath {
+    if (widget.hostId.isEmpty) return null;
+    final meta = widget.message.metadata;
+    if (meta == null) return null;
+    final path = meta['file_path'] ?? meta['path'] ?? meta['notebook_path'];
+    if (path is! String || path.trim().isEmpty) return null;
+    return path;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final meta = widget.message.metadata;
     final hasDetails = meta != null && meta.isNotEmpty;
+    final filePath = _filePath;
 
     return GestureDetector(
       onTap: hasDetails ? () => setState(() => _expanded = !_expanded) : null,
@@ -349,6 +387,31 @@ class _ToolUseCardState extends State<_ToolUseCard> {
                     ),
                   ),
                 ],
+                // On the row itself, not under the expansion: the file is what
+                // the row is about, and reaching it should not cost a tap on
+                // the details first.
+                if (filePath != null)
+                  InkWell(
+                    onTap: () => _openTranscriptFile(
+                      context,
+                      hostId: widget.hostId,
+                      sessionCwd: widget.sessionCwd,
+                      path: filePath,
+                    ),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      child: Icon(
+                        Icons.open_in_new,
+                        size: 14,
+                        color: theme.colorScheme.tertiary,
+                        semanticLabel: 'Open ${filePath.split('/').last}',
+                      ),
+                    ),
+                  ),
                 if (hasDetails)
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,

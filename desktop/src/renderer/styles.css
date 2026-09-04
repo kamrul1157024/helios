@@ -2234,17 +2234,34 @@ figure.mermaid svg {
   overflow: hidden;
 }
 
+/* A row, not a button: the file chip rides on this line and carries buttons of
+   its own. The toggle takes the space the chip and the chevron leave. */
 .tool-head {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  border-radius: 0;
+  gap: 8px;
   padding: 9px 12px;
+}
+
+.tool-toggle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  text-align: left;
+  border-radius: var(--r-sm);
   color: var(--on-surface);
   font-weight: 400;
+}
+
+.tool-chevron {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  color: var(--on-surface-variant);
 }
 
 .tool-icon {
