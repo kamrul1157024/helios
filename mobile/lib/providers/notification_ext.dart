@@ -56,6 +56,10 @@ extension NotificationPayload on HeliosNotification {
   List<dynamic>? get permissionSuggestions =>
       payload?['permission_suggestions'] as List?;
 
+  /// Whether Codex raised this. The card is the same card whoever raised it,
+  /// but the words on it name the agent the user is talking to.
+  bool get isCodex => source == 'codex';
+
   /// A plan waiting for approval. On the wire it is a permission like any
   /// other, but it is not a yes-or-no question: the answer picks the mode the
   /// session continues in, or sends the plan back in words.

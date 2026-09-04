@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { Notification } from '../../shared/models.ts'
-import { kindOf } from '../../shared/notifications.ts'
+import { kindOf, providerOf } from '../../shared/notifications.ts'
 
 /**
  * One notification, rendered with the controls its type needs.
@@ -37,7 +37,9 @@ export function NotificationCard({
   const body = ((): JSX.Element => {
     switch (kindOf(notif.type)) {
       case 'permission':
-        return <PermissionCard payload={payload} busy={busy} act={act} />
+        return (
+          <PermissionCard payload={payload} provider={providerOf(notif.type)} busy={busy} act={act} />
+        )
       case 'question':
         return <QuestionCard payload={payload} busy={busy} act={act} />
       case 'trust':
@@ -181,10 +183,12 @@ function PlanCard({
 
 function PermissionCard({
   payload,
+  provider,
   busy,
   act,
 }: {
   payload: Record<string, unknown>
+  provider: string
   busy: boolean
   act: (body: Record<string, unknown>) => Promise<void>
 }): JSX.Element {
@@ -202,6 +206,14 @@ function PermissionCard({
   const [editing, setEditing] = useState(false)
   const [edited, setEdited] = useState(original)
   const [rule, setRule] = useState<number | null>(null)
+  const [feedback, setFeedback] = useState('')
+
+  // Codex's own approval dialog offers "No, and tell Codex what to do
+  // differently". Helios paints over that dialog, so it has to offer the row
+  // too or the only refusal it leaves is a bare no. Claude's plan card carries
+  // its own field; its other tools take a rule instead.
+  const takesFeedback = provider === 'codex'
+  const words = feedback.trim()
 
   // A plan is prose and its answer is not a yes-or-no. The state above is
   // declared first so the hook order holds whichever card is drawn.
@@ -255,10 +267,26 @@ function PermissionCard({
         </div>
       )}
 
+      {takesFeedback && (
+        <label className="field">
+          <span>Tell Codex what to do differently</span>
+          <input
+            value={feedback}
+            placeholder="Say what to do instead"
+            onChange={(event) => setFeedback(event.target.value)}
+          />
+        </label>
+      )}
+
       <Actions busy={busy}>
         <button onClick={approve}>Approve</button>
-        <button className="ghost" onClick={() => void act({ action: 'deny' })}>
-          Deny
+        {/* Words turn a refusal into another attempt, so the button says what
+            it will do with them. */}
+        <button
+          className="ghost"
+          onClick={() => void act(words === '' ? { action: 'deny' } : { action: 'deny', feedback: words })}
+        >
+          {words === '' ? 'Deny' : 'Send back'}
         </button>
         <button className="link" onClick={() => setEditing(!editing)}>
           {editing ? 'Cancel editing' : 'Edit before approving'}
