@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -8,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -27,33 +31,40 @@ type uploadedFile struct {
 	Size int64  `json:"size"`
 }
 
-// uploadDir is where a session's attachments live: beside the database and the
-// logs, not in the workspace. A repository is the user's, and dropping files
-// into it to hand the agent a screenshot would show up in their next diff.
-func uploadDir(sessionID string) (string, error) {
+// uploadDir is where attachments live: beside the database and the logs, not
+// in the workspace. A repository is the user's, and dropping files into it to
+// hand the agent a screenshot would show up in their next diff.
+//
+// One directory for all of them. It used to be one per session, and that is
+// the only reason an upload ever needed a session to belong to — see
+// handleUpload for what needing one cost.
+func uploadDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".helios", "uploads", sessionID), nil
+	return filepath.Join(home, ".helios", "uploads"), nil
 }
 
-// handleSessionUpload takes multipart form files and writes them to the
-// session's upload directory, answering with the absolute path of each.
+// handleUpload takes multipart form files, writes them beside the database and
+// answers with the absolute path of each.
 //
 // The path is the point: the client puts it in the prompt and the agent opens
 // it with Read, so nothing about the bytes has to cross the model's context to
 // get there.
-func (s *PublicServer) handleSessionUpload(w http.ResponseWriter, r *http.Request) {
-	id := extractSessionID(r.URL.Path, "/files")
-	if id == "" {
-		jsonError(w, "missing session id", http.StatusBadRequest)
-		return
-	}
-
-	session, err := s.shared.DB.GetSession(id)
-	if err != nil || session == nil {
-		jsonError(w, "session not found", http.StatusNotFound)
+//
+// No session is involved, and that absence is the feature. Attachments were
+// once filed under the session id, so an upload could not happen until a
+// session existed — which forced the new-session composer to launch its agent
+// first and type the prompt naming the files at it afterwards, into the
+// seconds where the agent has reported in but its TUI has not yet claimed the
+// terminal. Prompts are lost in that window, and both agents put a trust
+// dialog in it as well. Without an id the paths exist before the launch, so
+// the prompt naming them is the one the agent starts with.
+func (s *PublicServer) handleUpload(w http.ResponseWriter, r *http.Request) {
+	dir, err := uploadDir()
+	if err != nil {
+		jsonError(w, "no home directory to store uploads in", http.StatusInternalServerError)
 		return
 	}
 
@@ -80,12 +91,7 @@ func (s *PublicServer) handleSessionUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	dir, err := uploadDir(id)
-	if err != nil {
-		jsonError(w, "no home directory to store uploads in", http.StatusInternalServerError)
-		return
-	}
-	// 0700: an attachment is as private as the session it belongs to.
+	// 0700: an attachment is as private as the session it was meant for.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		jsonError(w, "failed to create upload directory", http.StatusInternalServerError)
 		return
@@ -95,14 +101,14 @@ func (s *PublicServer) handleSessionUpload(w http.ResponseWriter, r *http.Reques
 	for _, header := range headers {
 		file, err := storeUpload(dir, header)
 		if err != nil {
-			log.Printf("session-upload: session=%s file=%q: %v", id, header.Filename, err)
+			log.Printf("upload: file=%q: %v", header.Filename, err)
 			jsonError(w, fmt.Sprintf("failed to store %s", safeName(header.Filename)), http.StatusInternalServerError)
 			return
 		}
 		saved = append(saved, file)
 	}
 
-	log.Printf("session-upload: session=%s stored %d file(s) in %s", id, len(saved), dir)
+	log.Printf("upload: stored %d file(s) in %s", len(saved), dir)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"files": saved})
 }
 
@@ -113,7 +119,7 @@ func storeUpload(dir string, header *multipart.FileHeader) (uploadedFile, error)
 	}
 	defer src.Close()
 
-	path := uniquePath(dir, safeName(header.Filename))
+	path := uniquePath(dir, storedName(header.Filename))
 	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return uploadedFile{}, err
@@ -129,6 +135,32 @@ func storeUpload(dir string, header *multipart.FileHeader) (uploadedFile, error)
 	}
 
 	return uploadedFile{Name: filepath.Base(path), Path: path, Size: size}, nil
+}
+
+// storedName is what a part is written as: a random prefix, then the name the
+// user knows the file by.
+//
+// The prefix is what replaced the per-session directory. Two screenshots are
+// both called Screenshot.png and neither may overwrite the other — the first
+// one's path is already in a prompt by the time the second arrives — and a
+// directory per session used to be what promised that. In one flat directory
+// the name has to promise it itself.
+//
+// Six bytes: wide enough that nothing collides, short enough to leave the real
+// name legible in the line of prose the agent reads the path out of.
+func storedName(filename string) string {
+	return uploadPrefix() + "-" + safeName(filename)
+}
+
+func uploadPrefix() string {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		// Not observed, and not worth failing an upload over: the clock still
+		// separates two files better than a fixed string would, and uniquePath
+		// below is the backstop either way.
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(buf)
 }
 
 // safeName reduces whatever the client sent to a single filename. The name

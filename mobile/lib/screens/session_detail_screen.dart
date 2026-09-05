@@ -367,13 +367,11 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     // Upload first. A prompt naming a path the daemon never stored sends the
     // agent looking for a file that is not there. Only what has not been
     // stored yet: the send below may have failed once already, and uploading
-    // the same bytes again would leave a numbered copy behind per attempt.
+    // the same bytes again would leave a second copy behind per attempt.
     var message = text;
     final pending = _attachments.where((f) => f.storedPath == null).toList();
     if (pending.isNotEmpty) {
-      final paths = sse == null
-          ? null
-          : await sse.uploadSessionFiles(widget.session.sessionId, pending);
+      final paths = sse == null ? null : await sse.uploadFiles(pending);
       if (paths == null || paths.length != pending.length) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

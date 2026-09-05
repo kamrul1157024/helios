@@ -195,7 +195,7 @@ export function ChatPanel({
     try {
       // Upload first: a prompt naming a path the daemon never stored is worse
       // than no prompt, and the agent would go looking for it.
-      const message = await files.store(hostId, session.session_id, text)
+      const message = await files.store(hostId, text)
 
       const result = await api(hostId).sendPrompt(session.session_id, message)
       setDraft('')

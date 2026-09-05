@@ -36,7 +36,7 @@ type part struct {
 	content string
 }
 
-func upload(t *testing.T, s *PublicServer, sessionID string, parts ...part) (*httptest.ResponseRecorder, map[string]interface{}) {
+func upload(t *testing.T, s *PublicServer, parts ...part) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
 
 	var body bytes.Buffer
@@ -52,11 +52,11 @@ func upload(t *testing.T, s *PublicServer, sessionID string, parts ...part) (*ht
 	}
 	form.Close()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/files", &body)
+	req := httptest.NewRequest(http.MethodPost, "/api/uploads", &body)
 	req.Header.Set("Content-Type", form.FormDataContentType())
 	rec := httptest.NewRecorder()
 
-	s.handleSessionUpload(rec, req)
+	s.handleUpload(rec, req)
 
 	var payload map[string]interface{}
 	if rec.Body.Len() > 0 {
@@ -87,10 +87,9 @@ func uploadedPaths(t *testing.T, payload map[string]interface{}) []string {
 // The path in the response is the whole feature: the client pastes it into a
 // prompt, so it has to be absolute and it has to hold the bytes that were sent.
 func TestUpload_StoresTheFileAndReturnsItsPath(t *testing.T) {
-	s, shared, home := newUploadTest(t)
-	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	s, _, home := newUploadTest(t)
 
-	rec, payload := upload(t, s, "sess-1", part{name: "diagram.png", content: "not really a png"})
+	rec, payload := upload(t, s, part{name: "diagram.png", content: "not really a png"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -100,9 +99,14 @@ func TestUpload_StoresTheFileAndReturnsItsPath(t *testing.T) {
 		t.Fatalf("files: got %d, want 1", len(paths))
 	}
 
-	want := filepath.Join(home, ".helios", "uploads", "sess-1", "diagram.png")
-	if paths[0] != want {
-		t.Errorf("path: got %q, want %q", paths[0], want)
+	dir := filepath.Join(home, ".helios", "uploads")
+	if got := filepath.Dir(paths[0]); got != dir {
+		t.Errorf("directory: got %q, want %q", got, dir)
+	}
+	// Prefixed, but the name the user knows the file by survives on the end of
+	// it: the agent reads this path out of a line of prose.
+	if got := filepath.Base(paths[0]); !strings.HasSuffix(got, "-diagram.png") {
+		t.Errorf("name: got %q, want something ending -diagram.png", got)
 	}
 	content, err := os.ReadFile(paths[0])
 	if err != nil {
@@ -116,13 +120,12 @@ func TestUpload_StoresTheFileAndReturnsItsPath(t *testing.T) {
 // The filename arrives from a remote client, so a path inside it is either a
 // browser quirk or an attempt to write somewhere it should not.
 func TestUpload_FilenameCannotEscapeTheUploadDirectory(t *testing.T) {
-	s, shared, home := newUploadTest(t)
-	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	s, _, home := newUploadTest(t)
 
-	_, payload := upload(t, s, "sess-1", part{name: "../../../etc/passwd", content: "x"})
+	_, payload := upload(t, s, part{name: "../../../etc/passwd", content: "x"})
 	paths := uploadedPaths(t, payload)
 
-	dir := filepath.Join(home, ".helios", "uploads", "sess-1")
+	dir := filepath.Join(home, ".helios", "uploads")
 	if filepath.Dir(paths[0]) != dir {
 		t.Errorf("escaped the upload directory: %q", paths[0])
 	}
@@ -134,46 +137,68 @@ func TestUpload_FilenameCannotEscapeTheUploadDirectory(t *testing.T) {
 // The path is handed to the agent in a line of prose, and a macOS screenshot
 // is named in four words that read as part of the sentence.
 func TestUpload_SpacesInTheNameAreNotKept(t *testing.T) {
-	s, shared, home := newUploadTest(t)
-	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	s, _, _ := newUploadTest(t)
 
-	_, payload := upload(t, s, "sess-1", part{name: "Screenshot 2026-08-15 at 2.33.50 PM.png", content: "x"})
+	_, payload := upload(t, s, part{name: "Screenshot 2026-08-15 at 2.33.50 PM.png", content: "x"})
 	paths := uploadedPaths(t, payload)
 
-	want := filepath.Join(home, ".helios", "uploads", "sess-1", "Screenshot-2026-08-15-at-2.33.50-PM.png")
-	if paths[0] != want {
-		t.Errorf("path: got %q, want %q", paths[0], want)
+	if got := filepath.Base(paths[0]); !strings.HasSuffix(got, "-Screenshot-2026-08-15-at-2.33.50-PM.png") {
+		t.Errorf("name: got %q, still carries spaces or lost the name", got)
+	}
+	if strings.Contains(paths[0], " ") {
+		t.Errorf("path still has a space in it: %q", paths[0])
 	}
 }
 
 // Two screenshots are both called Screenshot.png. Neither may overwrite the
-// other: the first one's path is already in a prompt by then.
+// other: the first one's path is already in a prompt by then. A directory per
+// session used to be what promised that; in one flat directory the random
+// prefix is all there is, so this is the test of it.
 func TestUpload_SameNameTwiceKeepsBothFiles(t *testing.T) {
-	s, shared, _ := newUploadTest(t)
-	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	s, _, _ := newUploadTest(t)
 
-	_, first := upload(t, s, "sess-1", part{name: "shot.png", content: "one"})
-	_, second := upload(t, s, "sess-1", part{name: "shot.png", content: "two"})
+	_, first := upload(t, s, part{name: "shot.png", content: "one"})
+	_, second := upload(t, s, part{name: "shot.png", content: "two"})
 
 	firstPath, secondPath := uploadedPaths(t, first)[0], uploadedPaths(t, second)[0]
 	if firstPath == secondPath {
 		t.Fatalf("second upload reused the path %q", firstPath)
 	}
-	if got := filepath.Base(secondPath); got != "shot-1.png" {
-		t.Errorf("second name: got %q, want shot-1.png", got)
+	for _, path := range []string{firstPath, secondPath} {
+		if !strings.HasSuffix(path, "-shot.png") {
+			t.Errorf("name: got %q, want something ending -shot.png", path)
+		}
 	}
 
 	content, err := os.ReadFile(firstPath)
 	if err != nil || string(content) != "one" {
 		t.Errorf("first file was overwritten: %q, %v", content, err)
 	}
+	if content, err := os.ReadFile(secondPath); err != nil || string(content) != "two" {
+		t.Errorf("second file is wrong: %q, %v", content, err)
+	}
+}
+
+// The prefix is the only thing keeping two files apart, so it has to actually
+// differ. A hundred of the same name is a cheap way to notice a constant.
+func TestUpload_PrefixIsDifferentEveryTime(t *testing.T) {
+	s, _, _ := newUploadTest(t)
+
+	seen := make(map[string]bool, 100)
+	for i := 0; i < 100; i++ {
+		_, payload := upload(t, s, part{name: "shot.png", content: "x"})
+		name := filepath.Base(uploadedPaths(t, payload)[0])
+		if seen[name] {
+			t.Fatalf("name %q came back twice", name)
+		}
+		seen[name] = true
+	}
 }
 
 func TestUpload_SeveralFilesInOneRequest(t *testing.T) {
-	s, shared, _ := newUploadTest(t)
-	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	s, _, _ := newUploadTest(t)
 
-	_, payload := upload(t, s, "sess-1",
+	_, payload := upload(t, s,
 		part{name: "a.txt", content: "a"},
 		part{name: "b.txt", content: "b"},
 	)
@@ -182,23 +207,10 @@ func TestUpload_SeveralFilesInOneRequest(t *testing.T) {
 	}
 }
 
-func TestUpload_UnknownSessionIsRejected(t *testing.T) {
-	s, _, home := newUploadTest(t)
-
-	rec, _ := upload(t, s, "nope", part{name: "a.txt", content: "a"})
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".helios", "uploads", "nope")); !os.IsNotExist(err) {
-		t.Errorf("created a directory for a session that does not exist")
-	}
-}
-
 func TestUpload_RequestWithoutFilesIsRejected(t *testing.T) {
-	s, shared, _ := newUploadTest(t)
-	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	s, _, _ := newUploadTest(t)
 
-	rec, _ := upload(t, s, "sess-1")
+	rec, _ := upload(t, s)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}

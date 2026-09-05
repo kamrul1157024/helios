@@ -144,7 +144,7 @@ export function TerminalPane({
           bytes: new Uint8Array(await file.arrayBuffer()),
         })),
       )
-      const stored = await api(tab.hostId).uploadFiles(tab.sessionId, parts)
+      const stored = await api(tab.hostId).uploadFiles(parts)
       const text = terminalPaths(stored.map((file) => file.path))
       if (text) await bridge.term.input(tab.id, encoder.encode(text))
     } catch (err) {

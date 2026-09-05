@@ -279,13 +279,17 @@ export class ApiClient {
   }
 
   /**
-   * Stores files beside the session and answers with the path of each.
+   * Stores files on the host and answers with the path of each.
    *
    * The bytes stop here. What reaches the agent is a path, which it opens with
    * its own tools — so an attachment costs the model nothing until it looks.
+   *
+   * No session id, which is what lets the new-session composer upload before
+   * it has one. The daemon keeps them apart with a random prefix on the name
+   * rather than a directory per session.
    */
-  async uploadFiles(id: string, files: UploadPart[]): Promise<UploadedFile[]> {
-    const path = `/api/sessions/${encodeURIComponent(id)}/files`
+  async uploadFiles(files: UploadPart[]): Promise<UploadedFile[]> {
+    const path = '/api/uploads'
     let response = await this.sendForm(path, files)
     if (response.status === 401) {
       this.invalidate()

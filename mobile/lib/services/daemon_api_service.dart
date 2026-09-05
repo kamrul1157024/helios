@@ -653,20 +653,18 @@ class DaemonAPIService extends ChangeNotifier {
   /// opens them with its own tools. Returns null when the upload failed, which
   /// the caller reports rather than sending a prompt naming files that are not
   /// there.
-  Future<List<String>?> uploadSessionFiles(
-    String sessionId,
-    List<UploadFile> files,
-  ) async {
+  ///
+  /// No session id. Attachments were once filed under one, which meant they
+  /// could not be uploaded until a session existed — and that is what forced
+  /// the desktop's new-session composer to launch its agent before it could
+  /// upload, and prompt it afterwards. The daemon keeps uploads apart with a
+  /// random prefix on the name instead.
+  Future<List<String>?> uploadFiles(List<UploadFile> files) async {
     if (files.isEmpty) return const [];
     try {
-      final resp = await _api.postFiles(
-        '/api/sessions/$sessionId/files',
-        files,
-      );
+      final resp = await _api.postFiles('/api/uploads', files);
       if (resp.statusCode != 200) {
-        debugPrint(
-          '[$hostId] uploadSessionFiles: ${resp.statusCode} ${resp.body}',
-        );
+        debugPrint('[$hostId] uploadFiles: ${resp.statusCode} ${resp.body}');
         return null;
       }
       final data = jsonDecode(resp.body);

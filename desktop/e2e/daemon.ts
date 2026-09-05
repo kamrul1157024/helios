@@ -50,10 +50,10 @@ export interface StubDaemon {
   /**
    * What the app asked the daemon to do, in the order it asked.
    *
-   * A session with files on its first prompt is three calls that have to
-   * happen in one order — create, upload, send — because the upload needs an
-   * id that only the create can give it. Nothing on screen shows the order, so
-   * the record of what arrived is the only thing that can.
+   * A session with files on its first prompt is two calls in one order —
+   * upload, then create — because the create has to carry the paths the upload
+   * decided. Nothing on screen shows the order, so the record of what arrived
+   * is the only thing that can.
    */
   writes(): DaemonWrite[]
   close(): Promise<void>
@@ -62,7 +62,7 @@ export interface StubDaemon {
 /** One thing the app asked of the daemon. */
 export type DaemonWrite =
   | { kind: 'create'; spec: Record<string, unknown> }
-  | { kind: 'upload'; sessionId: string; names: string[] }
+  | { kind: 'upload'; names: string[] }
   | { kind: 'send'; sessionId: string; message: string }
 
 /** The session every create in these tests hands back. */
@@ -368,9 +368,9 @@ export async function startDaemon(): Promise<StubDaemon> {
   }
 }
 
-/** The three calls that start a session and give it its first turn. */
+/** The calls that start a session and give it its first turn. */
 function written(path: string): boolean {
-  return path === '/api/sessions' || path.endsWith('/files') || path.endsWith('/send')
+  return path === '/api/sessions' || path === '/api/uploads' || path.endsWith('/send')
 }
 
 /**
@@ -385,17 +385,23 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
     return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
   }
 
-  const id = path.slice('/api/sessions/'.length, path.lastIndexOf('/'))
   if (path.endsWith('/send')) {
+    const id = path.slice('/api/sessions/'.length, path.lastIndexOf('/'))
     const { message } = JSON.parse(body.toString() || '{}')
     writes.push({ kind: 'send', sessionId: id, message: String(message ?? '') })
     return { success: true }
   }
 
   const names = [...body.toString('latin1').matchAll(/filename="([^"]*)"/g)].map((m) => m[1] ?? '')
-  writes.push({ kind: 'upload', sessionId: id, names })
+  writes.push({ kind: 'upload', names })
+  // Prefixed as the daemon prefixes them, so a test cannot pass by assuming
+  // the path is the name the file was picked under.
   return {
-    files: names.map((name) => ({ name, path: `${HOME}/.helios/uploads/${id}/${name}`, size: 1 })),
+    files: names.map((name, at) => ({
+      name,
+      path: `${HOME}/.helios/uploads/a1b2c3d4e5f${at}-${name}`,
+      size: 1,
+    })),
   }
 }
 

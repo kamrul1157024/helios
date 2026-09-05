@@ -151,8 +151,8 @@ directory already exists for attachments (`internal/server/uploads.go`), is
 ## Client change — offer to attach a large paste
 
 Reduces how often a huge prompt is generated at all. The attachment pipeline
-(`POST /api/sessions/{id}/files` → `Attached: <path>` lines) already exists on
-both clients.
+(`POST /api/uploads` → `Attached: <path>` lines) already exists on both
+clients.
 
 Default is **inline**: the paste lands in the composer exactly as today, and an
 offer appears alongside it. Nothing changes without the user choosing it.

@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test'
 
-import { CREATED } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 async function openComposer(window: Page): Promise<void> {
@@ -270,10 +269,15 @@ test('home does not disappear while it is being typed', async ({ window }) => {
 })
 
 // The one part of the composer that is not the chat composer with different
-// chips. An upload needs a session to belong to, and the session does not
-// exist until Create is pressed — so the first turn cannot be the one the
-// agent launches with, and the order below is the whole of the feature.
-test('files go up once the session exists, and the first prompt names them', async ({ window, daemon }) => {
+// chips, and the order below is the whole of the feature.
+//
+// The files go up first so that their paths can be in the prompt the agent
+// launches with. The other way round — create, upload, then send the prompt —
+// is what this used to do, because an upload needed a session to belong to,
+// and it meant typing at an agent whose TUI had not yet claimed the terminal.
+// Prompts are swallowed there, and both agents put a trust dialog in the same
+// window. Nothing is typed now: there is no send at all.
+test('files go up before the session, and it launches with a prompt naming them', async ({ window, daemon }) => {
   await openComposer(window)
 
   await window.locator('.composer input[type="file"]').setInputFiles({
@@ -287,21 +291,18 @@ test('files go up once the session exists, and the first prompt names them', asy
   await window.locator('.composer .filled').click()
   await expect(window.locator('.composer')).toHaveCount(0)
 
-  await expect
-    .poll(() => daemon.writes().map((write) => write.kind))
-    .toEqual(['create', 'upload', 'send'])
+  await expect.poll(() => daemon.writes().map((write) => write.kind)).toEqual(['upload', 'create'])
 
-  const [created, uploaded, sent] = daemon.writes()
-  if (created?.kind !== 'create' || uploaded?.kind !== 'upload' || sent?.kind !== 'send') {
-    throw new Error('the daemon recorded something other than a create, an upload and a send')
+  const [uploaded, created] = daemon.writes()
+  if (uploaded?.kind !== 'upload' || created?.kind !== 'create') {
+    throw new Error('the daemon recorded something other than an upload and a create')
   }
-  // Silent on purpose: launching with the prompt would send the agent looking
-  // for paths that are only decided by the upload below it.
-  expect(created.spec.prompt).toBeUndefined()
   expect(uploaded.names).toEqual(['shot.png'])
-  expect(uploaded.sessionId).toBe(CREATED)
-  expect(sent.message).toContain(`/home/dev/.helios/uploads/${CREATED}/shot.png`)
-  expect(sent.message).toContain('what is wrong with this')
+  // The path the upload decided, not the name the file was picked under: the
+  // daemon prefixes it, and a prompt carrying the unprefixed name points at
+  // nothing.
+  expect(created.spec.prompt).toContain('/home/dev/.helios/uploads/a1b2c3d4e5f0-shot.png')
+  expect(created.spec.prompt).toContain('what is wrong with this')
 })
 
 test('a session with nothing attached still launches with its prompt', async ({ window, daemon }) => {

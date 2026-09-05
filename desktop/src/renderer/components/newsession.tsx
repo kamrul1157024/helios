@@ -98,63 +98,37 @@ export function NewSessionDialog({
   const modes = selected?.permission_modes ?? []
 
   /**
-   * The first turn, when there are files on it.
+   * Starts the session, with its files already on disk and named in the prompt
+   * it launches with.
    *
-   * An upload needs a session to belong to — it lands in
-   * ~/.helios/uploads/{id} and the handler 404s without the record
-   * (internal/server/uploads.go) — and the id is what the create call is there
-   * to return. So an attached prompt cannot be the one the agent launches
-   * with: the session is started silent, the files go up against the id it
-   * came back with, and the prompt naming them is sent after.
+   * The upload goes first, and that ordering is the whole of it. It used to be
+   * impossible: an attachment was filed under a session id, the id came back
+   * from the create, so the session had to be launched silent and the prompt
+   * naming the files typed at it afterwards — into the seconds where the agent
+   * has reported in but its TUI has not yet claimed the terminal. Prompts are
+   * swallowed in that window, and both agents put a trust dialog in it as well;
+   * Codex puts two.
    *
-   * That send lands while the agent is still coming up, which is the hardest
-   * moment to deliver a prompt in and used to be where this one was lost. The
-   * daemon holds it now — it waits for the agent's screen to settle before
-   * typing, and gives a booting agent a budget that matches how long one
-   * actually takes to read (internal/server/launch.go, awaitQuietScreen).
+   * Uploads no longer take an id (POST /api/uploads), so nothing is typed at
+   * anything. The paths exist before the launch, the prompt naming them goes in
+   * the agent's own argv, and the CLI holds it behind its own dialogs the way
+   * it holds any other launch prompt.
    *
-   * Nothing here undoes the session. It is running by the time any of this can
-   * fail, and killing an agent over an upload is a worse answer than a prompt
-   * that arrives without its attachments.
+   * A failed upload now leaves nothing behind, because nothing has started.
    */
-  const firstTurn = async (sessionId: string, text: string): Promise<void> => {
-    let message = text
-    try {
-      message = await files.store(hostId, sessionId, text)
-    } catch (err) {
-      const why = err instanceof Error ? err.message : String(err)
-      store.notify(`Session started, but the files did not upload: ${why}`, 'error')
-    }
-    if (!message) return
-    try {
-      await api(hostId).sendPrompt(sessionId, message)
-    } catch (err) {
-      store.fail(err)
-    }
-  }
-
   const start = async (): Promise<void> => {
     if (!hostId || starting) return
     setStarting(true)
     try {
       const text = prompt.trim()
-      const attached = files.files.length > 0
+      const message = files.files.length > 0 ? await files.store(hostId, text) : text
       const result = await api(hostId).createSession({
         provider,
         cwd: cwd || undefined,
         model: model || undefined,
-        prompt: attached ? undefined : text || undefined,
+        prompt: message || undefined,
         permission_mode: mode || undefined,
       })
-      // Deliberately not awaited. The daemon holds a prompt until the agent is
-      // actually reading its terminal, which for a cold start is a good part of
-      // a minute, and a dialog sitting on "Creating…" for that long is a dialog
-      // that looks hung — over work the user has already been told is done.
-      // The session exists the moment the create returns, so it opens now and
-      // the prompt lands in it when it lands. Nothing is lost by not watching:
-      // a failure on either half arrives as a notification, which is where
-      // firstTurn already sends one.
-      if (attached) void firstTurn(result.session_id, text)
       // Filed before the refresh, so the list arrives with it already in the
       // group the + was pressed on. The directory only seeded the dialog; the
       // group is what the button actually promised.

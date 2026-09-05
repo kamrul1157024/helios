@@ -43,7 +43,7 @@ export interface AttachmentBag {
    * uploading the same bytes on the retry would leave a numbered copy behind
    * for every attempt.
    */
-  store: (hostId: string, sessionId: string, text: string) => Promise<string>
+  store: (hostId: string, text: string) => Promise<string>
   /** After a send has landed: the chips go and their previews are released. */
   clear: () => void
 }
@@ -84,12 +84,11 @@ export function useAttachments(): AttachmentBag {
     return pasted
   }
 
-  const store = async (hostId: string, sessionId: string, text: string): Promise<string> => {
+  const store = async (hostId: string, text: string): Promise<string> => {
     let ready = files
     const pending = needingUpload(files)
     if (pending.length > 0) {
       const stored = await api(hostId).uploadFiles(
-        sessionId,
         pending.map(({ name, type, bytes }) => ({ name, type, bytes })),
       )
       ready = withStoredPaths(files, pending, stored.map((file) => file.path))
