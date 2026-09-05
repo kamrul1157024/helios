@@ -219,6 +219,7 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	// Before the /api/groups/ catch-all, which would take "order" for a key.
 	protectedMux.HandleFunc("POST /api/groups/order", s.handleSetGroupOrder)
 	protectedMux.HandleFunc("/api/groups/{key}", s.handleGroup)
+	protectedMux.HandleFunc("POST /api/uploads", s.handleUpload)
 	protectedMux.HandleFunc("GET /api/files", s.handleListFiles)
 	protectedMux.HandleFunc("GET /api/files/search", s.handleSearchFiles)
 	protectedMux.HandleFunc("GET /api/files/grep", s.handleGrepFiles)
@@ -282,8 +283,6 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleSessionTouch(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/send"):
 			s.handleSessionSend(w, r)
-		case r.Method == "POST" && strings.HasSuffix(path, "/files"):
-			s.handleSessionUpload(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/stop"):
 			s.handleSessionStop(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/terminate"):

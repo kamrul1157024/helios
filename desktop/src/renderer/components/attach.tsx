@@ -43,7 +43,7 @@ export interface AttachmentBag {
    * uploading the same bytes on the retry would leave a numbered copy behind
    * for every attempt.
    */
-  store: (hostId: string, sessionId: string, text: string) => Promise<string>
+  store: (hostId: string, text: string) => Promise<string>
   /** After a send has landed: the chips go and their previews are released. */
   clear: () => void
 }
@@ -84,12 +84,11 @@ export function useAttachments(): AttachmentBag {
     return pasted
   }
 
-  const store = async (hostId: string, sessionId: string, text: string): Promise<string> => {
+  const store = async (hostId: string, text: string): Promise<string> => {
     let ready = files
     const pending = needingUpload(files)
     if (pending.length > 0) {
       const stored = await api(hostId).uploadFiles(
-        sessionId,
         pending.map(({ name, type, bytes }) => ({ name, type, bytes })),
       )
       ready = withStoredPaths(files, pending, stored.map((file) => file.path))
@@ -166,6 +165,7 @@ export function AttachButton({
   onFiles,
   disabled = false,
   shortcut = false,
+  icon = <Paperclip />,
 }: {
   onFiles: (files: FileList | null) => void
   disabled?: boolean
@@ -177,6 +177,12 @@ export function AttachButton({
    * would answer the keystroke with a dialog of its own.
    */
   shortcut?: boolean
+  /**
+   * The glyph. A paperclip beside a running session means "add to this turn";
+   * the new-session dialog is building a first turn out of nothing, and a plus
+   * is what adding to nothing looks like.
+   */
+  icon?: React.ReactNode
 }): JSX.Element {
   const picker = useRef<HTMLInputElement | null>(null)
 
@@ -211,7 +217,7 @@ export function AttachButton({
         disabled={disabled}
         onClick={() => picker.current?.click()}
       >
-        <Paperclip />
+        {icon}
       </button>
     </>
   )

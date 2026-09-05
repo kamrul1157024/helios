@@ -12,7 +12,7 @@ import {
   useAttachments,
   useDropTarget,
 } from './attach.tsx'
-import { Chevron, Console, Folder, Shield, Spark } from './icons.tsx'
+import { Chevron, Console, Folder, Plus, Shield, Spark } from './icons.tsx'
 import { completionTarget, completionsIn, resolveTyped } from './dirpath.ts'
 import { tintOf } from './grouping.ts'
 import { type DirectoryInfo, type ModelInfo, type ProviderInfo } from '../../shared/models.ts'
@@ -98,49 +98,37 @@ export function NewSessionDialog({
   const modes = selected?.permission_modes ?? []
 
   /**
-   * The first turn, when there are files on it.
+   * Starts the session, with its files already on disk and named in the prompt
+   * it launches with.
    *
-   * An upload needs a session to belong to — it lands in
-   * ~/.helios/uploads/{id} and the handler 404s without the record
-   * (internal/server/uploads.go) — and the id is what the create call is there
-   * to return. So an attached prompt cannot be the one the agent launches
-   * with: the session is started silent, the files go up against the id it
-   * came back with, and the prompt naming them is sent after.
+   * The upload goes first, and that ordering is the whole of it. It used to be
+   * impossible: an attachment was filed under a session id, the id came back
+   * from the create, so the session had to be launched silent and the prompt
+   * naming the files typed at it afterwards — into the seconds where the agent
+   * has reported in but its TUI has not yet claimed the terminal. Prompts are
+   * swallowed in that window, and both agents put a trust dialog in it as well;
+   * Codex puts two.
    *
-   * Nothing here undoes the session. It is running by the time any of this can
-   * fail, and killing an agent over an upload is a worse answer than a prompt
-   * that arrives without its attachments.
+   * Uploads no longer take an id (POST /api/uploads), so nothing is typed at
+   * anything. The paths exist before the launch, the prompt naming them goes in
+   * the agent's own argv, and the CLI holds it behind its own dialogs the way
+   * it holds any other launch prompt.
+   *
+   * A failed upload now leaves nothing behind, because nothing has started.
    */
-  const firstTurn = async (sessionId: string, text: string): Promise<void> => {
-    let message = text
-    try {
-      message = await files.store(hostId, sessionId, text)
-    } catch (err) {
-      const why = err instanceof Error ? err.message : String(err)
-      store.notify(`Session started, but the files did not upload: ${why}`, 'error')
-    }
-    if (!message) return
-    try {
-      await api(hostId).sendPrompt(sessionId, message)
-    } catch (err) {
-      store.fail(err)
-    }
-  }
-
   const start = async (): Promise<void> => {
     if (!hostId || starting) return
     setStarting(true)
     try {
       const text = prompt.trim()
-      const attached = files.files.length > 0
+      const message = files.files.length > 0 ? await files.store(hostId, text) : text
       const result = await api(hostId).createSession({
         provider,
         cwd: cwd || undefined,
         model: model || undefined,
-        prompt: attached ? undefined : text || undefined,
+        prompt: message || undefined,
         permission_mode: mode || undefined,
       })
-      if (attached) await firstTurn(result.session_id, text)
       // Filed before the refresh, so the list arrives with it already in the
       // group the + was pressed on. The directory only seeded the dialog; the
       // group is what the button actually promised.
@@ -269,29 +257,43 @@ export function NewSessionDialog({
 
         <AttachmentChips files={files.files} onRemove={files.remove} />
 
-        <textarea
-          className="composer-prompt"
-          autoFocus
-          rows={4}
-          value={prompt}
-          placeholder="What do you want to work on?"
-          onChange={(event) => setPrompt(event.target.value)}
-          onPaste={(event) => {
-            // A screenshot on the clipboard comes through as a file. Let the
-            // default run when there is none, or pasted text is lost.
-            if (event.clipboardData.files.length > 0) {
+        {/* Over the prompt rather than in the foot, as the transcript composer
+            has it: attaching is something done to the text, so it belongs on
+            the box holding the text. It also gives the foot back the width the
+            three chips need to stay on one line. */}
+        <div className="composer-input">
+          <textarea
+            className="composer-prompt"
+            autoFocus
+            rows={4}
+            value={prompt}
+            placeholder="What do you want to work on?"
+            onChange={(event) => setPrompt(event.target.value)}
+            onPaste={(event) => {
+              // A screenshot on the clipboard comes through as a file. Let the
+              // default run when there is none, or pasted text is lost.
+              if (event.clipboardData.files.length > 0) {
+                event.preventDefault()
+                void files.attach(event.clipboardData.files)
+                return
+              }
+              files.noticePaste(event.clipboardData.getData('text'))
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
               event.preventDefault()
-              void files.attach(event.clipboardData.files)
-              return
-            }
-            files.noticePaste(event.clipboardData.getData('text'))
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-            event.preventDefault()
-            void start()
-          }}
-        />
+              void start()
+            }}
+          />
+          <div className="composer-bar">
+            <AttachButton
+              onFiles={(chosen) => void files.attach(chosen)}
+              disabled={starting}
+              shortcut
+              icon={<Plus />}
+            />
+          </div>
+        </div>
 
         <footer className="composer-foot">
           <div className="composer-chips">
@@ -395,18 +397,9 @@ export function NewSessionDialog({
                 )}
               </Picker>
             )}
-
           </div>
 
           <div className="composer-actions">
-            {/* With the actions rather than with the chips: the chips say what
-                the session will be, and the paperclip is something done to the
-                prompt, next to the button that sends it. */}
-            <AttachButton
-              onFiles={(chosen) => void files.attach(chosen)}
-              disabled={starting}
-              shortcut
-            />
             <button className="ghost" onClick={onClose}>
               Cancel
             </button>

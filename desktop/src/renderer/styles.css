@@ -3837,7 +3837,11 @@ figure.mermaid svg {
    of its own: the prompt stopped growing with the window and stopped lining up
    with the messages above it. */
 .modal-backdrop .composer {
-  width: 680px;
+  /* 680 was the width before the foot held three chips. "Claude Code",
+     "Default model" and "Default permissions" want 471px between them and had
+     450, so every one of them was losing its last few characters to an
+     ellipsis at rest. */
+  width: 720px;
   max-width: 92vw;
   display: flex;
   flex-direction: column;
@@ -3898,17 +3902,34 @@ figure.mermaid svg {
   flex: none;
 }
 
-/* Sized to the buttons it stands beside, not to the 36px an icon button is
-   elsewhere: the foot of the dialog is a 30px row. */
-.composer-actions .attach-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
+/* The prompt box in the dialog is the dialog: the wrapper exists only to hang
+   the ⊕ over the text, as the transcript composer does, so it draws no surface
+   and no border of its own. */
+.modal-backdrop .composer-input {
+  margin: 0 12px;
+  border: none;
+  background: none;
 }
 
-.composer-actions .attach-btn .ui-icon {
-  width: 17px;
-  height: 17px;
+.modal-backdrop .composer-input:focus-within {
+  border-color: transparent;
+}
+
+/* One drop hint, not two: the dialog paints its own across the whole of
+   itself, and the inner box would sit inside that. */
+.modal-backdrop .composer.dropping .composer-input::after {
+  content: none;
+}
+
+.modal-backdrop .composer-prompt {
+  margin: 0;
+  /* Bottom padding is the strip the ⊕ floats over. */
+  padding: 8px 8px 40px;
+}
+
+.modal-backdrop .composer-bar {
+  left: 4px;
+  bottom: 4px;
 }
 
 /* The dialog has no inner box to outline, so the whole of it lights up. */
@@ -3940,6 +3961,15 @@ figure.mermaid svg {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Held at the width of the widest thing it says, so pressing it does not
+   resize it. "Creating…" is 11px wider than "Create ↵", and the chips beside
+   it paid for those 11px: the permission mode dropped onto a line of its own
+   at the exact moment the user was watching for something to happen. */
+.composer-actions .filled {
+  min-width: 102px;
+  justify-content: center;
 }
 
 .composer-key {
@@ -4028,6 +4058,25 @@ figure.mermaid svg {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 220px;
+}
+
+/* Provider, model and permissions read as one row of settings, so they get one
+   row. Three of them and two buttons do not fit 680px at full width — "Claude
+   Code", "Default model" and "Default permissions" are together already over
+   it — and a permission mode dropped onto a line of its own reads as a
+   separate control rather than the third of three.
+
+   So the chips give instead of wrapping. `flex: none` is what the chip row
+   wants everywhere else, where nothing should be cut; here they shrink and the
+   ellipsis lands wherever the width runs out. A cap would not do it: the names
+   are only just too wide together, so any cap tight enough to fit them cuts
+   names that had room. */
+.composer-foot .composer-chips {
+  flex-wrap: nowrap;
+}
+
+.composer-foot .composer-chips > * {
+  flex: 0 1 auto;
 }
 
 .picker-body {

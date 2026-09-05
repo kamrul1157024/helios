@@ -267,8 +267,8 @@ export class HostApi {
     return this.call('touchSession', id)
   }
   /** The bytes cross to the main process, which does the multipart POST. */
-  uploadFiles(id: string, files: UploadPart[]): Promise<UploadedFile[]> {
-    return this.call('uploadFiles', id, files)
+  uploadFiles(files: UploadPart[]): Promise<UploadedFile[]> {
+    return this.call('uploadFiles', files)
   }
   setSessionOrder(order: string[]): Promise<unknown> {
     return this.call('setSessionOrder', order)

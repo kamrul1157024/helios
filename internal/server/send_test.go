@@ -25,6 +25,36 @@ type sendBackend struct {
 	sent   []string
 	onWake func()
 	onSend func()
+	// screens is what Capture hands back, one per call, holding on the last.
+	// A TUI painting itself is a run of different screens followed by one that
+	// stops changing, and that is all awaitQuietScreen reads.
+	screens []string
+	screen  string
+}
+
+// Capture answers with the next queued screen, and keeps answering with the
+// last one once they run out. Driven by the call rather than by a clock, so a
+// test of the settle does not depend on how fast this machine sleeps.
+func (b *sendBackend) Capture(sessionID string) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.screens) > 0 {
+		b.screen = b.screens[0]
+		b.screens = b.screens[1:]
+	}
+	return b.screen, nil
+}
+
+func (b *sendBackend) queueScreens(screens ...string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.screens = append(b.screens, screens...)
+}
+
+func (b *sendBackend) framesLeft() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.screens)
 }
 
 func (b *sendBackend) Wake(sessionID, cwd string) (bool, error) {
@@ -76,9 +106,20 @@ func (b *sendBackend) wakeCount() int {
 func newSendTest(t *testing.T) (*PublicServer, *Shared, *sendBackend) {
 	t.Helper()
 
-	boot, ack := agentBootTimeout, promptAckTimeout
+	boot, ack, bootAck := agentBootTimeout, promptAckTimeout, bootPromptAckTimeout
 	agentBootTimeout, promptAckTimeout = 300*time.Millisecond, 300*time.Millisecond
-	t.Cleanup(func() { agentBootTimeout, promptAckTimeout = boot, ack })
+	bootPromptAckTimeout = 300 * time.Millisecond
+	t.Cleanup(func() {
+		agentBootTimeout, promptAckTimeout, bootPromptAckTimeout = boot, ack, bootAck
+	})
+
+	interval, settle, blank := screenSettleInterval, screenSettleTimeout, screenBlankGrace
+	screenSettleInterval = 5 * time.Millisecond
+	screenSettleTimeout = 300 * time.Millisecond
+	screenBlankGrace = 20 * time.Millisecond
+	t.Cleanup(func() {
+		screenSettleInterval, screenSettleTimeout, screenBlankGrace = interval, settle, blank
+	})
 
 	db, err := store.Open(":memory:")
 	if err != nil {
@@ -346,6 +387,113 @@ func TestSend_NewSessionTypesOnlyAfterTheAgentIsUp(t *testing.T) {
 	}
 	if !be.wokenNone() {
 		t.Error("a live session was woken, and waking one kills the terminal it already has")
+	}
+}
+
+// Reporting in is not the same as reading the terminal. The ready hook comes
+// from the agent process, which is up well before its TUI has claimed the
+// terminal, and the raw-mode switch that claim performs discards whatever is
+// sitting in the input buffer. A prompt typed into that window is not late —
+// it is gone, with no error and a session left looking idle because nothing
+// was ever asked of it. So the screen has to stop moving first.
+func TestSend_NewSessionTypesOnlyAfterTheScreenSettles(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "starting")
+	be.handles["sess-1"] = "sock-sess-1"
+	be.queueScreens("booting", "loading mcp servers", "welcome", "welcome  > ")
+
+	// The status is written before the signal, so the wait ends whichever side
+	// of the subscribe this lands on.
+	go func() {
+		shared.DB.UpdateSessionStatus("sess-1", "idle", "SessionStart")
+		shared.Signals.Fire(SignalAgentReady, "sess-1")
+	}()
+
+	var mu sync.Mutex
+	stillPainting := false
+	be.onSend = func() {
+		mu.Lock()
+		stillPainting = be.framesLeft() > 0
+		mu.Unlock()
+		shared.Signals.Fire(SignalPromptSubmitted, "sess-1")
+	}
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if stillPainting {
+		t.Error("prompt was typed while the agent was still painting its screen")
+	}
+}
+
+// A trust dialog is as motionless as a composer, so the settle alone would
+// call it ready and type into it — and the agent behind one is reading a menu
+// selection, not prose, so the prompt would answer the dialog rather than
+// queue behind it. Codex makes this the ordinary case: a fresh install shows
+// directory trust and then hook trust before it reads anything at all.
+func TestSend_TrustDialogIsRefusedRatherThanTypedInto(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	be.onWake = func() { shared.Signals.Fire(SignalAgentReady, "sess-1") }
+	// Codex's own wording, and a screen that holds still the way a modal does.
+	be.queueScreens(
+		"codex starting",
+		"Do you trust the contents of this directory?\n  1. Yes, continue    2. No, quit",
+	)
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	if got := be.sentTexts(); len(got) != 0 {
+		t.Errorf("typed %q into a session sitting on its trust dialog", got)
+	}
+}
+
+// The hook-trust dialog is the second of the two, and used to be the one that
+// went unnoticed. It has to block a send for the same reason the first does.
+func TestSend_HookTrustDialogAlsoBlocks(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	be.onWake = func() { shared.Signals.Fire(SignalAgentReady, "sess-1") }
+	be.queueScreens(
+		"codex starting",
+		"11 hooks are new or changed.\n  1. Review hooks   2. Trust all and continue",
+	)
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	if got := be.sentTexts(); len(got) != 0 {
+		t.Errorf("typed %q into a session sitting on its hook-trust dialog", got)
+	}
+}
+
+// A backend with no mirror to read answers blank forever. Waiting the whole
+// settle out on one buys nothing and costs every send that goes through it.
+func TestSend_BlankScreenDoesNotHoldTheSend(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	// Cold, so the wake path runs and the send counts as one at a booting
+	// agent. The stub never paints, which is what a backend with no mirror
+	// behind it looks like.
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	be.onWake = func() { shared.Signals.Fire(SignalAgentReady, "sess-1") }
+	be.onSend = func() { shared.Signals.Fire(SignalPromptSubmitted, "sess-1") }
+
+	start := time.Now()
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if waited := time.Since(start); waited >= screenSettleTimeout {
+		t.Errorf("waited %s on a screen that was never going to say anything", waited)
 	}
 }
 
