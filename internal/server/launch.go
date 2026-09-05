@@ -170,17 +170,19 @@ func (sh *Shared) awaitAgent(id string) error {
 // A booting TUI repaints continuously; once two captures a settle apart agree,
 // the composer is up and reading.
 //
-// Giving up is deliberately silent and deliberately not an error. Typing at an
-// agent whose screen never settles is exactly what this did before, so the
-// worst case is the behaviour it replaced.
-func (sh *Shared) awaitQuietScreen(id string) {
+// Giving up on the settle is deliberately silent and deliberately not an
+// error. Typing at an agent whose screen never settles is exactly what this
+// did before, so the worst case is the behaviour it replaced.
+//
+// A trust dialog is the one thing it refuses over. See below.
+func (sh *Shared) awaitQuietScreen(id string) error {
 	deadline := time.Now().Add(screenSettleTimeout)
 	blankUntil := time.Now().Add(screenBlankGrace)
 	last := ""
 	for time.Now().Before(deadline) {
 		screen, err := sh.Backend.Capture(id)
 		if err != nil {
-			return
+			return nil
 		}
 		// Blank does not count as settled: a terminal shows nothing at all in
 		// the moment before its TUI paints, which is the moment this exists to
@@ -189,15 +191,31 @@ func (sh *Shared) awaitQuietScreen(id string) {
 		// for the full timeout to learn nothing from it is worse than typing.
 		if screen == "" {
 			if time.Now().After(blankUntil) {
-				return
+				return nil
 			}
 		} else if screen == last {
-			return
+			// Still, but not ready. A modal is as motionless as a composer,
+			// and the agent behind it is not reading prose — it is reading a
+			// menu selection, so a prompt typed here does not queue, it
+			// answers. Codex makes this the ordinary case rather than the rare
+			// one: on a fresh install it shows two of these back to back,
+			// directory trust and then hook trust, before it reads anything.
+			//
+			// Refused rather than waited out. The watcher has already raised
+			// the dialog's own notification, so there is something to answer
+			// and something to say about why this did not go.
+			if prompt := matchTrustPrompt(screen); prompt != nil {
+				log.Printf("session-send: session %s is blocked on %s", id, prompt.Type)
+				return statusError(http.StatusConflict,
+					"the session is waiting on a prompt of its own: %s", prompt.Title)
+			}
+			return nil
 		}
 		last = screen
 		time.Sleep(screenSettleInterval)
 	}
 	log.Printf("session-send: session %s was still repainting after %s", id, screenSettleTimeout)
+	return nil
 }
 
 // EndSession kills a session's terminal and records it as terminated.
@@ -322,7 +340,9 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 	// being read, and the gap between the two is where a prompt is lost rather
 	// than merely late.
 	if booting {
-		sh.awaitQuietScreen(id)
+		if err := sh.awaitQuietScreen(id); err != nil {
+			return PromptResult{Resumed: resumed}, err
+		}
 	}
 
 	// Likewise subscribed before typing. The agent's own hook is the only

@@ -429,6 +429,52 @@ func TestSend_NewSessionTypesOnlyAfterTheScreenSettles(t *testing.T) {
 	}
 }
 
+// A trust dialog is as motionless as a composer, so the settle alone would
+// call it ready and type into it — and the agent behind one is reading a menu
+// selection, not prose, so the prompt would answer the dialog rather than
+// queue behind it. Codex makes this the ordinary case: a fresh install shows
+// directory trust and then hook trust before it reads anything at all.
+func TestSend_TrustDialogIsRefusedRatherThanTypedInto(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	be.onWake = func() { shared.Signals.Fire(SignalAgentReady, "sess-1") }
+	// Codex's own wording, and a screen that holds still the way a modal does.
+	be.queueScreens(
+		"codex starting",
+		"Do you trust the contents of this directory?\n  1. Yes, continue    2. No, quit",
+	)
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	if got := be.sentTexts(); len(got) != 0 {
+		t.Errorf("typed %q into a session sitting on its trust dialog", got)
+	}
+}
+
+// The hook-trust dialog is the second of the two, and used to be the one that
+// went unnoticed. It has to block a send for the same reason the first does.
+func TestSend_HookTrustDialogAlsoBlocks(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	be.onWake = func() { shared.Signals.Fire(SignalAgentReady, "sess-1") }
+	be.queueScreens(
+		"codex starting",
+		"11 hooks are new or changed.\n  1. Review hooks   2. Trust all and continue",
+	)
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	if got := be.sentTexts(); len(got) != 0 {
+		t.Errorf("typed %q into a session sitting on its hook-trust dialog", got)
+	}
+}
+
 // A backend with no mirror to read answers blank forever. Waiting the whole
 // settle out on one buys nothing and costs every send that goes through it.
 func TestSend_BlankScreenDoesNotHoldTheSend(t *testing.T) {
