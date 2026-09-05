@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -706,6 +707,46 @@ func TestToolPostPokesTheFileWatcher(t *testing.T) {
 
 			if pokes != 1 {
 				t.Errorf("poked %d times, want 1", pokes)
+			}
+		})
+	}
+}
+
+// A tool_response is shaped by the tool, not by Codex. Decoding it as a string
+// turned every search into a failed PostToolUse hook.
+func TestToolPostAcceptsAnyToolResponseShape(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	responses := map[string]interface{}{
+		"string": "ok",
+		"object": map[string]interface{}{"results": []string{"a", "b"}},
+		"array":  []interface{}{map[string]string{"url": "a"}},
+		"null":   nil,
+	}
+	for name, response := range responses {
+		t.Run(name, func(t *testing.T) {
+			ctx := &provider.HookContext{
+				DB:             db,
+				Mgr:            notifications.NewManager(db),
+				Notify:         func(string, interface{}) {},
+				Report:         func(provider.ReportEvent) {},
+				SessionStarted: func(string) {},
+			}
+			body, _ := json.Marshal(map[string]interface{}{
+				"session_id":    "01a04dee-183a-7461-9bef-5f05c0aa510a",
+				"cwd":           "/tmp",
+				"tool_name":     "web_search",
+				"tool_response": response,
+			})
+			w := httptest.NewRecorder()
+			handleToolPost(ctx, w, httptest.NewRequest("POST", "/hooks/codex/tool/post", nil), body)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("status %d, want 200 (body %q)", w.Code, w.Body.String())
 			}
 		})
 	}
