@@ -367,11 +367,17 @@ function QuestionCard({
             <button
               key={optionIndex}
               className={`option ${(chosen[questionIndex] ?? []).includes(optionIndex) ? 'chosen' : ''}`}
+              aria-pressed={(chosen[questionIndex] ?? []).includes(optionIndex)}
               onClick={() => pick(question, questionIndex, optionIndex)}
             >
               <span className="option-label">
-                {question.multiSelect &&
-                  ((chosen[questionIndex] ?? []).includes(optionIndex) ? '☑ ' : '☐ ')}
+                {question.multiSelect
+                  ? (chosen[questionIndex] ?? []).includes(optionIndex)
+                    ? '☑ '
+                    : '☐ '
+                  : (chosen[questionIndex] ?? []).includes(optionIndex)
+                    ? '◉ '
+                    : '○ '}
                 {option.label}
               </span>
               {option.description && <span className="option-desc">{option.description}</span>}

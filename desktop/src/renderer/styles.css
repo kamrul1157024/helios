@@ -2716,6 +2716,7 @@ figure.mermaid svg {
   padding: 10px 14px;
   border-radius: var(--r-sm);
   background: var(--surface-high);
+  border: 1px solid transparent;
   color: var(--on-surface);
   font-weight: 500;
 }
@@ -2726,7 +2727,12 @@ figure.mermaid svg {
 
 .option.chosen {
   background: var(--primary-container);
+  border-color: var(--primary);
   color: var(--on-primary-container);
+}
+
+.option.chosen:hover {
+  background: var(--primary-container);
 }
 
 .option-desc {
