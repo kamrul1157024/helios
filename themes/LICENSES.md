@@ -26,6 +26,10 @@ All of the below are MIT licensed.
 | `github-light.json` | GitHub Light | [primer/github-vscode-theme](https://github.com/primer/github-vscode-theme) |
 | `gruvbox-dark.json` | Gruvbox Dark Medium | [jdinhlife/gruvbox](https://github.com/jdinhlife/gruvbox) |
 | `gruvbox-light.json` | Gruvbox Light Medium | [jdinhlife/gruvbox](https://github.com/jdinhlife/gruvbox) |
+| `apos.json` | AposTheme | [Apostolique/AposTheme](https://github.com/Apostolique/AposTheme) |
+| `apos-gray.json` | AposThemeGray | [Apostolique/AposTheme](https://github.com/Apostolique/AposTheme) |
+| `apos-green.json` | AposThemeGreen | [Apostolique/AposTheme](https://github.com/Apostolique/AposTheme) |
+| `apos-red.json` | AposThemeRed | [Apostolique/AposTheme](https://github.com/Apostolique/AposTheme) |
 | `liquid-glass.json` | Liquid Glass | Helios, deepened from Dark Modern and carrying its token colours |
 | `liquid-glass-light.json` | Liquid Glass Light | Helios, from Light Modern and carrying its token colours |
 
