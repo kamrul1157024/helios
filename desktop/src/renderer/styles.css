@@ -1334,27 +1334,35 @@ small {
   font-size: 12px;
 }
 
-/* Held in the layout whether or not it is showing, and faded rather than
-   switched. A button that appears into the row pushes the title it is next to,
-   so the words move under the pointer that came to read them — which is what
-   made hovering feel jarring. Nothing in a row moves now; only the ink
-   changes. It also sets the row's height, and so the list's rhythm. */
+/* Collapsed to nothing until the pointer arrives, so the title reads across
+   the room three buttons were holding for a hover that had not happened. The
+   negative margin swallows .row-main's gap while the button is zero-wide;
+   width and opacity move together so the words slide rather than jump. Height
+   is kept at every width, since it sets the row's height and so the list's
+   rhythm. */
 .row-act {
   flex: none;
-  width: 22px;
+  width: 0;
   height: 22px;
+  margin-left: -8px;
   padding: 0;
   display: grid;
   place-items: center;
+  overflow: hidden;
   border-radius: 6px;
   color: var(--on-surface-variant);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition:
+    opacity 120ms ease,
+    width 120ms ease,
+    margin-left 120ms ease;
 }
 
 .session-row:hover .row-act,
 .session-row.selected .row-act,
 .row-act:focus-visible {
+  width: 22px;
+  margin-left: 0;
   opacity: 1;
 }
 
@@ -1433,8 +1441,13 @@ small {
 
 
 [data-density='compact'] .row-act {
-  width: 18px;
   height: 18px;
+}
+
+[data-density='compact'] .session-row:hover .row-act,
+[data-density='compact'] .session-row.selected .row-act,
+[data-density='compact'] .row-act:focus-visible {
+  width: 18px;
 }
 
 [data-density='compact'] .project {
