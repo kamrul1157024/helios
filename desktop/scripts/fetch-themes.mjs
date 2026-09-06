@@ -21,6 +21,7 @@ import { mergeThemes, modeFromUiTheme } from '../src/shared/theme/resolve.ts'
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '../../themes')
 
 const VSCODE = 'https://raw.githubusercontent.com/microsoft/vscode/main/extensions'
+const APOS = 'https://raw.githubusercontent.com/Apostolique/AposTheme/master/themes'
 
 /** Themes published as a plain JSON file in a git repo. */
 const RAW = [
@@ -44,6 +45,10 @@ const RAW = [
     url: 'https://raw.githubusercontent.com/Binaryify/OneDark-Pro/master/themes/OneDark-Pro.json',
     type: 'dark',
   },
+  { id: 'apos', url: `${APOS}/AposTheme-color-theme.json`, type: 'dark' },
+  { id: 'apos-gray', url: `${APOS}/AposTheme-gray-color-theme.json`, type: 'dark' },
+  { id: 'apos-green', url: `${APOS}/AposTheme-green-color-theme.json`, type: 'dark' },
+  { id: 'apos-red', url: `${APOS}/AposTheme-red-color-theme.json`, type: 'dark' },
 ]
 
 /**
