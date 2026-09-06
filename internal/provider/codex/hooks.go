@@ -36,10 +36,14 @@ type hookInput struct {
 	ToolName       string          `json:"tool_name,omitempty"`
 	ToolInput      json.RawMessage `json:"tool_input,omitempty"`
 	ToolUseID      string          `json:"tool_use_id,omitempty"`
-	ToolResponse   string          `json:"tool_response,omitempty"`
-	Trigger        string          `json:"trigger,omitempty"` // PreCompact/PostCompact
-	AgentID        string          `json:"agent_id,omitempty"`
-	AgentType      string          `json:"agent_type,omitempty"`
+	// ToolResponse is raw because its shape is the tool's, not Codex's: shell
+	// returns a string, web_search an object. Decoding it as a string made
+	// every PostToolUse after a search a failed hook — curl -f saw the 400 and
+	// exited 22 — for a field nothing reads.
+	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
+	Trigger      string          `json:"trigger,omitempty"` // PreCompact/PostCompact
+	AgentID      string          `json:"agent_id,omitempty"`
+	AgentType    string          `json:"agent_type,omitempty"`
 	// Stop
 	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
 	StopHookActive       bool   `json:"stop_hook_active,omitempty"`
