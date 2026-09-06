@@ -1203,15 +1203,11 @@ function SessionRow({
           </span>
         )}
         {/* Two shapes for two situations. A live or cold session offers an icon
-            that is already in the row before the pointer arrives and only fades
-            in — a button that appears into the layout re-measures the title
-            under the cursor, and a list that reflows as the pointer crosses it
-            is what makes hovering feel jarring. A terminated one gets the word,
+            that opens out of nothing under the pointer, so an unhovered row
+            spends its whole width on the title. A terminated one gets the word,
             because resuming is the only move it has left and it should not have
             to be hovered to say so. */}
-        {/* Held in the row like the action beside it, so the title does not
-            shift when the pointer arrives. Hidden while the field is up: it
-            opens what is already open. */}
+        {/* Hidden while the field is up: it opens what is already open. */}
         {!editing && (
           <button
             className="row-act"
