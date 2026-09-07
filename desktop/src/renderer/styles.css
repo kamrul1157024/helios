@@ -1306,18 +1306,20 @@ small {
   background: color-mix(in srgb, var(--on-surface) 9%, transparent);
 }
 
-/* Where the session runs, taking the free width the memory reading is pushed
-   off the right of. PathLabel is flex:1 already, so it fills the gap the old
-   spacer held and gives its leading directories up before the leaf — the same
-   split the status line spends. Monospace, like the model and mode beside it. */
+/* Where the session runs, on its own line under the status the way the mobile
+   cards carry it. Already shortened to "…/parent/leaf" by shortCwd, so it
+   rarely needs the ellipsis — but a long leaf still gives way rather than
+   widening the row. Monospace, like the model and mode above it and the mobile
+   cards it mirrors. */
 .row-cwd {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-/* The path a directory at a time, dimmer than the folder it leads to, so the
-   leaf reads first when the row is narrow enough to eat the rest. */
-.row-cwd .split-dir {
-  color: color-mix(in srgb, var(--on-surface-variant) 70%, transparent);
 }
 
 .row-ram {

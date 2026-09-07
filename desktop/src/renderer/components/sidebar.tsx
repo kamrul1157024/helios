@@ -18,6 +18,7 @@ import {
   isTerminated,
   needsRecovery,
   sessionLabel,
+  shortCwd,
   shortMode,
   shortModel,
   statusLabel,
@@ -36,7 +37,6 @@ import {
   type GroupNode,
 } from './grouping.ts'
 import { GroupPicker } from './group-picker.tsx'
-import { PathLabel } from './path-label.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import { sessionActions } from './session-menu.ts'
@@ -1289,24 +1289,25 @@ function SessionRow({
             {shortMode(session.permission_mode)}
           </span>
         )}
-        {/* Where the session lives, filling the gap the memory reading is
-            pushed off the right of. The sidebar groups by directory, but only
-            when grouping is on and only down to the leaf — the flat list and
-            the manual tree both leave the row itself saying nothing about where
-            it runs. The mobile cards have always shown this; the pane's status
-            line shows it once a session is open. This is the same fact on the
-            row, so it need not be opened to be placed. */}
-        {session.cwd ? (
-          <PathLabel path={session.cwd} className="row-cwd" />
-        ) : (
-          <span className="grow" />
-        )}
+        <span className="grow" />
         {session.memory_bytes !== undefined && (
           <span className="row-ram" title="Memory this terminal holds">
             {formatBytes(session.memory_bytes)}
           </span>
         )}
       </div>
+
+      {/* Where the session lives, on a line of its own the way the mobile cards
+          carry it. Shortened to its last two segments — the leaf is the part
+          that tells sessions apart, so the leading directories give way to a
+          "…/" and the full path waits in the title. The sidebar groups by
+          directory, but only when grouping is on; the flat list and the manual
+          tree both leave the row itself saying nothing about where it runs. */}
+      {session.cwd && (
+        <div className="row-cwd" title={session.cwd}>
+          {shortCwd(session.cwd)}
+        </div>
+      )}
     </article>
   )
 }
