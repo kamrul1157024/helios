@@ -274,6 +274,7 @@ desktop-install:
 
 ## Package this checkout's desktop app and install it (macOS: $(APP_DIR); Linux: system package via apt)
 desktop-install-dev: desktop-app
+	@sh $(MAKEFILE_DIR)scripts/quit-desktop-app.sh "$(APP_DIR)"
 ifeq ($(UNAME_S),Darwin)
 	@test -d "$(DESKTOP_APP)" || (echo "$(DESKTOP_APP) not found — see desktop/release" >&2 && exit 1)
 	@mkdir -p "$(APP_DIR)"
@@ -284,10 +285,14 @@ ifeq ($(UNAME_S),Darwin)
 	xattr -dr com.apple.quarantine "$(APP_DIR)/Helios.app" 2>/dev/null || true
 	@echo "Helios.app installed to $(APP_DIR)"
 else
+	# --allow-downgrades: VERSION's tag-commits-sha suffix is a commit hash, not
+	# a counter, so dpkg's version comparison is meaningless between two dev
+	# builds — it can call the one you just built a "downgrade" of whatever was
+	# installed before, purely by which hash sorts higher.
 	@deb="$$(ls -t desktop/release/*.deb 2>/dev/null | head -1)"; \
 	test -n "$$deb" || (echo "No .deb found in desktop/release — see desktop/release" >&2 && exit 1); \
 	case "$$deb" in /*) ;; *) deb="./$$deb" ;; esac; \
-	sudo apt install -y "$$deb" && echo "Helios desktop installed via $$deb"
+	sudo apt install -y --allow-downgrades "$$deb" && echo "Helios desktop installed via $$deb"
 endif
 
 desktop-clean:
