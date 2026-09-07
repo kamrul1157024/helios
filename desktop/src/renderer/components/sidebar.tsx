@@ -1292,6 +1292,19 @@ function SessionRow({
         <span className="row-time">{timeAgo(session.last_event_at ?? session.created_at)}</span>
       </div>
 
+      {/* Where the session lives, on a line of its own between the title and the
+          status the way the mobile cards order it. Shortened to its last two
+          segments — the leaf is the part that tells sessions apart, so the
+          leading directories give way to a "…/" and the full path waits in the
+          title. The sidebar groups by directory, but only when grouping is on;
+          the flat list and the manual tree both leave the row itself saying
+          nothing about where it runs. */}
+      {session.cwd && (
+        <div className="row-cwd" title={session.cwd}>
+          {shortCwd(session.cwd)}
+        </div>
+      )}
+
       {/* What the session is, under what it is called. Kept off the title's
           line so the title gets the whole width — a long one is the common
           case, and it was losing half its room to a trail of small print. */}
@@ -1320,18 +1333,6 @@ function SessionRow({
           </span>
         )}
       </div>
-
-      {/* Where the session lives, on a line of its own the way the mobile cards
-          carry it. Shortened to its last two segments — the leaf is the part
-          that tells sessions apart, so the leading directories give way to a
-          "…/" and the full path waits in the title. The sidebar groups by
-          directory, but only when grouping is on; the flat list and the manual
-          tree both leave the row itself saying nothing about where it runs. */}
-      {session.cwd && (
-        <div className="row-cwd" title={session.cwd}>
-          {shortCwd(session.cwd)}
-        </div>
-      )}
     </article>
   )
 }
