@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { app, safeStorage } from 'electron'
+import { app } from 'electron'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -14,9 +14,10 @@ const INTERNAL_URL = 'http://127.0.0.1:7654'
 const DEFAULT_LOCAL_URL = 'http://127.0.0.1:7655'
 
 interface StoredHost extends HostRecord {
-  /** Encrypted device seed, base64. Plaintext only if safeStorage is unavailable. */
+  /** The device seed, base64. Written in the clear; the file is 0600. */
   secret: string
-  encrypted: boolean
+  /** Set by builds that put the seed through the OS key store. Never written. */
+  encrypted?: boolean
 }
 
 export interface HostHandle {
@@ -42,6 +43,16 @@ export interface HostHandle {
  */
 export class HostRegistry extends EventEmitter {
   private hosts = new Map<string, HostHandle>()
+  /**
+   * Entries from an older file whose seed is ciphertext, kept verbatim.
+   *
+   * Nothing here can read them — the key store bound them to a code signature
+   * these ad-hoc builds no longer have, which is what made every upgrade look
+   * like the hosts had vanished. They are carried through a write rather than
+   * dropped, because persist() rebuilds the file from memory and anything left
+   * out of it is deleted from disk.
+   */
+  private locked: StoredHost[] = []
   private readonly file: string
 
   constructor(userDataDir = app.getPath('userData')) {
@@ -50,10 +61,13 @@ export class HostRegistry extends EventEmitter {
   }
 
   load(): void {
+    this.locked = []
     for (const stored of this.readFile()) {
-      const seed = this.decrypt(stored)
-      if (!seed) continue
-      this.instantiate({ ...stripSecret(stored) }, { kid: stored.device_id, seed })
+      if (stored.encrypted) {
+        this.locked.push(stored)
+        continue
+      }
+      this.instantiate({ ...stripSecret(stored) }, { kid: stored.device_id, seed: stored.secret })
     }
     this.emit('hosts', this.list())
   }
@@ -212,35 +226,15 @@ export class HostRegistry extends EventEmitter {
   }
 
   private persist(): void {
-    const stored: StoredHost[] = [...this.hosts.values()].map((h) => ({
-      ...h.record,
-      ...this.encrypt(h.key.seed),
-    }))
+    const stored: StoredHost[] = [
+      ...[...this.hosts.values()].map((h) => ({ ...h.record, secret: h.key.seed })),
+      ...this.locked,
+    ]
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
-    // 0600 regardless of encryption: on a box with no Secret Service the seed
-    // is in here in the clear, and file permissions are then the only guard.
+    // The seed is in here in the clear, so the mode is the only guard on it.
     fs.writeFileSync(this.file, JSON.stringify(stored, null, 2), { mode: 0o600 })
   }
 
-  private encrypt(seed: string): { secret: string; encrypted: boolean } {
-    if (safeStorage.isEncryptionAvailable()) {
-      return { secret: safeStorage.encryptString(seed).toString('base64'), encrypted: true }
-    }
-    // Linux with no keyring daemon. Degrading to a 0600 file is worse than the
-    // Keychain and better than refusing to run, which is the actual choice.
-    return { secret: seed, encrypted: false }
-  }
-
-  private decrypt(stored: StoredHost): string | null {
-    if (!stored.encrypted) return stored.secret
-    try {
-      return safeStorage.decryptString(Buffer.from(stored.secret, 'base64'))
-    } catch {
-      // A key encrypted under a different login, or a corrupt keychain entry.
-      // The host is unusable until it is paired again.
-      return null
-    }
-  }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
