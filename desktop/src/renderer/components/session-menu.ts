@@ -76,7 +76,7 @@ export function sessionActions(
 
   // One entry per group, ticked on the one this session is filed under.
   // Choosing another moves it; choosing the current one takes it out.
-  const actions: MenuAction[] = groups.map((group) => {
+  const filing: MenuAction[] = groups.map((group) => {
     const inside = held === group.key
     return {
       label: `${inside ? '✓ ' : '\u2003'}${group.name}`,
@@ -84,7 +84,7 @@ export function sessionActions(
     }
   })
 
-  actions.push({
+  filing.push({
     label: 'New group…',
     run: () => {
       const name = window.prompt('Name the group')?.trim()
@@ -94,6 +94,11 @@ export function sessionActions(
       })
     },
   })
+
+  // A child menu rather than the top of this one: a host with a dozen groups
+  // pushed the actions below it off the bottom, and every one of those entries
+  // is a place to file the session rather than a thing to do to it.
+  const actions: MenuAction[] = [{ label: 'Move to group', children: filing }]
 
   actions.push(
     {
