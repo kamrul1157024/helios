@@ -9,6 +9,7 @@ import {
   canResume,
   hasTerminal,
   needsRecovery,
+  shortCwd,
   shortMode,
   shortModel,
   type Session,
@@ -99,4 +100,32 @@ test('permission modes are said the short way, and unknown ones verbatim', () =>
   assert.equal(shortMode('acceptEdits'), 'accept')
   assert.equal(shortMode('plan'), 'plan')
   assert.equal(shortMode('auto'), 'auto')
+})
+
+// The directory a session runs in, shortened for a narrow sidebar row: the last
+// two segments behind a "…/", the leaf kept whole because it is what tells two
+// sessions apart. Mirrors shortCwd in mobile/lib/models/session.dart, so both
+// clients read a path the same way; the full path stays in the row's tooltip.
+test('a deep path keeps its last two segments behind an ellipsis', () => {
+  assert.equal(shortCwd('/Users/dev/workspace/helios'), '…/workspace/helios')
+  assert.equal(shortCwd('/a/b/c/d/e'), '…/d/e')
+})
+
+test('two segments or fewer are left whole', () => {
+  assert.equal(shortCwd('/tmp/repo'), '/tmp/repo')
+  assert.equal(shortCwd('/repo'), '/repo')
+  assert.equal(shortCwd('repo'), 'repo')
+})
+
+test('a trailing slash is not counted as a segment', () => {
+  assert.equal(shortCwd('/Users/dev/workspace/helios/'), '…/workspace/helios')
+})
+
+test('the root and an empty path are left as they are', () => {
+  assert.equal(shortCwd('/'), '/')
+  assert.equal(shortCwd(''), '')
+})
+
+test('a relative path is shortened the same way', () => {
+  assert.equal(shortCwd('workspace/helios/desktop'), '…/helios/desktop')
 })
