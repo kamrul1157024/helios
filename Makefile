@@ -204,6 +204,12 @@ DESKTOP_DMG = desktop/release/helios-desktop-$(DESKTOP_VERSION)-$(DESKTOP_ARCH).
 # electron-builder suffixes the staging directory with the arch, except on the
 # x64 build, where it is bare `mac`.
 DESKTOP_APP = desktop/release/$(if $(filter arm64,$(DESKTOP_ARCH)),mac-arm64,mac)/Helios.app
+# Where the app lands, matching HELIOS_APP_DIR in scripts/install.sh. The
+# default asks for no password: /Applications is group-writable by admin, which
+# is what an install without one relies on. A standard account is not in that
+# group, so point this at $(HOME)/Applications rather than reaching for sudo —
+# a bundle owned by root is one the next install cannot replace.
+APP_DIR ?= /Applications
 
 # make runs recipes under /bin/sh, which never sources a profile, so an nvm
 # install is invisible unless the parent shell already exported it.
@@ -266,19 +272,20 @@ endif
 desktop-install:
 	$(call build_release,desktop-install)
 
-## Package this checkout's desktop app and install it into /Applications (macOS)
+## Package this checkout's desktop app and install it into $(APP_DIR) (macOS)
 desktop-install-dev: desktop-app
 ifneq ($(UNAME_S),Darwin)
 	@echo "make desktop-install is macOS-only; on Linux install the AppImage or .deb from desktop/release" >&2
 	@exit 1
 else
 	@test -d "$(DESKTOP_APP)" || (echo "$(DESKTOP_APP) not found — see desktop/release" >&2 && exit 1)
+	@mkdir -p "$(APP_DIR)"
 	# Replaced rather than copied over: a copy leaves the previous build's files
 	# behind inside the bundle.
-	rm -rf /Applications/Helios.app
-	cp -R "$(DESKTOP_APP)" /Applications/Helios.app
-	xattr -dr com.apple.quarantine /Applications/Helios.app 2>/dev/null || true
-	@echo "Helios.app installed to /Applications"
+	rm -rf "$(APP_DIR)/Helios.app"
+	cp -R "$(DESKTOP_APP)" "$(APP_DIR)/Helios.app"
+	xattr -dr com.apple.quarantine "$(APP_DIR)/Helios.app" 2>/dev/null || true
+	@echo "Helios.app installed to $(APP_DIR)"
 endif
 
 desktop-clean:
