@@ -37,6 +37,7 @@ import {
   type GroupNode,
 } from './grouping.ts'
 import { GroupPicker } from './group-picker.tsx'
+import { Modal } from './newsession.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import { sessionActions } from './session-menu.ts'
@@ -233,6 +234,9 @@ export function Sidebar({
   // Which group header is being renamed in place, keyed the same way.
   const [renaming, setRenaming] = useState<string | null>(null)
   const [picker, setPicker] = useState(false)
+  // Quitting is the one control that ends the app rather than dropping it to
+  // the tray, so it asks first. Held here, not fired straight from the button.
+  const [confirmQuit, setConfirmQuit] = useState(false)
   const aside = useRef<HTMLElement | null>(null)
 
   // The width is a CSS variable rather than state: the value is read by the
@@ -938,11 +942,31 @@ export function Sidebar({
           </button>
         )}
         {/* Closing the window leaves the app on the tray so approvals keep
-            arriving; this is the one control that actually ends it. */}
-        <button className="link danger" onClick={() => void bridge.app.quit()}>
+            arriving; this is the one control that actually ends it, so it asks
+            before it does. */}
+        <button className="link danger" onClick={() => setConfirmQuit(true)}>
           Quit Helios
         </button>
       </footer>
+
+      {confirmQuit && (
+        <Modal title="Quit Helios?" onClose={() => setConfirmQuit(false)}>
+          <p className="pane-note">
+            Closing the window leaves Helios in the tray, where it keeps
+            delivering approvals. Quitting stops that — your sessions keep
+            running on their daemons, but this app will not surface anything
+            from them until you open it again.
+          </p>
+          <div className="pane-actions">
+            <button className="ghost" onClick={() => setConfirmQuit(false)}>
+              Cancel
+            </button>
+            <button className="danger" onClick={() => void bridge.app.quit()}>
+              Quit Helios
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {menu && (
         <SelectionMenu
