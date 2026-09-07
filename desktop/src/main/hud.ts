@@ -129,7 +129,16 @@ export class Hud {
     })
 
     window.setAlwaysOnTop(true, 'screen-saver')
-    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    // skipTransformProcessType keeps Electron from flipping the whole app
+    // between regular and accessory (UIElement) when the panel joins all
+    // spaces. That flip drops the Dock indicator, makes the Dock icon
+    // unclickable, and — because it changes the app's activation — drags the
+    // frontmost app out of its fullscreen space. The HUD only needs to be
+    // visible everywhere, not to restyle the process.
+    window.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    })
     window.on('closed', () => {
       this.window = null
     })
