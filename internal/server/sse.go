@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -27,6 +28,41 @@ func NewSSEBroadcaster() *SSEBroadcaster {
 	return &SSEBroadcaster{
 		clients: make(map[*sseClient]bool),
 	}
+}
+
+const (
+	defaultHeartbeat = 30 * time.Second
+	minHeartbeat     = 5 * time.Second
+	maxHeartbeat     = 10 * time.Minute
+)
+
+// heartbeatInterval reads the interval a client asked for, in seconds.
+//
+// A phone watching in the background pays for every beat: each one wakes the
+// radio, and at 30s that is 2,880 wake-ups a day for a stream that is silent
+// almost all of it. Nobody is watching a background service, so slow detection
+// of a dead socket costs nothing there — while in the app, where a stale
+// stream is visible, 30s stays right. The client is the only side that knows
+// which of the two it is.
+//
+// Clamped because the interval also sets how long a dead client occupies a
+// slot, and an unbounded value from the wire would pin one indefinitely.
+func heartbeatInterval(raw string) time.Duration {
+	if raw == "" {
+		return defaultHeartbeat
+	}
+	secs, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultHeartbeat
+	}
+	d := time.Duration(secs) * time.Second
+	if d < minHeartbeat {
+		return minHeartbeat
+	}
+	if d > maxHeartbeat {
+		return maxHeartbeat
+	}
+	return d
 }
 
 func (b *SSEBroadcaster) Broadcast(event SSEEvent) {
@@ -73,7 +109,7 @@ func (b *SSEBroadcaster) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
 
-	heartbeat := time.NewTicker(30 * time.Second)
+	heartbeat := time.NewTicker(heartbeatInterval(r.URL.Query().Get("heartbeat")))
 	defer heartbeat.Stop()
 
 	for {

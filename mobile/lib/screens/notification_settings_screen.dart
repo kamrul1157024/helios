@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import '../services/background_watch.dart';
 import '../services/notification_service.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
@@ -12,6 +15,8 @@ class NotificationSettingsScreen extends StatefulWidget {
 class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
   late Map<String, bool> _alertTypes;
+  bool _watchEnabled = false;
+  bool _batteryOptimised = false;
 
   static const _blockingTypes = [
     _NotifType(
@@ -66,6 +71,29 @@ class _NotificationSettingsScreenState
   void initState() {
     super.initState();
     _alertTypes = Map.of(NotificationService.instance.alertTypes);
+    _loadWatchState();
+  }
+
+  Future<void> _loadWatchState() async {
+    if (!Platform.isAndroid) return;
+    final enabled = await backgroundWatchEnabled();
+    final optimised = await isBatteryOptimised();
+    if (!mounted) return;
+    setState(() {
+      _watchEnabled = enabled;
+      _batteryOptimised = optimised;
+    });
+  }
+
+  Future<void> _setWatchEnabled(bool value) async {
+    setState(() => _watchEnabled = value);
+    await setBackgroundWatchEnabled(value);
+    if (value) await _loadWatchState();
+  }
+
+  Future<void> _requestExemption() async {
+    await requestBatteryExemption();
+    await _loadWatchState();
   }
 
   Future<void> _setAlert(String kind, bool value) async {
@@ -97,6 +125,7 @@ class _NotificationSettingsScreenState
               ),
             ),
           ),
+          if (Platform.isAndroid) ..._buildBackgroundSection(),
           _SectionHeader('Action required'),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -134,6 +163,53 @@ class _NotificationSettingsScreenState
         ],
       ),
     );
+  }
+
+  List<Widget> _buildBackgroundSection() {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return [
+      _SectionHeader('While the app is closed'),
+      SwitchListTile(
+        title: const Text('Watch in background'),
+        subtitle: Text(
+          'Keeps a connection to your hosts so approvals still reach you '
+          'after the app is closed. Shows a permanent notification.',
+          style: TextStyle(fontSize: 12, color: muted),
+        ),
+        isThreeLine: true,
+        value: _watchEnabled,
+        onChanged: _setWatchEnabled,
+      ),
+      if (_watchEnabled && _batteryOptimised)
+        ListTile(
+          leading: Icon(
+            Icons.battery_alert,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          title: const Text('Battery optimisation is on'),
+          subtitle: Text(
+            'Android may close the connection while the phone sleeps. '
+            'Exempt Helios so approvals still arrive overnight.',
+            style: TextStyle(fontSize: 12, color: muted),
+          ),
+          isThreeLine: true,
+          trailing: TextButton(
+            onPressed: _requestExemption,
+            child: const Text('Fix'),
+          ),
+        ),
+      if (_watchEnabled)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            'On Realme, OPPO and Xiaomi phones the system also needs Helios '
+            'allowed to start automatically, in the system app settings. '
+            'Without it the connection is closed a few minutes after you '
+            'leave the app.',
+            style: TextStyle(fontSize: 12, color: muted),
+          ),
+        ),
+    ];
   }
 
   Widget _buildTile(_NotifType t) {

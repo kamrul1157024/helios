@@ -5,6 +5,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- The watcher holds one SSE stream open while the app is closed. dataSync
+         is the natural classification, and Android 15 stops a dataSync service
+         after six hours in a day — useless for something whose job is to still
+         be there in the morning. specialUse has no such cap; its cost is a Play
+         policy review, and Helios ships as a sideloaded APK. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -12,7 +19,7 @@
 
     <application
         android:label="${appLabel}"
-        android:name="${applicationName}"
+        android:name=".HeliosApplication"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
         <activity
@@ -40,6 +47,17 @@
                 <data android:scheme="helios"/>
             </intent-filter>
         </activity>
+        <!-- flutter_foreground_task ships no service declaration of its own,
+             so the type has to be named here. -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Holds an event stream open to the user's own Helios daemon so that an agent blocked on an approval reaches the phone without delay."/>
+        </service>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

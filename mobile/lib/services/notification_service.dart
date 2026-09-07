@@ -112,14 +112,25 @@ class NotificationService {
     await prefs.setString(_keyAlertTypes, jsonEncode(_alertTypes));
   }
 
-  /// Convert a string ID to a positive notification ID.
-  static int _notifId(String id) => id.hashCode & 0x7FFFFFFF;
+  /// The integer the plugin is given for a notification, derived from its
+  /// [notifKey].
+  ///
+  /// Keyed rather than payload-derived because two isolates post these. The
+  /// foreground service watches the stream while the app is closed, and the app
+  /// has to be able to retract what the service posted — which it can only do
+  /// by arriving at the same integer from the same key, with nothing shared in
+  /// memory between them.
+  static int _notifId(String key) => key.hashCode & 0x7FFFFFFF;
 
-  /// Posted OS notifications, keyed by [notifKey] → the integer id handed to
-  /// the plugin. The integer is derived from the JSON payload string, so
-  /// rebuilding it at cancel time would depend on map key order; a retraction
-  /// that silently misses is worse than none.
-  final Map<String, int> _posted = {};
+  static const _keyPostedNotifications = 'notif_posted_keys';
+
+  /// Keys currently posted to the tray.
+  ///
+  /// Mirrored into SharedPreferences on every change: the app and the
+  /// background service run in separate isolates with separate heaps, and this
+  /// file is the only thing they both see. Held in memory as well so the common
+  /// path does not wait on disk.
+  final Set<String> _posted = {};
 
   /// Stable key for a notification, independent of payload encoding.
   static String notifKey(String hostId, String notificationId) =>
@@ -127,16 +138,76 @@ class NotificationService {
 
   /// Whether a notification is currently posted for this key. Doubles as the
   /// de-dupe check, so a replayed event does not re-alert.
-  bool isPosted(String key) => _posted.containsKey(key);
+  bool isPosted(String key) => _posted.contains(key);
+
+  /// Re-read the posted set written by the other isolate.
+  ///
+  /// Called on resume, before the reconcile sweep: the service may have posted
+  /// or retracted notifications while the app was away, and this instance's
+  /// in-memory copy predates all of it.
+  Future<void> reloadPosted() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      _posted
+        ..clear()
+        ..addAll(prefs.getStringList(_keyPostedNotifications) ?? const []);
+    } catch (e) {
+      debugPrint('[NotificationService] reloadPosted failed: $e');
+    }
+    await _pruneToTray();
+  }
+
+  /// Drop keys the tray no longer holds.
+  ///
+  /// The posted set doubles as the de-dupe check, and it outlives the
+  /// notifications it describes: a force-stop, a reboot, or the user swiping
+  /// the shade clears the tray without telling anyone. Left alone, the stale
+  /// key says "already posted" for ever and the approval it names never buzzes
+  /// again — the agent stays blocked and the phone stays quiet. The tray itself
+  /// is the only honest answer about what is on screen.
+  Future<void> _pruneToTray() async {
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) return;
+
+    try {
+      final active = await android.getActiveNotifications();
+      final live = active.map((n) => n.id).toSet();
+      final gone = _posted.where((key) => !live.contains(_notifId(key)));
+      if (gone.isEmpty) return;
+      debugPrint('[NotificationService] pruning ${gone.length} stale key(s)');
+      _posted.removeAll(gone.toList());
+      await _savePosted();
+    } catch (e) {
+      debugPrint('[NotificationService] prune failed: $e');
+    }
+  }
+
+  /// Drop the in-memory copy without touching shared storage, standing in for
+  /// an isolate that has not read the file yet.
+  @visibleForTesting
+  void forgetPostedForTest() => _posted.clear();
+
+  Future<void> _savePosted() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_keyPostedNotifications, _posted.toList());
+    } catch (e) {
+      debugPrint('[NotificationService] savePosted failed: $e');
+    }
+  }
 
   /// Retract a posted notification. A no-op when nothing is posted for this
   /// key, which is the common case for types that never raise one.
   Future<void> cancel(String key) async {
-    final nid = _posted.remove(key);
-    if (nid == null) return;
+    if (!_posted.remove(key)) return;
+    await _savePosted();
     try {
-      await _plugin.cancel(nid);
-      debugPrint('[NotificationService] cancel key=$key nid=$nid');
+      await _plugin.cancel(_notifId(key));
+      debugPrint('[NotificationService] cancel key=$key');
     } catch (e) {
       debugPrint('[NotificationService] cancel failed for $key: $e');
     }
@@ -151,7 +222,7 @@ class NotificationService {
   /// would leave it in the tray forever.
   Future<void> retainOnly(String hostId, Set<String> pendingIds) async {
     final prefix = '$hostId:';
-    final stale = _posted.keys
+    final stale = _posted
         .where(
           (key) =>
               key.startsWith(prefix) &&
@@ -165,19 +236,21 @@ class NotificationService {
 
   /// Retract every notification this service has posted.
   Future<void> cancelAll() async {
-    final ids = _posted.values.toList();
+    final keys = _posted.toList();
     _posted.clear();
-    for (final nid in ids) {
+    await _savePosted();
+    for (final key in keys) {
       try {
-        await _plugin.cancel(nid);
+        await _plugin.cancel(_notifId(key));
       } catch (e) {
-        debugPrint('[NotificationService] cancelAll failed for $nid: $e');
+        debugPrint('[NotificationService] cancelAll failed for $key: $e');
       }
     }
   }
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
+    _posted.addAll(prefs.getStringList(_keyPostedNotifications) ?? const []);
     _soundEnabled = prefs.getBool(_keySoundEnabled) ?? true;
     _vibrationEnabled = prefs.getBool(_keyVibrationEnabled) ?? true;
     final alertJson = prefs.getString(_keyAlertTypes);
@@ -288,6 +361,8 @@ class NotificationService {
         );
       }
     }
+
+    await _pruneToTray();
   }
 
   Future<bool> requestPermission() async {
@@ -337,9 +412,9 @@ class NotificationService {
     required String detail,
     bool silent = false,
   }) async {
-    final nid = _notifId(id);
+    final nid = _notifId(key);
     debugPrint(
-      '[NotificationService] showPermission id=$id nid=$nid tool=$toolName',
+      '[NotificationService] showPermission key=$key nid=$nid tool=$toolName',
     );
 
     final androidDetails = AndroidNotificationDetails(
@@ -381,7 +456,8 @@ class NotificationService {
         NotificationDetails(android: androidDetails, iOS: iosDetails),
         payload: id,
       );
-      _posted[key] = nid;
+      _posted.add(key);
+      await _savePosted();
       if (!silent) await _playSound();
       debugPrint('[NotificationService] showPermission SUCCESS');
     } catch (e) {
@@ -397,9 +473,9 @@ class NotificationService {
     required String body,
     bool silent = false,
   }) async {
-    final nid = _notifId(id);
+    final nid = _notifId(key);
     debugPrint(
-      '[NotificationService] showNotification id=$id nid=$nid title=$title',
+      '[NotificationService] showNotification key=$key nid=$nid title=$title',
     );
 
     final androidDetails = AndroidNotificationDetails(
@@ -429,7 +505,8 @@ class NotificationService {
         NotificationDetails(android: androidDetails, iOS: iosDetails),
         payload: id,
       );
-      _posted[key] = nid;
+      _posted.add(key);
+      await _savePosted();
       if (!silent) await _playSound();
       debugPrint('[NotificationService] showNotification SUCCESS');
     } catch (e) {

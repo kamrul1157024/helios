@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cryptography/cryptography.dart';
@@ -8,7 +9,9 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/host_connection.dart';
 import 'api_client.dart';
+import 'background_watch.dart';
 import 'daemon_api_service.dart';
+import 'notification_service.dart';
 
 /// Narrows the offline hosts to the ones the current filter is showing.
 ///
@@ -97,6 +100,15 @@ class HostManager extends ChangeNotifier {
 
   /// Load stored hosts on app start.
   Future<void> loadStoredHosts() async {
+    // A cold start never raises AppLifecycleState.resumed, so nothing else
+    // retires the watcher — and Android restarts it on its own after the app is
+    // killed. Without this the app and the service both hold a stream to every
+    // host, racing to post the same notification.
+    if (Platform.isAndroid) {
+      await stopBackgroundWatch();
+      await NotificationService.instance.reloadPosted();
+    }
+
     try {
       final raw = await _secureStorage.read(key: _hostsKey);
       if (raw != null) {
@@ -420,6 +432,27 @@ class HostManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Hand the streams to the foreground service as the app goes away.
+  ///
+  /// The app's own streams die with its process, so something has to hold them
+  /// while it is gone. Exactly one side is connected at a time: the app's
+  /// streams are stopped first, and the service seeds itself from
+  /// `/api/notifications` to cover the gap between the two.
+  Future<void> handOffToBackground() async {
+    if (!Platform.isAndroid) return;
+    if (!await backgroundWatchEnabled()) return;
+    if (_hosts.isEmpty) return;
+
+    stopAll();
+    try {
+      await startBackgroundWatch();
+    } catch (e) {
+      // Losing the handover must not cost the foreground streams as well.
+      debugPrint('Failed to start background watch: $e');
+      await resumeAll();
+    }
+  }
+
   /// Stop all services (app background).
   void stopAll() {
     for (final service in _services.values) {
@@ -429,6 +462,18 @@ class HostManager extends ChangeNotifier {
 
   /// Restart all services (app resume).
   Future<void> resumeAll() async {
+    if (Platform.isAndroid) {
+      await stopBackgroundWatch();
+      // The service posted and retracted notifications from its own isolate,
+      // with its own heap. Its record of what is in the tray lives in shared
+      // storage, and reading it back is what lets the sweep below retract
+      // something this isolate never posted.
+      await NotificationService.instance.reloadPosted();
+    }
+    await _resumeHosts();
+  }
+
+  Future<void> _resumeHosts() async {
     for (final host in _hosts) {
       final service = _services[host.id];
       if (service == null) continue;
