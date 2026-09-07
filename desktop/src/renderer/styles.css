@@ -1312,6 +1312,11 @@ small {
    widening the row. Monospace, like the model and mode above it and the mobile
    cards it mirrors. */
 .row-cwd {
+  /* Shrunk to the text rather than stretched across the row, so the pointer
+     below sits on the path name and not the empty space beside it. Bounded to
+     the row's width so a long path still truncates instead of widening it. */
+  align-self: flex-start;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1320,6 +1325,9 @@ small {
   line-height: 1.4;
   color: var(--on-surface-variant);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* A pointer over the path alone: it is the one part of the row worth resting
+     on, since that is what brings its full self up in the title. */
+  cursor: pointer;
 }
 
 .row-ram {
