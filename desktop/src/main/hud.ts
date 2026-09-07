@@ -1,11 +1,10 @@
 import { BrowserWindow, app, ipcMain, screen } from 'electron'
 import path from 'node:path'
 
+import { HudAnchor, type Rect } from './anchor.ts'
 import type { Notification } from '../shared/models.ts'
 import type { NotifyTarget } from './notify.ts'
 
-const WIDTH = 400
-const INSET = 12
 /** Past this the stack scrolls rather than the window growing off the screen. */
 const MAX_HEIGHT = 720
 
@@ -30,6 +29,7 @@ export interface HudCard {
 export class Hud {
   private window: BrowserWindow | null = null
   private readonly cards = new Map<string, HudCard>()
+  private readonly corner = new HudAnchor()
 
   constructor(
     private readonly rendererDir: string,
@@ -83,11 +83,13 @@ export class Hud {
 
   hide(): void {
     this.window?.hide()
+    this.corner.release()
   }
 
   destroy(): void {
     this.window?.destroy()
     this.window = null
+    this.corner.release()
   }
 
   private ensureWindow(): BrowserWindow {
@@ -145,16 +147,12 @@ export class Hud {
 
   /**
    * Top-right of the work area of the display the cursor is on, which is the
-   * screen the user is looking at and already clears the menu bar.
+   * screen the user is looking at and already clears the menu bar. Only the
+   * first call after a showing begins chooses it; see HudAnchor.
    */
-  private anchor(height: number): { x: number; y: number; width: number; height: number } {
+  private anchor(height: number): Rect {
     const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-    return {
-      x: workArea.x + workArea.width - WIDTH - INSET,
-      y: workArea.y + INSET,
-      width: WIDTH,
-      height,
-    }
+    return this.corner.place(workArea, height)
   }
 }
 
