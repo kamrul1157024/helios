@@ -268,16 +268,14 @@ else
 	@echo "Desktop packages: desktop/release"
 endif
 
-## Install the newest published release of the desktop app (macOS)
+## Install the newest published release of the desktop app (macOS: $(APP_DIR); Linux: system package via apt)
 desktop-install:
 	$(call build_release,desktop-install)
 
-## Package this checkout's desktop app and install it into $(APP_DIR) (macOS)
+## Package this checkout's desktop app and install it (macOS: $(APP_DIR); Linux: system package via apt)
 desktop-install-dev: desktop-app
-ifneq ($(UNAME_S),Darwin)
-	@echo "make desktop-install is macOS-only; on Linux install the AppImage or .deb from desktop/release" >&2
-	@exit 1
-else
+	@sh $(MAKEFILE_DIR)scripts/quit-desktop-app.sh "$(APP_DIR)"
+ifeq ($(UNAME_S),Darwin)
 	@test -d "$(DESKTOP_APP)" || (echo "$(DESKTOP_APP) not found — see desktop/release" >&2 && exit 1)
 	@mkdir -p "$(APP_DIR)"
 	# Replaced rather than copied over: a copy leaves the previous build's files
@@ -286,6 +284,15 @@ else
 	cp -R "$(DESKTOP_APP)" "$(APP_DIR)/Helios.app"
 	xattr -dr com.apple.quarantine "$(APP_DIR)/Helios.app" 2>/dev/null || true
 	@echo "Helios.app installed to $(APP_DIR)"
+else
+	# --allow-downgrades: VERSION's tag-commits-sha suffix is a commit hash, not
+	# a counter, so dpkg's version comparison is meaningless between two dev
+	# builds — it can call the one you just built a "downgrade" of whatever was
+	# installed before, purely by which hash sorts higher.
+	@deb="$$(ls -t desktop/release/*.deb 2>/dev/null | head -1)"; \
+	test -n "$$deb" || (echo "No .deb found in desktop/release — see desktop/release" >&2 && exit 1); \
+	case "$$deb" in /*) ;; *) deb="./$$deb" ;; esac; \
+	sudo apt install -y --allow-downgrades "$$deb" && echo "Helios desktop installed via $$deb"
 endif
 
 desktop-clean:
