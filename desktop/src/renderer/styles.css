@@ -5311,6 +5311,9 @@ hr {
 
 .pane-actions {
   display: flex;
+  /* Centred, because the row mixes a bare text link with padded buttons: left
+     to stretch, the link's text rides higher than the labels beside it. */
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
