@@ -18,8 +18,12 @@ void main() {
 
   late List<MethodCall> calls;
 
+  /// What the platform reports is currently in the tray.
+  late List<Map<String, Object?>> activeNotifications;
+
   setUp(() async {
     calls = [];
+    activeNotifications = [];
     SharedPreferences.setMockInitialValues({});
 
     // Unit tests get no plugin registration, so the platform instance the
@@ -32,6 +36,7 @@ void main() {
       calls.add(call);
       // initialize() returns a bool; everything else here returns void.
       if (call.method == 'initialize') return true;
+      if (call.method == 'getActiveNotifications') return activeNotifications;
       return null;
     });
     messenger.setMockMethodCallHandler(_nativeChannel, (call) async => null);
@@ -91,8 +96,8 @@ void main() {
     expect(NotificationService.instance.isPosted(key), isFalse);
   });
 
-  // The plugin id is derived from the payload string, so a cancel that rebuilt
-  // it from the parts would depend on JSON key order and silently miss.
+  // The plugin id is derived from the key, so any isolate holding the same key
+  // arrives at the same integer without sharing memory.
   test('cancel uses the same integer id that show used', () async {
     const key = 'host-a:n1';
     await NotificationService.instance.showPermissionNotification(
@@ -217,6 +222,98 @@ void main() {
     test('a host with nothing posted is a no-op', () async {
       await NotificationService.instance.retainOnly('host-z', {'n1'});
       expect(calls.where((c) => c.method == 'cancel'), isEmpty);
+    });
+  });
+
+  // The foreground service posts from its own isolate, with its own heap. The
+  // app can only retract what the service posted by reaching the same integer
+  // from the same key, and by learning the key from the one thing they share.
+  group('across the isolate boundary', () {
+    test('a key posted by the other isolate is retractable here', () async {
+      const key = 'host-a:n1';
+
+      // What the service isolate would have posted.
+      await NotificationService.instance.showPermissionNotification(
+        id: '{"hostId":"host-a","notificationId":"n1"}',
+        key: key,
+        toolName: 'Bash',
+        detail: 'rm -rf /tmp/x',
+        silent: true,
+      );
+      final postedId = shownId();
+      expect(postedId, isNotNull);
+      activeNotifications = [
+        {'id': postedId},
+      ];
+
+      // This isolate knows nothing about it until it reads the shared file.
+      NotificationService.instance.forgetPostedForTest();
+      expect(NotificationService.instance.isPosted(key), isFalse);
+
+      await NotificationService.instance.reloadPosted();
+      expect(NotificationService.instance.isPosted(key), isTrue);
+
+      calls.clear();
+      await NotificationService.instance.cancel(key);
+      expect(cancelledId(), postedId);
+    });
+
+    // A force-stop, a reboot or a swipe of the shade empties the tray without
+    // telling anyone. The key would otherwise keep answering "already posted"
+    // and that approval would never buzz again.
+    test('a key whose notification is gone from the tray is dropped', () async {
+      const key = 'host-a:n1';
+      await NotificationService.instance.showNotification(
+        id: 'p1',
+        key: key,
+        title: 'a',
+        body: 'a',
+        silent: true,
+      );
+      expect(NotificationService.instance.isPosted(key), isTrue);
+
+      // The tray now reports nothing, as it would after a force-stop.
+      activeNotifications = [];
+      await NotificationService.instance.reloadPosted();
+
+      expect(NotificationService.instance.isPosted(key), isFalse);
+    });
+
+    test('a key still in the tray survives the prune', () async {
+      const key = 'host-a:n1';
+      await NotificationService.instance.showNotification(
+        id: 'p1',
+        key: key,
+        title: 'a',
+        body: 'a',
+        silent: true,
+      );
+      activeNotifications = [
+        {'id': shownId()},
+      ];
+
+      await NotificationService.instance.reloadPosted();
+
+      expect(NotificationService.instance.isPosted(key), isTrue);
+    });
+
+    test('showing writes the key through to shared storage', () async {
+      await NotificationService.instance.showNotification(
+        id: 'p1',
+        key: 'host-a:n1',
+        title: 'a',
+        body: 'a',
+        silent: true,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList('notif_posted_keys'), contains('host-a:n1'));
+
+      await NotificationService.instance.cancel('host-a:n1');
+      expect(
+        prefs.getStringList('notif_posted_keys'),
+        isNot(contains('host-a:n1')),
+      );
     });
   });
 

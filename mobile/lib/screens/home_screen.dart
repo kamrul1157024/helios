@@ -75,8 +75,14 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
     if (state == AppLifecycleState.resumed) {
       _hm.resumeAll();
       _checkNotificationPermission();
+      return;
     }
-    // Don't stop SSE on pause — keep it alive for background notifications
+    // Keeping the app's own streams alive on pause only works until the
+    // process dies. The foreground service takes them over instead, so a
+    // swiped-away app still hears about a blocked agent.
+    if (state == AppLifecycleState.paused) {
+      _hm.handOffToBackground();
+    }
   }
 
   void _handleSSEEvent(String hostId, SSEEvent event) {
