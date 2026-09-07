@@ -74,9 +74,9 @@ Or do it by hand:
 ```bash
 git clone https://github.com/kamrul1157024/helios.git && cd helios
 
-make install           # daemon + CLI  → ~/.local/bin/helios      (needs Go 1.26+)
-make desktop-install   # desktop app   → /Applications/Helios.app (macOS, needs Node 22+)
-make apk-install       # Android app   → the device on adb        (needs Flutter 3.32+)
+make install           # daemon + CLI  → ~/.local/bin/helios                     (needs Go 1.26+)
+make desktop-install   # desktop app   → Applications, or apt (macOS/Linux, needs Node 22+)
+make apk-install       # Android app   → the device on adb                      (needs Flutter 3.32+)
 
 helios start           # the TUI checks your setup and walks you through the rest
 ```
@@ -91,8 +91,8 @@ what you want while working on it.
 | --- | --- | --- |
 | `make install` | the newest release, from source | `~/.local/bin/helios` |
 | `make install-dev` | this checkout | `~/.local/bin/helios` |
-| `make desktop-install` | the newest release's Electron app | `/Applications/Helios.app` |
-| `make desktop-install-dev` | this checkout's Electron app | `/Applications/Helios.app` |
+| `make desktop-install` | the newest release's Electron app | `/Applications/Helios.app` (macOS) or via `apt` (Linux) |
+| `make desktop-install-dev` | this checkout's Electron app | `/Applications/Helios.app` (macOS) or via `apt` (Linux) |
 | `make desktop-app` | Electron app | `desktop/release/*.dmg` (no install) |
 | `make apk-install` | Debug APK | the connected Android device |
 | `make apk-release VERSION=x.y.z` | Release APK, named that number | `~/.helios/helios.apk` |
