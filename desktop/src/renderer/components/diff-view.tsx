@@ -11,6 +11,16 @@ interface Row {
   right?: { n: number | null; text: string; changed: boolean }
 }
 
+interface UnifiedRow {
+  meta?: string
+  sign?: string
+  /** Null where the line does not exist on that side of the patch. */
+  oldN?: number | null
+  newN?: number | null
+  text?: string
+  cls?: string
+}
+
 /** A unified patch, coloured. Shared by the working-tree and commit views. */
 export function DiffView({
   diff,
@@ -35,15 +45,36 @@ export function DiffView({
   if (!diff.trim()) return <p className="empty-note">{empty ?? 'No changes.'}</p>
 
   if (layout === 'unified') {
+    const { rows, numbered } = toUnifiedRows(diff)
     return (
-      <pre>
-        {diff.split('\n').map((text, index) => (
-          <span key={index} className={diffClass(text)}>
-            {text || ' '}
-            {'\n'}
-          </span>
-        ))}
-      </pre>
+      <div className="diff-unified">
+        {rows.map((row, index) =>
+          row.meta !== undefined ? (
+            <div key={index} className={`diff-line diff-line-meta ${diffClass(row.meta)}`}>
+              {row.meta || ' '}
+            </div>
+          ) : (
+            <div
+              key={index}
+              className={`diff-line ${row.cls}${
+                line !== undefined && row.newN === line ? ' diff-row-marked' : ''
+              }`}
+              ref={line !== undefined && row.newN === line ? marked : undefined}
+            >
+              <span className="diff-nums">
+                {numbered && (
+                  <>
+                    <span className="diff-gutter">{row.oldN ?? ''}</span>
+                    <span className="diff-gutter">{row.newN ?? ''}</span>
+                  </>
+                )}
+                <span className="diff-sign">{row.sign}</span>
+              </span>
+              <span className="diff-text">{row.text || ' '}</span>
+            </div>
+          ),
+        )}
+      </div>
     )
   }
 
@@ -87,6 +118,60 @@ function Side({ cell, kind }: { cell: Row['left']; kind: 'del' | 'add' }): JSX.E
       <span className="diff-text">{cell.text || ' '}</span>
     </div>
   )
+}
+
+/**
+ * Turns a unified patch into one row per line.
+ *
+ * The numbers come from the `@@` headers, so a patch without one is reported as
+ * unnumbered rather than counted from 1: the transcript's diffs are built from
+ * the strings an Edit call carried, which say nothing about where in the file
+ * they sat, and a gutter that invents the offsets is worse than no gutter.
+ */
+function toUnifiedRows(diff: string): { rows: UnifiedRow[]; numbered: boolean } {
+  const rows: UnifiedRow[] = []
+  let oldN = 0
+  let newN = 0
+  let numbered = false
+
+  for (const line of diff.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
+    if (hunk) {
+      oldN = Number(hunk[1])
+      newN = Number(hunk[2])
+      numbered = true
+      rows.push({ meta: line })
+      continue
+    }
+    if (
+      line.startsWith('@@') ||
+      line.startsWith('diff --git') ||
+      line.startsWith('index ') ||
+      line.startsWith('+++') ||
+      line.startsWith('---')
+    ) {
+      rows.push({ meta: line })
+      continue
+    }
+
+    if (line.startsWith('-')) {
+      rows.push({ sign: '-', oldN: oldN++, newN: null, text: line.slice(1), cls: 'd-del' })
+      continue
+    }
+    if (line.startsWith('+')) {
+      rows.push({ sign: '+', oldN: null, newN: newN++, text: line.slice(1), cls: 'd-add' })
+      continue
+    }
+    rows.push({
+      sign: ' ',
+      oldN: oldN++,
+      newN: newN++,
+      text: line.startsWith(' ') ? line.slice(1) : line,
+      cls: '',
+    })
+  }
+
+  return { rows, numbered }
 }
 
 /**

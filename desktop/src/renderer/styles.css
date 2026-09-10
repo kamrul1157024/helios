@@ -81,11 +81,6 @@
      at the same y, and a reader sees them as one row — two numbers that agreed
      by coincidence is how they came to be 10px apart. */
   --strip-h: 34px;
-  /* Reading width for the transcript and its composer. It exists to stop a
-     reply and the prompt above it drifting to opposite edges of the window,
-     not to hold prose to a paragraph width — code blocks and diffs want the
-     room. */
-  --chat-column: 1100px;
 
   font-synthesis: none;
   /* Indirected through a variable so a theme sets one value and the form
@@ -1974,14 +1969,9 @@ small {
   padding: 16px;
 }
 
-/* A column rather than the full window: on a wide display the reply sits at
-   the left edge and the prompt that produced it at the right, far enough
-   apart to read as unrelated. Left aligned, not centred — the transcript
-   stays put as the window widens. */
 .msg {
   margin: 0 0 14px;
   width: 100%;
-  max-width: var(--chat-column);
 }
 
 .msg-role {
@@ -2268,18 +2258,24 @@ figure.mermaid svg {
 .msg.tool-call {
   background: var(--surface-container);
   border-radius: var(--r-md);
-  overflow: hidden;
 }
 
+/* Sticky, so the file a long patch belongs to is still named once the reader
+   has scrolled into the middle of it. It can only stick while nothing between
+   here and the transcript's scroller clips: hence no `overflow` on the card. */
 .tool-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 10px;
   width: 100%;
   text-align: left;
-  border-radius: 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
   padding: 9px 12px;
+  background: var(--surface-container);
   color: var(--on-surface);
   font-weight: 400;
 }
@@ -2312,26 +2308,21 @@ figure.mermaid svg {
   white-space: nowrap;
 }
 
+/* No height of its own: a patch reads as part of the transcript, scrolled with
+   the messages around it rather than through a window cut into the card. */
 .tool-detail {
   padding: 10px 12px;
   border-top: 1px solid var(--outline-variant);
-  max-height: 460px;
-  overflow: auto;
 }
 
 .tool-detail .code-block:last-child {
   margin-bottom: 0;
 }
 
-.tool-diff pre {
-  margin: 0;
-  padding: 10px 12px;
-  max-height: 420px;
-  overflow: auto;
-  background: var(--surface-container);
-  border-radius: var(--r-sm);
-  font-size: 12px;
-  line-height: 1.5;
+/* Full-bleed: the gutter and the tinted rows run to the edges of the card, as
+   they do in a file view. */
+.tool-diff {
+  margin: 0 -12px -10px;
 }
 
 .tool-code-label {
@@ -2414,10 +2405,7 @@ figure.mermaid svg {
   padding: 12px 16px 14px;
 }
 
-/* Aligned with the transcript column, so the box the prompt is typed into
-   lines up with the messages it produces. */
 .composer > * {
-  max-width: var(--chat-column);
   margin: 0;
 }
 
@@ -2919,6 +2907,14 @@ figure.mermaid svg {
   flex-direction: column;
 }
 
+/* In a pane of its own the patch owns the vertical scroll. In the transcript
+   it must not: there the messages around it are what scrolls. */
+.git-diff .diff-unified {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .git-diff header,
 .ws-file-head {
   display: flex;
@@ -3119,7 +3115,6 @@ figure.mermaid svg {
   margin-right: -4px;
 }
 
-.git-diff pre,
 .ws-plain {
   flex: 1;
   margin: 0;
@@ -5425,7 +5420,67 @@ hr {
   min-width: 0;
 }
 
-/* ─── Side-by-side diff ─────────────────────────────────────────────────── */
+/* ─── Diffs: unified, then side by side ─────────────────────────────────── */
+
+/* One column, one row per line, gutters at the left: a patch read the way a
+   file view shows one. The whole block scrolls sideways as a unit so the
+   columns stay lined up, and the gutters stick to the left edge while it does. */
+.diff-unified {
+  /* The tint of an added line is mixed into this, and the sticky numbers are
+     painted with it, so a pane on a different surface sets it once. */
+  --diff-bg: var(--surface-container);
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.diff-line {
+  display: flex;
+  gap: 8px;
+  /* Wider than the block when a line is long, but never narrower: a short
+     patch would otherwise tint only as far as its longest line. */
+  width: max-content;
+  min-width: 100%;
+  padding-right: 12px;
+  white-space: pre;
+  /* Opaque, because the numbers slide over the code on a sideways scroll. */
+  background: var(--diff-bg);
+}
+
+.diff-line.d-add {
+  background: color-mix(in srgb, var(--s-active) 16%, var(--diff-bg));
+}
+
+.diff-line.d-del {
+  background: color-mix(in srgb, var(--error) 16%, var(--diff-bg));
+}
+
+/* A hunk boundary is a break in the file, not a line of it. */
+.diff-line-meta {
+  padding: 3px 12px;
+  background: var(--surface-high);
+  border-block: 1px solid var(--outline-variant);
+}
+
+/* The numbers and the sign travel together: one sticky column, or the second
+   number would come to rest on top of the first. */
+.diff-nums {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  gap: 8px;
+  padding: 0 4px 0 12px;
+  background: inherit;
+}
+
+.diff-sign {
+  width: 1ch;
+  user-select: none;
+}
 
 .diff-split {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
