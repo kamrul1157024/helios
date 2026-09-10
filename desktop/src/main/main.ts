@@ -272,6 +272,13 @@ function createWindow(): void {
     if (url !== window?.webContents.getURL()) event.preventDefault()
   })
 
+  // Per load rather than once: the zoom factor belongs to the page, so after a
+  // reload the window would come back at 100% while the setting said otherwise.
+  window.webContents.on('did-finish-load', () => {
+    const scale = themes?.getPrefs().uiScale
+    if (scale) window?.webContents.setZoomFactor(scale / 100)
+  })
+
   void window.loadFile(path.join(rendererDir, 'index.html'))
 }
 

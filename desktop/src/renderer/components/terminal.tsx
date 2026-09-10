@@ -119,6 +119,7 @@ export function TerminalPane({
   const opened = useRef(false)
   const theme = useStore((s) => s.terminalTheme)
   const termFont = useStore((s) => s.termFont)
+  const termSize = useStore((s) => s.termSize)
   const uploads = useStore((s) => s.terminalUploads)
   /** A pasted block big enough to ask about, held until the reader chooses. */
   const [pasted, setPasted] = useState<string | null>(null)
@@ -212,8 +213,9 @@ export function TerminalPane({
     const term = termRef.current
     if (!term) return
     term.options.fontFamily = termFont
+    term.options.fontSize = termSize
     fitRef.current?.fit()
-  }, [termFont])
+  }, [termFont, termSize])
 
   useEffect(() => {
     const container = hostRef.current
@@ -227,7 +229,7 @@ export function TerminalPane({
       allowTransparency: true,
       cursorBlink: true,
       fontFamily: termFont,
-      fontSize: 13,
+      fontSize: termSize,
       // The host replays its own scrollback on attach, so a deep local buffer
       // only duplicates what a snapshot already delivered.
       scrollback: 5000,

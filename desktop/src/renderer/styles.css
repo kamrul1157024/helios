@@ -87,6 +87,9 @@
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   --mono: 'Fira Code', 'Helios Glyphs', monospace;
   --font-term: 'Fira Code', 'Helios Glyphs', monospace;
+  /* Code and diffs, set apart from prose: these are grids, and the size
+     decides how many columns fit rather than how a paragraph reflows. */
+  --code-size: 12px;
 
   font-synthesis: none;
   /* Indirected through a variable so a theme sets one value and the form
@@ -2182,7 +2185,7 @@ small {
 
 .code-block code {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--code-size);
   line-height: 1.5;
   background: none;
   padding: 0;
@@ -5461,7 +5464,7 @@ hr {
      draws an em dash and `@@` draws a glyph, so a header stops looking like
      the header it is. */
   font-variant-ligatures: none;
-  font-size: 12px;
+  font-size: var(--code-size);
   line-height: 1.5;
   tab-size: 4;
 }
@@ -5485,6 +5488,34 @@ hr {
 
 .diff-line.d-del {
   background: color-mix(in srgb, var(--error) 16%, var(--diff-bg));
+}
+
+/* With the syntax colours on, a green line and a red line would be two colours
+   fighting for the same letters. The tint and the sign carry what changed; the
+   text keeps the colours that say what it means. */
+.diff-line.d-add,
+.diff-line.d-del,
+.diff-cell.d-add,
+.diff-cell.d-del {
+  color: var(--on-surface);
+}
+
+.diff-line.d-add .diff-sign {
+  color: var(--s-active);
+}
+
+.diff-line.d-del .diff-sign {
+  color: var(--error);
+}
+
+/* The split view had nothing but the text colour to mark a change with, so it
+   takes the same tint as the unified rows now that the text is neutral. */
+.diff-cell.d-add {
+  background: color-mix(in srgb, var(--s-active) 16%, transparent);
+}
+
+.diff-cell.d-del {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
 }
 
 /* A hunk boundary is a break in the file, not a line of it. */
@@ -5515,7 +5546,7 @@ hr {
 .diff-split {
   font-family: var(--mono);
   font-variant-ligatures: none;
-  font-size: 12px;
+  font-size: var(--code-size);
   line-height: 1.5;
   /* The cells scroll, not this: scrolling here would drag the gutters and the
      hunk headers off screen with the code. */

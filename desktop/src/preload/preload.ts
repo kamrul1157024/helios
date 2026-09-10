@@ -1,7 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type { Density } from '../shared/models.ts'
-import { applyDensity, applyFonts, applyProseSize, applyStatusSize, applyTheme } from '../shared/theme/apply.ts'
+import {
+  applyCodeSize,
+  applyDensity,
+  applyFonts,
+  applyProseSize,
+  applyStatusSize,
+  applyTheme,
+} from '../shared/theme/apply.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 
 interface ThemeBoot {
@@ -11,6 +18,7 @@ interface ThemeBoot {
   glassSupported: boolean
   proseSize: number
   fonts: { ui: string; code: string; terminal: string }
+  sizes: { ui: number; code: number; terminal: number }
   density: Density
   statusLineSize: number
 }
@@ -64,6 +72,7 @@ const paint = (): void => {
   applyTheme(document.documentElement, boot.theme, boot.glass)
   applyProseSize(document.documentElement, boot.proseSize)
   applyFonts(document.documentElement, boot.fonts)
+  applyCodeSize(document.documentElement, boot.sizes.code)
   applyStatusSize(document.documentElement, boot.statusLineSize)
   applyDensity(document.documentElement, boot.density)
 }

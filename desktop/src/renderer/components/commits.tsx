@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 
 import { gitChangesQuery, gitDiffQuery, gitLogPagesQuery } from '../queries.ts'
 import { useStore } from '../store.ts'
+import { languageForPath } from '../markdown.ts'
 import { DiffView } from './diff-view.tsx'
 import { Chevron } from './icons.tsx'
 import { PathLabel } from './path-label.tsx'
@@ -402,6 +403,7 @@ export function CommitChanges({
               <DiffView
                 diff={diff.diff}
                 empty="No textual changes — binary, or a mode change."
+                language={languageForPath(diff.file)}
                 layout={wanted?.layout ?? 'split'}
                 line={wanted?.line}
               />

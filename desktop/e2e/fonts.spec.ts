@@ -53,6 +53,32 @@ test('the interface font is a slot of its own', async ({ window }) => {
   expect(await cssVar(window, '--mono')).toContain('Fira Code')
 })
 
+test('code size moves the variable the code blocks and diffs are set in', async ({ window }) => {
+  await openAppearance(window)
+
+  const box = window.locator('.setting-row', { hasText: 'Code size' }).locator('input')
+  await box.fill('17')
+  await box.blur()
+
+  await expect.poll(() => cssVar(window, '--code-size')).toBe('17px')
+})
+
+test('interface size scales the window rather than one font', async ({ window, app }) => {
+  await openAppearance(window)
+
+  const box = window.locator('.setting-row', { hasText: 'Interface size' }).locator('input')
+  await box.fill('120')
+  await box.blur()
+
+  // The window's zoom, read from the main process: nothing in the page's own
+  // styles is what carries this.
+  await expect
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getZoomFactor()),
+    )
+    .toBeCloseTo(1.2, 2)
+})
+
 test('a font the machine does not have is still offered, and says so', async ({ window }) => {
   await openAppearance(window)
 

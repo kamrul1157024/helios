@@ -207,11 +207,21 @@ export function SettingsPane(): JSX.Element {
 
         <FontPicker
           label="Interface font"
-          info="The text of the app itself: lists, labels and prose."
+          info="The text of the app itself: lists, labels and buttons."
           slot="ui"
           value={appearance?.uiFont}
           onPick={(uiFont) => void setTheme({ uiFont })}
         />
+        <PixelSize
+          label="Interface size"
+          info="A percentage, between 70 and 150. Scales the whole window — every control with it, so nothing outgrows the box it sits in. The sizes below are measured after it."
+          size={appearance?.uiScale}
+          min={70}
+          max={150}
+          unit="%"
+          onPick={(uiScale) => void setTheme({ uiScale })}
+        />
+
         <FontPicker
           label="Code font"
           info="Code blocks, diffs, paths, and everything else set in monospace."
@@ -219,12 +229,29 @@ export function SettingsPane(): JSX.Element {
           value={appearance?.codeFont}
           onPick={(codeFont) => void setTheme({ codeFont })}
         />
+        <PixelSize
+          label="Code size"
+          info="In pixels, between 9 and 24. Code blocks and both diff views."
+          size={appearance?.codeSize}
+          min={9}
+          max={24}
+          onPick={(codeSize) => void setTheme({ codeSize })}
+        />
+
         <FontPicker
           label="Terminal font"
           info="The terminal panes. Changing it remeasures the grid, so the columns move with it."
           slot="terminal"
           value={appearance?.terminalFont}
           onPick={(terminalFont) => void setTheme({ terminalFont })}
+        />
+        <PixelSize
+          label="Terminal size"
+          info="In pixels, between 9 and 24. A larger size is fewer columns in the same pane, and the shell is told the new width."
+          size={appearance?.terminalSize}
+          min={9}
+          max={24}
+          onPick={(terminalSize) => void setTheme({ terminalSize })}
         />
 
         <Backdrop />
@@ -1345,6 +1372,7 @@ function PixelSize({
   size,
   min,
   max,
+  unit = 'px',
   onPick,
 }: {
   label: string
@@ -1352,6 +1380,8 @@ function PixelSize({
   size: number | undefined
   min: number
   max: number
+  /** The interface's size is a scale, and reads as one. */
+  unit?: string
   onPick: (size: number) => void
 }): JSX.Element {
   const [draft, setDraft] = useState('')
@@ -1379,7 +1409,7 @@ function PixelSize({
           if (event.key === 'Enter') event.currentTarget.blur()
         }}
       />
-      <span className="setting-row-unit">px</span>
+      <span className="setting-row-unit">{unit}</span>
     </Row>
   )
 }

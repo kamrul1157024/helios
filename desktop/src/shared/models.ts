@@ -637,6 +637,12 @@ export interface AppearancePrefs {
   uiFont: string
   codeFont: string
   terminalFont: string
+  /** Scale of the whole window, as a percentage. The interface's size control. */
+  uiScale: number
+  /** Size of code blocks and diffs, in px. */
+  codeSize: number
+  /** Size of the text inside the terminal panes, in px. */
+  terminalSize: number
   /** How much of a session the sidebar shows: everything, or one line each. */
   density: Density
   /** Which segments the session status line draws, in the order it draws them. */

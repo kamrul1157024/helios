@@ -200,6 +200,7 @@ export function registerIpc(deps: IpcDeps): void {
     glassSupported: boolean
     proseSize: number
     fonts: { ui: string; code: string; terminal: string }
+    sizes: { ui: number; code: number; terminal: number }
     density: Density
     statusLine: SegmentId[]
     statusLineSize: number
@@ -211,6 +212,11 @@ export function registerIpc(deps: IpcDeps): void {
       ui: themes.getPrefs().uiFont,
       code: themes.getPrefs().codeFont,
       terminal: themes.getPrefs().terminalFont,
+    },
+    sizes: {
+      ui: themes.getPrefs().uiScale,
+      code: themes.getPrefs().codeSize,
+      terminal: themes.getPrefs().terminalSize,
     },
     density: themes.getPrefs().density,
     statusLine: themes.getPrefs().statusLine,
@@ -226,7 +232,12 @@ export function registerIpc(deps: IpcDeps): void {
   const broadcastTheme = (): ReturnType<typeof themePayload> => {
     const payload = themePayload()
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send('theme:changed', payload)
+      if (win.isDestroyed()) continue
+      // The interface's size is the window's zoom rather than a font size:
+      // every rule in the stylesheet is in px, so scaling one of them scales
+      // the text out of the boxes drawn around it.
+      win.webContents.setZoomFactor(themes.getPrefs().uiScale / 100)
+      win.webContents.send('theme:changed', payload)
     }
     return payload
   }

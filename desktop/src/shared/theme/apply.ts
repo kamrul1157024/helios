@@ -33,6 +33,11 @@ export function applyFonts(
   root.style.setProperty('--font-term', fontStack('terminal', fonts.terminal))
 }
 
+/** Code blocks and both diff views, which share the code font's own size. */
+export function applyCodeSize(root: HTMLElement, size: number): void {
+  root.style.setProperty('--code-size', `${size}px`)
+}
+
 /**
  * The status line's text size, which the bar's own height is derived from.
  *
