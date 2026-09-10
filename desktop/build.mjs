@@ -55,7 +55,10 @@ const configs = [
     platform: 'browser',
     format: 'iife',
     target: 'chrome128',
-    loader: { '.css': 'css' },
+    // The fonts the stylesheet asks for are copied beside the bundle and their
+    // url() rewritten, so the packaged app carries them rather than reaching
+    // for whatever the machine happens to have installed.
+    loader: { '.css': 'css', '.woff2': 'file' },
   },
   {
     // Mermaid, fetched on demand by src/renderer/mermaid.ts. It is bigger than
@@ -79,7 +82,7 @@ const configs = [
     platform: 'browser',
     format: 'iife',
     target: 'chrome128',
-    loader: { '.css': 'css' },
+    loader: { '.css': 'css', '.woff2': 'file' },
   },
 ]
 

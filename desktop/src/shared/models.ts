@@ -633,6 +633,16 @@ export interface AppearancePrefs {
   terminalTheme: string
   /** Body size of rendered markdown, in px; headings and tables scale with it. */
   proseSize: number
+  /** Font ids from shared/fonts.ts, one per slot the reader can set. */
+  uiFont: string
+  codeFont: string
+  terminalFont: string
+  /** Scale of the whole window, as a percentage. The interface's size control. */
+  uiScale: number
+  /** Size of code blocks and diffs, in px. */
+  codeSize: number
+  /** Size of the text inside the terminal panes, in px. */
+  terminalSize: number
   /** How much of a session the sidebar shows: everything, or one line each. */
   density: Density
   /** Which segments the session status line draws, in the order it draws them. */

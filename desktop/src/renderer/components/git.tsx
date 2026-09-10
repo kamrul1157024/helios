@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { gitDiffQuery, gitLogQuery, gitStatusQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { CommitChanges, ScopePicker, type Scope } from './commits.tsx'
+import { languageForPath } from '../markdown.ts'
 import { DiffView } from './diff-view.tsx'
 import { PathLabel } from './path-label.tsx'
 import { ReviewView } from './review.tsx'
@@ -291,7 +292,12 @@ function ChangesView({
               <span>{diff.file}</span>
               <span className="muted">{diff.stat}</span>
             </header>
-            <DiffView diff={diff.diff} layout={target?.layout ?? 'split'} line={target?.line} />
+            <DiffView
+              diff={diff.diff}
+              language={languageForPath(diff.file)}
+              layout={target?.layout ?? 'split'}
+              line={target?.line}
+            />
           </>
         ) : (
           <p className="empty-note">{status.dirty ? 'Pick a file.' : 'Nothing to show.'}</p>

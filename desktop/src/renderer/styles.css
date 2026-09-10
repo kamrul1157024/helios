@@ -81,6 +81,15 @@
      at the same y, and a reader sees them as one row — two numbers that agreed
      by coincidence is how they came to be 10px apart. */
   --strip-h: 34px;
+  /* The three families, as the settings name them. Written inline on <html> by
+     applyFonts() before the first frame; these are what a window that has not
+     been through that yet draws with. */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  --mono: 'Fira Code', 'Helios Glyphs', monospace;
+  --font-term: 'Fira Code', 'Helios Glyphs', monospace;
+  /* Code and diffs, set apart from prose: these are grids, and the size
+     decides how many columns fit rather than how a paragraph reflows. */
+  --code-size: 12px;
 
   font-synthesis: none;
   /* Indirected through a variable so a theme sets one value and the form
@@ -98,6 +107,22 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/**
+ * Fira Code, shipped with the app rather than hoped for on the machine.
+ *
+ * The variable file, so one 113KB request covers every weight the UI asks for
+ * instead of one file per weight. `font-display: block` because a code pane
+ * that paints in a fallback and reflows a moment later is worse to read than
+ * one that waits: the metrics differ, so every line moves.
+ */
+@font-face {
+  font-family: 'Fira Code';
+  src: url('./fonts/FiraCode-VF.woff2') format('woff2-variations');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: block;
 }
 
 /**
@@ -131,14 +156,18 @@ body,
     local('Hack Nerd Font'),
     local('HackNF-Regular'),
     local('MesloLGSNF-Regular'),
-    local('MesloLGS NF Regular');
+    local('MesloLGS NF Regular'),
+    /* Last, so a Nerd Font the machine already has wins: it is the one the
+       user's terminal and editor draw these glyphs with, and two drawings of
+       the same icon in one window is worse than either. */
+    url('./fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
   unicode-range: U+E000-F8FF, U+F0000-FFFFD, U+100000-10FFFD;
 }
 
 body {
   background: var(--surface);
   color: var(--on-surface);
-  font: 14px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font: 14px/1.45 var(--font-ui);
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -299,7 +328,7 @@ input[type='checkbox'] {
 code,
 pre,
 .mono {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-family: var(--mono);
   user-select: text;
 }
 
@@ -1228,7 +1257,7 @@ small {
   min-width: 0;
   /* The glyph font is first, but only claims the Private Use Area — the words
      fall through to the stack behind it. */
-  font-family: 'Helios Glyphs', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-family: 'Helios Glyphs', var(--font-ui);
   font-size: 13.5px;
   font-weight: 500;
   line-height: 1.4;
@@ -1291,7 +1320,7 @@ small {
   max-width: 12em;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
 }
 
 /* Permissions are a state to notice, not a label to read past. */
@@ -1319,7 +1348,7 @@ small {
   font-size: 10.5px;
   line-height: 1.4;
   color: var(--on-surface-variant);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   /* A pointer over the path alone: it is the one part of the row worth resting
      on, since that is what brings its full self up in the title. */
   cursor: pointer;
@@ -1560,7 +1589,7 @@ small {
      settings gains room instead of clipping. 11px, the default, gives 18. */
   height: calc(var(--status-size, 11px) + 7px);
   padding: 0 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: var(--status-size, 11px);
   line-height: 1;
   color: var(--on-surface-variant);
@@ -1906,7 +1935,7 @@ small {
 }
 
 .panel-error .muted {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   word-break: break-word;
 }
@@ -2134,7 +2163,7 @@ small {
 
 /* Inline code, but not the code inside a highlighted block. */
 .md code:not(.hljs) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 0.86em;
   background: var(--surface-highest);
   border-radius: 4px;
@@ -2155,8 +2184,8 @@ small {
 }
 
 .code-block code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: var(--code-size);
   line-height: 1.5;
   background: none;
   padding: 0;
@@ -2200,7 +2229,7 @@ figure.mermaid svg {
   border: 1px solid var(--outline-variant);
   background: transparent;
   color: var(--on-surface-variant);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   font-weight: 400;
 }
@@ -2288,7 +2317,7 @@ figure.mermaid svg {
 
 .tool-name {
   color: var(--primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   font-weight: 600;
 }
@@ -2301,7 +2330,7 @@ figure.mermaid svg {
      of the text rather than its start. */
   min-width: 0;
   color: var(--on-surface-variant);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2350,7 +2379,7 @@ figure.mermaid svg {
   flex: none;
   min-width: 90px;
   color: var(--on-surface-variant);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
 }
 
 .tool-fields dd {
@@ -2378,7 +2407,7 @@ figure.mermaid svg {
 }
 
 .msg.tool-result code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
 }
 
 .result-icon {
@@ -2791,7 +2820,7 @@ figure.mermaid svg {
 }
 
 .branch {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--primary);
   font-weight: 600;
@@ -2860,7 +2889,7 @@ figure.mermaid svg {
 .git-status {
   width: 16px;
   text-align: center;
-  font-family: ui-monospace, monospace;
+  font-family: var(--mono);
   font-weight: 700;
   color: var(--on-surface-variant);
 }
@@ -2942,7 +2971,7 @@ figure.mermaid svg {
 }
 
 .preview-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
 }
 
 /* Rendered markdown gets the reading width and padding a document wants,
@@ -3247,7 +3276,7 @@ figure.mermaid svg {
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 400;
 }
@@ -3381,7 +3410,7 @@ figure.mermaid svg {
   padding: 0;
   border-radius: var(--r-sm);
   font-size: 13px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   color: var(--on-surface-variant);
 }
 
@@ -3424,7 +3453,7 @@ figure.mermaid svg {
   text-align: left;
   padding: 2px 8px;
   border-radius: var(--r-sm);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 400;
 }
@@ -3619,7 +3648,7 @@ figure.mermaid svg {
 }
 
 .cm-host .cm-scroller {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-family: var(--mono);
   line-height: 1.55;
 }
 
@@ -4525,7 +4554,7 @@ hr {
 }
 
 .commit-sha {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   color: var(--primary);
 }
 
@@ -4561,7 +4590,7 @@ hr {
   margin-left: auto;
   padding-left: 8px;
   font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
 }
 
 .worktrees {
@@ -5169,7 +5198,7 @@ hr {
   border-radius: var(--r-md);
   /* A prompt is read as much as it is written, and the glyphs it names only
      line up in a monospaced font. */
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
   resize: vertical;
@@ -5430,8 +5459,12 @@ hr {
      painted with it, so a pane on a different surface sets it once. */
   --diff-bg: var(--surface-container);
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--mono);
+  /* A patch has to read as the bytes it is. With ligatures on, `--- a/file`
+     draws an em dash and `@@` draws a glyph, so a header stops looking like
+     the header it is. */
+  font-variant-ligatures: none;
+  font-size: var(--code-size);
   line-height: 1.5;
   tab-size: 4;
 }
@@ -5455,6 +5488,34 @@ hr {
 
 .diff-line.d-del {
   background: color-mix(in srgb, var(--error) 16%, var(--diff-bg));
+}
+
+/* With the syntax colours on, a green line and a red line would be two colours
+   fighting for the same letters. The tint and the sign carry what changed; the
+   text keeps the colours that say what it means. */
+.diff-line.d-add,
+.diff-line.d-del,
+.diff-cell.d-add,
+.diff-cell.d-del {
+  color: var(--on-surface);
+}
+
+.diff-line.d-add .diff-sign {
+  color: var(--s-active);
+}
+
+.diff-line.d-del .diff-sign {
+  color: var(--error);
+}
+
+/* The split view had nothing but the text colour to mark a change with, so it
+   takes the same tint as the unified rows now that the text is neutral. */
+.diff-cell.d-add {
+  background: color-mix(in srgb, var(--s-active) 16%, transparent);
+}
+
+.diff-cell.d-del {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
 }
 
 /* A hunk boundary is a break in the file, not a line of it. */
@@ -5483,8 +5544,9 @@ hr {
 }
 
 .diff-split {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-variant-ligatures: none;
+  font-size: var(--code-size);
   line-height: 1.5;
   /* The cells scroll, not this: scrolling here would drag the gutters and the
      hunk headers off screen with the code. */
@@ -6080,7 +6142,7 @@ hr {
   background: var(--code-bg);
   border-radius: var(--r-md);
   padding: 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   line-height: 1.5;
   max-height: 240px;

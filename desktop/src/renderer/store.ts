@@ -31,8 +31,16 @@ import {
   type ItemId,
   type Layout,
 } from './components/layout.ts'
+import { fontStack } from '../shared/fonts.ts'
 import type { SegmentId } from '../shared/status-line.ts'
-import { applyDensity, applyProseSize, applyStatusSize, applyTheme } from '../shared/theme/apply.ts'
+import {
+  applyCodeSize,
+  applyDensity,
+  applyFonts,
+  applyProseSize,
+  applyStatusSize,
+  applyTheme,
+} from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type {
   Density,
@@ -254,6 +262,10 @@ export interface State {
   pairingLink: string | null
   /** The palette xterm draws with; the CSS side is set on <html>, not here. */
   terminalTheme: XtermTheme
+  /** The family xterm draws with. xterm takes a string, not a CSS variable. */
+  termFont: string
+  /** And its size, for the same reason. */
+  termSize: number
   /** Whether a file dropped or pasted on a terminal is uploaded to its daemon. */
   terminalUploads: boolean
   /**
@@ -424,6 +436,8 @@ const initial: State = {
   query: '',
   loading: true,
   terminalTheme: bridge.theme.boot().terminal,
+  termFont: fontStack('terminal', bridge.theme.boot().fonts.terminal),
+  termSize: bridge.theme.boot().sizes.terminal,
   terminalUploads: readTerminalUploads(),
   density: bridge.theme.boot().density,
   statusLine: bridge.theme.boot().statusLine,
@@ -512,12 +526,20 @@ class Store {
     // The preload painted the boot theme already; this keeps up with changes
     // made afterwards, whether from the settings dialog or the OS switching
     // between light and dark underneath us.
-    bridge.theme.onChanged(({ theme, terminal, glass, proseSize, density, statusLine, statusLineSize }) => {
+    bridge.theme.onChanged(({ theme, terminal, glass, proseSize, fonts, sizes, density, statusLine, statusLineSize }) => {
       applyTheme(document.documentElement, theme, glass)
       applyProseSize(document.documentElement, proseSize)
+      applyFonts(document.documentElement, fonts)
+      applyCodeSize(document.documentElement, sizes.code)
       applyStatusSize(document.documentElement, statusLineSize)
       applyDensity(document.documentElement, density)
-      this.set({ terminalTheme: terminal, density, statusLine })
+      this.set({
+        terminalTheme: terminal,
+        termFont: fontStack('terminal', fonts.terminal),
+        termSize: sizes.terminal,
+        density,
+        statusLine,
+      })
     })
 
     bridge.hosts.onChanged((hosts) => {

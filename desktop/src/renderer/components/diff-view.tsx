@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
+
+import { highlightCode } from '../markdown.ts'
 
 /** How a patch is drawn. Side by side reads better for review; unified is
  *  narrower and is what a terminal shows. */
@@ -21,20 +23,54 @@ interface UnifiedRow {
   cls?: string
 }
 
+/**
+ * Past this many lines the patch is drawn plain.
+ *
+ * Highlighting is a grammar run per line, and a patch this long is being
+ * skimmed rather than read — the colours are not worth a second of a locked
+ * window to get them.
+ */
+const MAX_HIGHLIGHT_LINES = 3000
+
 /** A unified patch, coloured. Shared by the working-tree and commit views. */
 export function DiffView({
   diff,
   empty,
+  language,
   layout = 'split',
   line,
 }: {
   diff: string
   empty?: string
+  /** The file's language, for the syntax colours. Plain text without one. */
+  language?: string | null
   layout?: DiffLayout
   /** A line of the new file to scroll to and mark, when one was asked for. */
   line?: number
 }): JSX.Element {
   const marked = useRef<HTMLDivElement | null>(null)
+
+  /**
+   * Each line highlighted on its own.
+   *
+   * A patch is not a file: the lines either side of a hunk are missing, so
+   * there is no whole document to hand the grammar. Line by line costs the
+   * constructs that span lines — a block comment reads as code after its first
+   * line — and gets every other token right, which is the trade GitHub makes
+   * too.
+   */
+  const paint = useMemo(() => {
+    const lines = diff.split('\n')
+    if (!language || lines.length > MAX_HIGHLIGHT_LINES) return null
+    const cache = new Map<string, string>()
+    return (text: string): string => {
+      const held = cache.get(text)
+      if (held !== undefined) return held
+      const html = highlightCode(text, language)
+      cache.set(text, html)
+      return html
+    }
+  }, [diff, language])
 
   // A patch is long and the interesting line is rarely at the top, so being
   // pointed at one is worthless unless the pane goes there.
@@ -70,7 +106,7 @@ export function DiffView({
                 )}
                 <span className="diff-sign">{row.sign}</span>
               </span>
-              <span className="diff-text">{row.text || ' '}</span>
+              <Code text={row.text ?? ''} paint={paint} />
             </div>
           ),
         )}
@@ -99,8 +135,8 @@ export function DiffView({
               .join(' ')}
             ref={line !== undefined && row.right?.n === line ? marked : undefined}
           >
-            <Side cell={row.left} kind="del" />
-            <Side cell={row.right} kind="add" />
+            <Side cell={row.left} kind="del" paint={paint} />
+            <Side cell={row.right} kind="add" paint={paint} />
           </div>
         ),
       )}
@@ -108,16 +144,38 @@ export function DiffView({
   )
 }
 
-function Side({ cell, kind }: { cell: Row['left']; kind: 'del' | 'add' }): JSX.Element {
+function Side({
+  cell,
+  kind,
+  paint,
+}: {
+  cell: Row['left']
+  kind: 'del' | 'add'
+  paint: Painter
+}): JSX.Element {
   // An absent cell is not an empty line: one side of the pair simply has
   // nothing here, and it is shaded so the eye skips it.
   if (!cell) return <div className="diff-cell diff-cell-absent" />
   return (
     <div className={`diff-cell ${cell.changed ? (kind === 'del' ? 'd-del' : 'd-add') : ''}`}>
       <span className="diff-gutter">{cell.n ?? ''}</span>
-      <span className="diff-text">{cell.text || ' '}</span>
+      <Code text={cell.text} paint={paint} />
     </div>
   )
+}
+
+/** What turns a line of source into coloured markup, or null for plain text. */
+type Painter = ((text: string) => string) | null
+
+/**
+ * One line of the patch.
+ *
+ * The markup carries hljs token classes but not `.hljs` itself: that class sets
+ * a background, and the row's own add/delete tint is what has to show through.
+ */
+function Code({ text, paint }: { text: string; paint: Painter }): JSX.Element {
+  if (!paint || !text) return <span className="diff-text">{text || ' '}</span>
+  return <span className="diff-text" dangerouslySetInnerHTML={{ __html: paint(text) }} />
 }
 
 /**

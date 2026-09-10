@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { DEFAULT_FONTS, fontId } from '../shared/fonts.ts'
 import { DEFAULT_STATUS_LINE, parseStatusLine } from '../shared/status-line.ts'
 import { mergeThemes, resolveTheme, type HeliosTheme, type ThemeMode } from '../shared/theme/resolve.ts'
 import { parseJsonc, type BackdropSpec, type VSCodeTheme } from '../shared/theme/vscode.ts'
@@ -14,6 +15,12 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   darkTheme: 'dark-modern',
   terminalTheme: 'match',
   proseSize: 14,
+  uiFont: DEFAULT_FONTS.ui,
+  codeFont: DEFAULT_FONTS.code,
+  terminalFont: DEFAULT_FONTS.terminal,
+  uiScale: 100,
+  codeSize: 12,
+  terminalSize: 13,
   density: 'comfortable',
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,
@@ -23,6 +30,17 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
    thousand there is a window with no readable way back to the setting. */
 const MIN_PROSE = 10
 const MAX_PROSE = 28
+
+/* The window's own scale, in percent. The floor is where the controls stop
+   being hittable and the ceiling is where the sidebar takes the whole window;
+   past either, the way back to the setting is gone. */
+const MIN_SCALE = 70
+const MAX_SCALE = 150
+
+/* Code and terminal text. Narrower than prose on purpose: these are grids, and
+   a size that reflows prose harmlessly changes how many columns fit. */
+const MIN_CODE = 9
+const MAX_CODE = 24
 
 /* The bar's height is derived from this, so the ceiling is what keeps a status
    line from becoming a second header — the thing it was built to replace. */
@@ -42,6 +60,13 @@ function proseSize(value: unknown): number {
   const size = Math.round(Number(value))
   if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.proseSize
   return Math.min(Math.max(size, MIN_PROSE), MAX_PROSE)
+}
+
+/** Rounded and clamped, like every other size read from the file. */
+function bounded(value: unknown, min: number, max: number, fallback: number): number {
+  const size = Math.round(Number(value))
+  if (!Number.isFinite(size)) return fallback
+  return Math.min(Math.max(size, min), max)
 }
 
 function statusLineSize(value: unknown): number {
@@ -83,6 +108,12 @@ export class ThemeRegistry {
         darkTheme: parsed.darkTheme ?? DEFAULT_APPEARANCE.darkTheme,
         terminalTheme: parsed.terminalTheme ?? DEFAULT_APPEARANCE.terminalTheme,
         proseSize: proseSize(parsed.proseSize ?? DEFAULT_APPEARANCE.proseSize),
+        uiFont: fontId('ui', parsed.uiFont),
+        codeFont: fontId('code', parsed.codeFont),
+        terminalFont: fontId('terminal', parsed.terminalFont),
+        uiScale: bounded(parsed.uiScale, MIN_SCALE, MAX_SCALE, DEFAULT_APPEARANCE.uiScale),
+        codeSize: bounded(parsed.codeSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.codeSize),
+        terminalSize: bounded(parsed.terminalSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.terminalSize),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
         statusLine: parseStatusLine(parsed.statusLine),
         statusLineSize: statusLineSize(parsed.statusLineSize),
@@ -225,6 +256,17 @@ export class ThemeRegistry {
   setPrefs(next: Partial<AppearancePrefs>): AppearancePrefs {
     this.prefs = { ...this.prefs, ...next }
     this.prefs.proseSize = proseSize(this.prefs.proseSize)
+    this.prefs.uiFont = fontId('ui', this.prefs.uiFont)
+    this.prefs.codeFont = fontId('code', this.prefs.codeFont)
+    this.prefs.terminalFont = fontId('terminal', this.prefs.terminalFont)
+    this.prefs.uiScale = bounded(this.prefs.uiScale, MIN_SCALE, MAX_SCALE, DEFAULT_APPEARANCE.uiScale)
+    this.prefs.codeSize = bounded(this.prefs.codeSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.codeSize)
+    this.prefs.terminalSize = bounded(
+      this.prefs.terminalSize,
+      MIN_CODE,
+      MAX_CODE,
+      DEFAULT_APPEARANCE.terminalSize,
+    )
     this.prefs.density = density(this.prefs.density)
     this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)
     this.prefs.statusLineSize = statusLineSize(this.prefs.statusLineSize)

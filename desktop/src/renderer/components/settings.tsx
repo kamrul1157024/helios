@@ -9,6 +9,7 @@ import { settingsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { HostsPane } from './hosts.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
+import { choicesFor, type FontSlot } from '../../shared/fonts.ts'
 import {
   DEFAULT_STATUS_LINE,
   SEGMENTS,
@@ -202,6 +203,55 @@ export function SettingsPane(): JSX.Element {
           min={10}
           max={28}
           onPick={(proseSize) => void setTheme({ proseSize })}
+        />
+
+        <FontPicker
+          label="Interface font"
+          info="The text of the app itself: lists, labels and buttons."
+          slot="ui"
+          value={appearance?.uiFont}
+          onPick={(uiFont) => void setTheme({ uiFont })}
+        />
+        <PixelSize
+          label="Interface size"
+          info="A percentage, between 70 and 150. Scales the whole window — every control with it, so nothing outgrows the box it sits in. The sizes below are measured after it."
+          size={appearance?.uiScale}
+          min={70}
+          max={150}
+          unit="%"
+          onPick={(uiScale) => void setTheme({ uiScale })}
+        />
+
+        <FontPicker
+          label="Code font"
+          info="Code blocks, diffs, paths, and everything else set in monospace."
+          slot="code"
+          value={appearance?.codeFont}
+          onPick={(codeFont) => void setTheme({ codeFont })}
+        />
+        <PixelSize
+          label="Code size"
+          info="In pixels, between 9 and 24. Code blocks and both diff views."
+          size={appearance?.codeSize}
+          min={9}
+          max={24}
+          onPick={(codeSize) => void setTheme({ codeSize })}
+        />
+
+        <FontPicker
+          label="Terminal font"
+          info="The terminal panes. Changing it remeasures the grid, so the columns move with it."
+          slot="terminal"
+          value={appearance?.terminalFont}
+          onPick={(terminalFont) => void setTheme({ terminalFont })}
+        />
+        <PixelSize
+          label="Terminal size"
+          info="In pixels, between 9 and 24. A larger size is fewer columns in the same pane, and the shell is told the new width."
+          size={appearance?.terminalSize}
+          min={9}
+          max={24}
+          onPick={(terminalSize) => void setTheme({ terminalSize })}
         />
 
         <Backdrop />
@@ -964,6 +1014,60 @@ function ThemePicker({
 }
 
 /**
+ * One of the three families the app draws with.
+ *
+ * Fira Code and the symbol face ship with the app; the rest are whatever the
+ * machine has. An option the machine cannot draw is still offered — with the
+ * fact said out loud, because a picker that silently keeps the old font looks
+ * broken, and one that hides the option looks like it forgot.
+ */
+function FontPicker({
+  label,
+  info,
+  slot,
+  value,
+  onPick,
+}: {
+  label: string
+  info?: ReactNode
+  slot: FontSlot
+  value: string | undefined
+  onPick: (id: string) => void
+}): JSX.Element {
+  const choices = choicesFor(slot)
+  // Asked once the fonts have settled: document.fonts.check answers against
+  // what is loaded now, and a face still loading reads as absent.
+  const [installed, setInstalled] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let live = true
+    void document.fonts.ready.then(() => {
+      if (!live) return
+      setInstalled(
+        new Set(
+          choices.filter((font) => !font.probe || document.fonts.check(`12px "${font.probe}"`)).map((f) => f.id),
+        ),
+      )
+    })
+    return () => {
+      live = false
+    }
+  }, [slot])
+
+  return (
+    <Row label={label} info={info}>
+      <select value={value ?? ''} onChange={(event) => onPick(event.target.value)}>
+        {value === undefined && <option value="">Loading…</option>}
+        {choices.map((font) => (
+          <option key={font.id} value={font.id}>
+            {installed.size > 0 && !installed.has(font.id) ? `${font.label} — not installed` : font.label}
+          </option>
+        ))}
+      </select>
+    </Row>
+  )
+}
+
+/**
  * The size rendered markdown is read at, in px — the transcript and the file
  * preview both. Committed on blur or Enter rather than on every keystroke: a
  * half-typed "1" would otherwise repaint the app at the smallest size allowed.
@@ -1268,6 +1372,7 @@ function PixelSize({
   size,
   min,
   max,
+  unit = 'px',
   onPick,
 }: {
   label: string
@@ -1275,6 +1380,8 @@ function PixelSize({
   size: number | undefined
   min: number
   max: number
+  /** The interface's size is a scale, and reads as one. */
+  unit?: string
   onPick: (size: number) => void
 }): JSX.Element {
   const [draft, setDraft] = useState('')
@@ -1302,7 +1409,7 @@ function PixelSize({
           if (event.key === 'Enter') event.currentTarget.blur()
         }}
       />
-      <span className="setting-row-unit">px</span>
+      <span className="setting-row-unit">{unit}</span>
     </Row>
   )
 }

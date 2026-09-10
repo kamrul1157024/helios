@@ -599,7 +599,7 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
         <div className="tool-diff">
           {/* Unified, not the default split: a tool call's diff sits inline in
               the transcript, which is far too narrow for two columns. */}
-          <DiffView diff={diff} layout="unified" />
+          <DiffView diff={diff} language={languageForPath(str(input.file_path))} layout="unified" />
         </div>
       </>
     )
