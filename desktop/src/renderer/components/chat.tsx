@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -9,6 +9,7 @@ import { removeFirst } from '../attachments.ts'
 import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarget } from './attach.tsx'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
+import { followsItsCall, resultOf } from './tool-calls.ts'
 import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
@@ -259,14 +260,19 @@ export function ChatPanel({
               </button>
             )}
             {messages.length === 0 && <p className="empty-note">No transcript yet.</p>}
-            {messages.map((message, index) => (
-              <Message
-                key={`${message.timestamp}-${index}`}
-                message={message}
-                hostId={hostId}
-                cwd={session.cwd}
-              />
-            ))}
+            {messages.map((message, index) =>
+              // A result that followed its own call is drawn on that call's
+              // row, so it does not get a line of its own here.
+              followsItsCall(messages, index) ? null : (
+                <Message
+                  key={`${message.timestamp}-${index}`}
+                  message={message}
+                  result={resultOf(messages, index)}
+                  hostId={hostId}
+                  cwd={session.cwd}
+                />
+              ),
+            )}
             {busy && <div className="typing">agent is working…</div>}
           </>
         )}
@@ -389,16 +395,18 @@ interface MessageProps {
   message: TranscriptMessage
   hostId: string
   cwd: string
+  /** How the call went, for a tool_use whose result came next. */
+  result?: boolean
 }
 
 /**
  * One transcript entry. The roles are the daemon's
  * (internal/transcript/reader.go): user, assistant, tool_use, tool_result.
  */
-function Message({ message, hostId, cwd }: MessageProps): JSX.Element | null {
+function Message({ message, hostId, cwd, result }: MessageProps): JSX.Element | null {
   switch (message.role) {
     case 'tool_use':
-      return <ToolUse message={message} hostId={hostId} cwd={cwd} />
+      return <ToolUse message={message} hostId={hostId} cwd={cwd} result={result} />
     case 'tool_result':
       return <ToolResult message={message} />
     case 'assistant':
@@ -528,38 +536,97 @@ const CODE_FIELDS: { key: string; label?: string }[] = [
 /** Tools whose call changes a file, and whose diff is the point of the row. */
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
 
-/**
- * A summary is one line by definition, but the thing it summarises often is
- * not — a heredoc, a multi-line command. Collapsing the whitespace here rather
- * than leaving it to `white-space: nowrap` keeps the ellipsis honest: the
- * browser would otherwise measure the untouched string and decide the row
- * needs a width no sidebar has.
- */
 function oneLine(text: string | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim()
 }
 
 /**
- * A tool call: one line collapsed, the input expanded. The expansion is
- * tool-aware because a Bash command and an Edit's replacement text want
- * different treatment, and a raw JSON dump serves neither.
+ * What the row says the call was.
+ *
+ * The daemon's summary cuts a command at 80 characters (internal/transcript/
+ * reader.go), which is where `git commit -m "…"` loses the message and two
+ * pipelines become the same string. The command itself is in the input, so the
+ * row shows that and lets it wrap.
  */
-function ToolUse({ message, hostId, cwd }: MessageProps): JSX.Element {
+function headline(tool: string, input: Record<string, unknown>, summary?: string): string {
+  if (tool === 'Bash' || tool === 'BashOutput') {
+    const command = str(input.command) || str(input.cmd)
+    if (command) return command.trim()
+  }
+  return oneLine(summary)
+}
+
+/**
+ * How many lines the clamp is hiding, or 0 when it is hiding none.
+ *
+ * Measured rather than counted: what a line is depends on the width of the
+ * panel and the font in it, neither of which this knows. Re-measured on resize
+ * for the same reason.
+ */
+function useHiddenLines(text: string, open: boolean): [RefObject<HTMLSpanElement>, number] {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [hidden, setHidden] = useState(0)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || open) {
+      setHidden(0)
+      return
+    }
+    const measure = (): void => {
+      const line = parseFloat(getComputedStyle(el).lineHeight) || 1
+      setHidden(Math.max(0, Math.round((el.scrollHeight - el.clientHeight) / line)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, open])
+
+  return [ref, hidden]
+}
+
+/**
+ * A tool call: what it ran, and what it ran on.
+ *
+ * The command is shown in full and wrapped rather than cut at the width of the
+ * panel — reading which of two similar commands this was is the whole use of
+ * the row. Only the overflow past a few lines folds, and it says how much it is
+ * holding back, as the terminal does.
+ */
+function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
   const tool = message.tool ?? 'tool'
   const input = (message.metadata ?? {}) as Record<string, unknown>
   const filePath = typeof input.file_path === 'string' ? input.file_path : null
   // A write is the part of a session worth reading, and a collapsed row names
   // the tool without saying what it did to the file.
   const [open, setOpen] = useState(WRITING_TOOLS.has(tool))
+  const text = headline(tool, input, message.summary)
+  const [summaryRef, hidden] = useHiddenLines(text, open)
 
   return (
     <div className="msg tool-call">
-      <button className="tool-head" onClick={() => setOpen(!open)}>
+      <button className={open ? 'tool-head open' : 'tool-head'} onClick={() => setOpen(!open)}>
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
         <span className="tool-name">{tool}</span>
-        <span className="tool-summary">{oneLine(message.summary)}</span>
+        <span className="tool-summary" ref={summaryRef}>
+          {text}
+        </span>
+        {result !== undefined && (
+          <span
+            className={result ? 'tool-verdict' : 'tool-verdict failed'}
+            title={result ? 'The call succeeded' : 'The call failed'}
+          >
+            {result ? '✓' : '✕'}
+          </span>
+        )}
         <Chevron className="chevron" open={open} />
       </button>
+      {hidden > 0 && (
+        <button className="tool-more" onClick={() => setOpen(true)}>
+          … +{hidden} {hidden === 1 ? 'line' : 'lines'}
+        </button>
+      )}
       {open && (
         <div className="tool-detail">
           <ToolInput tool={tool} input={input} />
@@ -578,14 +645,11 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
   const entries = Object.entries(input)
   if (entries.length === 0) return <p className="tool-empty">No input recorded.</p>
 
+  // No code block for the command: the row above is showing it, in full.
   if (tool === 'Bash' || tool === 'BashOutput') {
-    const command = str(input.command) || str(input.cmd)
-    return (
-      <>
-        {command && <CodeBlock code={command} language="bash" />}
-        <KeyValues entries={entries.filter(([key]) => key !== 'command' && key !== 'cmd')} />
-      </>
-    )
+    const rest = entries.filter(([key]) => key !== 'command' && key !== 'cmd')
+    if (rest.length === 0) return <p className="tool-empty">Nothing else was passed.</p>
+    return <KeyValues entries={rest} />
   }
 
   // What changed, as a patch. Two code blocks — the text searched for and the
