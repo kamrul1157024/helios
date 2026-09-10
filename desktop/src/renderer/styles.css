@@ -1999,7 +1999,7 @@ small {
 }
 
 .msg {
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   width: 100%;
 }
 
@@ -2298,15 +2298,26 @@ figure.mermaid svg {
   z-index: 1;
   display: flex;
   min-width: 0;
-  align-items: center;
+  /* Top, not centre: the command wraps, and a centred icon beside three lines
+     of it floats in the middle of the row with nothing to line up with. */
+  align-items: flex-start;
   gap: 10px;
   width: 100%;
   text-align: left;
   border-radius: var(--r-md) var(--r-md) 0 0;
-  padding: 9px 12px;
+  padding: 6px 10px;
   background: var(--surface-container);
   color: var(--on-surface);
   font-weight: 400;
+}
+
+.tool-icon,
+.tool-name,
+.tool-head .chevron {
+  /* The wrapping summary sets the row's height; these keep to the first line
+     of it rather than stretching down the side. */
+  flex: none;
+  line-height: 1.45;
 }
 
 .tool-icon {
@@ -2322,25 +2333,61 @@ figure.mermaid svg {
   font-weight: 600;
 }
 
+/* Wrapped, not cut.
+ *
+ * A command truncated at the width of the panel hides the half that says which
+ * command it was — the flag, the path, the message. So it wraps, and only what
+ * runs past three lines is folded away, with a row underneath saying how much.
+ */
 .tool-summary {
   flex: 1;
-  /* Without this the ellipsis never fires: a flex child defaults to
-     min-width:auto, so a long summary keeps its full intrinsic width, the head
-     overflows the card, and what shows is an arbitrary window into the middle
-     of the text rather than its start. */
+  /* A flex child defaults to min-width:auto, which refuses to shrink below the
+     intrinsic width of the text — the head would overflow the card instead of
+     wrapping inside it. */
   min-width: 0;
   color: var(--on-surface-variant);
   font-family: var(--mono);
+  /* A command is quoted, not typeset: `--repo` has to stay two hyphens. */
+  font-variant-ligatures: none;
   font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.tool-head.open .tool-summary {
+  display: block;
+  overflow: visible;
+}
+
+/* What the clamp is holding back, said out loud. */
+.tool-more {
+  display: block;
+  width: 100%;
+  padding: 0 10px 6px 34px;
+  border-radius: 0;
+  background: none;
+  color: var(--on-surface-variant);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  opacity: 0.75;
+}
+
+.tool-more:hover {
+  opacity: 1;
+  background: none;
+  text-decoration: underline;
 }
 
 /* No height of its own: a patch reads as part of the transcript, scrolled with
    the messages around it rather than through a window cut into the card. */
 .tool-detail {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-top: 1px solid var(--outline-variant);
 }
 
@@ -2351,7 +2398,7 @@ figure.mermaid svg {
 /* Full-bleed: the gutter and the tinted rows run to the edges of the card, as
    they do in a file view. */
 .tool-diff {
-  margin: 0 -12px -10px;
+  margin: 0 -10px -8px;
 }
 
 .tool-code-label {
@@ -2396,12 +2443,25 @@ figure.mermaid svg {
   color: var(--on-surface-variant);
 }
 
-/* A result is one line: the interesting half of the exchange is the call. */
+/* A tick at the end of the call, rather than a line under it saying "Bash
+   done". It is the whole of what a tool_result carries. */
+.tool-verdict {
+  flex: none;
+  line-height: 1.45;
+  color: var(--s-active);
+}
+
+.tool-verdict.failed {
+  color: var(--error);
+}
+
+/* Only for a result whose call is not above it — otherwise it is drawn as the
+   tick, and this row does not exist. */
 .msg.tool-result {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: -8px 0 14px 4px;
+  margin: -4px 0 8px 4px;
   font-size: 11.5px;
   color: var(--on-surface-variant);
 }
