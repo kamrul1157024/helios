@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { DEFAULT_FONTS, fontId } from '../shared/fonts.ts'
 import { DEFAULT_STATUS_LINE, parseStatusLine } from '../shared/status-line.ts'
 import { mergeThemes, resolveTheme, type HeliosTheme, type ThemeMode } from '../shared/theme/resolve.ts'
 import { parseJsonc, type BackdropSpec, type VSCodeTheme } from '../shared/theme/vscode.ts'
@@ -14,6 +15,9 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   darkTheme: 'dark-modern',
   terminalTheme: 'match',
   proseSize: 14,
+  uiFont: DEFAULT_FONTS.ui,
+  codeFont: DEFAULT_FONTS.code,
+  terminalFont: DEFAULT_FONTS.terminal,
   density: 'comfortable',
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,
@@ -83,6 +87,9 @@ export class ThemeRegistry {
         darkTheme: parsed.darkTheme ?? DEFAULT_APPEARANCE.darkTheme,
         terminalTheme: parsed.terminalTheme ?? DEFAULT_APPEARANCE.terminalTheme,
         proseSize: proseSize(parsed.proseSize ?? DEFAULT_APPEARANCE.proseSize),
+        uiFont: fontId('ui', parsed.uiFont),
+        codeFont: fontId('code', parsed.codeFont),
+        terminalFont: fontId('terminal', parsed.terminalFont),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
         statusLine: parseStatusLine(parsed.statusLine),
         statusLineSize: statusLineSize(parsed.statusLineSize),
@@ -225,6 +232,9 @@ export class ThemeRegistry {
   setPrefs(next: Partial<AppearancePrefs>): AppearancePrefs {
     this.prefs = { ...this.prefs, ...next }
     this.prefs.proseSize = proseSize(this.prefs.proseSize)
+    this.prefs.uiFont = fontId('ui', this.prefs.uiFont)
+    this.prefs.codeFont = fontId('code', this.prefs.codeFont)
+    this.prefs.terminalFont = fontId('terminal', this.prefs.terminalFont)
     this.prefs.density = density(this.prefs.density)
     this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)
     this.prefs.statusLineSize = statusLineSize(this.prefs.statusLineSize)

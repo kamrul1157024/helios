@@ -199,6 +199,7 @@ export function registerIpc(deps: IpcDeps): void {
     glass: boolean
     glassSupported: boolean
     proseSize: number
+    fonts: { ui: string; code: string; terminal: string }
     density: Density
     statusLine: SegmentId[]
     statusLineSize: number
@@ -206,6 +207,11 @@ export function registerIpc(deps: IpcDeps): void {
     theme: themes.active(),
     terminal: themes.activeTerminal(),
     proseSize: themes.getPrefs().proseSize,
+    fonts: {
+      ui: themes.getPrefs().uiFont,
+      code: themes.getPrefs().codeFont,
+      terminal: themes.getPrefs().terminalFont,
+    },
     density: themes.getPrefs().density,
     statusLine: themes.getPrefs().statusLine,
     statusLineSize: themes.getPrefs().statusLineSize,

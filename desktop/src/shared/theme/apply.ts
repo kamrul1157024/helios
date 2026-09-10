@@ -1,3 +1,4 @@
+import { fontStack } from '../fonts.ts'
 import type { Density } from '../models.ts'
 import type { HeliosTheme } from './resolve.ts'
 
@@ -15,6 +16,21 @@ import type { HeliosTheme } from './resolve.ts'
 /** The reading size for rendered markdown, which the .md rules scale from. */
 export function applyProseSize(root: HTMLElement, size: number): void {
   root.style.setProperty('--prose-size', `${size}px`)
+}
+
+/**
+ * The three families a reader can set: the interface, code, and the terminal.
+ *
+ * Resolved from ids here rather than stored as stacks, so what reaches the
+ * document is always one of the catalogue's own strings.
+ */
+export function applyFonts(
+  root: HTMLElement,
+  fonts: { ui: string; code: string; terminal: string },
+): void {
+  root.style.setProperty('--font-ui', fontStack('ui', fonts.ui))
+  root.style.setProperty('--mono', fontStack('code', fonts.code))
+  root.style.setProperty('--font-term', fontStack('terminal', fonts.terminal))
 }
 
 /**

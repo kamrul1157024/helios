@@ -9,6 +9,7 @@ import { settingsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { HostsPane } from './hosts.tsx'
 import { ALERT_TYPES } from '../../shared/notifications.ts'
+import { choicesFor, type FontSlot } from '../../shared/fonts.ts'
 import {
   DEFAULT_STATUS_LINE,
   SEGMENTS,
@@ -202,6 +203,28 @@ export function SettingsPane(): JSX.Element {
           min={10}
           max={28}
           onPick={(proseSize) => void setTheme({ proseSize })}
+        />
+
+        <FontPicker
+          label="Interface font"
+          info="The text of the app itself: lists, labels and prose."
+          slot="ui"
+          value={appearance?.uiFont}
+          onPick={(uiFont) => void setTheme({ uiFont })}
+        />
+        <FontPicker
+          label="Code font"
+          info="Code blocks, diffs, paths, and everything else set in monospace."
+          slot="code"
+          value={appearance?.codeFont}
+          onPick={(codeFont) => void setTheme({ codeFont })}
+        />
+        <FontPicker
+          label="Terminal font"
+          info="The terminal panes. Changing it remeasures the grid, so the columns move with it."
+          slot="terminal"
+          value={appearance?.terminalFont}
+          onPick={(terminalFont) => void setTheme({ terminalFont })}
         />
 
         <Backdrop />
@@ -956,6 +979,60 @@ function ThemePicker({
         {themes.map((theme) => (
           <option key={theme.id} value={theme.id}>
             {theme.name}
+          </option>
+        ))}
+      </select>
+    </Row>
+  )
+}
+
+/**
+ * One of the three families the app draws with.
+ *
+ * Fira Code and the symbol face ship with the app; the rest are whatever the
+ * machine has. An option the machine cannot draw is still offered — with the
+ * fact said out loud, because a picker that silently keeps the old font looks
+ * broken, and one that hides the option looks like it forgot.
+ */
+function FontPicker({
+  label,
+  info,
+  slot,
+  value,
+  onPick,
+}: {
+  label: string
+  info?: ReactNode
+  slot: FontSlot
+  value: string | undefined
+  onPick: (id: string) => void
+}): JSX.Element {
+  const choices = choicesFor(slot)
+  // Asked once the fonts have settled: document.fonts.check answers against
+  // what is loaded now, and a face still loading reads as absent.
+  const [installed, setInstalled] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let live = true
+    void document.fonts.ready.then(() => {
+      if (!live) return
+      setInstalled(
+        new Set(
+          choices.filter((font) => !font.probe || document.fonts.check(`12px "${font.probe}"`)).map((f) => f.id),
+        ),
+      )
+    })
+    return () => {
+      live = false
+    }
+  }, [slot])
+
+  return (
+    <Row label={label} info={info}>
+      <select value={value ?? ''} onChange={(event) => onPick(event.target.value)}>
+        {value === undefined && <option value="">Loading…</option>}
+        {choices.map((font) => (
+          <option key={font.id} value={font.id}>
+            {installed.size > 0 && !installed.has(font.id) ? `${font.label} — not installed` : font.label}
           </option>
         ))}
       </select>
