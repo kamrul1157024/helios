@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, statusOf } from '../bridge.ts'
 import { keys } from '../keys.ts'
-import { appendDelta, transcriptMessages, transcriptQuery } from '../queries.ts'
+import { appendDelta, fileContentQuery, transcriptMessages, transcriptQuery } from '../queries.ts'
 import { removeFirst } from '../attachments.ts'
 import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarget } from './attach.tsx'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
+import { hunkHeader, lineOf } from './edit-offsets.ts'
 import { DiffView } from './diff-view.tsx'
 import { foldedCommand, followsItsCall, headline, oneLine, resultOf } from './tool-calls.ts'
 import { Chevron } from './icons.tsx'
@@ -622,21 +623,9 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
         <span className="tool-summary" ref={summaryRef}>
           {text}
         </span>
-        {hidden > 0 && !open && (
-          <span className="tool-more">
-            +{hidden} {hidden === 1 ? 'line' : 'lines'}
-          </span>
-        )}
-        {result !== undefined && (
-          <span
-            className={result ? 'tool-verdict' : 'tool-verdict failed'}
-            title={result ? 'The call succeeded' : 'The call failed'}
-          >
-            {result ? '✓' : '✕'}
-          </span>
-        )}
-        {/* On the row, not in the fold: opening the file a call touched is the
-            common thing to want from it, and it was three clicks down. */}
+        {/* Beside the name, not at the end of the row: it opens that file, and
+            an arrow an inch away from what it acts on reads as belonging to
+            the row's own controls. */}
         {filePath && (
           <button
             className="tool-open"
@@ -651,21 +640,45 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
             ↗
           </button>
         )}
+        <span className="grow" />
+        {hidden > 0 && !open && (
+          <span className="tool-more">
+            +{hidden} {hidden === 1 ? 'line' : 'lines'}
+          </span>
+        )}
+        {result !== undefined && (
+          <span
+            className={result ? 'tool-verdict' : 'tool-verdict failed'}
+            title={result ? 'The call succeeded' : 'The call failed'}
+          >
+            {result ? '✓' : '✕'}
+          </span>
+        )}
         <Chevron className="chevron" open={open} />
       </div>
 
       {open && (
         <div className="tool-detail">
-          <ToolInput tool={tool} input={input} />
+          <ToolInput tool={tool} input={input} hostId={hostId} cwd={cwd} />
         </div>
       )}
     </div>
   )
 }
 
-function ToolInput({ tool, input }: { tool: string; input: Record<string, unknown> }): JSX.Element {
-  // file_path is the row's own text for these, and a field repeating it is the
-  // same string twice with a label on one of them.
+function ToolInput({
+  tool,
+  input,
+  hostId,
+  cwd,
+}: {
+  tool: string
+  input: Record<string, unknown>
+  hostId: string
+  cwd: string
+}): JSX.Element {
+  // file_path is the row's own text, and the arrow on the row opens it, so a
+  // field repeating the path is the same string twice with a label on one.
   const entries = Object.entries(input).filter(([key]) => key !== 'file_path')
   if (entries.length === 0) return <p className="tool-empty">No input recorded.</p>
 
@@ -694,11 +707,7 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
     return (
       <>
         <KeyValues entries={entries.filter(([key]) => !coded.has(key))} />
-        <div className="tool-diff">
-          {/* Unified, not the default split: a tool call's diff sits inline in
-              the transcript, which is far too narrow for two columns. */}
-          <DiffView diff={diff} language={languageForPath(str(input.file_path))} layout="unified" />
-        </div>
+        <ToolDiff diff={diff} input={input} hostId={hostId} cwd={cwd} />
       </>
     )
   }
@@ -720,6 +729,55 @@ function ToolInput({ tool, input }: { tool: string; input: Record<string, unknow
   }
 
   return <KeyValues entries={entries} />
+}
+
+/**
+ * The patch, numbered against the file it was written to where that can be
+ * settled.
+ *
+ * The call carries no offsets, so the numbers come from finding the written
+ * text in the file itself — one cached read per path, shared with the Files
+ * panel. When the file has moved on, or the text sits in it twice, the patch is
+ * drawn unnumbered rather than numbered from a guess.
+ */
+function ToolDiff({
+  diff,
+  input,
+  hostId,
+  cwd,
+}: {
+  diff: string
+  input: Record<string, unknown>
+  hostId: string
+  cwd: string
+}): JSX.Element {
+  const path = resolveFilePath(str(input.file_path), cwd)
+  const written = str(input.new_string)
+  // A Write is the whole file, so it starts where files start. Only an Edit
+  // has to be found. A MultiEdit's edits sit at several places at once, and one
+  // header cannot describe them.
+  const whole = Boolean(str(input.content) || str(input.new_content))
+  const file = useQuery({
+    ...fileContentQuery(hostId, path),
+    enabled: path !== '' && written !== '' && !whole,
+  })
+
+  const numbered = useMemo(() => {
+    if (whole) return `${hunkHeader(diff, 1)}
+${diff}`
+    const content = file.data && file.data.encoding !== 'base64' ? file.data.content : ''
+    const header = hunkHeader(diff, content ? lineOf(content, written) : null)
+    return header ? `${header}
+${diff}` : diff
+  }, [diff, file.data, written, whole])
+
+  return (
+    <div className="tool-diff">
+      {/* Unified, not the default split: a tool call's diff sits inline in the
+          transcript, which is far too narrow for two columns. */}
+      <DiffView diff={numbered} language={languageForPath(str(input.file_path))} layout="unified" />
+    </div>
+  )
 }
 
 /** The patch a tool call implies, or "" for calls that changed no file. */

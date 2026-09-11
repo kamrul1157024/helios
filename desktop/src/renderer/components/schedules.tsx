@@ -23,6 +23,8 @@ import {
 import { store, useStore } from '../store.ts'
 import { sessionLabel, type CheckResult, type Schedule } from '../../shared/models.ts'
 import { schedulePrompt } from '../schedule-prompt.ts'
+import { Chevron } from './icons.tsx'
+import { depthOf, followerCounts, indentFor, visibleSchedules } from './schedule-tree.ts'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 
 /** The drag payload: one schedule's id, carried on the event. */
@@ -98,6 +100,16 @@ export function ScheduleList({
   }, [all, query])
 
   const depths = useMemo(() => depthOf(schedules), [schedules])
+  const followers = useMemo(() => followerCounts(schedules), [schedules])
+  // Folded by default: a chain is one job in several steps, and the steps are
+  // the root's business until asked for. The count on the row is what says
+  // they are there.
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set())
+  const folded = useMemo(
+    () => new Set(Object.keys(followers).filter((id) => followers[id] && !unfolded.has(id))),
+    [followers, unfolded],
+  )
+  const rows = useMemo(() => visibleSchedules(schedules, folded), [schedules, folded])
 
   if (error) {
     return (
@@ -121,7 +133,7 @@ export function ScheduleList({
 
   return (
     <div className="sched-rows">
-      {schedules.map((sc) => (
+      {rows.map((sc) => (
         <div
           key={sc.id}
           className={[
@@ -132,7 +144,7 @@ export function ScheduleList({
           ]
             .filter(Boolean)
             .join(' ')}
-          style={{ paddingLeft: 10 + (depths[sc.id] ?? 0) * 14 }}
+          style={{ paddingLeft: indentFor(depths[sc.id] ?? 0) }}
           draggable
           onDragStart={(event) => {
             // The id rides on the event rather than in state: state is a render
@@ -160,10 +172,36 @@ export function ScheduleList({
           }}
         >
           <span className="sched-row-top">
+            {followers[sc.id] ? (
+              <button
+                className="sched-fold"
+                aria-expanded={!folded.has(sc.id)}
+                aria-label={`${folded.has(sc.id) ? 'Show' : 'Hide'} the ${followers[sc.id]} chained after ${sc.name}`}
+                title={`${followers[sc.id]} chained after this`}
+                onClick={(event) => {
+                  // The row behind this opens the schedule; folding is not
+                  // opening it.
+                  event.stopPropagation()
+                  setUnfolded((open) => {
+                    const next = new Set(open)
+                    if (next.has(sc.id)) next.delete(sc.id)
+                    else next.add(sc.id)
+                    return next
+                  })
+                }}
+              >
+                <Chevron open={!folded.has(sc.id)} />
+              </button>
+            ) : (
+              <span className="sched-fold empty" />
+            )}
             <span className="sched-kind" title={kindTitle(sc)}>
               {kindGlyph(sc)}
             </span>
             <span className="sched-row-name">{sc.name}</span>
+            {followers[sc.id] && folded.has(sc.id) ? (
+              <span className="sched-followers">+{followers[sc.id]}</span>
+            ) : null}
             <span className={`sched-row-state ${statusClass(sc)}`}>{stateWord(sc)}</span>
           </span>
           <span className="sched-row-sub">{subtitle(sc)}</span>
@@ -223,19 +261,6 @@ function confirmDelete(schedules: Schedule[], id: string): boolean {
       'A job that follows another has no clock of its own, so it cannot be kept without it. ' +
       'Their runs stay, as ordinary sessions.',
   )
-}
-
-/** How deep in the after-chain each schedule sits, so a grandchild indents twice. */
-function depthOf(schedules: Schedule[]): Record<string, number> {
-  const parent: Record<string, string> = {}
-  for (const sc of schedules) parent[sc.id] = sc.after_id ?? ''
-  const depth: Record<string, number> = {}
-  for (const sc of schedules) {
-    let n = 0
-    for (let at = sc.after_id ?? ''; at && n < 16; at = parent[at] ?? '') n++
-    depth[sc.id] = n
-  }
-  return depth
 }
 
 /**

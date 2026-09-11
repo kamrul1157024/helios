@@ -2297,8 +2297,10 @@ figure.mermaid svg {
    bare `.tool` here inherited its width, its fixed 36px height and its
    `place-items: center` — which clipped the expanded row to the height of a
    button and centred the overflow so the left of every line was cut off. */
+/* No card. A transcript is mostly tool rows, and a filled box around each of
+   them turned the column into a stack of grey slabs with the conversation
+   squeezed between. What is left is the row itself. */
 .msg.tool-call {
-  background: var(--surface-container);
   border-radius: var(--r-md);
 }
 
@@ -2319,8 +2321,10 @@ figure.mermaid svg {
   width: 100%;
   text-align: left;
   border-radius: var(--r-md) var(--r-md) 0 0;
-  padding: 6px 10px;
-  background: var(--surface-container);
+  padding: 4px 8px;
+  /* Opaque, but the panel's own colour: it is sticky, so a patch scrolling
+     under it must not show through. */
+  background: var(--surface);
   color: var(--on-surface);
   font-weight: 400;
 }
@@ -2355,7 +2359,9 @@ figure.mermaid svg {
  * showing the rest.
  */
 .tool-summary {
-  flex: 1;
+  /* Shrinks, but does not grow: the arrow after it has to stay beside the name
+     rather than being pushed to the far edge by an empty span. */
+  flex: 0 1 auto;
   /* A flex child defaults to min-width:auto, which refuses to shrink below the
      intrinsic width of the text — the head would overflow the card instead of
      wrapping inside it. */
@@ -2379,27 +2385,27 @@ figure.mermaid svg {
   overflow: visible;
 }
 
-/* The one action a file row is usually wanted for. Quiet until the row is
-   under the pointer, so a list of them is not a column of arrows. */
+/* Without a card behind it the row still has to read as something that opens,
+   so it answers the pointer. */
+.tool-head:hover {
+  background: var(--surface-container);
+}
+
+/* The one action a file row is usually wanted for, so it is always there:
+   hiding it until hover means knowing it exists before it can be used. */
 .tool-open {
   flex: none;
-  width: 20px;
-  height: 18px;
+  width: 18px;
+  height: 16px;
+  margin-left: 2px;
   padding: 0;
   display: grid;
   place-items: center;
   border-radius: 4px;
   background: none;
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.msg.tool-call:hover .tool-open,
-.tool-open:focus-visible {
-  opacity: 1;
 }
 
 .tool-open:hover {
@@ -5559,9 +5565,11 @@ hr {
      colours then had to compete with. Against the darker surface the patch
      reads as recessed, which is what a terminal's diff looks like. */
   --diff-bg: var(--surface);
-  /* Enough to say which side a line is on, not enough to fight the text. A
-     file of nothing but additions is a whole card of this. */
-  --diff-tint: 10%;
+  /* Strong enough that a changed row is unmistakable against the context
+     around it — measured at 1.9:1 against the untinted rows, with the text on
+     it still at 7.4:1. The accents are pale, so the number reads higher than
+     it looks. */
+  --diff-tint: 30%;
   overflow-x: auto;
   font-family: var(--mono);
   /* A patch has to read as the bytes it is. With ligatures on, `--- a/file`
@@ -5594,14 +5602,25 @@ hr {
   background: color-mix(in srgb, var(--error) var(--diff-tint), var(--diff-bg));
 }
 
-/* With the syntax colours on, a green line and a red line would be two colours
-   fighting for the same letters. The tint and the sign carry what changed; the
-   text keeps the colours that say what it means. */
+/* The words stay the brightest thing on the row, whether or not a grammar is
+   colouring them. Green text on a green row measures 6:1 where the plain text
+   measures 9:1, and it is the text that has to be read — the tint, the sign
+   and the bar down the edge are what say which side the line is on. */
 .diff-line.d-add,
 .diff-line.d-del,
 .diff-cell.d-add,
 .diff-cell.d-del {
   color: var(--on-surface);
+}
+
+/* Scannable without reading: the eye finds the edge of the block before it
+   finds the signs. */
+.diff-line.d-add {
+  box-shadow: inset 2px 0 0 var(--s-active);
+}
+
+.diff-line.d-del {
+  box-shadow: inset 2px 0 0 var(--error);
 }
 
 .diff-line.d-add .diff-sign {
@@ -5644,6 +5663,7 @@ hr {
 
 .diff-sign {
   width: 1ch;
+  font-weight: 700;
   user-select: none;
 }
 
@@ -6054,6 +6074,41 @@ hr {
 .sched-kind {
   font-size: 11px;
   color: var(--on-surface-variant);
+}
+
+/* The disclosure for a chain. A row with nothing under it keeps the space, so
+   the names down a list still start at the same column. */
+.sched-fold {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--on-surface-variant);
+}
+
+.sched-fold.empty {
+  visibility: hidden;
+}
+
+.sched-fold .chevron-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* How many steps the fold is holding, so a folded chain is not a job that
+   silently lost its followers. */
+.sched-followers {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-highest);
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  line-height: 15px;
 }
 
 .sched-drop-hint {
