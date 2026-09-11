@@ -9,7 +9,7 @@ import { removeFirst } from '../attachments.ts'
 import { AttachButton, AttachmentChips, PasteOffer, useAttachments, useDropTarget } from './attach.tsx'
 import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { DiffView } from './diff-view.tsx'
-import { followsItsCall, resultOf } from './tool-calls.ts'
+import { foldedCommand, followsItsCall, headline, oneLine, resultOf } from './tool-calls.ts'
 import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
@@ -166,6 +166,17 @@ export function ChatPanel({
 
   useEffect(() => () => retries.current.forEach(clearTimeout), [])
 
+  // One line until there is more than one line to show. Measured rather than
+  // counted: the box's width decides where the text wraps, and a newline is
+  // not the only thing that starts a row. The cap is in the stylesheet, so
+  // past it the textarea scrolls instead of eating the transcript.
+  useEffect(() => {
+    const el = composer.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [draft])
+
   const loadOlder = async (): Promise<void> => {
     if (loadingOlder.current || !transcript.hasNextPage) return
     loadingOlder.current = true
@@ -236,7 +247,10 @@ export function ChatPanel({
   }
 
   return (
-    <div className="chat">
+    // The whole panel takes a drop, not just the box at the foot of it: a file
+    // dragged at a conversation is meant for the conversation, and aiming for
+    // a 40px strip is a hit test the reader should not have to pass.
+    <div className={dropping ? 'chat dropping' : 'chat'} {...dropHandlers}>
       <div
         className="chat-scroll"
         ref={scroller}
@@ -315,7 +329,7 @@ export function ChatPanel({
           </button>
         </div>
       ) : (
-        <div className={dropping ? 'composer dropping' : 'composer'} {...dropHandlers}>
+        <div className="composer">
           {files.pasted !== null && draft.includes(files.pasted) && (
             <PasteOffer text={files.pasted} onFile={fileThePaste} onKeep={files.keepThePaste} />
           )}
@@ -326,7 +340,7 @@ export function ChatPanel({
             <textarea
               ref={composer}
               value={draft}
-              rows={3}
+              rows={1}
               placeholder={
                 cold
                   ? 'Send a prompt — the session wakes first'
@@ -536,26 +550,6 @@ const CODE_FIELDS: { key: string; label?: string }[] = [
 /** Tools whose call changes a file, and whose diff is the point of the row. */
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
 
-function oneLine(text: string | undefined): string {
-  return (text ?? '').replace(/\s+/g, ' ').trim()
-}
-
-/**
- * What the row says the call was.
- *
- * The daemon's summary cuts a command at 80 characters (internal/transcript/
- * reader.go), which is where `git commit -m "…"` loses the message and two
- * pipelines become the same string. The command itself is in the input, so the
- * row shows that and lets it wrap.
- */
-function headline(tool: string, input: Record<string, unknown>, summary?: string): string {
-  if (tool === 'Bash' || tool === 'BashOutput') {
-    const command = str(input.command) || str(input.cmd)
-    if (command) return command.trim()
-  }
-  return oneLine(summary)
-}
-
 /**
  * How many lines the clamp is hiding, or 0 when it is hiding none.
  *
@@ -602,16 +596,37 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
   // the tool without saying what it did to the file.
   const [open, setOpen] = useState(WRITING_TOOLS.has(tool))
   const text = headline(tool, input, message.summary)
-  const [summaryRef, hidden] = useHiddenLines(text, open)
+  const [summaryRef, clamped] = useHiddenLines(text, open)
+  // A described row hides the command itself, not the rest of a line of it, so
+  // the count is the command's length rather than what the clamp cut.
+  const command = foldedCommand(tool, input)
+  const commandLines = command ? command.trim().split('\n').length : 0
+  const hidden = open ? 0 : commandLines > 1 ? commandLines : clamped
 
   return (
     <div className="msg tool-call">
-      <button className={open ? 'tool-head open' : 'tool-head'} onClick={() => setOpen(!open)}>
+      <div
+        className={open ? 'tool-head open' : 'tool-head'}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          setOpen(!open)
+        }}
+      >
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
         <span className="tool-name">{tool}</span>
         <span className="tool-summary" ref={summaryRef}>
           {text}
         </span>
+        {hidden > 0 && !open && (
+          <span className="tool-more">
+            +{hidden} {hidden === 1 ? 'line' : 'lines'}
+          </span>
+        )}
         {result !== undefined && (
           <span
             className={result ? 'tool-verdict' : 'tool-verdict failed'}
@@ -620,21 +635,28 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
             {result ? '✓' : '✕'}
           </span>
         )}
+        {/* On the row, not in the fold: opening the file a call touched is the
+            common thing to want from it, and it was three clicks down. */}
+        {filePath && (
+          <button
+            className="tool-open"
+            title={`Open ${resolveFilePath(filePath, cwd)}`}
+            aria-label={`Open ${filePath.split('/').pop() ?? filePath}`}
+            onClick={(event) => {
+              // The row behind this expands; opening the file is not that.
+              event.stopPropagation()
+              store.openFile(hostId, resolveFilePath(filePath, cwd))
+            }}
+          >
+            ↗
+          </button>
+        )}
         <Chevron className="chevron" open={open} />
-      </button>
-      {hidden > 0 && (
-        <button className="tool-more" onClick={() => setOpen(true)}>
-          … +{hidden} {hidden === 1 ? 'line' : 'lines'}
-        </button>
-      )}
+      </div>
+
       {open && (
         <div className="tool-detail">
           <ToolInput tool={tool} input={input} />
-          {filePath && (
-            <div className="file-chips">
-              <FileChip hostId={hostId} cwd={cwd} path={filePath} label={filePath.split('/').pop()} />
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -642,14 +664,26 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
 }
 
 function ToolInput({ tool, input }: { tool: string; input: Record<string, unknown> }): JSX.Element {
-  const entries = Object.entries(input)
+  // file_path is the row's own text for these, and a field repeating it is the
+  // same string twice with a label on one of them.
+  const entries = Object.entries(input).filter(([key]) => key !== 'file_path')
   if (entries.length === 0) return <p className="tool-empty">No input recorded.</p>
 
-  // No code block for the command: the row above is showing it, in full.
+  // The command, but only when the row above is showing a description instead
+  // of it. Without one the row is already the command, and opening it unclamps
+  // what was cut rather than printing it twice.
   if (tool === 'Bash' || tool === 'BashOutput') {
-    const rest = entries.filter(([key]) => key !== 'command' && key !== 'cmd')
-    if (rest.length === 0) return <p className="tool-empty">Nothing else was passed.</p>
-    return <KeyValues entries={rest} />
+    const command = foldedCommand(tool, input)
+    const rest = entries.filter(
+      ([key]) => key !== 'command' && key !== 'cmd' && !(command && key === 'description'),
+    )
+    if (!command && rest.length === 0) return <p className="tool-empty">Nothing else was passed.</p>
+    return (
+      <>
+        {command && <CodeBlock code={command} language="bash" />}
+        <KeyValues entries={rest} />
+      </>
+    )
   }
 
   // What changed, as a patch. Two code blocks — the text searched for and the

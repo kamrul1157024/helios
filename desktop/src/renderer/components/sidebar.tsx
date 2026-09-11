@@ -175,7 +175,7 @@ export function Sidebar({
   onNewSession,
 }: {
   onNewSession: (seed?: { hostId: string; cwd: string; group?: string }) => void
-}): JSX.Element {
+}): JSX.Element | null {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
   const { sessions, stats, pending: awaiting } = useHostSessions()
@@ -185,6 +185,7 @@ export function Sidebar({
   const selection = useStore((s) => s.selection)
   const renamingSession = useStore((s) => s.renamingSession)
   const mode = useStore((s) => s.sidebarMode)
+  const open = useStore((s) => s.sidebarOpen)
   const settingsSection = useStore((s) => s.settingsSection)
   // Its own search, because the two lists hold different things and a query
   // typed against one is meaningless against the other.
@@ -382,6 +383,10 @@ export function Sidebar({
   // One host answering "manual" is enough to show the switch as on: the click
   // writes the other way to every host, which settles any disagreement.
   const manual = hosts.some((host) => sortMode[host.id] === 'manual')
+
+  // Unmounted rather than hidden: the list holds a query per host, and a
+  // folded column has no business polling for rows nobody is looking at.
+  if (!open) return null
 
   return (
     <aside className="sidebar" ref={aside}>

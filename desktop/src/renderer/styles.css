@@ -630,6 +630,18 @@ small {
   overflow: hidden;
 }
 
+/* The fold sits above the modes and apart from them: it is not a fourth thing
+   the window can show, it is whether the third column is there at all. */
+.rail-fold {
+  color: var(--on-surface-variant);
+  margin-bottom: 4px;
+}
+
+.rail-fold .chevron-icon {
+  width: 16px;
+  height: 16px;
+}
+
 /* Wider than it looks: a 4px edge is a target that has to be hunted, so the
    grip reaches inside the panel where nothing else is clickable. It paints
    nothing until the pointer is on it. */
@@ -1982,6 +1994,7 @@ small {
 }
 
 .chat {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2293,6 +2306,7 @@ figure.mermaid svg {
    has scrolled into the middle of it. It can only stick while nothing between
    here and the transcript's scroller clips: hence no `overflow` on the card. */
 .tool-head {
+  cursor: pointer;
   position: sticky;
   top: 0;
   z-index: 1;
@@ -2333,11 +2347,12 @@ figure.mermaid svg {
   font-weight: 600;
 }
 
-/* Wrapped, not cut.
+/* One line per call, and the count of what that hides.
  *
- * A command truncated at the width of the panel hides the half that says which
- * command it was — the flag, the path, the message. So it wraps, and only what
- * runs past three lines is folded away, with a row underneath saying how much.
+ * A transcript is mostly these rows, so each one costs a line and no more. The
+ * text still wraps rather than being cut with `nowrap` — the clamp is what
+ * holds it to one line, and lifting the clamp on expand is then the whole of
+ * showing the rest.
  */
 .tool-summary {
   flex: 1;
@@ -2356,7 +2371,7 @@ figure.mermaid svg {
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 1;
 }
 
 .tool-head.open .tool-summary {
@@ -2364,24 +2379,43 @@ figure.mermaid svg {
   overflow: visible;
 }
 
-/* What the clamp is holding back, said out loud. */
-.tool-more {
-  display: block;
-  width: 100%;
-  padding: 0 10px 6px 34px;
-  border-radius: 0;
+/* The one action a file row is usually wanted for. Quiet until the row is
+   under the pointer, so a list of them is not a column of arrows. */
+.tool-open {
+  flex: none;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
   background: none;
   color: var(--on-surface-variant);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  text-align: left;
-  opacity: 0.75;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 
-.tool-more:hover {
+.msg.tool-call:hover .tool-open,
+.tool-open:focus-visible {
   opacity: 1;
-  background: none;
-  text-decoration: underline;
+}
+
+.tool-open:hover {
+  background: var(--surface-highest);
+  color: var(--primary);
+}
+
+/* What the clamp is holding back, said on the same line — a row that costs a
+   second line to report that it saved one has saved nothing. */
+.tool-more {
+  flex: none;
+  color: var(--on-surface-variant);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.7;
 }
 
 /* No height of its own: a patch reads as part of the transcript, scrolled with
@@ -2512,10 +2546,13 @@ figure.mermaid svg {
 }
 
 /* The box the prompt is typed into: the textarea gives up its own frame so
-   the buttons can sit inside one, on a row of their own rather than floating
-   over the text they belong to. */
+   the buttons can sit inside one, beside the text rather than under it. */
 .composer-input {
   position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: var(--r-md);
   background: var(--surface-high);
@@ -2526,28 +2563,13 @@ figure.mermaid svg {
   border-color: var(--primary);
 }
 
-/* Over the text rather than under it: a row of its own would push the box
-   taller for buttons that are only ever at its edges. The bar itself lets
-   clicks through, so the gap between the buttons still focuses the composer. */
+/* Beside the text, on the last line of it. A strip of its own under the text
+   cost 44px of the window whether one line had been typed or ten. */
 .composer-bar {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
   display: flex;
+  flex: none;
   align-items: center;
   gap: 4px;
-  pointer-events: none;
-}
-
-.composer-bar button {
-  pointer-events: auto;
-}
-
-/* Attach holds the left edge; everything that acts on the turn — Stop, then
-   Send — gathers at the right. */
-.composer-bar .attach-btn {
-  margin-right: auto;
 }
 
 .send-btn {
@@ -2571,16 +2593,20 @@ figure.mermaid svg {
   border-width: 2px;
 }
 
+/* One line to start with, growing with what is typed (see the effect in
+   ChatPanel) and stopping at a third of the window — past that the composer
+   would be eating the conversation it is answering. */
 .composer textarea {
-  /* Inline-block by default, and auto margins do not centre one. */
   display: block;
-  width: 100%;
-  /* Bottom padding is the strip the buttons float over. */
-  padding: 10px 12px 44px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 6px;
   background: transparent;
   border: none;
-  resize: vertical;
-  min-height: 84px;
+  /* The height is set from the content, so a drag handle would only fight it. */
+  resize: none;
+  overflow-y: auto;
+  max-height: 33vh;
   line-height: 1.5;
 }
 
@@ -2620,6 +2646,9 @@ figure.mermaid svg {
 
 /* A file dropped anywhere over the composer counts, so the whole of it lights
    up rather than some target the pointer has to find. */
+/* Over the panel it was dropped on, which is the whole of what accepts it. */
+.pane.dropping::after,
+.chat.dropping::after,
 .composer.dropping .composer-input::after {
   content: 'Drop to attach';
   position: absolute;
@@ -4046,6 +4075,14 @@ figure.mermaid svg {
    itself, and the inner box would sit inside that. */
 .modal-backdrop .composer.dropping .composer-input::after {
   content: none;
+}
+
+/* The transcript's own hint is drawn over the panel, and inside the dialog
+   there is no panel — the dialog draws its own. */
+.chat.dropping::after,
+.pane.dropping::after {
+  z-index: 3;
+  font-size: 13px;
 }
 
 .modal-backdrop .composer-prompt {
@@ -5515,9 +5552,16 @@ hr {
    file view shows one. The whole block scrolls sideways as a unit so the
    columns stay lined up, and the gutters stick to the left edge while it does. */
 .diff-unified {
-  /* The tint of an added line is mixed into this, and the sticky numbers are
-     painted with it, so a pane on a different surface sets it once. */
-  --diff-bg: var(--surface-container);
+  /* The tint of a changed line is mixed into this, and the sticky numbers are
+     painted with it, so a pane on a different surface sets it once.
+     The page surface rather than the card it sits on: mixing a pale accent
+     into an already-pale card gave a milky wall of colour that the syntax
+     colours then had to compete with. Against the darker surface the patch
+     reads as recessed, which is what a terminal's diff looks like. */
+  --diff-bg: var(--surface);
+  /* Enough to say which side a line is on, not enough to fight the text. A
+     file of nothing but additions is a whole card of this. */
+  --diff-tint: 10%;
   overflow-x: auto;
   font-family: var(--mono);
   /* A patch has to read as the bytes it is. With ligatures on, `--- a/file`
@@ -5543,11 +5587,11 @@ hr {
 }
 
 .diff-line.d-add {
-  background: color-mix(in srgb, var(--s-active) 16%, var(--diff-bg));
+  background: color-mix(in srgb, var(--s-active) var(--diff-tint), var(--diff-bg));
 }
 
 .diff-line.d-del {
-  background: color-mix(in srgb, var(--error) 16%, var(--diff-bg));
+  background: color-mix(in srgb, var(--error) var(--diff-tint), var(--diff-bg));
 }
 
 /* With the syntax colours on, a green line and a red line would be two colours
