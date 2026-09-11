@@ -31,6 +31,7 @@ import {
   type ItemId,
   type Layout,
 } from './components/layout.ts'
+import { parseRef } from './components/session-selection.ts'
 import { fontStack } from '../shared/fonts.ts'
 import type { SegmentId } from '../shared/status-line.ts'
 import {
@@ -269,6 +270,20 @@ export interface State {
   /** Whether a file dropped or pasted on a terminal is uploaded to its daemon. */
   terminalUploads: boolean
   /**
+   * Sessions picked out for one action to be done to all of them, as
+   * `hostId:sessionId`. Empty is the ordinary state of the list: a click still
+   * opens a session, and only a modifier or a tick starts a selection.
+   */
+  sessionSelection: string[]
+  /**
+   * Whether the ticks are showing. On while a selection is held, and held on
+   * by the Select button so an empty selection can be started with the mouse
+   * alone.
+   */
+  selectMode: boolean
+  /** The row a Shift-click measures its range from. */
+  selectionAnchor: string | null
+  /**
    * Whether the list column is showing.
    *
    * Folded, the rail stays: what is open is still reachable, and the switch
@@ -465,6 +480,9 @@ const initial: State = {
   termFont: fontStack('terminal', bridge.theme.boot().fonts.terminal),
   termSize: bridge.theme.boot().sizes.terminal,
   terminalUploads: readTerminalUploads(),
+  sessionSelection: [],
+  selectMode: false,
+  selectionAnchor: null,
   sidebarOpen: readSidebarOpen(),
   density: bridge.theme.boot().density,
   statusLine: bridge.theme.boot().statusLine,
@@ -765,6 +783,56 @@ class Store {
     const next = open ?? !this.getSnapshot().sidebarOpen
     this.set({ sidebarOpen: next })
     writeSidebarOpen(next)
+  }
+
+  /** Shows or hides the ticks. Leaving takes the selection with it. */
+  setSelectMode(on: boolean): void {
+    if (on) this.set({ selectMode: true })
+    else this.set({ selectMode: false, sessionSelection: [], selectionAnchor: null })
+  }
+
+  /** Replaces what is held, and remembers where a range would measure from. */
+  setSessionSelection(selection: string[], anchor?: string | null): void {
+    this.set({
+      sessionSelection: selection,
+      selectionAnchor: anchor === undefined ? this.getSnapshot().selectionAnchor : anchor,
+      // A selection with nothing in it still shows its ticks: the reader is
+      // mid-thought, and taking the boxes away under the pointer is worse than
+      // an empty bar.
+      selectMode: selection.length > 0 ? true : this.getSnapshot().selectMode,
+    })
+  }
+
+  clearSessionSelection(): void {
+    this.set({ sessionSelection: [], selectionAnchor: null })
+  }
+
+  /**
+   * One action, applied to every session held, host by host.
+   *
+   * allSettled rather than all: the point of a bulk action is that it finishes.
+   * One host being unreachable must not leave the other half undone, and what
+   * failed is said afterwards rather than thrown.
+   */
+  async bulk(
+    label: string,
+    apply: (hostId: string, sessionId: string) => Promise<unknown>,
+  ): Promise<void> {
+    const held = this.getSnapshot().sessionSelection
+    if (held.length === 0) return
+    const results = await Promise.allSettled(
+      held.map((key) => {
+        const { hostId, sessionId } = parseRef(key)
+        return apply(hostId, sessionId)
+      }),
+    )
+    const failed = results.filter((result) => result.status === 'rejected').length
+    for (const hostId of new Set(held.map((key) => parseRef(key).hostId))) {
+      void this.invalidateSessionsFor(hostId)
+    }
+    this.set({ sessionSelection: [], selectionAnchor: null })
+    if (failed === 0) this.notify(`${label} ${held.length}`)
+    else this.notify(`${label} ${held.length - failed} of ${held.length} — ${failed} failed`, 'error')
   }
 
   setTerminalUploads(on: boolean): void {

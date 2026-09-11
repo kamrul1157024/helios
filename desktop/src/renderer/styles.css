@@ -642,6 +642,79 @@ small {
   height: 16px;
 }
 
+/* ─── Bulk selection ────────────────────────────────────────────────────── */
+
+/* The tick takes a column of its own down the left, so it sits beside the
+   whole card rather than above its first line. */
+.session-row.picking {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+}
+
+.session-row.picking > :not(.row-tick) {
+  grid-column: 2;
+}
+
+.session-row.picking .row-tick {
+  grid-row: 1 / -1;
+}
+
+/* The tick on a row, and on a group header. Shown only while a selection is
+   being built, so an ordinary list is not a column of empty boxes. */
+.row-tick {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px 0 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* What is held, and what can be done to it. Under the search rather than over
+   the list: it appears and disappears, and a bar that pushes the rows down
+   from above is easier to follow than one that covers the top of them. */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--surface-container);
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+  font-size: 12px;
+}
+
+.bulk-count {
+  margin-right: 4px;
+  color: var(--on-surface-variant);
+  font-weight: 600;
+}
+
+.bulk-bar button {
+  padding: 3px 8px;
+  font-size: 11.5px;
+}
+
+.bulk-bar button.danger {
+  color: var(--error);
+}
+
+.bulk-bar button:disabled {
+  opacity: 0.4;
+}
+
+/* A picked row, which is not the same as the open one: one is what the panel
+   is showing, the other is what the bar would act on. */
+.session-row.picked {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.session-row.picked.selected {
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
 /* Wider than it looks: a 4px edge is a target that has to be hunted, so the
    grip reaches inside the panel where nothing else is clickable. It paints
    nothing until the pointer is on it. */

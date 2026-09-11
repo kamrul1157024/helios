@@ -117,6 +117,16 @@ export function Plus({ className = '' }: { className?: string }): JSX.Element {
   )
 }
 
+/** Picking several rows at once: a box with a tick in it. */
+export function Ticks({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4.5 5.5h9M4.5 12h9M4.5 18.5h6" />
+      <path d="M15 15.5l2.5 2.5 5-5" />
+    </svg>
+  )
+}
+
 /**
  * A list of sessions, for the rail. Bulleted, so it is not the sort icon.
  *
