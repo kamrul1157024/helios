@@ -59,10 +59,9 @@ test('a card opened by hand is still reached by the next press', async ({ window
   await expect(window.locator('.tool-detail')).toHaveCount(0)
 })
 
-// The bug this guards: the fold ran on mount, so once the button had been
-// pressed at all, every card that arrived afterwards was folded by a press
-// that happened before it existed — and a write never opened itself again.
-test('a write that arrives after a fold all still opens itself', async ({ window }) => {
+// Folding is a standing instruction for the session, not a press that expires:
+// a write the agent makes afterwards arrives folded too.
+test('a write that arrives after a fold all arrives folded', async ({ window }) => {
   await open(window)
 
   await fold(window).click()
@@ -77,7 +76,33 @@ test('a write that arrives after a fold all still opens itself', async ({ window
   pushEvent('session_status', { session_id: ALPHA_ID, status: 'idle' })
 
   await expect(window.locator('.msg.tool-call')).toHaveCount(3)
-  await expect(window.locator('.tool-detail')).toHaveCount(1)
+  await expect(window.locator('.tool-detail')).toHaveCount(0)
+})
+
+// The panel is unmounted after five minutes out of sight, so without this the
+// fold lasts exactly as long as the reader's attention does.
+test('the fold outlives the panel, and the window', async ({ window }) => {
+  await open(window)
+  await fold(window).click()
+
+  const stored = await window.evaluate(() => localStorage.getItem('helios.foldModes'))
+  expect(stored).toContain('folded')
+
+  // What a remounted panel reads: the mode, not the press.
+  await window.reload()
+  await window.locator('.session-row', { hasText: ALPHA }).click()
+  await expect(window.locator('.msg.tool-call').first()).toBeVisible()
+  await expect(window.locator('.tool-detail')).toHaveCount(0)
+  await expect(fold(window)).toHaveAttribute('aria-label', 'Open every tool call')
+})
+
+test('opening them all again is remembered too', async ({ window }) => {
+  await open(window)
+  await fold(window).click()
+  await fold(window).click()
+
+  const stored = await window.evaluate(() => localStorage.getItem('helios.foldModes'))
+  expect(stored).toContain('open')
 })
 
 test('the button says which way it will go', async ({ window }) => {

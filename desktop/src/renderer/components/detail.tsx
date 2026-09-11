@@ -4,7 +4,15 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../bridge.ts'
 import { useHostGroups, useHostNotifications, useHostSessions } from '../host-data.ts'
 import { providersQuery, sessionQuery } from '../queries.ts'
-import { currentLayout, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
+import {
+  currentLayout,
+  sessionKey,
+  store,
+  terminalId,
+  useStore,
+  type RightPanel,
+  type Tab,
+} from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
 import { Chevron } from './icons.tsx'
 import { ChatPanel } from './chat.tsx'
@@ -568,7 +576,9 @@ function GroupTabs({
           {/* Beside the tab it acts on, and only while that tab is the one
               showing: it folds the cards in the transcript, so anywhere else
               on the strip it would name a panel nobody is looking at. */}
-          {panelOf(item) === 'chat' && group.active === item && <FoldAllButton />}
+          {panelOf(item) === 'chat' && group.active === item && (
+            <FoldAllButton hostId={hostId} sessionId={session.session_id} />
+          )}
         </Fragment>
       ))}
       {dragging && over === group.items.length && <span className="tab-insert" />}
@@ -597,11 +607,10 @@ function GroupTabs({
  * should do. It remembers what it did last rather than reading the cards,
  * which would mean the strip knowing about every card in the panel.
  */
-function FoldAllButton(): JSX.Element {
-  const foldAll = useStore((s) => s.foldAll)
-  // Nothing has been pressed yet, and writes open themselves — so the first
-  // press folds.
-  const folded = foldAll.seq > 0 && !foldAll.open
+function FoldAllButton({ hostId, sessionId }: { hostId: string; sessionId: string }): JSX.Element {
+  // The session's own mode, not the last press anywhere: two sessions can be
+  // read differently, and reopening one should find it as it was left.
+  const folded = useStore((s) => s.foldModes[sessionKey(hostId, sessionId)]) === 'folded'
 
   return (
     <button
@@ -609,7 +618,7 @@ function FoldAllButton(): JSX.Element {
       title={folded ? 'Open every tool call' : 'Fold every tool call'}
       aria-label={folded ? 'Open every tool call' : 'Fold every tool call'}
       aria-pressed={folded}
-      onClick={() => store.foldTranscript(folded)}
+      onClick={() => store.foldTranscript(hostId, sessionId, folded)}
     >
       <Chevron dir={folded ? 'down' : 'up'} />
     </button>

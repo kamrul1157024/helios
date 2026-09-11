@@ -293,6 +293,14 @@ export interface State {
    */
   foldAll: { seq: number; open: boolean }
   /**
+   * Whether each session's transcript is being read folded, by session key.
+   *
+   * Kept per session rather than per card: what a reader means by folding is
+   * "this session is history, keep it quiet", and that outlives both the panel
+   * — which is unmounted after five minutes out of sight — and the window.
+   */
+  foldModes: Record<string, 'folded' | 'open'>
+  /**
    * Whether the list column is showing.
    *
    * Folded, the rail stays: what is open is still reachable, and the switch
@@ -360,6 +368,39 @@ function writeGroupMode(mode: GroupMode): void {
 
 const TERMINAL_UPLOADS_KEY = 'helios.terminalUploads'
 const SIDEBAR_OPEN_KEY = 'helios.sidebarOpen'
+const FOLD_MODE_KEY = 'helios.foldModes'
+
+/**
+ * How many sessions' fold modes are worth keeping.
+ *
+ * One line per session read, and a machine that has read a thousand should not
+ * carry a thousand: the oldest are dropped, which at worst costs a session its
+ * fold the next time it is opened.
+ */
+const FOLD_MODE_LIMIT = 200
+
+/** Whether a session's transcript was left folded, by session key. */
+function readFoldModes(): Record<string, 'folded' | 'open'> {
+  try {
+    const raw = localStorage.getItem(FOLD_MODE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, 'folded' | 'open'>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeFoldModes(modes: Record<string, 'folded' | 'open'>): void {
+  try {
+    const keys = Object.keys(modes)
+    const kept = keys.length > FOLD_MODE_LIMIT ? keys.slice(keys.length - FOLD_MODE_LIMIT) : keys
+    localStorage.setItem(
+      FOLD_MODE_KEY,
+      JSON.stringify(Object.fromEntries(kept.map((key) => [key, modes[key]]))),
+    )
+  } catch {
+    // A full or unavailable store costs the preference, not the fold.
+  }
+}
 
 /** Open unless it has been folded away, and it stays folded across restarts. */
 function readSidebarOpen(): boolean {
@@ -493,6 +534,7 @@ const initial: State = {
   selectMode: false,
   selectionAnchor: null,
   foldAll: { seq: 0, open: false },
+  foldModes: readFoldModes(),
   sidebarOpen: readSidebarOpen(),
   density: bridge.theme.boot().density,
   statusLine: bridge.theme.boot().statusLine,
@@ -795,9 +837,19 @@ class Store {
     writeSidebarOpen(next)
   }
 
-  /** Folds every tool call in the transcript, or opens them all. */
-  foldTranscript(open: boolean): void {
-    this.set({ foldAll: { seq: this.getSnapshot().foldAll.seq + 1, open } })
+  /**
+   * Folds every tool call in a session's transcript, or opens them all.
+   *
+   * Two things at once: the counter reaches the cards already on screen, and
+   * the mode is what a card mounting later starts as — including one the agent
+   * has not written yet. A reader who folded a session asked for a quiet
+   * transcript, not for a quiet minute.
+   */
+  foldTranscript(hostId: string, sessionId: string, open: boolean): void {
+    const mode: 'open' | 'folded' = open ? 'open' : 'folded'
+    const modes = { ...this.getSnapshot().foldModes, [sessionKey(hostId, sessionId)]: mode }
+    writeFoldModes(modes)
+    this.set({ foldAll: { seq: this.getSnapshot().foldAll.seq + 1, open }, foldModes: modes })
   }
 
   /** Shows or hides the ticks. Leaving takes the selection with it. */
