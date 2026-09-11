@@ -240,10 +240,11 @@ export function SettingsPane(): JSX.Element {
 
         <PixelSize
           label="Reading width"
-          info="How wide the agent's prose is allowed to run, in pixels. Code, patches and tool rows are unaffected — those are scanned rather than read, and they take the whole panel. Set 0 for no limit."
+          info="How much of the panel the agent's prose fills, as a percentage between 20 and 100. Code, patches and tool rows are unaffected — those are scanned rather than read, and they take the whole panel. 100 is no limit."
           size={appearance?.proseWidth}
-          min={0}
-          max={2400}
+          min={20}
+          max={100}
+          unit="%"
           onPick={(proseWidth) => void setTheme({ proseWidth })}
         />
 

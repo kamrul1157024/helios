@@ -37,23 +37,27 @@ async function setWidth(window: Page, px: string): Promise<void> {
   await window.locator('.rail-item[aria-label="Sessions"]').click()
 }
 
-test('the measure starts at 1100px', async ({ window }) => {
+test('the measure starts at 70% of the panel', async ({ window }) => {
   await open(window)
 
   expect(await window.evaluate(() => document.documentElement.style.getPropertyValue('--prose-width'))).toBe(
-    '1100px',
+    '70%',
   )
 })
 
 test('prose is held to the measure, and stops short of the panel', async ({ window }) => {
   appendTranscript(ALPHA_ID, LONG)
   await open(window)
-  await setWidth(window, '400')
+  await setWidth(window, '40')
 
-  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(400)
-  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeLessThan(
-    await widthOf(window, '.chat-scroll'),
-  )
+  // Two fifths of the panel, whatever the panel happens to be here.
+  await expect
+    .poll(async () =>
+      Math.round(
+        (await widthOf(window, '.msg.assistant .msg-body')) / (await widthOf(window, '.chat-scroll')) * 100,
+      ),
+    )
+    .toBeLessThanOrEqual(42)
 })
 
 test('a patch is not: it is scanned, not read', async ({ window }) => {
@@ -67,29 +71,31 @@ test('a patch is not: it is scanned, not read', async ({ window }) => {
   ])
   await open(window)
 
-  await setWidth(window, '400')
+  await setWidth(window, '40')
 
-  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(400)
   // The patch keeps the panel: it is scanned, not read.
-  expect(await widthOf(window, '.tool-diff')).toBeGreaterThan(
-    await widthOf(window, '.msg.assistant .msg-body'),
-  )
+  await expect
+    .poll(async () =>
+      (await widthOf(window, '.tool-diff')) > (await widthOf(window, '.msg.assistant .msg-body')),
+    )
+    .toBe(true)
 })
 
-test('the setting moves it, and zero takes the limit off', async ({ window }) => {
+test('the setting moves it, and a hundred takes the limit off', async ({ window }) => {
   appendTranscript(ALPHA_ID, LONG)
   await open(window)
 
-  await setWidth(window, '400')
-  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(400)
+  await setWidth(window, '40')
+  const narrow = await widthOf(window, '.msg.assistant .msg-body')
 
-  await setWidth(window, '0')
+  await setWidth(window, '100')
   await expect
     .poll(() => window.evaluate(() => document.documentElement.style.getPropertyValue('--prose-width')))
     .toBe('none')
-  // No limit means the panel's width, whatever that is on this machine.
+
+  // A hundred percent means the panel, whatever that is on this machine.
   const prose = await widthOf(window, '.msg.assistant .msg-body')
   const panel = await widthOf(window, '.chat-scroll')
-  expect(prose).toBeGreaterThan(400)
+  expect(prose).toBeGreaterThan(narrow)
   expect(panel - prose).toBeLessThan(48)
 })

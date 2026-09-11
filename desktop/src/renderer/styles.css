@@ -2166,7 +2166,7 @@ small {
 .msg.assistant .msg-body,
 .msg.user .msg-body,
 .msg-body:not(.md) {
-  max-width: var(--prose-width, 1100px);
+  max-width: var(--prose-width, 70%);
 }
 
 .msg-body {
