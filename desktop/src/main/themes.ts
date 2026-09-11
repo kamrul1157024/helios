@@ -22,7 +22,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   codeSize: 12,
   terminalSize: 13,
   diffLines: 5,
-  proseWidth: 900,
+  proseWidth: 1100,
   density: 'comfortable',
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,

@@ -25,9 +25,9 @@ test('prose is held to a measure', async ({ window }) => {
   await open(window)
 
   expect(await window.evaluate(() => document.documentElement.style.getPropertyValue('--prose-width'))).toBe(
-    '900px',
+    '1100px',
   )
-  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(900)
+  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(1100)
 })
 
 test('a patch is not: it is scanned, not read', async ({ window }) => {
@@ -66,5 +66,5 @@ test('the setting moves it, and zero takes the limit off', async ({ window }) =>
   await expect
     .poll(() => window.evaluate(() => document.documentElement.style.getPropertyValue('--prose-width')))
     .toBe('none')
-  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeGreaterThan(900)
+  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeGreaterThan(1100)
 })
