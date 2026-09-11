@@ -166,6 +166,17 @@ export function ChatPanel({
 
   useEffect(() => () => retries.current.forEach(clearTimeout), [])
 
+  // One line until there is more than one line to show. Measured rather than
+  // counted: the box's width decides where the text wraps, and a newline is
+  // not the only thing that starts a row. The cap is in the stylesheet, so
+  // past it the textarea scrolls instead of eating the transcript.
+  useEffect(() => {
+    const el = composer.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [draft])
+
   const loadOlder = async (): Promise<void> => {
     if (loadingOlder.current || !transcript.hasNextPage) return
     loadingOlder.current = true
@@ -326,7 +337,7 @@ export function ChatPanel({
             <textarea
               ref={composer}
               value={draft}
-              rows={3}
+              rows={1}
               placeholder={
                 cold
                   ? 'Send a prompt — the session wakes first'
@@ -612,6 +623,11 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
         <span className="tool-summary" ref={summaryRef}>
           {text}
         </span>
+        {hidden > 0 && !open && (
+          <span className="tool-more">
+            +{hidden} {hidden === 1 ? 'line' : 'lines'}
+          </span>
+        )}
         {result !== undefined && (
           <span
             className={result ? 'tool-verdict' : 'tool-verdict failed'}
@@ -622,11 +638,7 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
         )}
         <Chevron className="chevron" open={open} />
       </button>
-      {hidden > 0 && (
-        <button className="tool-more" onClick={() => setOpen(true)}>
-          … +{hidden} {hidden === 1 ? 'line' : 'lines'}
-        </button>
-      )}
+
       {open && (
         <div className="tool-detail">
           <ToolInput tool={tool} input={input} />

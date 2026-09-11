@@ -269,6 +269,14 @@ export interface State {
   /** Whether a file dropped or pasted on a terminal is uploaded to its daemon. */
   terminalUploads: boolean
   /**
+   * Whether the list column is showing.
+   *
+   * Folded, the rail stays: what is open is still reachable, and the switch
+   * back is where the switch away was. The session under the pointer keeps the
+   * whole window, which is the point of folding it.
+   */
+  sidebarOpen: boolean
+  /**
    * How much of a session the sidebar shows. Kept here as well as on <html>
    * because the control that changes it lives in the sidebar and has to show
    * which way it is set.
@@ -327,6 +335,24 @@ function writeGroupMode(mode: GroupMode): void {
 }
 
 const TERMINAL_UPLOADS_KEY = 'helios.terminalUploads'
+const SIDEBAR_OPEN_KEY = 'helios.sidebarOpen'
+
+/** Open unless it has been folded away, and it stays folded across restarts. */
+function readSidebarOpen(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_OPEN_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function writeSidebarOpen(open: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_OPEN_KEY, open ? '1' : '0')
+  } catch {
+    // A full or unavailable store costs the preference, not the fold.
+  }
+}
 
 /**
  * On unless it has been turned off. A file dropped on the terminal is on this
@@ -439,6 +465,7 @@ const initial: State = {
   termFont: fontStack('terminal', bridge.theme.boot().fonts.terminal),
   termSize: bridge.theme.boot().sizes.terminal,
   terminalUploads: readTerminalUploads(),
+  sidebarOpen: readSidebarOpen(),
   density: bridge.theme.boot().density,
   statusLine: bridge.theme.boot().statusLine,
   toast: null,
@@ -733,6 +760,13 @@ class Store {
   }
 
   /** Turns uploading a file dropped or pasted on a terminal on or off. */
+  /** Folds the list column away, or brings it back. */
+  toggleSidebar(open?: boolean): void {
+    const next = open ?? !this.getSnapshot().sidebarOpen
+    this.set({ sidebarOpen: next })
+    writeSidebarOpen(next)
+  }
+
   setTerminalUploads(on: boolean): void {
     this.set({ terminalUploads: on })
     writeTerminalUploads(on)

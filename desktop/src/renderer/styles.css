@@ -630,6 +630,18 @@ small {
   overflow: hidden;
 }
 
+/* The fold sits above the modes and apart from them: it is not a fourth thing
+   the window can show, it is whether the third column is there at all. */
+.rail-fold {
+  color: var(--on-surface-variant);
+  margin-bottom: 4px;
+}
+
+.rail-fold .chevron-icon {
+  width: 16px;
+  height: 16px;
+}
+
 /* Wider than it looks: a 4px edge is a target that has to be hunted, so the
    grip reaches inside the panel where nothing else is clickable. It paints
    nothing until the pointer is on it. */
@@ -2333,11 +2345,12 @@ figure.mermaid svg {
   font-weight: 600;
 }
 
-/* Wrapped, not cut.
+/* One line per call, and the count of what that hides.
  *
- * A command truncated at the width of the panel hides the half that says which
- * command it was — the flag, the path, the message. So it wraps, and only what
- * runs past three lines is folded away, with a row underneath saying how much.
+ * A transcript is mostly these rows, so each one costs a line and no more. The
+ * text still wraps rather than being cut with `nowrap` — the clamp is what
+ * holds it to one line, and lifting the clamp on expand is then the whole of
+ * showing the rest.
  */
 .tool-summary {
   flex: 1;
@@ -2356,7 +2369,7 @@ figure.mermaid svg {
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 1;
 }
 
 .tool-head.open .tool-summary {
@@ -2364,24 +2377,15 @@ figure.mermaid svg {
   overflow: visible;
 }
 
-/* What the clamp is holding back, said out loud. */
+/* What the clamp is holding back, said on the same line — a row that costs a
+   second line to report that it saved one has saved nothing. */
 .tool-more {
-  display: block;
-  width: 100%;
-  padding: 0 10px 6px 34px;
-  border-radius: 0;
-  background: none;
+  flex: none;
   color: var(--on-surface-variant);
   font-family: var(--mono);
-  font-size: 11.5px;
-  text-align: left;
-  opacity: 0.75;
-}
-
-.tool-more:hover {
-  opacity: 1;
-  background: none;
-  text-decoration: underline;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.7;
 }
 
 /* No height of its own: a patch reads as part of the transcript, scrolled with
@@ -2512,10 +2516,13 @@ figure.mermaid svg {
 }
 
 /* The box the prompt is typed into: the textarea gives up its own frame so
-   the buttons can sit inside one, on a row of their own rather than floating
-   over the text they belong to. */
+   the buttons can sit inside one, beside the text rather than under it. */
 .composer-input {
   position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: var(--r-md);
   background: var(--surface-high);
@@ -2526,28 +2533,13 @@ figure.mermaid svg {
   border-color: var(--primary);
 }
 
-/* Over the text rather than under it: a row of its own would push the box
-   taller for buttons that are only ever at its edges. The bar itself lets
-   clicks through, so the gap between the buttons still focuses the composer. */
+/* Beside the text, on the last line of it. A strip of its own under the text
+   cost 44px of the window whether one line had been typed or ten. */
 .composer-bar {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
   display: flex;
+  flex: none;
   align-items: center;
   gap: 4px;
-  pointer-events: none;
-}
-
-.composer-bar button {
-  pointer-events: auto;
-}
-
-/* Attach holds the left edge; everything that acts on the turn — Stop, then
-   Send — gathers at the right. */
-.composer-bar .attach-btn {
-  margin-right: auto;
 }
 
 .send-btn {
@@ -2571,16 +2563,20 @@ figure.mermaid svg {
   border-width: 2px;
 }
 
+/* One line to start with, growing with what is typed (see the effect in
+   ChatPanel) and stopping at a third of the window — past that the composer
+   would be eating the conversation it is answering. */
 .composer textarea {
-  /* Inline-block by default, and auto margins do not centre one. */
   display: block;
-  width: 100%;
-  /* Bottom padding is the strip the buttons float over. */
-  padding: 10px 12px 44px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 6px;
   background: transparent;
   border: none;
-  resize: vertical;
-  min-height: 84px;
+  /* The height is set from the content, so a drag handle would only fight it. */
+  resize: none;
+  overflow-y: auto;
+  max-height: 33vh;
   line-height: 1.5;
 }
 

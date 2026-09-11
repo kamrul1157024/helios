@@ -8,6 +8,12 @@ import { Rail } from './components/rail.tsx'
 import { Sidebar } from './components/sidebar.tsx'
 import { ReleaseNotes } from './components/updates.tsx'
 
+/** Whether the keyboard belongs to a field rather than to the window. */
+function typingInto(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+}
+
 export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
   const toast = useStore((s) => s.toast)
@@ -38,6 +44,13 @@ export function App(): JSX.Element {
         event.preventDefault()
         setSeed(null)
         setDialog('new')
+      }
+      // ⌘B folds the list away, as it does in an editor. Not while a field has
+      // the keyboard: ⌘B is bold in a composer, and stealing it there would
+      // fold the window on someone reaching for it.
+      if ((event.metaKey || event.ctrlKey) && event.key === 'b' && !typingInto(event.target)) {
+        event.preventDefault()
+        store.toggleSidebar()
       }
       // ⌘W closes the selected session's terminal, not the window: the
       // terminal is the only thing in this layout that can be closed.
