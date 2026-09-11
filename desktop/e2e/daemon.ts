@@ -64,6 +64,10 @@ export type DaemonWrite =
   | { kind: 'create'; spec: Record<string, unknown> }
   | { kind: 'upload'; names: string[] }
   | { kind: 'send'; sessionId: string; message: string }
+  // What a bulk action issues: one call per session held, so a test can check
+  // that all of them went out and none went twice.
+  | { kind: 'delete'; sessionId: string }
+  | { kind: 'patch'; sessionId: string; patch: Record<string, unknown> }
 
 /** The session every create in these tests hands back. */
 export const CREATED = 's-created'
@@ -325,6 +329,28 @@ export async function startDaemon(): Promise<StubDaemon> {
       res.write(': open\n\n')
       streams.add(res)
       req.on('close', () => streams.delete(res))
+      return
+    }
+
+    if (req.method === 'DELETE' && path.startsWith('/api/sessions/')) {
+      writes.push({ kind: 'delete', sessionId: path.slice('/api/sessions/'.length) })
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ success: true }))
+      return
+    }
+
+    if (req.method === 'PATCH' && path.startsWith('/api/sessions/')) {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        writes.push({
+          kind: 'patch',
+          sessionId: path.slice('/api/sessions/'.length),
+          patch: JSON.parse(Buffer.concat(chunks).toString() || '{}') as Record<string, unknown>,
+        })
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ success: true }))
+      })
       return
     }
 

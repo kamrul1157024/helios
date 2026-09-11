@@ -27,7 +27,7 @@ import {
   type Session,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Console, Cpu, Memory, Pencil, Plus, Search, Sort } from './icons.tsx'
+import { Chevron, Ticks, Console, Cpu, Memory, Pencil, Plus, Search, Sort } from './icons.tsx'
 import {
   buildCwdTree,
   buildTree,
@@ -40,7 +40,9 @@ import { GroupPicker } from './group-picker.tsx'
 import { Modal } from './newsession.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
+import { BulkBar } from './bulk-bar.tsx'
 import { sessionActions } from './session-menu.ts'
+import { coverage, extend, keysInNode, refKey, toggle, toggleAll } from './session-selection.ts'
 import { SECTIONS } from './settings.tsx'
 
 /** What the sidebar may be dragged to. Narrower hides titles; wider is a
@@ -384,6 +386,32 @@ export function Sidebar({
   // writes the other way to every host, which settles any disagreement.
   const manual = hosts.some((host) => sortMode[host.id] === 'manual')
 
+  // ─── Selection ─────────────────────────────────────────────────────────
+  //
+  // The order a Shift-click means is the order on screen, which is the order
+  // the rows were sorted into above — not the daemon's, and not the order the
+  // hosts were paired in.
+  const held = useStore((s) => s.sessionSelection)
+  const picking = useStore((s) => s.selectMode)
+  const anchor = useStore((s) => s.selectionAnchor)
+  const rowOrder = useMemo(
+    () => grouped.flatMap((group) => group.rows.map((row) => refKey(group.host.id, row.session.session_id))),
+    [grouped],
+  )
+  const rowsHeld = useMemo(
+    () => grouped.flatMap((group) => group.rows.map((row) => ({ hostId: group.host.id, session: row.session }))),
+    [grouped],
+  )
+
+  const pick = (hostId: string, sessionId: string, how: 'toggle' | 'range'): void => {
+    const key = refKey(hostId, sessionId)
+    if (how === 'range') {
+      store.setSessionSelection(extend(held, rowOrder, anchor, key), key)
+      return
+    }
+    store.setSessionSelection(toggle(held, key), key)
+  }
+
   // Unmounted rather than hidden: the list holds a query per host, and a
   // folded column has no business polling for rows nobody is looking at.
   if (!open) return null
@@ -501,6 +529,15 @@ export function Sidebar({
           )}
         </div>
         <button
+          className={picking ? 'tool select-toggle on' : 'tool select-toggle'}
+          aria-label="Select sessions"
+          aria-pressed={picking}
+          title="Select several — ⌘-click a row, or Shift-click for a run"
+          onClick={() => store.setSelectMode(!picking)}
+        >
+          <Ticks />
+        </button>
+        <button
           className="tool primary"
           aria-label="New session"
           title="New session (⌘N)"
@@ -509,6 +546,10 @@ export function Sidebar({
           <Plus />
         </button>
       </header>
+      )}
+
+      {mode === 'sessions' && picking && (
+        <BulkBar held={held} rows={rowsHeld} groups={groupsByHost} />
       )}
 
       <div className="sidebar-list" hidden={mode !== 'sessions'}>
@@ -568,9 +609,13 @@ export function Sidebar({
                 ids.splice(to, 0, ids.splice(from, 1)[0] as string)
                 void store.reorderSessions(host.id, ids)
               }}
+              picking={picking}
+              picked={held.includes(refKey(host.id, session.session_id))}
+              onPick={(how) => pick(host.id, session.session_id, how)}
             />
           )
 
+          const keysUnder = (node: GroupNode): string[] => keysInNode(host.id, node)
           const renderNode = (node: GroupNode): JSX.Element => {
             const path = node.path.join('/')
             const foldKey = `${host.id}:${path}`
@@ -613,6 +658,22 @@ export function Sidebar({
                     })
                   }}
                 >
+                  {/* One tick for the whole group. What it covers is the rows
+                      the group is drawing, at any depth under it — folding a
+                      group does not take its sessions out of the selection the
+                      header offers. */}
+                  {picking && !editing && (
+                    <input
+                      className="row-tick"
+                      type="checkbox"
+                      checked={coverage(held, keysUnder(node)) === 'all'}
+                      ref={(box) => {
+                        if (box) box.indeterminate = coverage(held, keysUnder(node)) === 'some'
+                      }}
+                      aria-label={`Select everything in ${node.name || 'Ungrouped'}`}
+                      onChange={() => store.setSessionSelection(toggleAll(held, keysUnder(node)))}
+                    />
+                  )}
                   {editing ? (
                     <InlineNameField
                       initial={node.name}
@@ -890,6 +951,9 @@ export function Sidebar({
                           setMenu({ kind: 'session', hostId: host.id, session, x, y })
                         }
                         onDropBefore={() => {}}
+                        picking={picking}
+                        picked={held.includes(refKey(host.id, session.session_id))}
+                        onPick={(how) => pick(host.id, session.session_id, how)}
                       />
                     ))}
                 </div>
@@ -1120,6 +1184,9 @@ function SessionRow({
   onDragEnd,
   onContextMenu,
   onDropBefore,
+  picking,
+  picked,
+  onPick,
 }: {
   hostId: string
   session: Session
@@ -1137,6 +1204,10 @@ function SessionRow({
   onDragEnd: () => void
   onContextMenu: (x: number, y: number) => void
   onDropBefore: (draggedId: string) => void
+  /** Selection: the ticks are showing, this row is held, and how a click lands. */
+  picking: boolean
+  picked: boolean
+  onPick: (how: 'toggle' | 'range') => void
 }): JSX.Element {
   const live = hasTerminal(session)
   const busy = BUSY_STATUSES.has(session.status)
@@ -1147,6 +1218,8 @@ function SessionRow({
     'session-row',
     session.status,
     selected ? 'selected' : '',
+    picking ? 'picking' : '',
+    picked ? 'picked' : '',
     dragging ? 'dragging' : '',
     draggable ? 'movable' : '',
   ]
@@ -1179,7 +1252,26 @@ function SessionRow({
         event.preventDefault()
         onDropBefore(event.dataTransfer.getData('text/plain'))
       }}
-      onClick={() => store.select(hostId, session.session_id)}
+      onClick={(event) => {
+        // A modifier is what turns a click into a selection; without one the
+        // row opens, as it always has. Shift takes the run between here and
+        // the last one picked.
+        if (event.shiftKey) {
+          onPick('range')
+          return
+        }
+        if (event.metaKey || event.ctrlKey) {
+          onPick('toggle')
+          return
+        }
+        // While the ticks are showing, a plain click ticks: the reader is
+        // building a selection, not browsing.
+        if (picking) {
+          onPick('toggle')
+          return
+        }
+        store.select(hostId, session.session_id)
+      }}
       // Pointed at, not opened. A right-click is a question about a session,
       // and answering it by loading that session into the panel throws away
       // whatever the user was reading — the one thing they did not ask for.
@@ -1198,6 +1290,18 @@ function SessionRow({
           : store.openTerminal(hostId, session, !live))
       }}
     >
+      {/* The tick, only while a selection is being built. It is not a second
+          way to open the row: clicking it picks, and stops there. */}
+      {picking && (
+        <input
+          className="row-tick"
+          type="checkbox"
+          checked={picked}
+          aria-label={`Select ${label}`}
+          onClick={(event) => event.stopPropagation()}
+          onChange={() => onPick('toggle')}
+        />
+      )}
       <div className="row-main">
         {editing ? (
           <InlineNameField
