@@ -18,7 +18,7 @@ interface ThemeBoot {
   glassSupported: boolean
   proseSize: number
   fonts: { ui: string; code: string; terminal: string }
-  sizes: { ui: number; code: number; terminal: number }
+  sizes: { ui: number; code: number; terminal: number; diff: number }
   density: Density
   statusLineSize: number
 }

@@ -238,6 +238,16 @@ export function SettingsPane(): JSX.Element {
           onPick={(codeSize) => void setTheme({ codeSize })}
         />
 
+        <PixelSize
+          label="Patch preview"
+          info="How many lines of a diff the transcript shows before offering the rest, between 1 and 200. The Git panel always draws a patch whole."
+          size={appearance?.diffLines}
+          min={1}
+          max={200}
+          unit="lines"
+          onPick={(diffLines) => void setTheme({ diffLines })}
+        />
+
         <FontPicker
           label="Terminal font"
           info="The terminal panes. Changing it remeasures the grid, so the columns move with it."

@@ -28,13 +28,27 @@ function bigEdit(lines: number) {
   }
 }
 
-test('a long patch is cut short, and says how much it is holding', async ({ window }) => {
+test('a long patch is cut to the five lines it starts at', async ({ window }) => {
   withToolCalls(ALPHA_ID, [bigEdit(LINES)])
   await open(window)
 
-  const rows = window.locator('.diff-line')
-  expect(await rows.count()).toBeLessThanOrEqual(24)
+  await expect(window.locator('.diff-line')).toHaveCount(5)
   await expect(window.locator('.diff-more')).toContainText('more lines')
+})
+
+test('the setting decides how much is shown', async ({ window }) => {
+  withToolCalls(ALPHA_ID, [bigEdit(LINES)])
+  await open(window)
+  await expect(window.locator('.diff-line')).toHaveCount(5)
+
+  await window.locator('.rail-item[aria-label="Settings"]').click()
+  await window.locator('.settings-nav button', { hasText: 'Appearance' }).click()
+  const box = window.locator('.setting-row', { hasText: 'Patch preview' }).locator('input')
+  await box.fill('12')
+  await box.blur()
+
+  await window.locator('.rail-item[aria-label="Sessions"]').click()
+  await expect(window.locator('.diff-line')).toHaveCount(12)
 })
 
 test('the rest is one click away, and can be put back', async ({ window }) => {
@@ -51,7 +65,7 @@ test('the rest is one click away, and can be put back', async ({ window }) => {
 })
 
 test('a short patch is drawn whole, with nothing to press', async ({ window }) => {
-  withToolCalls(ALPHA_ID, [bigEdit(3)])
+  withToolCalls(ALPHA_ID, [bigEdit(2)])
   await open(window)
 
   await expect(window.locator('.diff-more')).toHaveCount(0)

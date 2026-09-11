@@ -616,16 +616,6 @@ const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
 const RECENT_CALLS = 3
 
 /**
- * How much of a patch a transcript shows before offering the rest.
- *
- * Enough to see what the change was — a hunk and its context — without a
- * four-hundred-line rewrite becoming the page. The rest is one click away, and
- * the whole file is one click further, in the Files panel the row's arrow
- * opens.
- */
-const MAX_DIFF_LINES = 24
-
-/**
  * How many lines the clamp is hiding, or 0 when it is hiding none.
  *
  * Measured rather than counted: what a line is depends on the width of the
@@ -914,6 +904,10 @@ function ToolDiff({
   hostId: string
   cwd: string
 }): JSX.Element {
+  // How much of a patch this reader wants inline, from Settings. Enough to see
+  // what the change was; the rest is one press away, and the whole file is one
+  // press further through the arrow on the row.
+  const maxLines = useStore((s) => s.diffLines)
   const path = resolveFilePath(str(input.file_path), cwd)
   const written = str(input.new_string)
   // A Write is the whole file, so it starts where files start. Only an Edit
@@ -942,7 +936,7 @@ ${diff}` : diff
         diff={numbered}
         language={languageForPath(str(input.file_path))}
         layout="unified"
-        maxLines={MAX_DIFF_LINES}
+        maxLines={maxLines}
       />
     </div>
   )

@@ -21,6 +21,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   uiScale: 100,
   codeSize: 12,
   terminalSize: 13,
+  diffLines: 5,
   density: 'comfortable',
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,
@@ -41,6 +42,11 @@ const MAX_SCALE = 150
    a size that reflows prose harmlessly changes how many columns fit. */
 const MIN_CODE = 9
 const MAX_CODE = 24
+
+/* How much of a patch a transcript shows. One line is still a patch; the
+   ceiling is where "show the rest" has stopped meaning anything. */
+const MIN_DIFF_LINES = 1
+const MAX_DIFF_LINES = 200
 
 /* The bar's height is derived from this, so the ceiling is what keeps a status
    line from becoming a second header — the thing it was built to replace. */
@@ -114,6 +120,7 @@ export class ThemeRegistry {
         uiScale: bounded(parsed.uiScale, MIN_SCALE, MAX_SCALE, DEFAULT_APPEARANCE.uiScale),
         codeSize: bounded(parsed.codeSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.codeSize),
         terminalSize: bounded(parsed.terminalSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.terminalSize),
+        diffLines: bounded(parsed.diffLines, MIN_DIFF_LINES, MAX_DIFF_LINES, DEFAULT_APPEARANCE.diffLines),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
         statusLine: parseStatusLine(parsed.statusLine),
         statusLineSize: statusLineSize(parsed.statusLineSize),
@@ -266,6 +273,12 @@ export class ThemeRegistry {
       MIN_CODE,
       MAX_CODE,
       DEFAULT_APPEARANCE.terminalSize,
+    )
+    this.prefs.diffLines = bounded(
+      this.prefs.diffLines,
+      MIN_DIFF_LINES,
+      MAX_DIFF_LINES,
+      DEFAULT_APPEARANCE.diffLines,
     )
     this.prefs.density = density(this.prefs.density)
     this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)

@@ -267,6 +267,8 @@ export interface State {
   termFont: string
   /** And its size, for the same reason. */
   termSize: number
+  /** How many lines of a patch the transcript draws before offering the rest. */
+  diffLines: number
   /** Whether a file dropped or pasted on a terminal is uploaded to its daemon. */
   terminalUploads: boolean
   /**
@@ -529,6 +531,7 @@ const initial: State = {
   terminalTheme: bridge.theme.boot().terminal,
   termFont: fontStack('terminal', bridge.theme.boot().fonts.terminal),
   termSize: bridge.theme.boot().sizes.terminal,
+  diffLines: bridge.theme.boot().sizes.diff,
   terminalUploads: readTerminalUploads(),
   sessionSelection: [],
   selectMode: false,
@@ -634,6 +637,7 @@ class Store {
         terminalTheme: terminal,
         termFont: fontStack('terminal', fonts.terminal),
         termSize: sizes.terminal,
+        diffLines: sizes.diff,
         density,
         statusLine,
       })
