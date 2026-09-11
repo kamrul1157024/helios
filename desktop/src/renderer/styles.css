@@ -1994,6 +1994,7 @@ small {
 }
 
 .chat {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2305,6 +2306,7 @@ figure.mermaid svg {
    has scrolled into the middle of it. It can only stick while nothing between
    here and the transcript's scroller clips: hence no `overflow` on the card. */
 .tool-head {
+  cursor: pointer;
   position: sticky;
   top: 0;
   z-index: 1;
@@ -2375,6 +2377,34 @@ figure.mermaid svg {
 .tool-head.open .tool-summary {
   display: block;
   overflow: visible;
+}
+
+/* The one action a file row is usually wanted for. Quiet until the row is
+   under the pointer, so a list of them is not a column of arrows. */
+.tool-open {
+  flex: none;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.msg.tool-call:hover .tool-open,
+.tool-open:focus-visible {
+  opacity: 1;
+}
+
+.tool-open:hover {
+  background: var(--surface-highest);
+  color: var(--primary);
 }
 
 /* What the clamp is holding back, said on the same line — a row that costs a
@@ -2616,6 +2646,9 @@ figure.mermaid svg {
 
 /* A file dropped anywhere over the composer counts, so the whole of it lights
    up rather than some target the pointer has to find. */
+/* Over the panel it was dropped on, which is the whole of what accepts it. */
+.pane.dropping::after,
+.chat.dropping::after,
 .composer.dropping .composer-input::after {
   content: 'Drop to attach';
   position: absolute;
@@ -4042,6 +4075,14 @@ figure.mermaid svg {
    itself, and the inner box would sit inside that. */
 .modal-backdrop .composer.dropping .composer-input::after {
   content: none;
+}
+
+/* The transcript's own hint is drawn over the panel, and inside the dialog
+   there is no panel — the dialog draws its own. */
+.chat.dropping::after,
+.pane.dropping::after {
+  z-index: 3;
+  font-size: 13px;
 }
 
 .modal-backdrop .composer-prompt {

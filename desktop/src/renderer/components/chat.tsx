@@ -247,7 +247,10 @@ export function ChatPanel({
   }
 
   return (
-    <div className="chat">
+    // The whole panel takes a drop, not just the box at the foot of it: a file
+    // dragged at a conversation is meant for the conversation, and aiming for
+    // a 40px strip is a hit test the reader should not have to pass.
+    <div className={dropping ? 'chat dropping' : 'chat'} {...dropHandlers}>
       <div
         className="chat-scroll"
         ref={scroller}
@@ -326,7 +329,7 @@ export function ChatPanel({
           </button>
         </div>
       ) : (
-        <div className={dropping ? 'composer dropping' : 'composer'} {...dropHandlers}>
+        <div className="composer">
           {files.pasted !== null && draft.includes(files.pasted) && (
             <PasteOffer text={files.pasted} onFile={fileThePaste} onKeep={files.keepThePaste} />
           )}
@@ -602,7 +605,18 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
 
   return (
     <div className="msg tool-call">
-      <button className={open ? 'tool-head open' : 'tool-head'} onClick={() => setOpen(!open)}>
+      <div
+        className={open ? 'tool-head open' : 'tool-head'}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          setOpen(!open)
+        }}
+      >
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>
         <span className="tool-name">{tool}</span>
         <span className="tool-summary" ref={summaryRef}>
@@ -621,17 +635,28 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
             {result ? '✓' : '✕'}
           </span>
         )}
+        {/* On the row, not in the fold: opening the file a call touched is the
+            common thing to want from it, and it was three clicks down. */}
+        {filePath && (
+          <button
+            className="tool-open"
+            title={`Open ${resolveFilePath(filePath, cwd)}`}
+            aria-label={`Open ${filePath.split('/').pop() ?? filePath}`}
+            onClick={(event) => {
+              // The row behind this expands; opening the file is not that.
+              event.stopPropagation()
+              store.openFile(hostId, resolveFilePath(filePath, cwd))
+            }}
+          >
+            ↗
+          </button>
+        )}
         <Chevron className="chevron" open={open} />
-      </button>
+      </div>
 
       {open && (
         <div className="tool-detail">
           <ToolInput tool={tool} input={input} />
-          {filePath && (
-            <div className="file-chips">
-              <FileChip hostId={hostId} cwd={cwd} path={filePath} label={filePath.split('/').pop()} />
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -639,7 +664,9 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
 }
 
 function ToolInput({ tool, input }: { tool: string; input: Record<string, unknown> }): JSX.Element {
-  const entries = Object.entries(input)
+  // file_path is the row's own text for these, and a field repeating it is the
+  // same string twice with a label on one of them.
+  const entries = Object.entries(input).filter(([key]) => key !== 'file_path')
   if (entries.length === 0) return <p className="tool-empty">No input recorded.</p>
 
   // The command, but only when the row above is showing a description instead

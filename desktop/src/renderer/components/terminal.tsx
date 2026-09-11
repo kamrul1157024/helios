@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 
+import { useDropTarget } from './attach.tsx'
 import { silenceDeviceReports } from './deviceReports.ts'
 import { linkHandler, webLinkActivate } from './links.ts'
 import { isLargePaste, pastedName, pastedTextAttachment, terminalPaths } from '../attachments.ts'
@@ -123,6 +124,9 @@ export function TerminalPane({
   const uploads = useStore((s) => s.terminalUploads)
   /** A pasted block big enough to ask about, held until the reader chooses. */
   const [pasted, setPasted] = useState<string | null>(null)
+  const { dropping, handlers: dropHandlers } = useDropTarget((files) => {
+    if (uploads) void insertUploads([...files])
+  })
 
   /**
    * Puts dropped or pasted files where the agent can reach them, and types the
@@ -380,19 +384,13 @@ export function TerminalPane({
   // Whether it is on screen is the group's business, not the pane's: the item
   // wrapper carries `hidden`, and a pane that is up fills the cell it is in.
   return (
-    <div className="pane">
-      <div
-        className="pane-term"
-        ref={hostRef}
-        // Always swallowed, uploads on or off: a file dropped on a window
-        // Electron has not claimed navigates it to that file, replacing the app.
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault()
-          if (!uploads) return
-          void insertUploads([...event.dataTransfer.files])
-        }}
-      />
+    // The pane takes the drop, not the grid inside it: the padding around the
+    // terminal is part of the terminal as far as a reader aiming at it is
+    // concerned. Always swallowed, uploads on or off — a file dropped on a
+    // window Electron has not claimed navigates it to that file, replacing the
+    // app.
+    <div className={dropping ? 'pane dropping' : 'pane'} {...dropHandlers}>
+      <div className="pane-term" ref={hostRef} />
       {pasted !== null && (
         <div
           className="paste-offer paste-offer-term"
