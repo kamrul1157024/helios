@@ -283,6 +283,7 @@ export function ChatPanel({
                   key={`${message.timestamp}-${index}`}
                   message={message}
                   result={resultOf(messages, index)}
+                  recent={index >= messages.length - RECENT_MESSAGES}
                   hostId={hostId}
                   cwd={session.cwd}
                 />
@@ -412,16 +413,18 @@ interface MessageProps {
   cwd: string
   /** How the call went, for a tool_use whose result came next. */
   result?: boolean
+  /** Near the end of the transcript, where a write opens itself. */
+  recent?: boolean
 }
 
 /**
  * One transcript entry. The roles are the daemon's
  * (internal/transcript/reader.go): user, assistant, tool_use, tool_result.
  */
-function Message({ message, hostId, cwd, result }: MessageProps): JSX.Element | null {
+function Message({ message, hostId, cwd, result, recent }: MessageProps): JSX.Element | null {
   switch (message.role) {
     case 'tool_use':
-      return <ToolUse message={message} hostId={hostId} cwd={cwd} result={result} />
+      return <ToolUse message={message} hostId={hostId} cwd={cwd} result={result} recent={recent} />
     case 'tool_result':
       return <ToolResult message={message} />
     case 'assistant':
@@ -552,6 +555,16 @@ const CODE_FIELDS: { key: string; label?: string }[] = [
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
 
 /**
+ * How far back a write is still worth opening on its own.
+ *
+ * The diff an agent just wrote is what the reader came for; the twenty before
+ * it are history, and a transcript that opens all of them is a page of patches
+ * with the conversation lost between them. Older ones fold, and say what they
+ * are on one line — the same shape the terminal settles into.
+ */
+const RECENT_MESSAGES = 6
+
+/**
  * How many lines the clamp is hiding, or 0 when it is hiding none.
  *
  * Measured rather than counted: what a line is depends on the width of the
@@ -589,13 +602,22 @@ function useHiddenLines(text: string, open: boolean): [RefObject<HTMLSpanElement
  * the row. Only the overflow past a few lines folds, and it says how much it is
  * holding back, as the terminal does.
  */
-function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
+function ToolUse({ message, hostId, cwd, result, recent = true }: MessageProps): JSX.Element {
   const tool = message.tool ?? 'tool'
   const input = (message.metadata ?? {}) as Record<string, unknown>
   const filePath = typeof input.file_path === 'string' ? input.file_path : null
   // A write is the part of a session worth reading, and a collapsed row names
   // the tool without saying what it did to the file.
-  const [open, setOpen] = useState(WRITING_TOOLS.has(tool))
+  // Only what the agent has just done opens itself. A card mounted open stays
+  // open as the transcript grows past it: shutting one under a reader mid-diff
+  // to keep a rule tidy is worse than the rule.
+  const [open, setOpen] = useState(WRITING_TOOLS.has(tool) && recent)
+  // Fold all, from the strip above. Keyed on the counter so a card opened by
+  // hand since the last press is reached by the next one.
+  const foldAll = useStore((s) => s.foldAll)
+  useEffect(() => {
+    if (foldAll.seq > 0) setOpen(foldAll.open)
+  }, [foldAll.seq])
   const text = headline(tool, input, message.summary)
   const [summaryRef, clamped] = useHiddenLines(text, open)
   // A described row hides the command itself, not the rest of a line of it, so

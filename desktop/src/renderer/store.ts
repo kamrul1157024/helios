@@ -284,6 +284,15 @@ export interface State {
   /** The row a Shift-click measures its range from. */
   selectionAnchor: string | null
   /**
+   * An instruction to every tool card in the transcript to fold or unfold.
+   *
+   * A counter rather than a boolean, because it is an event and not a state: a
+   * card opened by hand after a Fold all must stay open, and the next press of
+   * the same button has to reach it again. Cards watch the number, not the
+   * flag.
+   */
+  foldAll: { seq: number; open: boolean }
+  /**
    * Whether the list column is showing.
    *
    * Folded, the rail stays: what is open is still reachable, and the switch
@@ -483,6 +492,7 @@ const initial: State = {
   sessionSelection: [],
   selectMode: false,
   selectionAnchor: null,
+  foldAll: { seq: 0, open: false },
   sidebarOpen: readSidebarOpen(),
   density: bridge.theme.boot().density,
   statusLine: bridge.theme.boot().statusLine,
@@ -783,6 +793,11 @@ class Store {
     const next = open ?? !this.getSnapshot().sidebarOpen
     this.set({ sidebarOpen: next })
     writeSidebarOpen(next)
+  }
+
+  /** Folds every tool call in the transcript, or opens them all. */
+  foldTranscript(open: boolean): void {
+    this.set({ foldAll: { seq: this.getSnapshot().foldAll.seq + 1, open } })
   }
 
   /** Shows or hides the ticks. Leaving takes the selection with it. */

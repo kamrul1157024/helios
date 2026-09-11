@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
@@ -6,6 +6,7 @@ import { useHostGroups, useHostNotifications, useHostSessions } from '../host-da
 import { providersQuery, sessionQuery } from '../queries.ts'
 import { currentLayout, store, terminalId, useStore, type RightPanel, type Tab } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
+import { Chevron } from './icons.tsx'
 import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
@@ -552,18 +553,23 @@ function GroupTabs({
       }}
     >
       {group.items.map((item, index) => (
-        <TabButton
-          key={item}
-          item={item}
-          active={group.active === item}
-          insertBefore={over === index}
-          hostId={hostId}
-          session={session}
-          tabs={tabs}
-          term={term}
-          pending={pending}
-          onDragItem={onDragItem}
-        />
+        <Fragment key={item}>
+          <TabButton
+            item={item}
+            active={group.active === item}
+            insertBefore={over === index}
+            hostId={hostId}
+            session={session}
+            tabs={tabs}
+            term={term}
+            pending={pending}
+            onDragItem={onDragItem}
+          />
+          {/* Beside the tab it acts on, and only while that tab is the one
+              showing: it folds the cards in the transcript, so anywhere else
+              on the strip it would name a panel nobody is looking at. */}
+          {panelOf(item) === 'chat' && group.active === item && <FoldAllButton />}
+        </Fragment>
       ))}
       {dragging && over === group.items.length && <span className="tab-insert" />}
 
@@ -580,6 +586,33 @@ function GroupTabs({
 
       {showAdd && <SessionMenuButton hostId={hostId} session={session} />}
     </nav>
+  )
+}
+
+/**
+ * Folds every tool call in the transcript, and opens them again.
+ *
+ * One button rather than two: a transcript is read folded or read open, and
+ * which of those it is now is the only thing that decides what the press
+ * should do. It remembers what it did last rather than reading the cards,
+ * which would mean the strip knowing about every card in the panel.
+ */
+function FoldAllButton(): JSX.Element {
+  const foldAll = useStore((s) => s.foldAll)
+  // Nothing has been pressed yet, and writes open themselves — so the first
+  // press folds.
+  const folded = foldAll.seq > 0 && !foldAll.open
+
+  return (
+    <button
+      className="tab-fold"
+      title={folded ? 'Open every tool call' : 'Fold every tool call'}
+      aria-label={folded ? 'Open every tool call' : 'Fold every tool call'}
+      aria-pressed={folded}
+      onClick={() => store.foldTranscript(folded)}
+    >
+      <Chevron dir={folded ? 'down' : 'up'} />
+    </button>
   )
 }
 
