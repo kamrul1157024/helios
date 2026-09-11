@@ -21,7 +21,7 @@ import {
   resolveFilePath,
 } from '../markdown.ts'
 import { useMermaid } from '../mermaid.ts'
-import { store, useStore } from '../store.ts'
+import { sessionKey, store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
   canResume,
@@ -59,6 +59,8 @@ export function ChatPanel({
    * grows would close a card somebody is reading, so what it decides is only
    * ever the state a new card starts in.
    */
+  // Set by the button beside the tab, and remembered for this session.
+  const folded = useStore((s) => s.foldModes[sessionKey(hostId, session.session_id)]) === 'folded'
   const recentCalls = useMemo(() => {
     const calls = messages.reduce<number[]>((held, message, index) => {
       if (message.role === 'tool_use') held.push(index)
@@ -298,6 +300,7 @@ export function ChatPanel({
                   message={message}
                   result={resultOf(messages, index)}
                   recent={recentCalls.has(index)}
+                  folded={folded}
                   hostId={hostId}
                   cwd={session.cwd}
                 />
@@ -429,16 +432,27 @@ interface MessageProps {
   result?: boolean
   /** Near the end of the transcript, where a write opens itself. */
   recent?: boolean
+  /** The session is being read folded, so nothing opens itself. */
+  folded?: boolean
 }
 
 /**
  * One transcript entry. The roles are the daemon's
  * (internal/transcript/reader.go): user, assistant, tool_use, tool_result.
  */
-function Message({ message, hostId, cwd, result, recent }: MessageProps): JSX.Element | null {
+function Message({ message, hostId, cwd, result, recent, folded }: MessageProps): JSX.Element | null {
   switch (message.role) {
     case 'tool_use':
-      return <ToolUse message={message} hostId={hostId} cwd={cwd} result={result} recent={recent} />
+      return (
+        <ToolUse
+          message={message}
+          hostId={hostId}
+          cwd={cwd}
+          result={result}
+          recent={recent}
+          folded={folded}
+        />
+      )
     case 'tool_result':
       return <ToolResult message={message} />
     case 'assistant':
@@ -619,16 +633,24 @@ function useHiddenLines(text: string, open: boolean): [RefObject<HTMLSpanElement
  * the row. Only the overflow past a few lines folds, and it says how much it is
  * holding back, as the terminal does.
  */
-function ToolUse({ message, hostId, cwd, result, recent = true }: MessageProps): JSX.Element {
+function ToolUse({
+  message,
+  hostId,
+  cwd,
+  result,
+  recent = true,
+  folded = false,
+}: MessageProps): JSX.Element {
   const tool = message.tool ?? 'tool'
   const input = (message.metadata ?? {}) as Record<string, unknown>
   const filePath = typeof input.file_path === 'string' ? input.file_path : null
   // A write is the part of a session worth reading, and a collapsed row names
   // the tool without saying what it did to the file.
-  // Only what the agent has just done opens itself. A card mounted open stays
-  // open as the transcript grows past it: shutting one under a reader mid-diff
-  // to keep a rule tidy is worse than the rule.
-  const [open, setOpen] = useState(WRITING_TOOLS.has(tool) && recent)
+  // Only what the agent has just done opens itself, and not even that while
+  // the session is being read folded — that is a standing instruction, not a
+  // press that expires. A card mounted open stays open as the transcript grows
+  // past it: shutting one under a reader mid-diff is worse than the rule.
+  const [open, setOpen] = useState(!folded && WRITING_TOOLS.has(tool) && recent)
   // Fold all, from the strip above. Keyed on the counter so a card opened by
   // hand since the last press is reached by the next one.
   const foldAll = useStore((s) => s.foldAll)
