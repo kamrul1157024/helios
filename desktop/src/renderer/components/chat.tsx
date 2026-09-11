@@ -623,21 +623,9 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
         <span className="tool-summary" ref={summaryRef}>
           {text}
         </span>
-        {hidden > 0 && !open && (
-          <span className="tool-more">
-            +{hidden} {hidden === 1 ? 'line' : 'lines'}
-          </span>
-        )}
-        {result !== undefined && (
-          <span
-            className={result ? 'tool-verdict' : 'tool-verdict failed'}
-            title={result ? 'The call succeeded' : 'The call failed'}
-          >
-            {result ? '✓' : '✕'}
-          </span>
-        )}
-        {/* On the row, not in the fold: opening the file a call touched is the
-            common thing to want from it, and it was three clicks down. */}
+        {/* Beside the name, not at the end of the row: it opens that file, and
+            an arrow an inch away from what it acts on reads as belonging to
+            the row's own controls. */}
         {filePath && (
           <button
             className="tool-open"
@@ -651,6 +639,20 @@ function ToolUse({ message, hostId, cwd, result }: MessageProps): JSX.Element {
           >
             ↗
           </button>
+        )}
+        <span className="grow" />
+        {hidden > 0 && !open && (
+          <span className="tool-more">
+            +{hidden} {hidden === 1 ? 'line' : 'lines'}
+          </span>
+        )}
+        {result !== undefined && (
+          <span
+            className={result ? 'tool-verdict' : 'tool-verdict failed'}
+            title={result ? 'The call succeeded' : 'The call failed'}
+          >
+            {result ? '✓' : '✕'}
+          </span>
         )}
         <Chevron className="chevron" open={open} />
       </div>

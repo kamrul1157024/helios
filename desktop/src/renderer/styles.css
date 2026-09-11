@@ -2297,8 +2297,10 @@ figure.mermaid svg {
    bare `.tool` here inherited its width, its fixed 36px height and its
    `place-items: center` — which clipped the expanded row to the height of a
    button and centred the overflow so the left of every line was cut off. */
+/* No card. A transcript is mostly tool rows, and a filled box around each of
+   them turned the column into a stack of grey slabs with the conversation
+   squeezed between. What is left is the row itself. */
 .msg.tool-call {
-  background: var(--surface-container);
   border-radius: var(--r-md);
 }
 
@@ -2319,8 +2321,10 @@ figure.mermaid svg {
   width: 100%;
   text-align: left;
   border-radius: var(--r-md) var(--r-md) 0 0;
-  padding: 6px 10px;
-  background: var(--surface-container);
+  padding: 4px 8px;
+  /* Opaque, but the panel's own colour: it is sticky, so a patch scrolling
+     under it must not show through. */
+  background: var(--surface);
   color: var(--on-surface);
   font-weight: 400;
 }
@@ -2355,7 +2359,9 @@ figure.mermaid svg {
  * showing the rest.
  */
 .tool-summary {
-  flex: 1;
+  /* Shrinks, but does not grow: the arrow after it has to stay beside the name
+     rather than being pushed to the far edge by an empty span. */
+  flex: 0 1 auto;
   /* A flex child defaults to min-width:auto, which refuses to shrink below the
      intrinsic width of the text — the head would overflow the card instead of
      wrapping inside it. */
@@ -2379,27 +2385,27 @@ figure.mermaid svg {
   overflow: visible;
 }
 
-/* The one action a file row is usually wanted for. Quiet until the row is
-   under the pointer, so a list of them is not a column of arrows. */
+/* Without a card behind it the row still has to read as something that opens,
+   so it answers the pointer. */
+.tool-head:hover {
+  background: var(--surface-container);
+}
+
+/* The one action a file row is usually wanted for, so it is always there:
+   hiding it until hover means knowing it exists before it can be used. */
 .tool-open {
   flex: none;
-  width: 20px;
-  height: 18px;
+  width: 18px;
+  height: 16px;
+  margin-left: 2px;
   padding: 0;
   display: grid;
   place-items: center;
   border-radius: 4px;
   background: none;
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.msg.tool-call:hover .tool-open,
-.tool-open:focus-visible {
-  opacity: 1;
 }
 
 .tool-open:hover {
