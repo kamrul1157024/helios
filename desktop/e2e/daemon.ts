@@ -204,6 +204,16 @@ export function withToolCalls(
   TOOL_CALLS[sessionId] = calls
 }
 
+/** One more call, as the agent making one looks to a panel that is watching. */
+export function addToolCall(
+  sessionId: string,
+  call: { tool: string; summary: string; input: Record<string, unknown> },
+): void {
+  ;(TOOL_CALLS[sessionId] ??= []).push(call)
+  const record = [...SESSIONS, ...RUNS].find((s) => s.session_id === sessionId)
+  if (record) record.last_event_at = new Date().toISOString()
+}
+
 interface StubMessage {
   seq: number
   role: string

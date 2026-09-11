@@ -5,7 +5,7 @@
 // most of this checks.
 import type { Page } from '@playwright/test'
 
-import { ALPHA as ALPHA_ID, withToolCalls } from './daemon.ts'
+import { ALPHA as ALPHA_ID, addToolCall, pushEvent, withToolCalls } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 const ALPHA = 'Alpha'
@@ -57,6 +57,27 @@ test('a card opened by hand is still reached by the next press', async ({ window
 
   await fold(window).click()
   await expect(window.locator('.tool-detail')).toHaveCount(0)
+})
+
+// The bug this guards: the fold ran on mount, so once the button had been
+// pressed at all, every card that arrived afterwards was folded by a press
+// that happened before it existed — and a write never opened itself again.
+test('a write that arrives after a fold all still opens itself', async ({ window }) => {
+  await open(window)
+
+  await fold(window).click()
+  await expect(window.locator('.tool-detail')).toHaveCount(0)
+
+  addToolCall(ALPHA_ID, {
+    tool: 'Edit',
+    summary: 'later.go',
+    input: { file_path: '/repo/later.go', old_string: 'x', new_string: 'y' },
+  })
+  // The record moving is what tells the panel there is more to read.
+  pushEvent('session_status', { session_id: ALPHA_ID, status: 'idle' })
+
+  await expect(window.locator('.msg.tool-call')).toHaveCount(3)
+  await expect(window.locator('.tool-detail')).toHaveCount(1)
 })
 
 test('the button says which way it will go', async ({ window }) => {

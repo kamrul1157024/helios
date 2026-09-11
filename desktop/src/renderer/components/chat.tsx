@@ -52,6 +52,20 @@ export function ChatPanel({
   const client = useQueryClient()
   const transcript = useInfiniteQuery({ ...transcriptQuery(hostId, session.session_id), enabled: active })
   const messages = useMemo(() => transcriptMessages(transcript.data), [transcript.data])
+  /**
+   * The last few calls, by their place in the list.
+   *
+   * A card reads this once, when it mounts. Recomputing it as the transcript
+   * grows would close a card somebody is reading, so what it decides is only
+   * ever the state a new card starts in.
+   */
+  const recentCalls = useMemo(() => {
+    const calls = messages.reduce<number[]>((held, message, index) => {
+      if (message.role === 'tool_use') held.push(index)
+      return held
+    }, [])
+    return new Set(calls.slice(-RECENT_CALLS))
+  }, [messages])
   // The newest page answers for the whole conversation: its total is the count,
   // and the epoch is which parse the held seq numbers count against.
   const newestPage = transcript.data?.pages[0]
@@ -283,7 +297,7 @@ export function ChatPanel({
                   key={`${message.timestamp}-${index}`}
                   message={message}
                   result={resultOf(messages, index)}
-                  recent={index >= messages.length - RECENT_MESSAGES}
+                  recent={recentCalls.has(index)}
                   hostId={hostId}
                   cwd={session.cwd}
                 />
@@ -555,14 +569,17 @@ const CODE_FIELDS: { key: string; label?: string }[] = [
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
 
 /**
- * How far back a write is still worth opening on its own.
+ * How many tool calls back a write is still worth opening on its own.
  *
- * The diff an agent just wrote is what the reader came for; the twenty before
- * it are history, and a transcript that opens all of them is a page of patches
- * with the conversation lost between them. Older ones fold, and say what they
- * are on one line — the same shape the terminal settles into.
+ * Counted in calls rather than messages: a write is followed by its own
+ * result, then a line of the agent's prose, then the next call — so a window
+ * measured in messages closes on the patch the reader is still looking at.
+ *
+ * The diff an agent has just written is what the reader came for; the twenty
+ * before it are history, and a transcript that opens all of them is a page of
+ * patches with the conversation lost between them.
  */
-const RECENT_MESSAGES = 6
+const RECENT_CALLS = 3
 
 /**
  * How many lines the clamp is hiding, or 0 when it is hiding none.
@@ -615,9 +632,16 @@ function ToolUse({ message, hostId, cwd, result, recent = true }: MessageProps):
   // Fold all, from the strip above. Keyed on the counter so a card opened by
   // hand since the last press is reached by the next one.
   const foldAll = useStore((s) => s.foldAll)
+  // The press this card has already answered. Seeded with whatever the counter
+  // stands at when the card mounts: a card that arrives after a Fold all is
+  // new work, and folding it because of a press that happened before it
+  // existed is how every later write came to arrive shut.
+  const answered = useRef(foldAll.seq)
   useEffect(() => {
-    if (foldAll.seq > 0) setOpen(foldAll.open)
-  }, [foldAll.seq])
+    if (foldAll.seq === answered.current) return
+    answered.current = foldAll.seq
+    setOpen(foldAll.open)
+  }, [foldAll.seq, foldAll.open])
   const text = headline(tool, input, message.summary)
   const [summaryRef, clamped] = useHiddenLines(text, open)
   // A described row hides the command itself, not the rest of a line of it, so
