@@ -682,15 +682,24 @@ small {
   color: var(--on-surface);
 }
 
-/* The rows a run stands for, indented under the line that counts them so the
+/* Consecutive tool rows read as one block. The gap belongs between the prose
+   and the work, not between one call and the next. */
+.msg.tool-call + .msg.tool-call,
+.msg.tool-call + .msg.tool-turn,
+.msg.tool-turn + .msg.tool-call,
+.msg.tool-turn + .msg.tool-turn {
+  margin-top: -6px;
+}
+
+/* The rows a turn stands for, indented under the line that counts them so the
    group reads as one thing rather than as the transcript resuming. */
-.run-members {
+.turn-members {
   margin-left: 18px;
   padding-left: 8px;
   box-shadow: inset 1px 0 0 var(--outline-variant);
 }
 
-.run-members .msg {
+.turn-members .msg {
   margin-bottom: 2px;
 }
 

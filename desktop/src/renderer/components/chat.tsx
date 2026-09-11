@@ -11,7 +11,7 @@ import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { hunkHeader, lineOf } from './edit-offsets.ts'
 import { DiffView } from './diff-view.tsx'
 import { foldedCommand, followsItsCall, headline, oneLine, resultOf } from './tool-calls.ts'
-import { groupRuns, runSucceeded } from './tool-runs.ts'
+import { groupRuns, runSucceeded, summariseTurn } from './tool-runs.ts'
 import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
@@ -314,9 +314,9 @@ export function ChatPanel({
             )}
             {messages.length === 0 && <p className="empty-note">No transcript yet.</p>}
             {items.map((item) =>
-              item.kind === 'run' ? (
-                <CommandRun
-                  key={`run-${item.indices[0]}`}
+              item.kind === 'turn' ? (
+                <TurnRow
+                  key={`turn-${item.indices[0]}`}
                   messages={messages}
                   indices={item.indices}
                   hostId={hostId}
@@ -646,13 +646,13 @@ function useHiddenLines(text: string, open: boolean): [RefObject<HTMLSpanElement
 }
 
 /**
- * Several shell commands as one row, opening to the rows it stands for.
+ * A turn's tool calls as one row, opening to the rows it stands for.
  *
- * Folded whatever the session's mode is: a run is history by definition — the
- * one still going is never grouped — so there is nothing here the reader has
- * asked to see yet.
+ * Folded whatever the session's mode is: a grouped turn is history by
+ * definition — the one still running is never grouped — so there is nothing
+ * here the reader has asked to see yet.
  */
-function CommandRun({
+function TurnRow({
   messages,
   indices,
   hostId,
@@ -665,9 +665,18 @@ function CommandRun({
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const ok = runSucceeded(messages, indices)
+  // Fold all reaches a turn as it reaches a card: "open every tool call" that
+  // left the groups shut would have opened nothing a reader could see.
+  const foldAll = useStore((s) => s.foldAll)
+  const answered = useRef(foldAll.seq)
+  useEffect(() => {
+    if (foldAll.seq === answered.current) return
+    answered.current = foldAll.seq
+    setOpen(foldAll.open)
+  }, [foldAll.seq, foldAll.open])
 
   return (
-    <div className="msg tool-run">
+    <div className="msg tool-turn">
       <div
         className={open ? 'tool-head open' : 'tool-head'}
         role="button"
@@ -680,15 +689,17 @@ function CommandRun({
           setOpen(!open)
         }}
       >
-        <span className="tool-icon">{TOOL_ICONS.Bash}</span>
-        <span className="tool-name">Ran</span>
-        <span className="tool-summary">{indices.length} shell commands</span>
+        <span className="tool-icon">◈</span>
+        <span className="tool-name">
+          {indices.length} {indices.length === 1 ? 'step' : 'steps'}
+        </span>
+        <span className="tool-summary">{summariseTurn(messages, indices)}</span>
         <span className="grow" />
         <span className={ok ? 'tool-verdict' : 'tool-verdict failed'}>{ok ? '✓' : '✕'}</span>
         <Chevron className="chevron" open={open} />
       </div>
       {open && (
-        <div className="run-members">
+        <div className="turn-members">
           {indices.map((index) => {
             const message = messages[index]
             if (!message) return null
