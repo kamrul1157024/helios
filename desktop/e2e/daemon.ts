@@ -150,6 +150,7 @@ export function appendTranscript(sessionId: string, text: string): void {
 /** Back to how each test expects to find the daemon. */
 export function resetTranscripts(): void {
   for (const key of Object.keys(EXTRA)) delete EXTRA[key]
+  for (const key of Object.keys(TOOL_CALLS)) delete TOOL_CALLS[key]
   for (const record of [...SESSIONS, ...RUNS]) {
     record.last_event_at = '2026-01-01T00:00:00Z'
     if (record.session_id === PAST_RUN) continue
@@ -187,15 +188,62 @@ export function pushEvent(type: string, data: Record<string, unknown>): void {
 // Held outside startDaemon so a test can push an event without a handle.
 const openStreams = new Set<http.ServerResponse>()
 
-function transcriptFor(id: string): { seq: number; role: string; content: string; timestamp: string }[] {
+/**
+ * The tool calls a transcript holds, for the tests about how a call is drawn.
+ *
+ * Only on the session that asks for them: every other spec counts the messages
+ * in the panel it opened, and two extra rows everywhere would be two extra
+ * rows those tests never asked for.
+ */
+export const TOOL_CALLS: Record<string, { tool: string; summary: string; input: Record<string, unknown> }[]> = {}
+
+export function withToolCalls(
+  sessionId: string,
+  calls: { tool: string; summary: string; input: Record<string, unknown> }[],
+): void {
+  TOOL_CALLS[sessionId] = calls
+}
+
+interface StubMessage {
+  seq: number
+  role: string
+  timestamp: string
+  content?: string
+  tool?: string
+  summary?: string
+  success?: boolean
+  metadata?: Record<string, unknown>
+}
+
+function transcriptFor(id: string): StubMessage[] {
   const first = TRANSCRIPT_TEXT[id]
   const all = first === undefined ? (EXTRA[id] ?? []) : [first, ...(EXTRA[id] ?? [])]
-  return all.map((content, seq) => ({
+  const said = all.map((content, seq) => ({
     seq,
     role: 'assistant',
     content,
     timestamp: '2026-01-01T00:00:00Z',
   }))
+  // A call and its result, as the daemon reports them: the result carries no
+  // output of its own, only whether it worked.
+  const called = (TOOL_CALLS[id] ?? []).flatMap((call, at) => [
+    {
+      seq: said.length + at * 2,
+      role: 'tool_use',
+      tool: call.tool,
+      summary: call.summary,
+      metadata: call.input,
+      timestamp: '2026-01-01T00:00:00Z',
+    },
+    {
+      seq: said.length + at * 2 + 1,
+      role: 'tool_result',
+      tool: call.tool,
+      success: true,
+      timestamp: '2026-01-01T00:00:00Z',
+    },
+  ])
+  return [...said, ...called]
 }
 
 /** One schedule, so the schedules list has something in it to switch to. */

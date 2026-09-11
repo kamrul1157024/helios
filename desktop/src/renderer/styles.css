@@ -642,6 +642,26 @@ small {
   height: 16px;
 }
 
+/* Folds the transcript's tool calls.
+ *
+ * Part of the tab rather than a control beside it: it only exists while the
+ * transcript is the tab showing, so it takes the same full height and the same
+ * underline, and closes the strip's gap so the highlight runs unbroken from
+ * the label to the chevron. */
+/* Scoped past `.panel-tabs > button`, which is more specific than a bare class
+   and would otherwise keep the underline transparent. */
+.panel-tabs > .tab-fold {
+  margin-left: -4px;
+  padding: 0 8px 0 4px;
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.tab-fold .chevron-icon {
+  width: 14px;
+  height: 14px;
+}
+
 /* ─── Bulk selection ────────────────────────────────────────────────────── */
 
 /* The tick takes a column of its own down the left, so it sits beside the
