@@ -117,6 +117,17 @@ func (s *Screen) Write(p []byte) (n int, err error) {
 			n, err = len(p), nil
 		}
 	}()
+	// A scroll region larger than the grid is what the emulator panics on, so
+	// it is corrected here rather than recovered from below: recovery costs
+	// the whole write, and the write is a redraw somebody is waiting to see.
+	if fixed, changed := clampMargins(p, s.rows); changed {
+		if _, werr := s.em.Write(fixed); werr != nil {
+			return 0, werr
+		}
+		// The caller's bytes are all accounted for, whatever the rewrite made
+		// of them; a short count would only have it retry the difference.
+		return len(p), nil
+	}
 	return s.em.Write(p)
 }
 
