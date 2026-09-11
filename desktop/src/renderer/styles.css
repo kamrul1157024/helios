@@ -2304,14 +2304,12 @@ figure.mermaid svg {
   border-radius: var(--r-md);
 }
 
-/* Sticky, so the file a long patch belongs to is still named once the reader
-   has scrolled into the middle of it. It can only stick while nothing between
-   here and the transcript's scroller clips: hence no `overflow` on the card. */
+/* Not sticky. It was, back when the row was a filled card with a rounded top —
+   flat, a header pinned over the transcript is a line of text with the
+   conversation sliding under it and being cut off at its edge, which reads as
+   a rendering fault rather than as a header. */
 .tool-head {
   cursor: pointer;
-  position: sticky;
-  top: 0;
-  z-index: 1;
   display: flex;
   min-width: 0;
   /* Top, not centre: the command wraps, and a centred icon beside three lines
@@ -2322,9 +2320,6 @@ figure.mermaid svg {
   text-align: left;
   border-radius: var(--r-md) var(--r-md) 0 0;
   padding: 4px 8px;
-  /* Opaque, but the panel's own colour: it is sticky, so a patch scrolling
-     under it must not show through. */
-  background: var(--surface);
   color: var(--on-surface);
   font-weight: 400;
 }
@@ -5555,8 +5550,10 @@ hr {
 /* ─── Diffs: unified, then side by side ─────────────────────────────────── */
 
 /* One column, one row per line, gutters at the left: a patch read the way a
-   file view shows one. The whole block scrolls sideways as a unit so the
-   columns stay lined up, and the gutters stick to the left edge while it does. */
+   file view shows one.
+   Long lines wrap rather than scrolling sideways. A patch in a transcript is
+   read, not navigated — text held behind a horizontal scrollbar is text
+   nobody sees, and prose in a Markdown file is one long line per paragraph. */
 .diff-unified {
   /* The tint of a changed line is mixed into this, and the sticky numbers are
      painted with it, so a pane on a different surface sets it once.
@@ -5565,12 +5562,14 @@ hr {
      colours then had to compete with. Against the darker surface the patch
      reads as recessed, which is what a terminal's diff looks like. */
   --diff-bg: var(--surface);
+  /* The width of both gutters and the sign, so a wrapped line can be indented
+     to start under the text above it rather than under the numbers. */
+  --diff-gutter: 11ch;
   /* Strong enough that a changed row is unmistakable against the context
      around it — measured at 1.9:1 against the untinted rows, with the text on
      it still at 7.4:1. The accents are pale, so the number reads higher than
      it looks. */
   --diff-tint: 30%;
-  overflow-x: auto;
   font-family: var(--mono);
   /* A patch has to read as the bytes it is. With ligatures on, `--- a/file`
      draws an em dash and `@@` draws a glyph, so a header stops looking like
@@ -5583,13 +5582,13 @@ hr {
 
 .diff-line {
   display: flex;
+  /* The numbers keep to the first line of a wrapped row rather than centring
+     themselves against the height of it. */
+  align-items: flex-start;
   gap: 8px;
-  /* Wider than the block when a line is long, but never narrower: a short
-     patch would otherwise tint only as far as its longest line. */
-  width: max-content;
-  min-width: 100%;
   padding-right: 12px;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   /* Opaque, because the numbers slide over the code on a sideways scroll. */
   background: var(--diff-bg);
 }
@@ -5648,17 +5647,15 @@ hr {
   border-block: 1px solid var(--outline-variant);
 }
 
-/* The numbers and the sign travel together: one sticky column, or the second
-   number would come to rest on top of the first. */
+/* The numbers and the sign travel together, and hold a fixed width so the
+   text starts at the same column on every row. */
 .diff-nums {
-  position: sticky;
-  left: 0;
-  z-index: 1;
   display: flex;
   flex: none;
   gap: 8px;
+  width: var(--diff-gutter);
   padding: 0 4px 0 12px;
-  background: inherit;
+  box-sizing: content-box;
 }
 
 .diff-sign {
@@ -5735,6 +5732,7 @@ hr {
 }
 
 .diff-text {
+  flex: 1;
   min-width: 0;
 }
 
