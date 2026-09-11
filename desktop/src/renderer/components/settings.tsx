@@ -239,6 +239,15 @@ export function SettingsPane(): JSX.Element {
         />
 
         <PixelSize
+          label="Reading width"
+          info="How wide the agent's prose is allowed to run, in pixels. Code, patches and tool rows are unaffected — those are scanned rather than read, and they take the whole panel. Set 0 for no limit."
+          size={appearance?.proseWidth}
+          min={0}
+          max={2400}
+          onPick={(proseWidth) => void setTheme({ proseWidth })}
+        />
+
+        <PixelSize
           label="Patch preview"
           info="How many lines of a diff the transcript shows before offering the rest, between 1 and 200. The Git panel always draws a patch whole."
           size={appearance?.diffLines}

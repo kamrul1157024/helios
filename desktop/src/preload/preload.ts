@@ -6,6 +6,7 @@ import {
   applyDensity,
   applyFonts,
   applyProseSize,
+  applyProseWidth,
   applyStatusSize,
   applyTheme,
 } from '../shared/theme/apply.ts'
@@ -18,7 +19,7 @@ interface ThemeBoot {
   glassSupported: boolean
   proseSize: number
   fonts: { ui: string; code: string; terminal: string }
-  sizes: { ui: number; code: number; terminal: number; diff: number }
+  sizes: { ui: number; code: number; terminal: number; diff: number; prose: number }
   density: Density
   statusLineSize: number
 }
@@ -73,6 +74,7 @@ const paint = (): void => {
   applyProseSize(document.documentElement, boot.proseSize)
   applyFonts(document.documentElement, boot.fonts)
   applyCodeSize(document.documentElement, boot.sizes.code)
+  applyProseWidth(document.documentElement, boot.sizes.prose)
   applyStatusSize(document.documentElement, boot.statusLineSize)
   applyDensity(document.documentElement, boot.density)
 }

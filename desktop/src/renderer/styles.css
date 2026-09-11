@@ -2159,6 +2159,16 @@ small {
   margin-bottom: 4px;
 }
 
+/* Prose only, and only as wide as it is worth reading: a line the width of a
+   large display is one the eye loses its place in coming back to the margin.
+   Code, patches and tool rows are unaffected — those are scanned, not read,
+   and they want every pixel the panel has. */
+.msg.assistant .msg-body,
+.msg.user .msg-body,
+.msg-body:not(.md) {
+  max-width: var(--prose-width, 900px);
+}
+
 .msg-body {
   white-space: pre-wrap;
   word-break: break-word;

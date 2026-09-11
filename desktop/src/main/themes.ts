@@ -22,6 +22,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   codeSize: 12,
   terminalSize: 13,
   diffLines: 5,
+  proseWidth: 900,
   density: 'comfortable',
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,
@@ -42,6 +43,12 @@ const MAX_SCALE = 150
    a size that reflows prose harmlessly changes how many columns fit. */
 const MIN_CODE = 9
 const MAX_CODE = 24
+
+/* A line of prose past about 100 characters is one the eye loses its place
+   in, and below 40 it is a column. 0 is the way out: the whole panel, which
+   is what this was before it was a setting. */
+const MIN_PROSE_WIDTH = 360
+const MAX_PROSE_WIDTH = 2400
 
 /* How much of a patch a transcript shows. One line is still a patch; the
    ceiling is where "show the rest" has stopped meaning anything. */
@@ -73,6 +80,14 @@ function bounded(value: unknown, min: number, max: number, fallback: number): nu
   const size = Math.round(Number(value))
   if (!Number.isFinite(size)) return fallback
   return Math.min(Math.max(size, min), max)
+}
+
+/** Zero passes through as "no limit"; anything else is clamped to a width. */
+function proseWidth(value: unknown): number {
+  const width = Math.round(Number(value))
+  if (!Number.isFinite(width)) return DEFAULT_APPEARANCE.proseWidth
+  if (width <= 0) return 0
+  return Math.min(Math.max(width, MIN_PROSE_WIDTH), MAX_PROSE_WIDTH)
 }
 
 function statusLineSize(value: unknown): number {
@@ -121,6 +136,7 @@ export class ThemeRegistry {
         codeSize: bounded(parsed.codeSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.codeSize),
         terminalSize: bounded(parsed.terminalSize, MIN_CODE, MAX_CODE, DEFAULT_APPEARANCE.terminalSize),
         diffLines: bounded(parsed.diffLines, MIN_DIFF_LINES, MAX_DIFF_LINES, DEFAULT_APPEARANCE.diffLines),
+        proseWidth: proseWidth(parsed.proseWidth),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
         statusLine: parseStatusLine(parsed.statusLine),
         statusLineSize: statusLineSize(parsed.statusLineSize),
@@ -280,6 +296,7 @@ export class ThemeRegistry {
       MAX_DIFF_LINES,
       DEFAULT_APPEARANCE.diffLines,
     )
+    this.prefs.proseWidth = proseWidth(this.prefs.proseWidth)
     this.prefs.density = density(this.prefs.density)
     this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)
     this.prefs.statusLineSize = statusLineSize(this.prefs.statusLineSize)

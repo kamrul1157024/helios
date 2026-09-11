@@ -33,6 +33,17 @@ export function applyFonts(
   root.style.setProperty('--font-term', fontStack('terminal', fonts.terminal))
 }
 
+/**
+ * How wide the agent's prose is allowed to run.
+ *
+ * A paragraph the width of a 32-inch display is one the eye loses its place
+ * in on the way back to the left margin. Only the prose: code and patches are
+ * read by scanning, and they want every pixel.
+ */
+export function applyProseWidth(root: HTMLElement, width: number): void {
+  root.style.setProperty('--prose-width', width > 0 ? `${width}px` : 'none')
+}
+
 /** Code blocks and both diff views, which share the code font's own size. */
 export function applyCodeSize(root: HTMLElement, size: number): void {
   root.style.setProperty('--code-size', `${size}px`)

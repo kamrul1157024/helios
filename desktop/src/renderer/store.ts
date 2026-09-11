@@ -39,6 +39,7 @@ import {
   applyDensity,
   applyFonts,
   applyProseSize,
+  applyProseWidth,
   applyStatusSize,
   applyTheme,
 } from '../shared/theme/apply.ts'
@@ -631,6 +632,7 @@ class Store {
       applyProseSize(document.documentElement, proseSize)
       applyFonts(document.documentElement, fonts)
       applyCodeSize(document.documentElement, sizes.code)
+      applyProseWidth(document.documentElement, sizes.prose)
       applyStatusSize(document.documentElement, statusLineSize)
       applyDensity(document.documentElement, density)
       this.set({
