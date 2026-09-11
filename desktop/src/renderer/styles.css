@@ -662,6 +662,47 @@ small {
   height: 14px;
 }
 
+/* The rest of a long patch, offered rather than shown. Full width so it reads
+   as the foot of the patch and not as a control floating beside it. */
+.diff-more {
+  display: block;
+  width: 100%;
+  padding: 4px 12px;
+  border-radius: 0;
+  background: var(--surface-container);
+  box-shadow: inset 0 1px 0 var(--outline-variant);
+  color: var(--on-surface-variant);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: left;
+}
+
+.diff-more:hover {
+  background: var(--surface-highest);
+  color: var(--on-surface);
+}
+
+/* Consecutive tool rows read as one block. The gap belongs between the prose
+   and the work, not between one call and the next. */
+.msg.tool-call + .msg.tool-call,
+.msg.tool-call + .msg.tool-turn,
+.msg.tool-turn + .msg.tool-call,
+.msg.tool-turn + .msg.tool-turn {
+  margin-top: -6px;
+}
+
+/* The rows a turn stands for, indented under the line that counts them so the
+   group reads as one thing rather than as the transcript resuming. */
+.turn-members {
+  margin-left: 18px;
+  padding-left: 8px;
+  box-shadow: inset 1px 0 0 var(--outline-variant);
+}
+
+.turn-members .msg {
+  margin-bottom: 2px;
+}
+
 /* ─── Bulk selection ────────────────────────────────────────────────────── */
 
 /* The tick takes a column of its own down the left, so it sits beside the
@@ -2116,6 +2157,16 @@ small {
   letter-spacing: 0.08em;
   color: var(--on-surface-variant);
   margin-bottom: 4px;
+}
+
+/* Prose only, and only as wide as it is worth reading: a line the width of a
+   large display is one the eye loses its place in coming back to the margin.
+   Code, patches and tool rows are unaffected — those are scanned, not read,
+   and they want every pixel the panel has. */
+.msg.assistant .msg-body,
+.msg.user .msg-body,
+.msg-body:not(.md) {
+  max-width: var(--prose-width, 70%);
 }
 
 .msg-body {

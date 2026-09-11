@@ -39,6 +39,7 @@ import {
   applyDensity,
   applyFonts,
   applyProseSize,
+  applyProseWidth,
   applyStatusSize,
   applyTheme,
 } from '../shared/theme/apply.ts'
@@ -267,6 +268,8 @@ export interface State {
   termFont: string
   /** And its size, for the same reason. */
   termSize: number
+  /** How many lines of a patch the transcript draws before offering the rest. */
+  diffLines: number
   /** Whether a file dropped or pasted on a terminal is uploaded to its daemon. */
   terminalUploads: boolean
   /**
@@ -529,6 +532,7 @@ const initial: State = {
   terminalTheme: bridge.theme.boot().terminal,
   termFont: fontStack('terminal', bridge.theme.boot().fonts.terminal),
   termSize: bridge.theme.boot().sizes.terminal,
+  diffLines: bridge.theme.boot().sizes.diff,
   terminalUploads: readTerminalUploads(),
   sessionSelection: [],
   selectMode: false,
@@ -628,12 +632,14 @@ class Store {
       applyProseSize(document.documentElement, proseSize)
       applyFonts(document.documentElement, fonts)
       applyCodeSize(document.documentElement, sizes.code)
+      applyProseWidth(document.documentElement, sizes.prose)
       applyStatusSize(document.documentElement, statusLineSize)
       applyDensity(document.documentElement, density)
       this.set({
         terminalTheme: terminal,
         termFont: fontStack('terminal', fonts.terminal),
         termSize: sizes.terminal,
+        diffLines: sizes.diff,
         density,
         statusLine,
       })

@@ -238,6 +238,26 @@ export function SettingsPane(): JSX.Element {
           onPick={(codeSize) => void setTheme({ codeSize })}
         />
 
+        <PixelSize
+          label="Reading width"
+          info="How much of the panel the agent's prose fills, as a percentage between 20 and 100. Code, patches and tool rows are unaffected — those are scanned rather than read, and they take the whole panel. 100 is no limit."
+          size={appearance?.proseWidth}
+          min={20}
+          max={100}
+          unit="%"
+          onPick={(proseWidth) => void setTheme({ proseWidth })}
+        />
+
+        <PixelSize
+          label="Patch preview"
+          info="How many lines of a diff the transcript shows before offering the rest, between 1 and 200. The Git panel always draws a patch whole."
+          size={appearance?.diffLines}
+          min={1}
+          max={200}
+          unit="lines"
+          onPick={(diffLines) => void setTheme({ diffLines })}
+        />
+
         <FontPicker
           label="Terminal font"
           info="The terminal panes. Changing it remeasures the grid, so the columns move with it."

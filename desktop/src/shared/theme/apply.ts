@@ -33,6 +33,22 @@ export function applyFonts(
   root.style.setProperty('--font-term', fontStack('terminal', fonts.terminal))
 }
 
+/**
+ * How much of the panel the agent's prose is allowed to fill.
+ *
+ * A paragraph the width of a 32-inch display is one the eye loses its place in
+ * on the way back to the left margin. A share rather than a width, so the
+ * browser works the pixels out from whatever the panel is at that moment:
+ * dragging the sidebar re-measures it, and the setting means the same thing on
+ * a laptop as on a large display.
+ *
+ * Only the prose: code and patches are read by scanning, and they want every
+ * pixel the panel has.
+ */
+export function applyProseWidth(root: HTMLElement, percent: number): void {
+  root.style.setProperty('--prose-width', percent >= 100 ? 'none' : `${percent}%`)
+}
+
 /** Code blocks and both diff views, which share the code font's own size. */
 export function applyCodeSize(root: HTMLElement, size: number): void {
   root.style.setProperty('--code-size', `${size}px`)

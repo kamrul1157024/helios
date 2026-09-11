@@ -11,6 +11,7 @@ import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { hunkHeader, lineOf } from './edit-offsets.ts'
 import { DiffView } from './diff-view.tsx'
 import { foldedCommand, followsItsCall, headline, oneLine, resultOf } from './tool-calls.ts'
+import { groupRuns, runSucceeded, summariseTurn } from './tool-runs.ts'
 import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
@@ -59,6 +60,24 @@ export function ChatPanel({
    * grows would close a card somebody is reading, so what it decides is only
    * ever the state a new card starts in.
    */
+  const renderMessage = (index: number): JSX.Element | null => {
+    const message = messages[index]
+    // A result that followed its own call is drawn on that call's row, so it
+    // does not get a line of its own here.
+    if (!message || followsItsCall(messages, index)) return null
+    return (
+      <Message
+        key={`${message.timestamp}-${index}`}
+        message={message}
+        result={resultOf(messages, index)}
+        recent={recentCalls.has(index)}
+        folded={folded}
+        hostId={hostId}
+        cwd={session.cwd}
+      />
+    )
+  }
+
   // Set by the button beside the tab, and remembered for this session.
   const folded = useStore((s) => s.foldModes[sessionKey(hostId, session.session_id)]) === 'folded'
   const recentCalls = useMemo(() => {
@@ -95,6 +114,9 @@ export function ChatPanel({
 
   const status = session.status
   const busy = BUSY_STATUSES.has(status)
+  // Runs of shell commands, drawn as one row each. The one still going is left
+  // as it is: that is the one being watched.
+  const items = useMemo(() => groupRuns(messages, busy), [messages, busy])
   const terminated = canResume(session)
   const cold = needsRecovery(session)
 
@@ -291,19 +313,17 @@ export function ChatPanel({
               </button>
             )}
             {messages.length === 0 && <p className="empty-note">No transcript yet.</p>}
-            {messages.map((message, index) =>
-              // A result that followed its own call is drawn on that call's
-              // row, so it does not get a line of its own here.
-              followsItsCall(messages, index) ? null : (
-                <Message
-                  key={`${message.timestamp}-${index}`}
-                  message={message}
-                  result={resultOf(messages, index)}
-                  recent={recentCalls.has(index)}
-                  folded={folded}
+            {items.map((item) =>
+              item.kind === 'turn' ? (
+                <TurnRow
+                  key={`turn-${item.indices[0]}`}
+                  messages={messages}
+                  indices={item.indices}
                   hostId={hostId}
                   cwd={session.cwd}
                 />
+              ) : (
+                renderMessage(item.index)
               ),
             )}
             {busy && <div className="typing">agent is working…</div>}
@@ -626,6 +646,82 @@ function useHiddenLines(text: string, open: boolean): [RefObject<HTMLSpanElement
 }
 
 /**
+ * A turn's tool calls as one row, opening to the rows it stands for.
+ *
+ * Folded whatever the session's mode is: a grouped turn is history by
+ * definition — the one still running is never grouped — so there is nothing
+ * here the reader has asked to see yet.
+ */
+function TurnRow({
+  messages,
+  indices,
+  hostId,
+  cwd,
+}: {
+  messages: TranscriptMessage[]
+  indices: number[]
+  hostId: string
+  cwd: string
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const ok = runSucceeded(messages, indices)
+  // Fold all reaches a turn as it reaches a card: "open every tool call" that
+  // left the groups shut would have opened nothing a reader could see.
+  const foldAll = useStore((s) => s.foldAll)
+  const answered = useRef(foldAll.seq)
+  useEffect(() => {
+    if (foldAll.seq === answered.current) return
+    answered.current = foldAll.seq
+    setOpen(foldAll.open)
+  }, [foldAll.seq, foldAll.open])
+
+  return (
+    <div className="msg tool-turn">
+      <div
+        className={open ? 'tool-head open' : 'tool-head'}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          setOpen(!open)
+        }}
+      >
+        <span className="tool-icon">◈</span>
+        <span className="tool-name">
+          {indices.length} {indices.length === 1 ? 'step' : 'steps'}
+        </span>
+        <span className="tool-summary">{summariseTurn(messages, indices)}</span>
+        <span className="grow" />
+        <span className={ok ? 'tool-verdict' : 'tool-verdict failed'}>{ok ? '✓' : '✕'}</span>
+        <Chevron className="chevron" open={open} />
+      </div>
+      {open && (
+        <div className="turn-members">
+          {indices.map((index) => {
+            const message = messages[index]
+            if (!message) return null
+            return (
+              <Message
+                key={`${message.timestamp}-${index}`}
+                message={message}
+                result={resultOf(messages, index)}
+                recent={false}
+                folded
+                hostId={hostId}
+                cwd={cwd}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * A tool call: what it ran, and what it ran on.
  *
  * The command is shown in full and wrapped rather than cut at the width of the
@@ -819,6 +915,10 @@ function ToolDiff({
   hostId: string
   cwd: string
 }): JSX.Element {
+  // How much of a patch this reader wants inline, from Settings. Enough to see
+  // what the change was; the rest is one press away, and the whole file is one
+  // press further through the arrow on the row.
+  const maxLines = useStore((s) => s.diffLines)
   const path = resolveFilePath(str(input.file_path), cwd)
   const written = str(input.new_string)
   // A Write is the whole file, so it starts where files start. Only an Edit
@@ -843,7 +943,12 @@ ${diff}` : diff
     <div className="tool-diff">
       {/* Unified, not the default split: a tool call's diff sits inline in the
           transcript, which is far too narrow for two columns. */}
-      <DiffView diff={numbered} language={languageForPath(str(input.file_path))} layout="unified" />
+      <DiffView
+        diff={numbered}
+        language={languageForPath(str(input.file_path))}
+        layout="unified"
+        maxLines={maxLines}
+      />
     </div>
   )
 }

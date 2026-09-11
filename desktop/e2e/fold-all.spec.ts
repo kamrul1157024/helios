@@ -5,12 +5,15 @@
 // most of this checks.
 import type { Page } from '@playwright/test'
 
-import { ALPHA as ALPHA_ID, addToolCall, pushEvent, withToolCalls } from './daemon.ts'
+import { ALPHA as ALPHA_ID, addToolCall, pushEvent, setSessionStatus, withToolCalls } from './daemon.ts'
 import { expect, test } from './fixtures.ts'
 
 const ALPHA = 'Alpha'
 
 test.beforeEach(() => {
+  // Working, so the calls at the end of the transcript are not grouped into a
+  // turn: this suite is about the cards, and a live session is where they are.
+  setSessionStatus(ALPHA_ID, 'active')
   withToolCalls(ALPHA_ID, [
     { tool: 'Bash', summary: 'ls -la', input: { command: 'ls -la', description: 'List the directory' } },
     { tool: 'Edit', summary: 'main.go', input: { file_path: '/repo/main.go', old_string: 'a', new_string: 'b' } },

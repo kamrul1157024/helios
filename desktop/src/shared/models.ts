@@ -643,6 +643,10 @@ export interface AppearancePrefs {
   codeSize: number
   /** Size of the text inside the terminal panes, in px. */
   terminalSize: number
+  /** How many lines of a patch the transcript shows before offering the rest. */
+  diffLines: number
+  /** Reading width for the agent's prose, as a percentage of the panel. */
+  proseWidth: number
   /** How much of a session the sidebar shows: everything, or one line each. */
   density: Density
   /** Which segments the session status line draws, in the order it draws them. */

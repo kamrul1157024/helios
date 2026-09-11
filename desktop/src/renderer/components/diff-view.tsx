@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { highlightCode } from '../markdown.ts'
 
@@ -39,6 +39,7 @@ export function DiffView({
   language,
   layout = 'split',
   line,
+  maxLines,
 }: {
   diff: string
   empty?: string
@@ -47,8 +48,18 @@ export function DiffView({
   layout?: DiffLayout
   /** A line of the new file to scroll to and mark, when one was asked for. */
   line?: number
+  /**
+   * Show this many lines and offer the rest.
+   *
+   * For a patch sitting inline in a conversation: a four-hundred-line rewrite
+   * is one message among many, and scrolling past it to reach the next
+   * sentence is most of what reading that transcript becomes. A pane showing
+   * one file — the git panel — passes nothing and draws it whole.
+   */
+  maxLines?: number
 }): JSX.Element {
   const marked = useRef<HTMLDivElement | null>(null)
+  const [expanded, setExpanded] = useState(false)
 
   /**
    * Each line highlighted on its own.
@@ -82,9 +93,14 @@ export function DiffView({
 
   if (layout === 'unified') {
     const { rows, numbered } = toUnifiedRows(diff)
+    // A line asked for by name is somewhere in the patch, and cutting the
+    // patch would be cutting the thing the reader was sent to.
+    const capped = maxLines !== undefined && line === undefined && !expanded && rows.length > maxLines
+    const shown = capped ? rows.slice(0, maxLines) : rows
+    const hidden = rows.length - shown.length
     return (
       <div className="diff-unified">
-        {rows.map((row, index) =>
+        {shown.map((row, index) =>
           row.meta !== undefined ? (
             <div key={index} className={`diff-line diff-line-meta ${diffClass(row.meta)}`}>
               {row.meta || ' '}
@@ -109,6 +125,11 @@ export function DiffView({
               <Code text={row.text ?? ''} paint={paint} />
             </div>
           ),
+        )}
+        {(capped || expanded) && (
+          <button className="diff-more" onClick={() => setExpanded(!expanded)}>
+            {capped ? `Show ${hidden} more ${hidden === 1 ? 'line' : 'lines'}` : 'Show less'}
+          </button>
         )}
       </div>
     )
