@@ -5552,9 +5552,16 @@ hr {
    file view shows one. The whole block scrolls sideways as a unit so the
    columns stay lined up, and the gutters stick to the left edge while it does. */
 .diff-unified {
-  /* The tint of an added line is mixed into this, and the sticky numbers are
-     painted with it, so a pane on a different surface sets it once. */
-  --diff-bg: var(--surface-container);
+  /* The tint of a changed line is mixed into this, and the sticky numbers are
+     painted with it, so a pane on a different surface sets it once.
+     The page surface rather than the card it sits on: mixing a pale accent
+     into an already-pale card gave a milky wall of colour that the syntax
+     colours then had to compete with. Against the darker surface the patch
+     reads as recessed, which is what a terminal's diff looks like. */
+  --diff-bg: var(--surface);
+  /* Enough to say which side a line is on, not enough to fight the text. A
+     file of nothing but additions is a whole card of this. */
+  --diff-tint: 10%;
   overflow-x: auto;
   font-family: var(--mono);
   /* A patch has to read as the bytes it is. With ligatures on, `--- a/file`
@@ -5580,11 +5587,11 @@ hr {
 }
 
 .diff-line.d-add {
-  background: color-mix(in srgb, var(--s-active) 16%, var(--diff-bg));
+  background: color-mix(in srgb, var(--s-active) var(--diff-tint), var(--diff-bg));
 }
 
 .diff-line.d-del {
-  background: color-mix(in srgb, var(--error) 16%, var(--diff-bg));
+  background: color-mix(in srgb, var(--error) var(--diff-tint), var(--diff-bg));
 }
 
 /* With the syntax colours on, a green line and a red line would be two colours
