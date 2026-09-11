@@ -20,14 +20,40 @@ function widthOf(window: Page, selector: string): Promise<number> {
   return window.locator(selector).first().evaluate((node) => node.getBoundingClientRect().width)
 }
 
-test('prose is held to a measure', async ({ window }) => {
-  appendTranscript(ALPHA_ID, LONG)
+/**
+ * Sets the width and comes back to the transcript.
+ *
+ * The measurements below are all relative to the panel: the window CI runs in
+ * is narrower than the default measure, so asserting "prose is under 1100px"
+ * there passes whatever the setting does — and asserting it exceeds 1100 with
+ * the cap off cannot pass at all.
+ */
+async function setWidth(window: Page, px: string): Promise<void> {
+  await window.locator('.rail-item[aria-label="Settings"]').click()
+  await window.locator('.settings-nav button', { hasText: 'Appearance' }).click()
+  const box = window.locator('.setting-row', { hasText: 'Reading width' }).locator('input')
+  await box.fill(px)
+  await box.blur()
+  await window.locator('.rail-item[aria-label="Sessions"]').click()
+}
+
+test('the measure starts at 1100px', async ({ window }) => {
   await open(window)
 
   expect(await window.evaluate(() => document.documentElement.style.getPropertyValue('--prose-width'))).toBe(
     '1100px',
   )
-  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(1100)
+})
+
+test('prose is held to the measure, and stops short of the panel', async ({ window }) => {
+  appendTranscript(ALPHA_ID, LONG)
+  await open(window)
+  await setWidth(window, '400')
+
+  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(400)
+  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeLessThan(
+    await widthOf(window, '.chat-scroll'),
+  )
 })
 
 test('a patch is not: it is scanned, not read', async ({ window }) => {
@@ -41,30 +67,29 @@ test('a patch is not: it is scanned, not read', async ({ window }) => {
   ])
   await open(window)
 
-  const prose = await widthOf(window, '.msg.assistant .msg-body')
-  const patch = await widthOf(window, '.tool-diff')
-  expect(patch).toBeGreaterThan(prose)
+  await setWidth(window, '400')
+
+  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(400)
+  // The patch keeps the panel: it is scanned, not read.
+  expect(await widthOf(window, '.tool-diff')).toBeGreaterThan(
+    await widthOf(window, '.msg.assistant .msg-body'),
+  )
 })
 
 test('the setting moves it, and zero takes the limit off', async ({ window }) => {
   appendTranscript(ALPHA_ID, LONG)
   await open(window)
 
-  await window.locator('.rail-item[aria-label="Settings"]').click()
-  await window.locator('.settings-nav button', { hasText: 'Appearance' }).click()
-  const box = window.locator('.setting-row', { hasText: 'Reading width' }).locator('input')
+  await setWidth(window, '400')
+  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(400)
 
-  await box.fill('600')
-  await box.blur()
-  await window.locator('.rail-item[aria-label="Sessions"]').click()
-  await expect.poll(() => widthOf(window, '.msg.assistant .msg-body')).toBeLessThanOrEqual(600)
-
-  await window.locator('.rail-item[aria-label="Settings"]').click()
-  await box.fill('0')
-  await box.blur()
-  await window.locator('.rail-item[aria-label="Sessions"]').click()
+  await setWidth(window, '0')
   await expect
     .poll(() => window.evaluate(() => document.documentElement.style.getPropertyValue('--prose-width')))
     .toBe('none')
-  expect(await widthOf(window, '.msg.assistant .msg-body')).toBeGreaterThan(1100)
+  // No limit means the panel's width, whatever that is on this machine.
+  const prose = await widthOf(window, '.msg.assistant .msg-body')
+  const panel = await widthOf(window, '.chat-scroll')
+  expect(prose).toBeGreaterThan(400)
+  expect(panel - prose).toBeLessThan(48)
 })
