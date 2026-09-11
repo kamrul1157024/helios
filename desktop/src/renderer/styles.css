@@ -6056,6 +6056,41 @@ hr {
   color: var(--on-surface-variant);
 }
 
+/* The disclosure for a chain. A row with nothing under it keeps the space, so
+   the names down a list still start at the same column. */
+.sched-fold {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--on-surface-variant);
+}
+
+.sched-fold.empty {
+  visibility: hidden;
+}
+
+.sched-fold .chevron-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* How many steps the fold is holding, so a folded chain is not a job that
+   silently lost its followers. */
+.sched-followers {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-highest);
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  line-height: 15px;
+}
+
 .sched-drop-hint {
   font-size: 11px;
   color: var(--primary);
