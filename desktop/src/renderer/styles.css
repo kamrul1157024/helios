@@ -662,6 +662,18 @@ small {
   height: 14px;
 }
 
+/* The rows a run stands for, indented under the line that counts them so the
+   group reads as one thing rather than as the transcript resuming. */
+.run-members {
+  margin-left: 18px;
+  padding-left: 8px;
+  box-shadow: inset 1px 0 0 var(--outline-variant);
+}
+
+.run-members .msg {
+  margin-bottom: 2px;
+}
+
 /* ─── Bulk selection ────────────────────────────────────────────────────── */
 
 /* The tick takes a column of its own down the left, so it sits beside the
