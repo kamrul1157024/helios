@@ -5559,9 +5559,11 @@ hr {
      colours then had to compete with. Against the darker surface the patch
      reads as recessed, which is what a terminal's diff looks like. */
   --diff-bg: var(--surface);
-  /* Enough to say which side a line is on, not enough to fight the text. A
-     file of nothing but additions is a whole card of this. */
-  --diff-tint: 10%;
+  /* Strong enough that a changed row is unmistakable against the context
+     around it — measured at 1.9:1 against the untinted rows, with the text on
+     it still at 7.4:1. The accents are pale, so the number reads higher than
+     it looks. */
+  --diff-tint: 30%;
   overflow-x: auto;
   font-family: var(--mono);
   /* A patch has to read as the bytes it is. With ligatures on, `--- a/file`
@@ -5594,14 +5596,25 @@ hr {
   background: color-mix(in srgb, var(--error) var(--diff-tint), var(--diff-bg));
 }
 
-/* With the syntax colours on, a green line and a red line would be two colours
-   fighting for the same letters. The tint and the sign carry what changed; the
-   text keeps the colours that say what it means. */
+/* The words stay the brightest thing on the row, whether or not a grammar is
+   colouring them. Green text on a green row measures 6:1 where the plain text
+   measures 9:1, and it is the text that has to be read — the tint, the sign
+   and the bar down the edge are what say which side the line is on. */
 .diff-line.d-add,
 .diff-line.d-del,
 .diff-cell.d-add,
 .diff-cell.d-del {
   color: var(--on-surface);
+}
+
+/* Scannable without reading: the eye finds the edge of the block before it
+   finds the signs. */
+.diff-line.d-add {
+  box-shadow: inset 2px 0 0 var(--s-active);
+}
+
+.diff-line.d-del {
+  box-shadow: inset 2px 0 0 var(--error);
 }
 
 .diff-line.d-add .diff-sign {
@@ -5644,6 +5657,7 @@ hr {
 
 .diff-sign {
   width: 1ch;
+  font-weight: 700;
   user-select: none;
 }
 
