@@ -205,6 +205,23 @@ export function ChatPanel({
 
   useEffect(() => () => retries.current.forEach(clearTimeout), [])
 
+  /**
+   * The prompt takes the keyboard when the transcript comes up.
+   *
+   * Coming back to a session to say something is the usual reason for coming
+   * back to it, and a click on the box first is a step nobody wanted — least of
+   * all somebody dictating, who has to put the pointer somewhere before they
+   * can speak.
+   *
+   * Only when this panel is the one showing: a hidden panel stays mounted for
+   * five minutes, and one of those quietly taking the keyboard would type into
+   * the wrong session.
+   */
+  useEffect(() => {
+    if (!active || terminated) return
+    composer.current?.focus()
+  }, [active, terminated, hostId, session.session_id])
+
   // One line until there is more than one line to show. Measured rather than
   // counted: the box's width decides where the text wraps, and a newline is
   // not the only thing that starts a row. The cap is in the stylesheet, so
