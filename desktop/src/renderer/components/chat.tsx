@@ -22,6 +22,7 @@ import {
   resolveFilePath,
 } from '../markdown.ts'
 import { useMermaid } from '../mermaid.ts'
+import { clearDraft, loadDraft, saveDraft, sessionDraftKey } from '../drafts.ts'
 import { sessionKey, store, useStore } from '../store.ts'
 import {
   BUSY_STATUSES,
@@ -95,7 +96,11 @@ export function ChatPanel({
   // Switching sessions must not show the previous transcript, nor "No
   // transcript yet." for one that is merely still loading.
   const loaded = transcript.isSuccess
-  const [draft, setDraft] = useState('')
+  // What was typed here last, whether or not this panel has been alive since:
+  // switching session to check something must not cost a half-written prompt,
+  // and the panel is unmounted five minutes after it leaves the screen.
+  const draftKey = sessionDraftKey(hostId, session.session_id)
+  const [draft, setDraft] = useState(() => loadDraft(draftKey))
   const [sending, setSending] = useState(false)
   const files = useAttachments()
   const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
@@ -189,6 +194,19 @@ export function ChatPanel({
     // seq, not text: sending the same lines twice has to append twice.
   }, [promptDraft?.seq])
 
+  // Written on every change rather than on a timer: the cost is a string in
+  // localStorage, and the thing being protected is somebody's sentence.
+  useEffect(() => {
+    saveDraft(draftKey, draft)
+  }, [draftKey, draft])
+
+  // A different session is a different draft. Without this the box would keep
+  // the last one's text, which is worse than losing it: it would be sent to
+  // the wrong agent.
+  useEffect(() => {
+    setDraft(loadDraft(draftKey))
+  }, [draftKey])
+
   useEffect(() => {
     messagesRef.current = messages
     const el = scroller.current
@@ -204,6 +222,23 @@ export function ChatPanel({
   }, [messages])
 
   useEffect(() => () => retries.current.forEach(clearTimeout), [])
+
+  /**
+   * The prompt takes the keyboard when the transcript comes up.
+   *
+   * Coming back to a session to say something is the usual reason for coming
+   * back to it, and a click on the box first is a step nobody wanted — least of
+   * all somebody dictating, who has to put the pointer somewhere before they
+   * can speak.
+   *
+   * Only when this panel is the one showing: a hidden panel stays mounted for
+   * five minutes, and one of those quietly taking the keyboard would type into
+   * the wrong session.
+   */
+  useEffect(() => {
+    if (!active || terminated) return
+    composer.current?.focus()
+  }, [active, terminated, hostId, session.session_id])
 
   // One line until there is more than one line to show. Measured rather than
   // counted: the box's width decides where the text wraps, and a newline is
@@ -250,6 +285,7 @@ export function ChatPanel({
 
       const result = await api(hostId).sendPrompt(session.session_id, message)
       setDraft('')
+      clearDraft(draftKey)
       files.clear()
       if (result.queued) store.notify('Queued — the agent is mid-turn')
       void store.invalidateSessionsFor(hostId)
