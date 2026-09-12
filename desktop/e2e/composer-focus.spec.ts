@@ -9,20 +9,11 @@ import { expect, test } from './fixtures.ts'
 
 const ALPHA = 'Alpha'
 
-/** What has the keyboard: the tag, and whether it is the composer's. */
-function focused(window: Page): Promise<string> {
-  return window.evaluate(() => {
-    const el = document.activeElement
-    if (!el) return 'nothing'
-    return `${el.tagName}${el.closest('.composer') ? ':composer' : ''}`
-  })
-}
-
 test('opening a session puts the caret in the prompt', async ({ window }) => {
   await window.locator('.session-row', { hasText: ALPHA }).click()
   await expect(window.locator('.composer textarea')).toBeVisible()
 
-  await expect.poll(() => focused(window)).toBe('TEXTAREA:composer')
+  await expect(window.locator('.composer textarea')).toBeFocused()
   // And it is ready to type into, with no click anywhere.
   await window.keyboard.type('rebase onto main')
   await expect(window.locator('.composer textarea')).toHaveValue('rebase onto main')
@@ -35,5 +26,5 @@ test('coming back from the terminal gives the prompt the keyboard again', async 
   await window.locator('.panel-tabs button', { hasText: 'terminal' }).first().click()
   await window.locator('.panel-tabs button', { hasText: 'transcript' }).first().click()
 
-  await expect.poll(() => focused(window)).toBe('TEXTAREA:composer')
+  await expect(window.locator('.composer textarea')).toBeFocused()
 })

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
 import { removeFirst } from '../attachments.ts'
+import { NEW_SESSION_DRAFT, clearDraft, loadDraft, saveDraft } from '../drafts.ts'
 import { directoriesQuery, dirQuery, modelsQuery, providersQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import {
@@ -24,6 +25,25 @@ const NO_DIRECTORIES: DirectoryInfo[] = []
 /** Module scope so the cache memoises the filtered list. */
 const onlyReady = (all: ProviderInfo[]): ProviderInfo[] => all.filter((p) => p.ready !== false)
 
+/** The fields the dialog keeps between openings. */
+interface NewSessionDraft {
+  hostId?: string
+  provider?: string
+  model?: string
+  cwd?: string
+  mode?: string
+  prompt?: string
+}
+
+function readDraft(): NewSessionDraft {
+  try {
+    const raw = loadDraft(NEW_SESSION_DRAFT)
+    return raw ? (JSON.parse(raw) as NewSessionDraft) : {}
+  } catch {
+    return {}
+  }
+}
+
 export function NewSessionDialog({
   seed,
   onClose,
@@ -35,15 +55,33 @@ export function NewSessionDialog({
 }): JSX.Element {
   const hosts = useStore((s) => s.hosts)
   const hostStatus = useStore((s) => s.hostStatus)
-  const [hostId, setHostId] = useState(seed?.hostId ?? hosts[0]?.id ?? '')
-  const [provider, setProvider] = useState('claude')
-  const [model, setModel] = useState('')
-  const [cwd, setCwd] = useState('')
-  const [mode, setMode] = useState('')
-  const [prompt, setPrompt] = useState('')
+  /**
+   * What was in the dialog when it was last closed.
+   *
+   * Closing it to go and look something up — a path, a branch, what the error
+   * actually said — used to cost everything typed into it. The seed wins where
+   * it has an opinion: a + pressed on a project means that project, whatever
+   * the last dialog was about.
+   */
+  const kept = useMemo(() => readDraft(), [])
+  const [hostId, setHostId] = useState(seed?.hostId ?? kept.hostId ?? hosts[0]?.id ?? '')
+  const [provider, setProvider] = useState(kept.provider ?? 'claude')
+  const [model, setModel] = useState(kept.model ?? '')
+  const [cwd, setCwd] = useState(seed?.cwd ?? kept.cwd ?? '')
+  const [mode, setMode] = useState(kept.mode ?? '')
+  const [prompt, setPrompt] = useState(kept.prompt ?? '')
   // Held out here rather than in the picker, which unmounts with its popover: a
   // half-typed path must still be there when the chip is opened again.
   const [typed, setTyped] = useState('')
+
+  // Written as one record: the fields are one thought, and restoring half of
+  // them would be worse than restoring none.
+  useEffect(() => {
+    saveDraft(
+      NEW_SESSION_DRAFT,
+      JSON.stringify({ hostId, provider, model, cwd, mode, prompt } satisfies NewSessionDraft),
+    )
+  }, [hostId, provider, model, cwd, mode, prompt])
   const files = useAttachments()
   const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
   const [starting, setStarting] = useState(false)
@@ -138,6 +176,8 @@ export function NewSessionDialog({
       const session = store.sessionById(hostId, result.session_id)
       // Freshly created sessions are always warm, so attaching never wakes.
       if (session) await store.openTerminal(hostId, session, false)
+      // Started, so there is nothing left to come back to.
+      clearDraft(NEW_SESSION_DRAFT)
       onClose()
     } catch (err) {
       store.fail(err)
