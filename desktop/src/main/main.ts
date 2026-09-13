@@ -230,6 +230,11 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // A window that is never shown counts as hidden, and Chromium throttles
+      // a hidden renderer's timers to about one a second. Harmless for a
+      // minimised app and ruinous under test, where it turns a three-minute
+      // suite into a quarter of an hour of nothing happening.
+      backgroundThrottling: process.env.HELIOS_E2E_HIDDEN !== '1',
       webviewTag: false,
       spellcheck: false,
     },
