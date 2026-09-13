@@ -99,6 +99,15 @@ export function channelsQuery(hostId: string) {
  * Reading it marks it read on the daemon, which is what the unread count is
  * counted against — so opening a channel is what clears its badge.
  */
+/** One thread, read when its panel is open. */
+export function channelThreadQuery(hostId: string, channelId: string, root: string) {
+  return queryOptions({
+    queryKey: keys.channelThread(hostId, channelId, root),
+    queryFn: () => api(hostId).channelThread(channelId, root),
+    enabled: channelId !== '' && root !== '',
+  })
+}
+
 export function channelMessagesQuery(hostId: string, channelId: string) {
   return queryOptions({
     queryKey: keys.channelMessages(hostId, channelId),

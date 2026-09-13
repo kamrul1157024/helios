@@ -70,7 +70,13 @@ export const test = base.extend<Options & Fixtures>({
     // suite lands on its backdrop.
     const app = await electron.launch({
       args: ['.', `--user-data-dir=${userData}`],
-      env: { ...process.env, HELIOS_RELEASES_URL: 'data:application/json,[]' },
+      env: {
+        ...process.env,
+        HELIOS_RELEASES_URL: 'data:application/json,[]',
+        // Never brought to the front: a hundred specs each stealing focus is
+        // why this suite was not runnable while doing anything else.
+        HELIOS_E2E_HIDDEN: '1',
+      },
     })
     await use(app)
     await app.close()

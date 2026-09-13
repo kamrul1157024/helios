@@ -503,6 +503,10 @@ export interface Channel {
   created_at: string
   /** What this reader has not seen. */
   unread: number
+  /** Of the unread, how many named this reader. Worth stopping for. */
+  mentions: number
+  /** Session id → the handle it answers to when addressed with @. */
+  slugs: Record<string, string>
   /** Closed: still readable, but it takes no more messages and delivers nothing. */
   archived: boolean
 }
@@ -516,6 +520,14 @@ export interface ChannelMessage {
   body: string
   urgent?: boolean
   created_at: string
+  /** Empty on the spine, else the message this one hangs off. */
+  thread_root?: string
+  /** Readers this named, in author form, resolved by the daemon. */
+  mentions?: string[]
+  /** How many replies hang off this one. Spine messages only. */
+  reply_count?: number
+  /** Who has replied, by the name they are shown as. */
+  reply_authors?: string[]
 }
 
 /** internal/server/filesearch.go — one quick-open candidate. */

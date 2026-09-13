@@ -235,7 +235,14 @@ function createWindow(): void {
     },
   })
 
-  window.once('ready-to-show', () => window?.show())
+  // Under test the window is driven through the debug protocol and never
+  // looked at, so showing it only steals focus from whatever the developer is
+  // doing — once per spec, and the suite is over a hundred of them. It still
+  // renders and still screenshots; it is simply never brought to the front.
+  window.once('ready-to-show', () => {
+    if (process.env.HELIOS_E2E_HIDDEN === '1') return
+    window?.show()
+  })
 
   /*
    * The close button puts the window away; it does not end the app.

@@ -66,7 +66,19 @@ interface StubChannel {
   name: string
   members: string[]
   archived: boolean
-  messages: { id: string; author: string; from: string; body: string; created_at: string }[]
+  messages: StubChannelMessage[]
+}
+
+interface StubChannelMessage {
+  id: string
+  author: string
+  from: string
+  body: string
+  created_at: string
+  /** Empty for a message on the spine, else the message it hangs off. */
+  thread_root: string
+  /** Readers the daemon resolved out of the body, in author form. */
+  mentions: string[]
 }
 
 const CHANNELS: StubChannel[] = []
@@ -95,7 +107,7 @@ export function seedChannel(channel: {
   name?: string
   members: string[]
   archived?: boolean
-  messages?: { author: string; from: string; body: string }[]
+  messages?: { author: string; from: string; body: string; thread_root?: string; mentions?: string[] }[]
 }): void {
   CHANNELS.push({
     id: channel.id,
@@ -108,8 +120,23 @@ export function seedChannel(channel: {
       from: m.from,
       body: m.body,
       created_at: '2026-01-01T00:00:00Z',
+      thread_root: m.thread_root ?? '',
+      mentions: m.mentions ?? [],
     })),
   })
+}
+
+/** The handle a member answers to, as internal/server/mentions.go derives it. */
+function slugOf(title: string): string {
+  const filler = new Set(['a', 'an', 'and', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to', 'with'])
+  const words = title
+    .replace(/^\s*\[[^\]]*\]\s*/, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word && !filler.has(word))
+    .slice(0, 2)
+  const slug = words.join('-')
+  return slug.length < 3 ? '' : slug
 }
 
 export function channelsHeld(): StubChannel[] {
@@ -124,7 +151,7 @@ export type DaemonWrite =
   // that all of them went out and none went twice.
   | { kind: 'delete'; sessionId: string }
   | { kind: 'channel'; name: string; members: string[]; message: string }
-  | { kind: 'post'; channelId: string; message: string }
+  | { kind: 'post'; channelId: string; message: string; threadRoot: string }
   | { kind: 'join'; channelId: string; session: string }
   | { kind: 'archive'; channelId: string; archived: boolean }
   | { kind: 'rename'; channelId: string; name: string }
@@ -587,6 +614,8 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
         from: 'user',
         body: spec.message,
         created_at: '2026-01-01T00:00:00Z',
+        thread_root: '',
+        mentions: [],
       })
     }
     CHANNELS.push(channel)
@@ -623,8 +652,11 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
 
   if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
     const id = path.slice('/api/channels/'.length, -'/messages'.length)
-    const { message } = JSON.parse(body.toString() || '{}') as { message?: string }
-    writes.push({ kind: 'post', channelId: id, message: message ?? '' })
+    const { message, thread_root: threadRoot } = JSON.parse(body.toString() || '{}') as {
+      message?: string
+      thread_root?: string
+    }
+    writes.push({ kind: 'post', channelId: id, message: message ?? '', threadRoot: threadRoot ?? '' })
     const channel = CHANNELS.find((one) => one.id === id)
     if (channel) {
       channel.messages.push({
@@ -633,6 +665,8 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
         from: 'user',
         body: message ?? '',
         created_at: '2026-01-01T00:00:00Z',
+        thread_root: threadRoot ?? '',
+        mentions: [],
       })
     }
     return { success: true }
@@ -737,14 +771,33 @@ function answer(
           titles: Object.fromEntries(
             channel.members.map((id) => [id, SESSIONS.find((s) => s.session_id === id)?.title ?? id]),
           ),
+          slugs: Object.fromEntries(
+            channel.members.map((id) => [
+              id,
+              slugOf(SESSIONS.find((s) => s.session_id === id)?.title ?? '') || id.slice(0, 8),
+            ]),
+          ),
           created_by: 'user',
           created_at: '2026-01-01T00:00:00Z',
           unread: 0,
+          mentions: channel.messages.filter((m) => m.mentions.includes('user')).length,
           archived: channel.archived,
         })),
       }
     // What the new-schedule form offers: a schedule runs unattended, so the
     // model and the permission mode are picked rather than guessed.
+    default:
+      break
+  }
+
+  if (path.startsWith('/api/channels/') && path.includes('/threads/')) {
+    const id = path.slice('/api/channels/'.length, path.indexOf('/threads/'))
+    const root = path.slice(path.indexOf('/threads/') + '/threads/'.length)
+    const held = CHANNELS.find((one) => one.id === id)?.messages ?? []
+    return { root, messages: held.filter((m) => m.id === root || m.thread_root === root) }
+  }
+
+  switch (path) {
     case '/api/providers':
       return {
         providers: [
@@ -768,7 +821,19 @@ function answer(
       }
       if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
         const id = path.slice('/api/channels/'.length, -'/messages'.length)
-        return { messages: CHANNELS.find((one) => one.id === id)?.messages ?? [] }
+        const held = CHANNELS.find((one) => one.id === id)?.messages ?? []
+        return {
+          messages: held
+            .filter((m) => !m.thread_root)
+            .map((m) => {
+              const replies = held.filter((r) => r.thread_root === m.id)
+              return {
+                ...m,
+                reply_count: replies.length,
+                reply_authors: [...new Set(replies.map((r) => r.from))],
+              }
+            }),
+        }
       }
       if (path.endsWith('/transcript')) {
         const id = path.slice('/api/sessions/'.length, -'/transcript'.length)

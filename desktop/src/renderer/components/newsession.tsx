@@ -85,6 +85,16 @@ export function NewSessionDialog({
   const files = useAttachments()
   const { dropping, handlers: dropHandlers } = useDropTarget((dropped) => void files.attach(dropped))
   const [starting, setStarting] = useState(false)
+  /**
+   * The same guard as `starting`, held where a second click can see it.
+   *
+   * `starting` is state, so it is not true until React re-renders, and both
+   * halves of a double-click — or of two Enters in the same tick — run against
+   * the old value and both start a session. A ref changes on the line that
+   * sets it, which is the only thing fast enough. The state stays because it
+   * is what disables the button and paints the spinner.
+   */
+  const inFlight = useRef(false)
   const shell = useRef<HTMLDivElement | null>(null)
   const dismissing = useRef(false)
   // Spent on the first load and not again: switching hosts after that has to
@@ -155,7 +165,8 @@ export function NewSessionDialog({
    * A failed upload now leaves nothing behind, because nothing has started.
    */
   const start = async (): Promise<void> => {
-    if (!hostId || starting) return
+    if (!hostId || inFlight.current) return
+    inFlight.current = true
     setStarting(true)
     try {
       const text = prompt.trim()
@@ -182,6 +193,7 @@ export function NewSessionDialog({
     } catch (err) {
       store.fail(err)
     } finally {
+      inFlight.current = false
       setStarting(false)
     }
   }
@@ -324,6 +336,7 @@ export function NewSessionDialog({
               event.preventDefault()
               void start()
             }}
+            readOnly={starting}
           />
           <div className="composer-bar">
             <AttachButton

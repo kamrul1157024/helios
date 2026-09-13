@@ -5,10 +5,11 @@ import { api } from '../bridge.ts'
 import { clearDraft, loadDraft, saveDraft } from '../drafts.ts'
 import { statusOf } from '../errors.ts'
 import { keys } from '../keys.ts'
-import { channelMessagesQuery, channelsQuery } from '../queries.ts'
+import { channelMessagesQuery, channelThreadQuery, channelsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { renderMarkdown } from '../markdown.ts'
 import { AUTHOR_USER, authorColour, authorInitials } from './author-colour.ts'
+import { decorateMentions } from './mentions.ts'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import type { Channel, ChannelMessage } from '../../shared/models.ts'
 
@@ -75,6 +76,11 @@ export function ChannelList({ hostId, name, showName }: {
           />
         ) : (
           <span className="channel-name">{channelLabel(channel)}</span>
+        )}
+        {channel.mentions > 0 && !channel.archived && (
+          <span className="badge mention" title="Somebody addressed you">
+            @{channel.mentions}
+          </span>
         )}
         {channel.unread > 0 && !channel.archived && <span className="badge">{channel.unread}</span>}
       </span>
@@ -194,6 +200,12 @@ function ChannelNameField({
   )
 }
 
+/** The handles a channel answers to, for drawing chips in its messages. */
+function useHandles(channel: Channel | undefined): Set<string> {
+  const slugs = channel?.slugs
+  return useMemo(() => new Set(Object.values(slugs ?? {}).concat('user')), [slugs])
+}
+
 /** internal/store/channels.go — the channel every session is in. */
 const GENERAL = 'general'
 
@@ -236,11 +248,31 @@ export function ChannelPanel(): JSX.Element {
   }
   const host = hosts.find((one) => one.id === selection.hostId)
   return (
-    <ChannelConversation
-      key={`${selection.hostId}:${selection.channelId}`}
-      hostId={selection.hostId}
-      hostName={host?.name ?? selection.hostId}
-      channelId={selection.channelId}
+    <div className="channel-with-thread">
+      <ChannelConversation
+        key={`${selection.hostId}:${selection.channelId}`}
+        hostId={selection.hostId}
+        hostName={host?.name ?? selection.hostId}
+        channelId={selection.channelId}
+      />
+      <OpenThread />
+    </div>
+  )
+}
+
+/** The thread panel, when one is open on the channel being shown. */
+function OpenThread(): JSX.Element | null {
+  const selection = useStore((s) => s.channelSelection)
+  const thread = useStore((s) => s.threadSelection)
+  if (!thread || !selection) return null
+  if (thread.hostId !== selection.hostId || thread.channelId !== selection.channelId) return null
+
+  return (
+    <ThreadPanel
+      key={`${thread.hostId}:${thread.channelId}:${thread.root}`}
+      hostId={thread.hostId}
+      channelId={thread.channelId}
+      root={thread.root}
     />
   )
 }
@@ -253,49 +285,17 @@ function ChannelConversation({
   hostName: string
   channelId: string
 }): JSX.Element {
-  const client = useQueryClient()
   const { data: channels = [] } = useQuery(channelsQuery(hostId))
   const { data: messages = [] } = useQuery(channelMessagesQuery(hostId, channelId))
   const channel = channels.find((one) => one.id === channelId)
-
-  const draftKey = `channel:${hostId}:${channelId}`
-  const [draft, setDraft] = useState(() => loadDraft(draftKey))
-  const [sending, setSending] = useState(false)
-  const composer = useRef<HTMLTextAreaElement | null>(null)
+  const handles = useHandles(channel)
   const scroller = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    saveDraft(draftKey, draft)
-  }, [draftKey, draft])
-
-  // The box takes the keyboard when a channel opens, as the transcript's does:
-  // the reason for opening one is usually to say something in it.
-  useEffect(() => {
-    composer.current?.focus()
-  }, [channelId])
 
   // Newest last, and the reader wants the end of it.
   useEffect(() => {
     const el = scroller.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages.length])
-
-  const post = async (): Promise<void> => {
-    const text = draft.trim()
-    if (!text || sending) return
-    setSending(true)
-    try {
-      await api(hostId).postToChannel(channelId, text)
-      setDraft('')
-      clearDraft(draftKey)
-      await client.invalidateQueries({ queryKey: keys.channelMessages(hostId, channelId) })
-      await client.invalidateQueries({ queryKey: keys.channels(hostId) })
-    } catch (err) {
-      store.fail(err)
-    } finally {
-      setSending(false)
-    }
-  }
 
   return (
     <div className="channel">
@@ -332,6 +332,8 @@ function ChannelConversation({
             key={message.id}
             message={message}
             opens={messages[at - 1]?.author !== message.author}
+            handles={handles}
+            onOpenThread={() => store.openThread(hostId, channelId, message.id)}
           />
         ))}
       </div>
@@ -348,33 +350,230 @@ function ChannelConversation({
       )}
 
       {!channel?.archived && (
-      <div className="composer">
-        <div className="composer-input">
-          <textarea
-            ref={composer}
-            value={draft}
-            rows={1}
-            placeholder="Message the channel (↵ to send, ⇧↵ for a new line)"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-              event.preventDefault()
-              void post()
-            }}
+        <ChannelComposer
+          hostId={hostId}
+          channelId={channelId}
+          members={channel?.members ?? []}
+          titles={channel?.titles ?? {}}
+          slugs={channel?.slugs ?? {}}
+          placeholder="Message the channel (↵ to send, ⇧↵ for a new line)"
+          autoFocus
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The thread hanging off one message, beside the conversation rather than
+ * inside it.
+ *
+ * Its own composer and its own draft: what you were part-way through saying to
+ * the channel is not what you were part-way through saying in here.
+ */
+function ThreadPanel({
+  hostId,
+  channelId,
+  root,
+}: {
+  hostId: string
+  channelId: string
+  root: string
+}): JSX.Element {
+  const { data: channels = [] } = useQuery(channelsQuery(hostId))
+  const { data: messages = [] } = useQuery(channelThreadQuery(hostId, channelId, root))
+  const channel = channels.find((one) => one.id === channelId)
+  const handles = useHandles(channel)
+  const scroller = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const el = scroller.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages.length])
+
+  return (
+    <aside className="channel-thread">
+      <header className="channel-head">
+        <span className="channel-head-name">Thread</span>
+        <span className="grow" />
+        <button className="ghost" aria-label="Close the thread" onClick={() => store.closeThread()}>
+          ✕
+        </button>
+      </header>
+
+      <div className="channel-scroll" ref={scroller}>
+        {messages.map((message, at) => (
+          <ChannelMessageRow
+            key={message.id}
+            message={message}
+            opens={messages[at - 1]?.author !== message.author}
+            handles={handles}
           />
-          <div className="composer-bar">
-            <button
-              className="filled send-btn"
-              disabled={!draft.trim() || sending}
-              aria-label="Send to the channel"
-              onClick={() => void post()}
-            >
-              {sending ? <span className="spinner" /> : '↑'}
+        ))}
+      </div>
+
+      {!channel?.archived && (
+        <ChannelComposer
+          hostId={hostId}
+          channelId={channelId}
+          threadRoot={root}
+          members={channel?.members ?? []}
+          titles={channel?.titles ?? {}}
+          slugs={channel?.slugs ?? {}}
+          placeholder="Reply in the thread (↵ to send)"
+          autoFocus
+        />
+      )}
+    </aside>
+  )
+}
+
+/**
+ * The box, and the @ menu it opens.
+ *
+ * One component for the channel and for a thread, because the only difference
+ * between them is where the message lands — and the draft key, which has to
+ * differ or a half-typed reply would appear in the channel's box.
+ */
+function ChannelComposer({
+  hostId,
+  channelId,
+  threadRoot = '',
+  members,
+  titles,
+  slugs,
+  placeholder,
+  autoFocus = false,
+}: {
+  hostId: string
+  channelId: string
+  threadRoot?: string
+  members: string[]
+  titles: Record<string, string>
+  slugs: Record<string, string>
+  placeholder: string
+  autoFocus?: boolean
+}): JSX.Element {
+  const client = useQueryClient()
+  const draftKey = threadRoot
+    ? `thread:${hostId}:${channelId}:${threadRoot}`
+    : `channel:${hostId}:${channelId}`
+  const [draft, setDraft] = useState(() => loadDraft(draftKey))
+  const [sending, setSending] = useState(false)
+  const [picking, setPicking] = useState<string | null>(null)
+  const box = useRef<HTMLTextAreaElement | null>(null)
+  // State is not true until React re-renders, so two Enters in one tick both
+  // read it as false and post the message twice. A ref changes immediately.
+  const inFlight = useRef(false)
+
+  useEffect(() => {
+    saveDraft(draftKey, draft)
+  }, [draftKey, draft])
+
+  useEffect(() => {
+    if (autoFocus) box.current?.focus()
+  }, [autoFocus, draftKey])
+
+  const post = async (): Promise<void> => {
+    const text = draft.trim()
+    if (!text || inFlight.current) return
+    inFlight.current = true
+    setSending(true)
+    try {
+      await api(hostId).postToChannel(channelId, text, false, threadRoot)
+      setDraft('')
+      clearDraft(draftKey)
+      await client.invalidateQueries({ queryKey: keys.channelMessages(hostId, channelId) })
+      if (threadRoot) {
+        await client.invalidateQueries({
+          queryKey: keys.channelThread(hostId, channelId, threadRoot),
+        })
+      }
+      await client.invalidateQueries({ queryKey: keys.channels(hostId) })
+    } catch (err) {
+      store.fail(err)
+    } finally {
+      inFlight.current = false
+      setSending(false)
+    }
+  }
+
+  // The handle is what the daemon resolves, so the menu inserts that rather
+  // than the title: what reads well and what addresses somebody are different
+  // strings, and only one of them wakes an agent.
+  const offered = members
+    .map((id) => ({ id, handle: slugs[id] ?? id.slice(0, 8), title: titles[id] ?? id }))
+    .filter(({ handle, title }) => {
+      const needle = (picking ?? '').toLowerCase()
+      return !needle || handle.includes(needle) || title.toLowerCase().includes(needle)
+    })
+
+  const insert = (handle: string): void => {
+    setDraft((text) => text.replace(/@([A-Za-z0-9_-]*)$/, `@${handle} `))
+    setPicking(null)
+    box.current?.focus()
+  }
+
+  return (
+    <div className="composer">
+      {picking !== null && offered.length > 0 && (
+        <div className="mention-menu">
+          {offered.map(({ id, handle, title }) => (
+            <button key={id} className="mention-option" onMouseDown={() => insert(handle)}>
+              <span className="mention-handle" style={{ color: authorColour(`session:${id}`) }}>
+                @{handle}
+              </span>
+              <span className="mention-title">{title}</span>
             </button>
-          </div>
+          ))}
+        </div>
+      )}
+
+      <div className="composer-input">
+        <textarea
+          ref={box}
+          value={draft}
+          rows={1}
+          placeholder={placeholder}
+          onChange={(event) => {
+            const text = event.target.value
+            setDraft(text)
+            // Open on the @ and narrow as it is typed; any space ends it.
+            const at = /@([A-Za-z0-9_-]*)$/.exec(text)
+            setPicking(at ? (at[1] ?? '') : null)
+          }}
+          onBlur={() => setPicking(null)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && picking !== null) {
+              event.preventDefault()
+              setPicking(null)
+              return
+            }
+            if (event.key === 'Tab' && picking !== null && offered[0]) {
+              event.preventDefault()
+              insert(offered[0].handle)
+              return
+            }
+            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            if (picking !== null && offered[0]) {
+              insert(offered[0].handle)
+              return
+            }
+            void post()
+          }}
+        />
+        <div className="composer-bar">
+          <button
+            className="filled send-btn"
+            disabled={!draft.trim() || sending}
+            aria-label={threadRoot ? 'Send to the thread' : 'Send to the channel'}
+            onClick={() => void post()}
+          >
+            {sending ? <span className="spinner" /> : '↑'}
+          </button>
         </div>
       </div>
-      )}
     </div>
   )
 }
@@ -390,15 +589,27 @@ function ChannelConversation({
 function ChannelMessageRow({
   message,
   opens,
+  handles,
+  onOpenThread,
 }: {
   message: ChannelMessage
   opens: boolean
+  /** The handles this channel answers to, for drawing the chips. */
+  handles: Set<string>
+  /** Absent inside a thread: everything there is already in one. */
+  onOpenThread?: () => void
 }): JSX.Element {
-  const html = useMemo(() => renderMarkdown(message.body), [message.body])
+  const html = useMemo(
+    () => decorateMentions(renderMarkdown(message.body), handles),
+    [message.body, handles],
+  )
   // The colour is the session's, carried on the row as a variable so the name,
   // the avatar and the bubble cannot disagree. The person gets none.
   const colour = authorColour(message.author)
   const mine = message.author === AUTHOR_USER
+  // Addressed to the person reading it, which is the one thing in a channel
+  // worth finding again when scrolling back.
+  const addressed = (message.mentions ?? []).includes(AUTHOR_USER)
 
   return (
     <div
@@ -406,6 +617,7 @@ function ChannelMessageRow({
         'channel-msg',
         mine ? 'you' : 'from-session',
         opens ? 'opens' : 'continues',
+        addressed ? 'addressed' : '',
         message.urgent ? 'urgent' : '',
       ]
         .filter(Boolean)
@@ -427,9 +639,22 @@ function ChannelMessageRow({
           </span>
         )}
         <div className="channel-msg-body md" dangerouslySetInnerHTML={{ __html: html }} />
+
+        {onOpenThread && (message.reply_count ?? 0) > 0 && (
+          <button className="channel-replies" onClick={onOpenThread}>
+            {replyLine(message)}
+          </button>
+        )}
       </div>
     </div>
   )
+}
+
+function replyLine(message: ChannelMessage): string {
+  const count = message.reply_count ?? 0
+  const who = (message.reply_authors ?? []).join(", ")
+  const replies = count === 1 ? "1 reply" : `${count} replies`
+  return who ? `${replies} · ${who}` : replies
 }
 
 function shortTime(iso: string): string {
