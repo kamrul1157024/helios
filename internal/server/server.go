@@ -159,6 +159,12 @@ func NewInternalServer(port int, shared *Shared) *InternalServer {
 	mux.HandleFunc("GET /internal/logs", s.handleInternalLogs)
 	// Schedules answer on both muxes: the apps reach them over the public API
 	// and the CLI over this one, and a schedule is the same thing to both.
+	mux.HandleFunc("/internal/channels", func(w http.ResponseWriter, r *http.Request) {
+		shared.channelRoute(w, r, "/internal/channels")
+	})
+	mux.HandleFunc("/internal/channels/", func(w http.ResponseWriter, r *http.Request) {
+		shared.channelRoute(w, r, "/internal/channels")
+	})
 	mux.HandleFunc("/internal/schedules", func(w http.ResponseWriter, r *http.Request) {
 		shared.scheduleRoute(w, r, "/internal/schedules")
 	})
@@ -213,6 +219,12 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	})
 	protectedMux.HandleFunc("/api/schedules/", func(w http.ResponseWriter, r *http.Request) {
 		s.shared.scheduleRoute(w, r, "/api/schedules")
+	})
+	protectedMux.HandleFunc("/api/channels", func(w http.ResponseWriter, r *http.Request) {
+		s.shared.channelRoute(w, r, "/api/channels")
+	})
+	protectedMux.HandleFunc("/api/channels/", func(w http.ResponseWriter, r *http.Request) {
+		s.shared.channelRoute(w, r, "/api/channels")
 	})
 	protectedMux.HandleFunc("GET /api/groups", s.handleListGroups)
 	protectedMux.HandleFunc("POST /api/groups", s.handleCreateGroup)
