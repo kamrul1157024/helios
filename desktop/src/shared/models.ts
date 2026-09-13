@@ -487,6 +487,37 @@ export interface FileContent {
   encoding?: 'utf8' | 'base64'
 }
 
+/**
+ * A channel: several sessions and the person, with one conversation running
+ * through it. internal/store/channels.go.
+ */
+export interface Channel {
+  id: string
+  /** Empty for a channel that is only its members. */
+  name: string
+  /** Session ids, in the order they joined. */
+  members: string[]
+  /** Session id → the title it is shown by, resolved by the daemon. */
+  titles: Record<string, string>
+  created_by: string
+  created_at: string
+  /** What this reader has not seen. */
+  unread: number
+  /** Closed: still readable, but it takes no more messages and delivers nothing. */
+  archived: boolean
+}
+
+export interface ChannelMessage {
+  id: string
+  /** 'user', or 'session:<id>'. */
+  author: string
+  /** What to show it as: 'user', or the session's title. */
+  from: string
+  body: string
+  urgent?: boolean
+  created_at: string
+}
+
 /** internal/server/filesearch.go — one quick-open candidate. */
 export interface FileMatch {
   path: string

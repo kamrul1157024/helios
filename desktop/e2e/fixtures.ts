@@ -11,9 +11,22 @@ import path from 'node:path'
 
 import { _electron as electron, test as base, type ElectronApplication, type Page } from '@playwright/test'
 
-import { startDaemon, type StubDaemon } from './daemon.ts'
+import { setChannelsUnsupported, startDaemon, type StubDaemon } from './daemon.ts'
 
 export const HOST_ID = 'e2e-host'
+
+interface Options {
+  /**
+   * Whether this daemon knows what a channel is.
+   *
+   * An option rather than something a test sets in its own body: the window is
+   * built before the first hook runs, so a flag flipped inside a test arrives
+   * after the app has already read the channel list and cached the answer.
+   * Options are resolved before the fixtures that depend on them, which is the
+   * ordering this needs. Use it with `test.use({ channelsSupported: false })`.
+   */
+  channelsSupported: boolean
+}
 
 interface Fixtures {
   daemon: StubDaemon
@@ -21,11 +34,15 @@ interface Fixtures {
   window: Page
 }
 
-export const test = base.extend<Fixtures>({
-  daemon: async ({}, use) => {
+export const test = base.extend<Options & Fixtures>({
+  channelsSupported: [true, { option: true }],
+
+  daemon: async ({ channelsSupported }, use) => {
+    setChannelsUnsupported(!channelsSupported)
     const daemon = await startDaemon()
     await use(daemon)
     await daemon.close()
+    setChannelsUnsupported(false)
   },
 
   app: async ({ daemon }, use) => {

@@ -1,5 +1,5 @@
 import { store, useStore, type SidebarMode } from '../store.ts'
-import { Chevron, Clock, Gear, ListRows } from './icons.tsx'
+import { Chat, Chevron, Clock, Gear, ListRows } from './icons.tsx'
 
 /**
  * What the window is showing, chosen from the left edge.
@@ -56,6 +56,7 @@ export function Rail(): JSX.Element {
       </button>
       {item('sessions', 'Sessions', <ListRows />)}
       {item('schedules', 'Schedules', <Clock />)}
+      {item('channels', 'Channels', <Chat />)}
       <span className="grow" />
       {item('settings', 'Settings', <Gear />)}
     </nav>

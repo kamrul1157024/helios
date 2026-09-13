@@ -67,6 +67,8 @@ func main() {
 		handleLogs(os.Args[2:])
 	case "schedule", "schedules":
 		handleSchedule(os.Args[2:])
+	case "chat":
+		handleChat(os.Args[2:])
 	case "version":
 		fmt.Printf("helios v%s\n", version.Current)
 	case "help", "--help", "-h":
@@ -1202,6 +1204,9 @@ Commands:
   schedule              Run a prompt on a clock, or when a check matches
                         list | add | edit | rm | enable | disable
                         run | check | logs — see: helios schedule help
+  chat                  One conversation running through several sessions
+                        list | sessions | new | post | read
+                        join | leave — see: helios chat help
 
   daemon start [flags]  Start the helios daemon (with supervisor)
                         -d                Run in background (daemonize)

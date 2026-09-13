@@ -53,6 +53,19 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
   return result.value as T
 }
 
+/**
+ * The envelope, handed over as data rather than thrown.
+ *
+ * contextBridge clones a thrown Error by its message and stack and drops every
+ * other property, so a status set on one here reaches the renderer as
+ * undefined. The REST calls are the ones whose status is load-bearing — the
+ * retry policy and every "is this daemon too old" check read it — so they cross
+ * as a value and are turned back into an Error on the other side.
+ */
+async function callRaw<T>(channel: string, ...args: unknown[]): Promise<Result<T>> {
+  return (await ipcRenderer.invoke(channel, ...args)) as Result<T>
+}
+
 function on(channel: string, listener: (payload: unknown) => void): () => void {
   const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => listener(payload)
   ipcRenderer.on(channel, wrapped)
@@ -108,7 +121,7 @@ const helios = {
   },
   api: {
     call: <T>(hostId: string, method: string, args: unknown[] = []) =>
-      call<T>('api:call', hostId, method, args),
+      callRaw<T>('api:call', hostId, method, args),
   },
   term: {
     open: (req: unknown) => call<void>('term:open', req),

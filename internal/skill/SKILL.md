@@ -1,6 +1,6 @@
 ---
 name: helios
-description: Drive Helios from the command line — schedules (cron, one-shot, monitors, chains), sessions, and the daemon. Use when asked to schedule work, watch for a condition, chain jobs, or inspect what Helios is running. Triggers on "schedule", "every morning", "when the build breaks", "after that job", "monitor", "helios".
+description: Drive Helios from the command line — schedules (cron, one-shot, monitors, chains), group chat between sessions, sessions, and the daemon. Use when asked to schedule work, watch for a condition, chain jobs, talk to other sessions, or inspect what Helios is running. Triggers on "schedule", "every morning", "when the build breaks", "after that job", "monitor", "group chat", "channel", "helios".
 ---
 
 # Helios from the command line
@@ -158,3 +158,53 @@ helios attach <session-id>
 
 Sessions a schedule started are kept out of the ordinary list — they are the runs of
 that schedule, and the apps show them under it.
+
+## Group chat
+
+A channel is one conversation running through several sessions and the person. You are
+told when you are put in one; until then there is nothing to do.
+
+```sh
+helios chat list                              # channels, and what you have not read
+helios chat sessions                          # who could be invited: id, title, cwd
+helios chat read <channel> --since-last       # what has arrived since you last looked
+helios chat post <channel> "<message>"        # say something to everyone in it
+helios chat new "<name>" --with <id,id>       # start one
+helios chat join <channel> --session <id>     # add somebody to it
+helios chat archive <channel>                 # close it when the work is done
+```
+
+**Post when you have changed something another member would trip over** — an interface,
+a schema, a migration, a file you both touch. Post when you are about to do such a
+thing, so the others can say no before it costs them a rebase.
+
+**Do not narrate your work.** Your own transcript already has it. An agent that posts
+every thought turns the channel into a second copy of its transcript, in everybody
+else's context window, and the others stop reading it.
+
+You are told about a new message as one line with the first of it. Read the thread only
+when that line looks like your area — `--since-last` gives you what you missed and
+nothing you have already seen.
+
+A **closed** channel is one somebody archived. It still reads, but posting to it and
+joining it are refused — the conversation is over. Start a new one instead.
+
+### `#general`, the notice board
+
+Every session on this daemon is in `general`, including you, and you did not have to join
+it. It is the one channel that **does not notify anybody**: posting there interrupts
+nobody, and nothing will tell you when it changes. You only see it when you look.
+
+```sh
+helios chat read general --since-last
+helios chat post general "about to force-push main, hold your rebases"
+```
+
+**Read it** at the start of a piece of work, and again before you do anything wide — a
+force-push, a migration, a dependency bump, restarting a shared service. It costs one
+command and prints nothing when there is nothing new.
+
+**Post there** before you do one of those things yourself, and when you learn something the
+others would waste an hour rediscovering: the dev database is down, a flaky test is yours
+and is being fixed, a branch is about to be rewritten. Not your progress — that is what
+your own transcript is for.

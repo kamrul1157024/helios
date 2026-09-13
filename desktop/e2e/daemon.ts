@@ -60,6 +60,62 @@ export interface StubDaemon {
 }
 
 /** One thing the app asked of the daemon. */
+/** Channels the stub is holding, and what was said in them. */
+interface StubChannel {
+  id: string
+  name: string
+  members: string[]
+  archived: boolean
+  messages: { id: string; author: string; from: string; body: string; created_at: string }[]
+}
+
+const CHANNELS: StubChannel[] = []
+
+/** Whether this daemon pretends to predate channels and 404s the routes. */
+let channelsUnsupported = false
+
+/** Back to no channels, for a test that is not about them. */
+export function resetChannels(): void {
+  CHANNELS.length = 0
+}
+
+/**
+ * Answers every channel route with 404, as a daemon too old for them does.
+ *
+ * Set by the `channelsSupported` fixture option and cleared when that daemon
+ * closes — not by resetChannels, which runs in a beforeEach, after the option
+ * has already decided what this daemon is.
+ */
+export function setChannelsUnsupported(value: boolean): void {
+  channelsUnsupported = value
+}
+
+export function seedChannel(channel: {
+  id: string
+  name?: string
+  members: string[]
+  archived?: boolean
+  messages?: { author: string; from: string; body: string }[]
+}): void {
+  CHANNELS.push({
+    id: channel.id,
+    name: channel.name ?? '',
+    members: channel.members,
+    archived: channel.archived ?? false,
+    messages: (channel.messages ?? []).map((m, at) => ({
+      id: `m_${String(at).padStart(12, '0')}`,
+      author: m.author,
+      from: m.from,
+      body: m.body,
+      created_at: '2026-01-01T00:00:00Z',
+    })),
+  })
+}
+
+export function channelsHeld(): StubChannel[] {
+  return CHANNELS.map((one) => ({ ...one, messages: [...one.messages] }))
+}
+
 export type DaemonWrite =
   | { kind: 'create'; spec: Record<string, unknown> }
   | { kind: 'upload'; names: string[] }
@@ -67,6 +123,11 @@ export type DaemonWrite =
   // What a bulk action issues: one call per session held, so a test can check
   // that all of them went out and none went twice.
   | { kind: 'delete'; sessionId: string }
+  | { kind: 'channel'; name: string; members: string[]; message: string }
+  | { kind: 'post'; channelId: string; message: string }
+  | { kind: 'join'; channelId: string; session: string }
+  | { kind: 'archive'; channelId: string; archived: boolean }
+  | { kind: 'rename'; channelId: string; name: string }
   | { kind: 'patch'; sessionId: string; patch: Record<string, unknown> }
 
 /** The session every create in these tests hands back. */
@@ -382,6 +443,15 @@ export async function startDaemon(): Promise<StubDaemon> {
     const path = url.pathname
     const q = (name: string): string => url.searchParams.get(name) ?? ''
 
+    // A daemon older than channels has no such route at all. The app has to
+    // cope, because one out-of-date machine in the sidebar must not break the
+    // mode on the others.
+    if (channelsUnsupported && path.startsWith('/api/channels')) {
+      res.writeHead(404, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Not Found', message: 'no such route' }))
+      return
+    }
+
     if (path === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
       res.write(': open\n\n')
@@ -454,7 +524,17 @@ export async function startDaemon(): Promise<StubDaemon> {
 
 /** The calls that start a session and give it its first turn. */
 function written(path: string): boolean {
-  return path === '/api/sessions' || path === '/api/uploads' || path.endsWith('/send')
+  return (
+    path === '/api/sessions' ||
+    path === '/api/uploads' ||
+    path.endsWith('/send') ||
+    path === '/api/channels' ||
+    (path.startsWith('/api/channels/') &&
+      (path.endsWith('/messages') ||
+        path.endsWith('/members') ||
+        path.endsWith('/archive') ||
+        path.endsWith('/rename')))
+  )
 }
 
 /**
@@ -467,6 +547,95 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
   if (path === '/api/sessions') {
     writes.push({ kind: 'create', spec: JSON.parse(body.toString() || '{}') })
     return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
+  }
+
+  if (path === '/api/channels') {
+    const spec = JSON.parse(body.toString() || '{}') as {
+      name?: string
+      members?: string[]
+      message?: string
+    }
+    const members = spec.members ?? []
+    writes.push({
+      kind: 'channel',
+      name: spec.name ?? '',
+      members,
+      message: spec.message ?? '',
+    })
+    // The rule the daemon applies: an unnamed channel is its members, so the
+    // same set gives the same conversation back rather than a second one.
+    const same = (a: string[], b: string[]): boolean =>
+      a.length === b.length && [...a].sort().join() === [...b].sort().join()
+    // A closed channel is skipped: archiving says the conversation is over,
+    // and handing it back would reopen it behind the caller's back.
+    const existing = spec.name
+      ? undefined
+      : CHANNELS.find((one) => !one.name && !one.archived && same(one.members, members))
+    if (existing) return { channel: existing, existing: true }
+
+    const channel: StubChannel = {
+      id: `ch_${CHANNELS.length + 1}`,
+      name: spec.name ?? '',
+      members,
+      archived: false,
+      messages: [],
+    }
+    if (spec.message) {
+      channel.messages.push({
+        id: 'm_000000000000',
+        author: 'user',
+        from: 'user',
+        body: spec.message,
+        created_at: '2026-01-01T00:00:00Z',
+      })
+    }
+    CHANNELS.push(channel)
+    return { channel, existing: false }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/members')) {
+    const id = path.slice('/api/channels/'.length, -'/members'.length)
+    const { session } = JSON.parse(body.toString() || '{}') as { session?: string }
+    writes.push({ kind: 'join', channelId: id, session: session ?? '' })
+    const channel = CHANNELS.find((one) => one.id === id)
+    const added = Boolean(channel && session && !channel.members.includes(session))
+    if (added && channel && session) channel.members.push(session)
+    return { success: true, added }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/rename')) {
+    const id = path.slice('/api/channels/'.length, -'/rename'.length)
+    const { name } = JSON.parse(body.toString() || '{}') as { name?: string }
+    writes.push({ kind: 'rename', channelId: id, name: name ?? '' })
+    const channel = CHANNELS.find((one) => one.id === id)
+    if (channel) channel.name = (name ?? '').trim()
+    return { success: true, name: (name ?? '').trim() }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/archive')) {
+    const id = path.slice('/api/channels/'.length, -'/archive'.length)
+    const { archived } = JSON.parse(body.toString() || '{}') as { archived?: boolean }
+    writes.push({ kind: 'archive', channelId: id, archived: Boolean(archived) })
+    const channel = CHANNELS.find((one) => one.id === id)
+    if (channel) channel.archived = Boolean(archived)
+    return { success: true, archived: Boolean(archived) }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
+    const id = path.slice('/api/channels/'.length, -'/messages'.length)
+    const { message } = JSON.parse(body.toString() || '{}') as { message?: string }
+    writes.push({ kind: 'post', channelId: id, message: message ?? '' })
+    const channel = CHANNELS.find((one) => one.id === id)
+    if (channel) {
+      channel.messages.push({
+        id: `m_${String(channel.messages.length).padStart(12, '0')}`,
+        author: 'user',
+        from: 'user',
+        body: message ?? '',
+        created_at: '2026-01-01T00:00:00Z',
+      })
+    }
+    return { success: true }
   }
 
   if (path.endsWith('/send')) {
@@ -556,6 +725,24 @@ function answer(
       return { root: q('path'), matches: [], scanned: 0, truncated: false }
     case '/api/schedules':
       return { schedules: SCHEDULES }
+    case '/api/channels':
+      return {
+        channels: CHANNELS.map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          members: channel.members,
+          // The daemon resolves a session's title for its clients, so the stub
+          // does too: a client showing ids would be a client under test that
+          // never sees what the real one shows.
+          titles: Object.fromEntries(
+            channel.members.map((id) => [id, SESSIONS.find((s) => s.session_id === id)?.title ?? id]),
+          ),
+          created_by: 'user',
+          created_at: '2026-01-01T00:00:00Z',
+          unread: 0,
+          archived: channel.archived,
+        })),
+      }
     // What the new-schedule form offers: a schedule runs unattended, so the
     // model and the permission mode are picked rather than guessed.
     case '/api/providers':
@@ -578,6 +765,10 @@ function answer(
         const id = path.slice('/api/sessions/'.length)
         const one = [...SESSIONS, ...RUNS].find((s) => s.session_id === id)
         if (path.startsWith('/api/sessions/') && one) return { session: statusOf(one), pending_permissions: 0 }
+      }
+      if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
+        const id = path.slice('/api/channels/'.length, -'/messages'.length)
+        return { messages: CHANNELS.find((one) => one.id === id)?.messages ?? [] }
       }
       if (path.endsWith('/transcript')) {
         const id = path.slice('/api/sessions/'.length, -'/transcript'.length)

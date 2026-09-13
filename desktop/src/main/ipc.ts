@@ -1,6 +1,6 @@
 import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 
-import { ApiError, type ApiClient } from './api.ts'
+import { type ApiClient } from './api.ts'
 import { stagePreview } from './main.ts'
 import type { HostRegistry } from './hosts.ts'
 import type { Notifier } from './notify.ts'
@@ -29,6 +29,14 @@ const API_METHODS = new Set<keyof ApiClient>([
   'sendPrompt',
   'touchSession',
   'setSessionOrder',
+  'listChannels',
+  'createChannel',
+  'channelMessages',
+  'postToChannel',
+  'addToChannel',
+  'renameChannel',
+  'setChannelArchived',
+  'deleteChannel',
   'listSchedules',
   'createSchedule',
   'updateSchedule',
@@ -359,10 +367,19 @@ function handle(
     try {
       return { ok: true, value: await fn(event, ...(args as never[])) }
     } catch (err) {
-      if (err instanceof ApiError) {
-        return { ok: false, error: err.message, status: err.status, code: err.code }
+      // Read structurally rather than through `instanceof`. The status is the
+      // difference between "the daemon answered no" and "the call never
+      // landed", and the retry policy turns on it: a 404 that arrives without
+      // one is retried three times before the view is told, which is how a
+      // host too old for a feature came to look like a slow one.
+      const status = (err as { status?: unknown }).status
+      const code = (err as { code?: unknown }).code
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        status: typeof status === 'number' ? status : undefined,
+        code: typeof code === 'string' ? code : undefined,
       }
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
 }

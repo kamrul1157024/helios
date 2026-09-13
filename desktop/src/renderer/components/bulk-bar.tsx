@@ -16,6 +16,11 @@ import type { Session, SessionGroup } from '../../shared/models.ts'
  * opened from. Here the count is the first thing said, so what is about to
  * happen and how much of it are in the same sentence.
  */
+/** The session ids behind the selection keys, which are `host:session`. */
+function sessionsOf(held: string[]): string[] {
+  return held.map((key) => key.slice(key.indexOf(':') + 1))
+}
+
 export function BulkBar({
   held,
   rows,
@@ -67,6 +72,37 @@ export function BulkBar({
   return (
     <div className="bulk-bar">
       <span className="bulk-count">{summary.count} selected</span>
+
+      {/* The gesture the channels were asked for: pick a few sessions and
+          start a conversation between them. Only on one host, because a
+          channel belongs to the daemon that holds its members. */}
+      <button
+        className="ghost"
+        disabled={!summary.canFile}
+        title={
+          summary.canFile
+            ? 'Start a channel with these sessions'
+            : 'The selection is on more than one host'
+        }
+        onClick={() => void store.startChannel(hostId, sessionsOf(held))}
+      >
+        New group chat
+      </button>
+
+      {/* The other half of the same gesture: these sessions, but into a
+          conversation that is already running rather than a fresh one. */}
+      <button
+        className="ghost"
+        disabled={!summary.canFile}
+        title={
+          summary.canFile
+            ? 'Put these sessions in a channel that already exists'
+            : 'The selection is on more than one host'
+        }
+        onClick={() => store.pickChannelFor(hostId, sessionsOf(held))}
+      >
+        Add to channel…
+      </button>
 
       <button
         className="ghost"

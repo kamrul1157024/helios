@@ -117,6 +117,16 @@ export function Plus({ className = '' }: { className?: string }): JSX.Element {
   )
 }
 
+/** A conversation several sessions are in: two overlapping bubbles. */
+export function Chat({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8.5 15.5H6l-3 2.5v-11a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v4" />
+      <path d="M21 19.5l-2.5-2h-6a1.5 1.5 0 0 1-1.5-1.5v-4a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 21 12z" />
+    </svg>
+  )
+}
+
 /** Picking several rows at once: a box with a tick in it. */
 export function Ticks({ className = '' }: { className?: string }): JSX.Element {
   return (

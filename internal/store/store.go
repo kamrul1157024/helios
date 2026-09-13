@@ -236,6 +236,46 @@ func (s *Store) migrate() error {
 		// Which schedule started a session, so the sidebar can leave the
 		// clock's work out and the runs list can show only it.
 		{"add_sessions_schedule_id", `ALTER TABLE sessions ADD COLUMN schedule_id TEXT`},
+
+		// Channels: several sessions and the person, with one conversation
+		// running through them. See docs/specs/60-group-chat.md.
+		{"create_channels", `CREATE TABLE IF NOT EXISTS channels (
+			id         TEXT PRIMARY KEY,
+			name       TEXT NOT NULL DEFAULT '',
+			created_by TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)`},
+		{"create_channel_members", `CREATE TABLE IF NOT EXISTS channel_members (
+			channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL,
+			muted      INTEGER NOT NULL DEFAULT 0,
+			joined_at  TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (channel_id, session_id)
+		)`},
+		// seq, not a timestamp, is what orders a conversation: three messages
+		// posted in the same millisecond have an order, and a receipt is a
+		// message id compared with `>`, which has to mean "after".
+		{"create_channel_messages", `CREATE TABLE IF NOT EXISTS channel_messages (
+			seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+			id         TEXT UNIQUE,
+			channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+			author     TEXT NOT NULL,
+			body       TEXT NOT NULL,
+			urgent     INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)`},
+		{"create_channel_messages_index",
+			`CREATE INDEX IF NOT EXISTS idx_channel_messages ON channel_messages(channel_id, id)`},
+		{"create_channel_receipts", `CREATE TABLE IF NOT EXISTS channel_receipts (
+			channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+			reader     TEXT NOT NULL,
+			last_read  TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (channel_id, reader)
+		)`},
+		// A closed conversation: still readable, but it takes no more messages
+		// and delivers nothing. What shortens the list without destroying what
+		// was said.
+		{"add_channels_archived", `ALTER TABLE channels ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
 	}
 
 	for _, cm := range columnMigrations {

@@ -100,6 +100,14 @@ export function sessionActions(
   // is a place to file the session rather than a thing to do to it.
   const actions: MenuAction[] = [{ label: 'Move to group', children: filing }]
 
+  // Not a child menu, unlike the groups above it: the list of channels is
+  // unbounded and a submenu of thirty is a scroll with no way to search it.
+  // The picker asks the same question with a field at the top of it.
+  actions.push({
+    label: 'Add to channel…',
+    run: () => store.pickChannelFor(hostId, [session.session_id]),
+  })
+
   actions.push(
     {
       // Edited on the row itself, where a group header is renamed. Prompting

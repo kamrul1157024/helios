@@ -703,6 +703,225 @@ small {
   margin-bottom: 2px;
 }
 
+/* ─── Channels ──────────────────────────────────────────────────────────── */
+
+.channel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  cursor: default;
+  transition: background-color 120ms ease;
+}
+
+.channel-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+}
+
+.channel-row.active {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.channel-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.channel-row-sub {
+  color: var(--on-surface-variant);
+  font-size: 11px;
+}
+
+/* Renamed on the row, the way a session and a group header are. */
+.channel-name-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  margin: -1px 0;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* A closed channel is readable, not gone — dimmed rather than struck through,
+   so it reads as put away rather than broken. */
+.channel-row.closed .channel-name {
+  color: var(--on-surface-variant);
+}
+
+.channel-closed-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  text-align: left;
+  cursor: default;
+}
+
+.channel-closed-head:hover {
+  color: var(--on-surface);
+}
+
+.channel-closed-mark {
+  width: 10px;
+}
+
+/* Where the composer was. The box goes rather than being disabled: one that
+   takes text and then refuses it is worse than none at all. */
+.channel-closed-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  box-shadow: inset 0 1px 0 var(--outline-variant);
+}
+
+.channel-note {
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.channel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.channel-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.channel-head-name {
+  font-weight: 600;
+}
+
+.channel-head-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Who is in it, and a way into each: two seconds after reading a message the
+   reader wants the session that wrote it. */
+.member-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-chip:hover {
+  color: var(--primary);
+}
+
+.member-chip.you {
+  background: none;
+  cursor: default;
+}
+
+.channel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+.channel-msg {
+  margin-bottom: 12px;
+  max-width: var(--prose-width, 70%);
+}
+
+/* A rule in the session's own colour, so one agent can be followed down a busy
+   channel without reading a single name. The person gets none: the absence is
+   what separates them from every agent at a glance. */
+.channel-msg.from-session {
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--author, var(--primary));
+}
+
+.channel-msg.from-session .channel-from {
+  color: var(--author, var(--primary));
+}
+
+.channel-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.channel-from {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.channel-from.you {
+  color: var(--on-surface-variant);
+}
+
+.channel-when {
+  font-size: 10.5px;
+  color: var(--on-surface-variant);
+}
+
+/* An urgent message stopped everybody's work; it should not look like the rest
+   of the conversation. */
+.channel-msg.urgent {
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--error);
+}
+
+.channel-urgent {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--error);
+  color: var(--surface);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.channel-msg-body {
+  white-space: normal;
+  word-break: break-word;
+}
+
 /* ─── Bulk selection ────────────────────────────────────────────────────── */
 
 /* The tick takes a column of its own down the left, so it sits beside the

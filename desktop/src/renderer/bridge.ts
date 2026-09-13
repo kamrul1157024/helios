@@ -1,3 +1,4 @@
+import { unwrap, type CallResult } from './errors.ts'
 import type { SegmentId } from '../shared/status-line.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 import type { BackdropSpec } from '../shared/theme/vscode.ts'
@@ -24,6 +25,8 @@ export interface ThemePayload {
 }
 import type {
   AppearancePrefs,
+  Channel,
+  ChannelMessage,
   BackdropState,
   CommandInfo,
   Density,
@@ -99,7 +102,7 @@ interface RawBridge {
     onEvent(fn: (payload: { hostId: string; event: SSEEvent }) => void): Unsubscribe
   }
   api: {
-    call<T>(hostId: string, method: string, args?: unknown[]): Promise<T>
+    call<T>(hostId: string, method: string, args?: unknown[]): Promise<CallResult<T>>
   }
   term: {
     open(req: {
@@ -187,8 +190,11 @@ export { statusOf, type BridgeError } from './errors.ts'
 export class HostApi {
   constructor(readonly hostId: string) {}
 
-  private call<T>(method: string, ...args: unknown[]): Promise<T> {
-    return bridge.api.call<T>(this.hostId, method, args)
+  // Thrown here rather than in the preload: contextBridge clones an Error by
+  // its message and stack alone, so a status attached on the far side arrives
+  // as undefined. See unwrap.
+  private async call<T>(method: string, ...args: unknown[]): Promise<T> {
+    return unwrap(await bridge.api.call<T>(this.hostId, method, args), method)
   }
 
   listSessions(
@@ -205,6 +211,36 @@ export class HostApi {
     return this.call('listSessions', params)
   }
   // ─── Schedules ─────────────────────────────────────────────────────────
+
+  // ─── Channels ──────────────────────────────────────────────────────────
+
+  listChannels(): Promise<Channel[]> {
+    return this.call('listChannels')
+  }
+  createChannel(spec: { name?: string; members: string[]; message?: string }): Promise<{
+    channel: Channel
+    existing: boolean
+  }> {
+    return this.call('createChannel', spec)
+  }
+  channelMessages(id: string): Promise<ChannelMessage[]> {
+    return this.call('channelMessages', id)
+  }
+  postToChannel(id: string, message: string, urgent = false): Promise<void> {
+    return this.call('postToChannel', id, message, urgent)
+  }
+  addToChannel(id: string, session: string): Promise<void> {
+    return this.call('addToChannel', id, session)
+  }
+  renameChannel(id: string, name: string): Promise<void> {
+    return this.call('renameChannel', id, name)
+  }
+  setChannelArchived(id: string, archived: boolean): Promise<void> {
+    return this.call('setChannelArchived', id, archived)
+  }
+  deleteChannel(id: string): Promise<void> {
+    return this.call('deleteChannel', id)
+  }
 
   listSchedules(): Promise<Schedule[]> {
     return this.call('listSchedules')
