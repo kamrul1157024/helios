@@ -16,8 +16,10 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,19 +34,77 @@ var darwinBundlePaths = []string{
 	"/Applications/Tailscale.app/Contents/MacOS/tailscale",
 }
 
-// Binary resolves the tailscale CLI: $PATH first, then the macOS app bundle.
+// resolved caches the CLI that answered, because the answer does not change
+// while the process runs and Binary is called on every detection.
+var (
+	resolvedMu sync.Mutex
+	resolved   string
+)
+
+/*
+Binary resolves the tailscale CLI that can actually reach the running daemon.
+
+More than one CLI is often installed. On macOS a Homebrew `tailscale` sits on
+$PATH beside the GUI app, and each one talks to its own daemon over its own
+socket — the Homebrew CLI to a Homebrew `tailscaled`, the bundled one to the
+app. With the app running and Homebrew's daemon not, the Homebrew CLI answers
+"failed to connect to local Tailscale service", and taking the first name on
+$PATH meant Helios reported Tailscale as not running at all and refused to
+start the tunnel.
+
+So the candidates are probed rather than ranked. The first that answers wins.
+When none answers, the first that exists is returned so that Detect still
+reaches its "installed but not running" message, which is the true one then.
+*/
 func Binary() (string, error) {
+	resolvedMu.Lock()
+	defer resolvedMu.Unlock()
+	if resolved != "" {
+		return resolved, nil
+	}
+
+	found := candidates()
+	if len(found) == 0 {
+		return "", fmt.Errorf("tailscale CLI not found in $PATH or /Applications/Tailscale.app")
+	}
+	for _, path := range found {
+		if _, err := run(context.Background(), path, "status", "--json"); err == nil {
+			resolved = path
+			return path, nil
+		}
+	}
+	// Not cached: nothing answered, and the daemon may come up later.
+	return found[0], nil
+}
+
+// candidates are every tailscale CLI on this machine, nearest first.
+func candidates() []string {
+	var found []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		// Resolved, so that /usr/local/bin/tailscale and the bundle binary it
+		// is a shim for are not probed as if they were two installations.
+		if real, err := filepath.EvalSymlinks(path); err == nil {
+			path = real
+		}
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		found = append(found, path)
+	}
+
 	if path, err := exec.LookPath("tailscale"); err == nil {
-		return path, nil
+		add(path)
 	}
 	if runtime.GOOS == "darwin" {
 		for _, path := range darwinBundlePaths {
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				return path, nil
+				add(path)
 			}
 		}
 	}
-	return "", fmt.Errorf("tailscale CLI not found in $PATH or /Applications/Tailscale.app")
+	return found
 }
 
 // State is the detection result. It drives both the recommendation surface and

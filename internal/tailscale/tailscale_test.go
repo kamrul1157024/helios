@@ -3,6 +3,9 @@ package tailscale
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -385,5 +388,55 @@ func TestServeConfigFunnelFlag(t *testing.T) {
 	}
 	if cfg.AllowFunnel["host.x.ts.net:8443"] {
 		t.Error("AllowFunnel reports true for an unconfigured host:port")
+	}
+}
+
+// Two CLIs on one machine is the normal case on macOS: a Homebrew `tailscale`
+// on $PATH beside the GUI app's own binary. Each talks to its own daemon, so
+// the one that is first on $PATH is not necessarily the one that can answer.
+func TestCandidatesFindsEveryCLIOnce(t *testing.T) {
+	dir := t.TempDir()
+	brew := filepath.Join(dir, "tailscale")
+	if err := os.WriteFile(brew, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	// Resolved for the comparison, as candidates resolves: on macOS the temp
+	// directory is itself reached through a /var -> /private/var symlink.
+	brew, _ = filepath.EvalSymlinks(brew)
+
+	found := candidates()
+	if len(found) == 0 || found[0] != brew {
+		t.Fatalf("candidates = %v, want %s first", found, brew)
+	}
+	// A machine with the app installed offers it as well, and the $PATH entry
+	// must not hide it — that is the bug this exists to stop.
+	if runtime.GOOS == "darwin" {
+		if _, err := os.Stat(darwinBundlePaths[0]); err == nil && len(found) < 2 {
+			t.Errorf("candidates = %v, want the app bundle offered too", found)
+		}
+	}
+}
+
+// /usr/local/bin/tailscale is a two-line shim that execs the binary inside the
+// app bundle. Probing it and the bundle separately would spend two subprocess
+// calls to ask one daemon the same question.
+func TestCandidatesDoesNotCountAShimTwice(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real-tailscale")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	link := filepath.Join(dir, "tailscale")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	for _, path := range candidates() {
+		if path == link {
+			t.Errorf("candidates kept the symlink %s as well as its target", link)
+		}
 	}
 }
