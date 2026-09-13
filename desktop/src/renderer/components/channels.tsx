@@ -8,7 +8,7 @@ import { keys } from '../keys.ts'
 import { channelMessagesQuery, channelsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { renderMarkdown } from '../markdown.ts'
-import { AUTHOR_USER, authorColour } from './author-colour.ts'
+import { AUTHOR_USER, authorColour, authorInitials } from './author-colour.ts'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import type { Channel, ChannelMessage } from '../../shared/models.ts'
 
@@ -327,8 +327,12 @@ function ChannelConversation({
 
       <div className="channel-scroll" ref={scroller}>
         {messages.length === 0 && <p className="empty-note">Nothing said yet.</p>}
-        {messages.map((message) => (
-          <ChannelMessageRow key={message.id} message={message} />
+        {messages.map((message, at) => (
+          <ChannelMessageRow
+            key={message.id}
+            message={message}
+            opens={messages[at - 1]?.author !== message.author}
+          />
         ))}
       </div>
 
@@ -375,11 +379,24 @@ function ChannelConversation({
   )
 }
 
-function ChannelMessageRow({ message }: { message: ChannelMessage }): JSX.Element {
+/**
+ * One message, as a chat shows it.
+ *
+ * `opens` is whether this starts a run from a new author. A run shares one
+ * header and one avatar: four messages from the same agent repeating its title
+ * four times is the noise that made a busy channel hard to read, and the
+ * repetition says nothing the first line did not.
+ */
+function ChannelMessageRow({
+  message,
+  opens,
+}: {
+  message: ChannelMessage
+  opens: boolean
+}): JSX.Element {
   const html = useMemo(() => renderMarkdown(message.body), [message.body])
-  // The colour is the session's, carried on the row as a variable so the name
-  // and the rule down its left edge cannot disagree. The person gets none, and
-  // falls back to the ordinary text colour.
+  // The colour is the session's, carried on the row as a variable so the name,
+  // the avatar and the bubble cannot disagree. The person gets none.
   const colour = authorColour(message.author)
   const mine = message.author === AUTHOR_USER
 
@@ -388,18 +405,29 @@ function ChannelMessageRow({ message }: { message: ChannelMessage }): JSX.Elemen
       className={[
         'channel-msg',
         mine ? 'you' : 'from-session',
+        opens ? 'opens' : 'continues',
         message.urgent ? 'urgent' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       style={colour ? ({ '--author': colour } as CSSProperties) : undefined}
     >
-      <span className="channel-msg-head">
-        <span className={mine ? 'channel-from you' : 'channel-from'}>{message.from}</span>
-        {message.urgent && <span className="channel-urgent">urgent</span>}
-        <span className="channel-when">{shortTime(message.created_at)}</span>
+      {/* A slot even when empty, so the bubbles of one run stay in a column
+          rather than stepping left under the first. */}
+      <span className="channel-avatar" aria-hidden={!opens}>
+        {opens && !mine ? authorInitials(message.from) : ''}
       </span>
-      <div className="channel-msg-body md" dangerouslySetInnerHTML={{ __html: html }} />
+
+      <div className="channel-bubble">
+        {opens && (
+          <span className="channel-msg-head">
+            <span className={mine ? 'channel-from you' : 'channel-from'}>{message.from}</span>
+            {message.urgent && <span className="channel-urgent">urgent</span>}
+            <span className="channel-when">{shortTime(message.created_at)}</span>
+          </span>
+        )}
+        <div className="channel-msg-body md" dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
     </div>
   )
 }
