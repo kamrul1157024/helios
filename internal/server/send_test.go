@@ -390,6 +390,72 @@ func TestSend_NewSessionTypesOnlyAfterTheAgentIsUp(t *testing.T) {
 	}
 }
 
+/*
+The same gap, reached from the other side, and the reason the test below was
+flaky rather than merely slow.
+
+"starting" only describes a session whose SessionStart hook has not arrived. The
+moment it does, the status is idle — so a prompt landing just after the hook
+took the ordinary path and typed into a TUI that was still painting. Whether it
+did depended on which of the two won a race, which is why CI failed about a
+third of the time and main looked fine locally.
+
+Pinned on the event rather than on a clock: last_event moves as soon as the
+agent does anything, so this is the one prompt after a boot and no others.
+*/
+func TestSend_ASessionThatJustReportedInStillWaitsForItsScreen(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	// Idle and live, exactly as it looks a moment after the hook lands.
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	if err := shared.DB.UpdateSessionStatus("sess-1", "idle", "SessionStart"); err != nil {
+		t.Fatalf("report in: %v", err)
+	}
+	be.handles["sess-1"] = "sock-sess-1"
+	be.queueScreens("booting", "loading mcp servers", "welcome", "welcome  > ")
+
+	var mu sync.Mutex
+	stillPainting := false
+	be.onSend = func() {
+		mu.Lock()
+		stillPainting = be.framesLeft() > 0
+		mu.Unlock()
+		shared.Signals.Fire(SignalPromptSubmitted, "sess-1")
+	}
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if stillPainting {
+		t.Error("prompt was typed while the agent was still painting its screen")
+	}
+}
+
+// And the other half of it: a session that has done something since booting is
+// not made to wait again. Otherwise every prompt would pay the settle.
+func TestSend_ASettledSessionIsNotMadeToWaitAgain(t *testing.T) {
+	s, shared, be := newSendTest(t)
+	seedSessionWithStatus(t, shared.DB, "sess-1", "idle")
+	if err := shared.DB.UpdateSessionStatus("sess-1", "idle", "Stop"); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+	be.handles["sess-1"] = "sock-sess-1"
+	be.queueScreens("welcome  > ")
+
+	be.onSend = func() { shared.Signals.Fire(SignalPromptSubmitted, "sess-1") }
+
+	rec, _ := sendPrompt(t, s, "sess-1", "hello")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	// The screen was never read, so the queued frame is untouched.
+	if be.framesLeft() != 1 {
+		t.Error("an ordinary send waited for the screen; that is a cost on every prompt")
+	}
+}
+
 // Reporting in is not the same as reading the terminal. The ready hook comes
 // from the agent process, which is up well before its TUI has claimed the
 // terminal, and the raw-mode switch that claim performs discards whatever is

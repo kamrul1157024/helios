@@ -252,6 +252,24 @@ type PromptResult struct {
 	Resumed bool
 }
 
+/*
+justReportedIn says the agent has announced itself and done nothing since.
+
+SessionStart means the agent process is up. It does not mean the TUI has
+finished claiming the terminal, and the raw-mode switch that claim performs
+throws away whatever is already in the input buffer — so a prompt typed in that
+window is not late, it is gone.
+
+Read off the last event rather than off a clock. A wall-clock window would be a
+guess about how slow the machine is, and would be wrong on the machine that is
+slow enough to matter. The event moves the instant the agent does anything at
+all, so this stops applying by itself and costs a settle only on the first
+prompt after a boot.
+*/
+func justReportedIn(session *store.Session) bool {
+	return session.LastEvent != nil && *session.LastEvent == "SessionStart"
+}
+
 // SendPrompt delivers a message to a session, waking it first if it is cold.
 func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 	session, err := sh.DB.GetSession(id)
@@ -333,6 +351,13 @@ func (sh *Shared) SendPrompt(id, message string) (PromptResult, error) {
 		if err := sh.awaitAgent(id); err != nil {
 			return PromptResult{}, err
 		}
+		booting = true
+	} else if justReportedIn(session) {
+		// The same gap, reached from the other side. "starting" only catches a
+		// session whose hook has not landed yet; the moment it lands the status
+		// is idle, and a prompt arriving just after reads as an ordinary send
+		// and skips the settle below — while the TUI is still painting, which
+		// is exactly what the settle exists to wait out.
 		booting = true
 	}
 
