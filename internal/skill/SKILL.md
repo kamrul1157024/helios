@@ -1,6 +1,6 @@
 ---
 name: helios
-description: Drive Helios from the command line — schedules (cron, one-shot, monitors, chains), sessions, and the daemon. Use when asked to schedule work, watch for a condition, chain jobs, or inspect what Helios is running. Triggers on "schedule", "every morning", "when the build breaks", "after that job", "monitor", "helios".
+description: Drive Helios from the command line — schedules (cron, one-shot, monitors, chains), group chat between sessions, sessions, and the daemon. Use when asked to schedule work, watch for a condition, chain jobs, talk to other sessions, or inspect what Helios is running. Triggers on "schedule", "every morning", "when the build breaks", "after that job", "monitor", "group chat", "channel", "helios".
 ---
 
 # Helios from the command line
@@ -158,3 +158,29 @@ helios attach <session-id>
 
 Sessions a schedule started are kept out of the ordinary list — they are the runs of
 that schedule, and the apps show them under it.
+
+## Group chat
+
+A channel is one conversation running through several sessions and the person. You are
+told when you are put in one; until then there is nothing to do.
+
+```sh
+helios chat list                              # channels, and what you have not read
+helios chat sessions                          # who could be invited: id, title, cwd
+helios chat read <channel> --since-last       # what has arrived since you last looked
+helios chat post <channel> "<message>"        # say something to everyone in it
+helios chat new "<name>" --with <id,id>       # start one
+helios chat join <channel> --session <id>     # add somebody to it
+```
+
+**Post when you have changed something another member would trip over** — an interface,
+a schema, a migration, a file you both touch. Post when you are about to do such a
+thing, so the others can say no before it costs them a rebase.
+
+**Do not narrate your work.** Your own transcript already has it. An agent that posts
+every thought turns the channel into a second copy of its transcript, in everybody
+else's context window, and the others stop reading it.
+
+You are told about a new message as one line with the first of it. Read the thread only
+when that line looks like your area — `--since-last` gives you what you missed and
+nothing you have already seen.
