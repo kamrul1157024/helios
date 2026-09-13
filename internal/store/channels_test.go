@@ -145,7 +145,7 @@ func TestMessagesComeBackInOrder(t *testing.T) {
 	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
 
 	for _, body := range []string{"first", "second", "third"} {
-		if _, err := s.PostMessage(ch.ID, AuthorUser, body, false); err != nil {
+		if _, err := s.PostMessage(ch.ID, AuthorUser, body, false, "", nil); err != nil {
 			t.Fatalf("post %q: %v", body, err)
 		}
 	}
@@ -162,7 +162,7 @@ func TestMessagesComeBackInOrder(t *testing.T) {
 func TestAnEmptyMessageIsNotAMessage(t *testing.T) {
 	s := channelStore(t)
 	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
-	if _, err := s.PostMessage(ch.ID, AuthorUser, "   ", false); err == nil {
+	if _, err := s.PostMessage(ch.ID, AuthorUser, "   ", false, "", nil); err == nil {
 		t.Error("want an error for a message with nothing in it")
 	}
 }
@@ -171,8 +171,8 @@ func TestUnreadCountsWhatSomebodyElseSaid(t *testing.T) {
 	s := channelStore(t)
 	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
 
-	_, _ = s.PostMessage(ch.ID, AuthorUser, "one", false)
-	_, _ = s.PostMessage(ch.ID, SessionAuthor("s2"), "two", false)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "one", false, "", nil)
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s2"), "two", false, "", nil)
 
 	// s2 wrote the second one, so it has one thing to read, not two.
 	unread, err := s.Unread(ch.ID, SessionAuthor("s2"))
@@ -194,9 +194,9 @@ func TestUnreadCountsWhatSomebodyElseSaid(t *testing.T) {
 func TestReadingFromAReceiptSkipsWhatWasSeen(t *testing.T) {
 	s := channelStore(t)
 	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
-	_, _ = s.PostMessage(ch.ID, AuthorUser, "before", false)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "before", false, "", nil)
 	_ = s.MarkRead(ch.ID, SessionAuthor("s2"))
-	_, _ = s.PostMessage(ch.ID, AuthorUser, "after", false)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "after", false, "", nil)
 
 	at, err := s.LastRead(ch.ID, SessionAuthor("s2"))
 	if err != nil {
@@ -242,7 +242,7 @@ func TestGeneralCannotBeDeleted(t *testing.T) {
 func TestDeletingAChannelTakesItsMessagesWithIt(t *testing.T) {
 	s := channelStore(t)
 	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
-	_, _ = s.PostMessage(ch.ID, AuthorUser, "something", false)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "something", false, "", nil)
 
 	if err := s.DeleteChannel(ch.ID); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -299,7 +299,7 @@ func TestAClosedChannelTakesNothing(t *testing.T) {
 	ch, _, _ := s.CreateChannel("api-redesign", AuthorUser, []string{"s2"})
 	_ = s.SetArchived(ch.ID, true)
 
-	if _, err := s.PostMessage(ch.ID, AuthorUser, "anyone there?", false); err == nil {
+	if _, err := s.PostMessage(ch.ID, AuthorUser, "anyone there?", false, "", nil); err == nil {
 		t.Error("want an error: a closed channel takes no messages")
 	}
 	if _, err := s.AddMember(ch.ID, "s7"); err == nil {
@@ -341,7 +341,7 @@ func TestArchivingWhatIsNotThereSaysSo(t *testing.T) {
 func TestRenamingAChannelKeepsWhatWasSaidInIt(t *testing.T) {
 	s := channelStore(t)
 	ch, _, _ := s.CreateChannel("api-redesing", AuthorUser, []string{"s2"})
-	_, _ = s.PostMessage(ch.ID, AuthorUser, "the typo is in the name", false)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "the typo is in the name", false, "", nil)
 
 	if err := s.RenameChannel(ch.ID, "  api-redesign  "); err != nil {
 		t.Fatalf("rename: %v", err)
@@ -463,6 +463,180 @@ func TestNobodyJoinsOrLeavesGeneralByHand(t *testing.T) {
 	}
 	if err := s.RemoveMember(GeneralChannel, "s2"); err == nil {
 		t.Error("want an error: a session leaves by ending")
+	}
+}
+
+// The whole of the one-layer rule. Answering a reply has to join the thread
+// that reply is in, or a client would have to render a tree it was promised it
+// would never see.
+func TestAnsweringAReplyJoinsTheSameThread(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+
+	root, _ := s.PostMessage(ch.ID, AuthorUser, "the response shape changed", false, "", nil)
+	first, err := s.PostMessage(ch.ID, SessionAuthor("s2"), "which call sites?", false, root.ID, nil)
+	if err != nil {
+		t.Fatalf("reply: %v", err)
+	}
+	if first.ThreadRoot != root.ID {
+		t.Fatalf("thread_root = %q, want the message it answers", first.ThreadRoot)
+	}
+
+	// Answering the reply, not the root.
+	second, err := s.PostMessage(ch.ID, AuthorUser, "orders.ts only", false, first.ID, nil)
+	if err != nil {
+		t.Fatalf("reply to reply: %v", err)
+	}
+	if second.ThreadRoot != root.ID {
+		t.Errorf("thread_root = %q, want the root %q — threads are one layer", second.ThreadRoot, root.ID)
+	}
+}
+
+// The spine is what the channel is about. An aside between two members must not
+// push the conversation off the top of it.
+func TestRepliesStayOffTheSpine(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+
+	root, _ := s.PostMessage(ch.ID, AuthorUser, "the response shape changed", false, "", nil)
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s2"), "which call sites?", false, root.ID, nil)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "orders.ts only", false, root.ID, nil)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "separately: the flake is mine", false, "", nil)
+
+	spine, err := s.Messages(ch.ID, "", 0)
+	if err != nil {
+		t.Fatalf("spine: %v", err)
+	}
+	if len(spine) != 2 {
+		t.Fatalf("spine holds %d messages, want the two said to the channel", len(spine))
+	}
+
+	thread, err := s.ThreadMessages(ch.ID, root.ID)
+	if err != nil {
+		t.Fatalf("thread: %v", err)
+	}
+	if len(thread) != 3 {
+		t.Errorf("thread holds %d, want the root and its two replies", len(thread))
+	}
+	if thread[0].ID != root.ID {
+		t.Error("the thread should open with the message it hangs off")
+	}
+}
+
+func TestTheSpineKnowsWhatHangsOffIt(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2", "s7"})
+
+	root, _ := s.PostMessage(ch.ID, AuthorUser, "the response shape changed", false, "", nil)
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s2"), "which call sites?", false, root.ID, nil)
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s2"), "found them", false, root.ID, nil)
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s7"), "same here", false, root.ID, nil)
+
+	summaries, err := s.ThreadSummaries(ch.ID)
+	if err != nil {
+		t.Fatalf("summaries: %v", err)
+	}
+	got := summaries[root.ID]
+	if got.Replies != 3 {
+		t.Errorf("replies = %d, want 3", got.Replies)
+	}
+	// Distinct, and in the order they first spoke: the line reads "3 replies ·
+	// s2, s7", not the same name twice.
+	if len(got.Authors) != 2 || got.Authors[0] != SessionAuthor("s2") {
+		t.Errorf("authors = %v, want each once, first speaker first", got.Authors)
+	}
+}
+
+// The delivery set. Everyone who has said something in the thread, and nobody
+// else in the channel.
+func TestAThreadIsItsParticipants(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2", "s7", "s9"})
+
+	root, _ := s.PostMessage(ch.ID, SessionAuthor("s2"), "the response shape changed", false, "", nil)
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s7"), "which call sites?", false, root.ID, nil)
+
+	who, err := s.ThreadParticipants(ch.ID, root.ID)
+	if err != nil {
+		t.Fatalf("participants: %v", err)
+	}
+	if len(who) != 2 {
+		t.Errorf("participants = %v, want the root's author and the one reply", who)
+	}
+	for _, one := range who {
+		if one == SessionAuthor("s9") {
+			t.Error("s9 has said nothing in this thread and should not be in it")
+		}
+	}
+}
+
+// A badge that counts what you were never told about is a badge that never
+// clears, so unread has to follow the same rule delivery does.
+func TestABusyThreadDoesNotRaiseABadgeForSomebodyOutsideIt(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2", "s7", "s9"})
+
+	root, _ := s.PostMessage(ch.ID, SessionAuthor("s2"), "the response shape changed", false, "", nil)
+	_ = s.MarkRead(ch.ID, SessionAuthor("s9"))
+	for range 5 {
+		_, _ = s.PostMessage(ch.ID, SessionAuthor("s7"), "back and forth", false, root.ID, nil)
+	}
+
+	// s9 is in the channel but not in the thread.
+	outside, err := s.Unread(ch.ID, SessionAuthor("s9"))
+	if err != nil {
+		t.Fatalf("unread: %v", err)
+	}
+	if outside != 0 {
+		t.Errorf("unread = %d for somebody outside the thread, want 0", outside)
+	}
+
+	// s2 opened it, so the replies are theirs to read.
+	_ = s.MarkRead(ch.ID, SessionAuthor("s2"))
+	_, _ = s.PostMessage(ch.ID, SessionAuthor("s7"), "one more", false, root.ID, nil)
+	if inside, _ := s.Unread(ch.ID, SessionAuthor("s2")); inside != 1 {
+		t.Errorf("unread = %d for a participant, want 1", inside)
+	}
+}
+
+func TestAThreadCannotHangOffAnotherChannelsMessage(t *testing.T) {
+	s := channelStore(t)
+	here, _, _ := s.CreateChannel("here", AuthorUser, []string{"s2"})
+	elsewhere, _, _ := s.CreateChannel("elsewhere", AuthorUser, []string{"s2"})
+	foreign, _ := s.PostMessage(elsewhere.ID, AuthorUser, "not your conversation", false, "", nil)
+
+	if _, err := s.PostMessage(here.ID, AuthorUser, "answering", false, foreign.ID, nil); err == nil {
+		t.Error("want an error: the quote would point at nothing in this channel")
+	}
+	if _, err := s.PostMessage(here.ID, AuthorUser, "answering", false, "m_nope", nil); err == nil {
+		t.Error("want an error for a message that does not exist")
+	}
+}
+
+func TestMentionsAreCountedApartFromUnread(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "general traffic", false, "", nil)
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "@s2 this one is yours", false, "",
+		[]string{SessionAuthor("s2")})
+
+	unread, _ := s.Unread(ch.ID, SessionAuthor("s2"))
+	mentions, err := s.Mentions(ch.ID, SessionAuthor("s2"))
+	if err != nil {
+		t.Fatalf("mentions: %v", err)
+	}
+	if unread != 2 {
+		t.Errorf("unread = %d, want both", unread)
+	}
+	if mentions != 1 {
+		t.Errorf("mentions = %d, want only the one that named them", mentions)
+	}
+
+	// Reading clears both, off the one receipt.
+	_ = s.MarkRead(ch.ID, SessionAuthor("s2"))
+	if after, _ := s.Mentions(ch.ID, SessionAuthor("s2")); after != 0 {
+		t.Errorf("mentions after reading = %d, want 0", after)
 	}
 }
 

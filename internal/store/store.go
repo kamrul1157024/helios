@@ -276,6 +276,25 @@ func (s *Store) migrate() error {
 		// and delivers nothing. What shortens the list without destroying what
 		// was said.
 		{"add_channels_archived", `ALTER TABLE channels ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
+		// Threads, one layer deep. Empty for a message on the channel's spine,
+		// and otherwise the id of the message the thread hangs off — never the
+		// id of another reply, so there is no second level to render.
+		{"add_channel_messages_thread_root",
+			`ALTER TABLE channel_messages ADD COLUMN thread_root TEXT NOT NULL DEFAULT ''`},
+		{"create_channel_messages_thread_index",
+			`CREATE INDEX IF NOT EXISTS idx_channel_messages_thread
+			 ON channel_messages(channel_id, thread_root, seq)`},
+		// Who a message named. Resolved once when it is posted and stored, so
+		// that regenerating a session's title cannot silently un-address what
+		// was already said to it.
+		{"create_channel_mentions", `CREATE TABLE IF NOT EXISTS channel_mentions (
+			channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+			message_id TEXT NOT NULL,
+			reader     TEXT NOT NULL,
+			PRIMARY KEY (channel_id, message_id, reader)
+		)`},
+		{"create_channel_mentions_index",
+			`CREATE INDEX IF NOT EXISTS idx_channel_mentions ON channel_mentions(channel_id, reader)`},
 	}
 
 	for _, cm := range columnMigrations {

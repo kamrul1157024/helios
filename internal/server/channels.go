@@ -51,6 +51,9 @@ type channelBody struct {
 	Muted    bool     `json:"muted"`
 	AfterMsg string   `json:"after"`
 	Archived bool     `json:"archived"`
+	// The message being answered. Resolved to a thread root by the store, so a
+	// client cannot create a second layer by pointing at a reply.
+	ThreadRoot string `json:"thread_root"`
 }
 
 // channelRoute is the one entry point, as the schedules routes are: the paths
@@ -85,6 +88,8 @@ func (sh *Shared) channelRoute(w http.ResponseWriter, r *http.Request, prefix st
 		sh.setArchived(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "rename" && r.Method == http.MethodPost:
 		sh.renameChannel(w, r, parts[0])
+	case len(parts) == 3 && parts[1] == "threads" && r.Method == http.MethodGet:
+		sh.readThread(w, r, parts[0], parts[2])
 	default:
 		jsonError(w, "no such channel route", http.StatusNotFound)
 	}
@@ -109,10 +114,16 @@ func (sh *Shared) listChannels(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		mentions, err := sh.DB.Mentions(ch.ID, reader)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		out = append(out, map[string]any{
 			"id": ch.ID, "name": ch.Name, "members": ch.Members,
 			"created_by": ch.CreatedBy, "created_at": ch.CreatedAt,
-			"unread": unread, "titles": sh.titles(ch.Members), "archived": ch.Archived,
+			"unread": unread, "mentions": mentions, "titles": sh.titles(ch.Members),
+			"slugs": sh.slugs(&ch), "archived": ch.Archived,
 		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"channels": out})
@@ -129,11 +140,13 @@ func (sh *Shared) readChannel(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	unread, _ := sh.DB.Unread(ch.ID, readerOf(r))
+	mentions, _ := sh.DB.Mentions(ch.ID, readerOf(r))
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"channel": map[string]any{
 			"id": ch.ID, "name": ch.Name, "members": ch.Members,
 			"created_by": ch.CreatedBy, "created_at": ch.CreatedAt,
-			"unread": unread, "titles": sh.titles(ch.Members), "archived": ch.Archived,
+			"unread": unread, "mentions": mentions, "titles": sh.titles(ch.Members),
+			"slugs": sh.slugs(ch), "archived": ch.Archived,
 		},
 	})
 }
@@ -175,7 +188,9 @@ func (sh *Shared) createChannel(w http.ResponseWriter, r *http.Request) {
 		if reused {
 			skipJoiners = nil
 		}
-		if _, err := sh.say(ch, author, body.Message, body.Urgent, skipJoiners); err != nil {
+		// A channel's opening message is always on the spine: there is nothing
+		// yet for it to hang off.
+		if _, err := sh.say(ch, author, body.Message, body.Urgent, "", skipJoiners); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -224,14 +239,62 @@ func (sh *Shared) readMessages(w http.ResponseWriter, r *http.Request, id string
 		}
 	}
 
+	// What hangs off each of them. Read once for the whole spine rather than
+	// per message, because the spine asks for all of it every time it is drawn.
+	threads, err := sh.DB.ThreadSummaries(id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	out := make([]map[string]any, 0, len(messages))
 	for _, m := range messages {
-		out = append(out, map[string]any{
-			"id": m.ID, "author": m.Author, "from": sh.authorName(m.Author),
-			"body": m.Body, "urgent": m.Urgent, "created_at": m.CreatedAt,
-		})
+		row := sh.messagePayload(m)
+		if summary, ok := threads[m.ID]; ok {
+			row["reply_count"] = summary.Replies
+			row["reply_authors"] = sh.authorNames(summary.Authors)
+			row["last_reply_at"] = summary.LastAt
+		}
+		out = append(out, row)
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+// readThread is one thread: the message it hangs off, then its replies.
+func (sh *Shared) readThread(w http.ResponseWriter, r *http.Request, id, root string) {
+	messages, err := sh.DB.ThreadMessages(id, root)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(messages) == 0 {
+		jsonError(w, "no such thread", http.StatusNotFound)
+		return
+	}
+
+	out := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		out = append(out, sh.messagePayload(m))
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"messages": out, "root": root})
+}
+
+func (sh *Shared) messagePayload(m store.ChannelMessage) map[string]any {
+	return map[string]any{
+		"id": m.ID, "author": m.Author, "from": sh.authorName(m.Author),
+		"body": m.Body, "urgent": m.Urgent, "created_at": m.CreatedAt,
+		"thread_root": m.ThreadRoot, "mentions": m.Mentions,
+	}
+}
+
+// authorNames turns the authors of a thread into what a reader sees, so the
+// "3 replies · Port the client, user" line needs nothing resolved client-side.
+func (sh *Shared) authorNames(authors []string) []string {
+	out := make([]string, 0, len(authors))
+	for _, author := range authors {
+		out = append(out, sh.authorName(author))
+	}
+	return out
 }
 
 func (sh *Shared) postMessage(w http.ResponseWriter, r *http.Request, id string) {
@@ -250,15 +313,12 @@ func (sh *Shared) postMessage(w http.ResponseWriter, r *http.Request, id string)
 		author = store.AuthorUser
 	}
 
-	message, err := sh.say(ch, author, body.Message, body.Urgent, nil)
+	message, err := sh.say(ch, author, body.Message, body.Urgent, body.ThreadRoot, nil)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"message": map[string]any{
-		"id": message.ID, "author": message.Author, "from": sh.authorName(message.Author),
-		"body": message.Body, "urgent": message.Urgent, "created_at": message.CreatedAt,
-	}})
+	jsonResponse(w, http.StatusOK, map[string]any{"message": sh.messagePayload(*message)})
 }
 
 func (sh *Shared) addMember(w http.ResponseWriter, r *http.Request, id string) {
@@ -342,21 +402,27 @@ func (sh *Shared) markRead(w http.ResponseWriter, r *http.Request, id string) {
 /*
 say records a message and delivers it.
 
-`skip` is who has already been told — the members that were sent a joining
-prompt in this same request, which carried the message inside it. Telling them
-again would be the same sentence twice in one turn.
+Who it reaches depends on what the message is. One said to the channel goes to
+the channel; one said in a thread goes to that thread's participants and to
+nobody else, which is the whole reason threads exist — two agents settle a
+detail without prompting the other four. On top of either, anybody the message
+named by `@` is told, including in general, which otherwise notifies no one.
+
+`skip` is who has already been told: the members sent a joining prompt in this
+same request, which carried the message inside it. Telling them again would be
+the same sentence twice in one turn.
 */
 func (sh *Shared) say(
-	ch *store.Channel, author, body string, urgent bool, skip []string,
+	ch *store.Channel, author, body string, urgent bool, inThread string, skip []string,
 ) (*store.ChannelMessage, error) {
-	message, err := sh.DB.PostMessage(ch.ID, author, body, urgent)
+	mentioned := resolveMentions(parseMentions(body), ch.Members, sh.slugs(ch))
+
+	message, err := sh.DB.PostMessage(ch.ID, author, body, urgent, inThread, mentioned)
 	if err != nil {
 		return nil, err
 	}
 
-	// The author reads its own message in the transcript it typed it into; the
-	// muted asked not to be interrupted.
-	members, err := sh.DB.Unmuted(ch.ID, store.AuthorSession(author))
+	members, err := sh.audience(ch, message, author)
 	if err != nil {
 		return nil, err
 	}
@@ -382,8 +448,84 @@ func (sh *Shared) say(
 
 	sh.SSE.Broadcast(SSEEvent{Type: "channel_message", Data: map[string]any{
 		"channel_id": ch.ID, "id": message.ID, "author": message.Author,
+		"thread_root": message.ThreadRoot,
 	}})
 	return message, nil
+}
+
+/*
+audience is who a message is typed at.
+
+The channel for a message on the spine, the thread for a reply, plus anyone the
+message named. The author is always left out — it reads its own words in the
+transcript it typed them into — and so is anyone muted, which is an explicit
+"do not interrupt me" that only urgent overrides.
+
+A mention reaches a member who is muted nowhere in this: mute is the setting
+that says stop, and giving `@` the power to override it would make the setting
+worth nothing the first time an agent learned the trick.
+*/
+func (sh *Shared) audience(
+	ch *store.Channel, message *store.ChannelMessage, author string,
+) ([]string, error) {
+	// Unmuted carries general's rule that it delivers to nobody, which is what
+	// the spine wants and what a mention has to get past.
+	wanted, err := sh.DB.Unmuted(ch.ID, store.AuthorSession(author))
+	if err != nil {
+		return nil, err
+	}
+
+	if message.ThreadRoot != "" {
+		participants, err := sh.DB.ThreadParticipants(ch.ID, message.ThreadRoot)
+		if err != nil {
+			return nil, err
+		}
+		wanted = nil
+		for _, one := range participants {
+			// Participants are authors — "user" or "session:<id>" — and only a
+			// session can be typed at.
+			if session := store.AuthorSession(one); session != one {
+				wanted = append(wanted, session)
+			}
+		}
+	}
+	wanted = append(wanted, mentionedSessions(message.Mentions)...)
+
+	out := []string{}
+	seen := map[string]bool{}
+	for _, member := range wanted {
+		if seen[member] || member == store.AuthorSession(author) {
+			continue
+		}
+		muted, err := sh.DB.IsMuted(ch.ID, member)
+		if err != nil {
+			return nil, err
+		}
+		if muted {
+			continue
+		}
+		seen[member] = true
+		out = append(out, member)
+	}
+	return out, nil
+}
+
+// mentionedSessions is the sessions among a message's resolved readers, as
+// session ids rather than authors. The person is a reader too and is not typed
+// at: they are the one reading the channel.
+func mentionedSessions(mentions []string) []string {
+	out := []string{}
+	for _, reader := range mentions {
+		if session := store.AuthorSession(reader); session != reader {
+			out = append(out, session)
+		}
+	}
+	return out
+}
+
+// slugs is the handle each member of a channel answers to.
+func (sh *Shared) slugs(ch *store.Channel) map[string]string {
+	return slugsFor(ch.Members, sh.titles(ch.Members))
 }
 
 // deliverable is what a member is sent: a person's message in full, and a
