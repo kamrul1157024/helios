@@ -50,6 +50,7 @@ type channelBody struct {
 	Session  string   `json:"session"`
 	Muted    bool     `json:"muted"`
 	AfterMsg string   `json:"after"`
+	Archived bool     `json:"archived"`
 }
 
 // channelRoute is the one entry point, as the schedules routes are: the paths
@@ -80,6 +81,8 @@ func (sh *Shared) channelRoute(w http.ResponseWriter, r *http.Request, prefix st
 		sh.removeMember(w, parts[0], parts[2])
 	case len(parts) == 2 && parts[1] == "read" && r.Method == http.MethodPost:
 		sh.markRead(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodPost:
+		sh.setArchived(w, r, parts[0])
 	default:
 		jsonError(w, "no such channel route", http.StatusNotFound)
 	}
@@ -90,7 +93,7 @@ func (sh *Shared) listChannels(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	channels, err := sh.DB.Channels()
+	channels, err := sh.DB.Channels(r.URL.Query().Get("archived") == "1")
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -107,7 +110,7 @@ func (sh *Shared) listChannels(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"id": ch.ID, "name": ch.Name, "members": ch.Members,
 			"created_by": ch.CreatedBy, "created_at": ch.CreatedAt,
-			"unread": unread, "titles": sh.titles(ch.Members),
+			"unread": unread, "titles": sh.titles(ch.Members), "archived": ch.Archived,
 		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"channels": out})
@@ -128,7 +131,7 @@ func (sh *Shared) readChannel(w http.ResponseWriter, r *http.Request, id string)
 		"channel": map[string]any{
 			"id": ch.ID, "name": ch.Name, "members": ch.Members,
 			"created_by": ch.CreatedBy, "created_at": ch.CreatedAt,
-			"unread": unread, "titles": sh.titles(ch.Members),
+			"unread": unread, "titles": sh.titles(ch.Members), "archived": ch.Archived,
 		},
 	})
 }
@@ -291,6 +294,23 @@ func (sh *Shared) removeMember(w http.ResponseWriter, id, session string) {
 	}
 	sh.SSE.Broadcast(SSEEvent{Type: "channel_updated", Data: map[string]any{"id": id}})
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// setArchived closes a channel, or reopens it. Closing is not hiding: the
+// store refuses every message and every join afterwards, so what the clients
+// stop showing and what the daemon stops delivering cannot drift apart.
+func (sh *Shared) setArchived(w http.ResponseWriter, r *http.Request, id string) {
+	var body channelBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := sh.DB.SetArchived(id, body.Archived); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sh.SSE.Broadcast(SSEEvent{Type: "channel_updated", Data: map[string]any{"id": id}})
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "archived": body.Archived})
 }
 
 func (sh *Shared) markRead(w http.ResponseWriter, r *http.Request, id string) {

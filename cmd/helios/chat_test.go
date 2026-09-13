@@ -72,6 +72,15 @@ func TestTheReaderIsTheSessionYouAreIn(t *testing.T) {
 	}
 }
 
+func TestArchivedIsReadOffTheCommandLine(t *testing.T) {
+	if chatFlags([]string{"--archived"}).archived != true {
+		t.Error("--archived was not read")
+	}
+	if chatFlags(nil).archived != false {
+		t.Error("the list hides closed channels unless asked")
+	}
+}
+
 // An unnamed channel has no name to print, and `helios chat read ch_8f21a0`
 // has to be a command somebody can run.
 func TestAnUnnamedChannelIsLabelledByItsID(t *testing.T) {

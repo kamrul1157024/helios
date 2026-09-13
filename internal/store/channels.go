@@ -33,6 +33,8 @@ type Channel struct {
 	Members   []string `json:"members"`
 	CreatedBy string   `json:"created_by"`
 	CreatedAt string   `json:"created_at"`
+	// Closed: readable, but it takes no more messages and delivers nothing.
+	Archived bool `json:"archived"`
 }
 
 type ChannelMessage struct {
@@ -141,9 +143,14 @@ func (s *Store) EnsureGeneral() error {
 	return nil
 }
 
-// channelWithMembers finds the unnamed channel holding exactly this set.
+// channelWithMembers finds the open unnamed channel holding exactly this set.
+//
+// A closed one is skipped rather than handed back: archiving says the
+// conversation is finished, and reopening it because somebody asked for the
+// same two sessions again would undo that behind their back.
 func (s *Store) channelWithMembers(members []string) (*Channel, error) {
-	rows, err := s.db.Query(`SELECT id FROM channels WHERE name = '' AND id != ?`, GeneralChannel)
+	rows, err := s.db.Query(
+		`SELECT id FROM channels WHERE name = '' AND archived = 0 AND id != ?`, GeneralChannel)
 	if err != nil {
 		return nil, fmt.Errorf("scan channels: %w", err)
 	}
@@ -179,15 +186,17 @@ func (s *Store) channelWithMembers(members []string) (*Channel, error) {
 
 func (s *Store) channelRow(id string) (*Channel, error) {
 	var ch Channel
+	var archived int
 	err := s.db.QueryRow(
-		`SELECT id, name, created_by, created_at FROM channels WHERE id = ?`, id,
-	).Scan(&ch.ID, &ch.Name, &ch.CreatedBy, &ch.CreatedAt)
+		`SELECT id, name, created_by, created_at, archived FROM channels WHERE id = ?`, id,
+	).Scan(&ch.ID, &ch.Name, &ch.CreatedBy, &ch.CreatedAt, &archived)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read channel: %w", err)
 	}
+	ch.Archived = archived == 1
 	members, err := s.ChannelMembers(id)
 	if err != nil {
 		return nil, err
@@ -206,11 +215,16 @@ func (s *Store) Channel(id string) (*Channel, bool, error) {
 	return ch, false, nil
 }
 
-// Channels lists them, newest first, with general pinned to the top.
-func (s *Store) Channels() ([]Channel, error) {
+// Channels lists them, newest first, with general pinned to the top and the
+// closed ones after the open ones.
+func (s *Store) Channels(includeArchived bool) ([]Channel, error) {
+	where := `WHERE archived = 0`
+	if includeArchived {
+		where = ""
+	}
 	rows, err := s.db.Query(
-		`SELECT id, name, created_by, created_at FROM channels
-		 ORDER BY (id = 'general') DESC, created_at DESC, id DESC`,
+		`SELECT id, name, created_by, created_at, archived FROM channels ` + where + `
+		 ORDER BY (id = 'general') DESC, archived ASC, created_at DESC, id DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
@@ -220,9 +234,11 @@ func (s *Store) Channels() ([]Channel, error) {
 	var out []Channel
 	for rows.Next() {
 		var ch Channel
-		if err := rows.Scan(&ch.ID, &ch.Name, &ch.CreatedBy, &ch.CreatedAt); err != nil {
+		var archived int
+		if err := rows.Scan(&ch.ID, &ch.Name, &ch.CreatedBy, &ch.CreatedAt, &archived); err != nil {
 			return nil, fmt.Errorf("scan channel: %w", err)
 		}
+		ch.Archived = archived == 1
 		out = append(out, ch)
 	}
 	if err := rows.Err(); err != nil {
@@ -238,10 +254,27 @@ func (s *Store) Channels() ([]Channel, error) {
 	return out, nil
 }
 
+/*
+ChannelMembers is who is in a channel.
+
+For general it is not read from channel_members at all — it is every session on
+this daemon that has not ended, worked out from the sessions table each time.
+
+That is what makes the rule free. A session that is terminated drops out of the
+answer with no row to delete; one that is resumed comes back with no row to
+add. A stored membership would have to be corrected on every start, stop and
+resume, and the first one it missed would leave the notice board lying about
+who is standing at it.
+*/
 func (s *Store) ChannelMembers(id string) ([]string, error) {
-	rows, err := s.db.Query(
-		`SELECT session_id FROM channel_members WHERE channel_id = ? ORDER BY joined_at, session_id`, id,
-	)
+	query := `SELECT session_id FROM channel_members WHERE channel_id = ? ORDER BY joined_at, session_id`
+	args := []any{id}
+	if id == GeneralChannel {
+		query = `SELECT session_id FROM sessions WHERE status != 'terminated' ORDER BY created_at, session_id`
+		args = nil
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list members: %w", err)
 	}
@@ -264,6 +297,17 @@ func (s *Store) ChannelMembers(id string) ([]string, error) {
 // The bool says whether this call is what put it there, which decides whether
 // it is sent a joining prompt.
 func (s *Store) AddMember(channelID, sessionID string) (bool, error) {
+	if channelID == GeneralChannel {
+		return false, fmt.Errorf("every session is already in the general channel")
+	}
+	archived, err := s.archived(channelID)
+	if err != nil {
+		return false, err
+	}
+	if archived {
+		return false, fmt.Errorf("that channel is closed")
+	}
+
 	result, err := s.db.Exec(
 		`INSERT OR IGNORE INTO channel_members (channel_id, session_id) VALUES (?, ?)`,
 		channelID, sessionID,
@@ -279,6 +323,9 @@ func (s *Store) AddMember(channelID, sessionID string) (bool, error) {
 }
 
 func (s *Store) RemoveMember(channelID, sessionID string) error {
+	if channelID == GeneralChannel {
+		return fmt.Errorf("a session leaves the general channel by ending, not by being removed")
+	}
 	_, err := s.db.Exec(
 		`DELETE FROM channel_members WHERE channel_id = ? AND session_id = ?`, channelID, sessionID,
 	)
@@ -303,9 +350,21 @@ func (s *Store) SetMuted(channelID, sessionID string, muted bool) error {
 	return nil
 }
 
-// Unmuted is who a message is delivered to: the members, less the author, less
-// anyone who asked not to be interrupted.
+/*
+Unmuted is who a message is delivered to: the members, less the author, less
+anyone who asked not to be interrupted.
+
+Nobody, for general. It is a notice board: sessions read it, it does not read
+them. A snippet per post per session is fine for a channel of three, but on a
+daemon running thirty sessions one sentence would cost thirty prompts and
+thirty context windows — and the cost grows with how useful the feature gets.
+So the membership is everyone and the delivery is no one.
+*/
 func (s *Store) Unmuted(channelID, exceptSession string) ([]string, error) {
+	if channelID == GeneralChannel {
+		return []string{}, nil
+	}
+
 	rows, err := s.db.Query(
 		`SELECT session_id FROM channel_members
 		 WHERE channel_id = ? AND muted = 0 AND session_id != ?
@@ -334,8 +393,12 @@ func (s *Store) PostMessage(channelID, author, body string, urgent bool) (*Chann
 	if body == "" {
 		return nil, fmt.Errorf("a message needs a body")
 	}
-	if _, err := s.db.Exec(`SELECT 1 FROM channels WHERE id = ?`, channelID); err != nil {
-		return nil, fmt.Errorf("read channel: %w", err)
+	archived, err := s.archived(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if archived {
+		return nil, fmt.Errorf("that channel is closed")
 	}
 
 	flag := 0
@@ -444,6 +507,45 @@ func (s *Store) LastRead(channelID, reader string) (string, error) {
 		return "", fmt.Errorf("read receipt: %w", err)
 	}
 	return at, nil
+}
+
+// archived answers whether a channel is closed, and errors when there is no
+// such channel — which is how the callers below tell a typo from a refusal.
+func (s *Store) archived(id string) (bool, error) {
+	var flag int
+	err := s.db.QueryRow(`SELECT archived FROM channels WHERE id = ?`, id).Scan(&flag)
+	if err == sql.ErrNoRows {
+		return false, fmt.Errorf("no such channel")
+	}
+	if err != nil {
+		return false, fmt.Errorf("read channel: %w", err)
+	}
+	return flag == 1, nil
+}
+
+/*
+SetArchived closes a channel, or reopens it.
+
+Closing is not hiding: the conversation stays readable, but it takes no more
+messages and delivers nothing. That is the stronger promise, and the one worth
+making — a channel somebody has finished with cannot come back a week later and
+interrupt six agents.
+*/
+func (s *Store) SetArchived(id string, archived bool) error {
+	if id == GeneralChannel {
+		return fmt.Errorf("the general channel cannot be closed")
+	}
+	if _, err := s.archived(id); err != nil {
+		return err
+	}
+	flag := 0
+	if archived {
+		flag = 1
+	}
+	if _, err := s.db.Exec(`UPDATE channels SET archived = ? WHERE id = ?`, flag, id); err != nil {
+		return fmt.Errorf("archive channel: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) DeleteChannel(id string) error {

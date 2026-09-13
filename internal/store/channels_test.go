@@ -219,7 +219,7 @@ func TestGeneralIsMadeOnceAndPinnedToTheTop(t *testing.T) {
 		}
 	}
 
-	channels, err := s.Channels()
+	channels, err := s.Channels(false)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -251,6 +251,159 @@ func TestDeletingAChannelTakesItsMessagesWithIt(t *testing.T) {
 	members, _ := s.ChannelMembers(ch.ID)
 	if len(messages) != 0 || len(members) != 0 {
 		t.Errorf("left behind %d messages and %d members", len(messages), len(members))
+	}
+}
+
+// Archiving is what shortens the list. Destroying the conversation is what it
+// exists to avoid, so the channel is still there to be asked for.
+func TestArchivingTakesAChannelOutOfTheList(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("api-redesign", AuthorUser, []string{"s2"})
+
+	if err := s.SetArchived(ch.ID, true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	open, _ := s.Channels(false)
+	for _, one := range open {
+		if one.ID == ch.ID {
+			t.Error("a closed channel is still in the open list")
+		}
+	}
+	all, _ := s.Channels(true)
+	found := false
+	for _, one := range all {
+		if one.ID == ch.ID {
+			found = true
+			if !one.Archived {
+				t.Error("it is in the full list but does not say it is closed")
+			}
+		}
+	}
+	if !found {
+		t.Error("archiving lost the channel; it is meant to keep it")
+	}
+
+	if err := s.SetArchived(ch.ID, false); err != nil {
+		t.Fatalf("unarchive: %v", err)
+	}
+	if again, _ := s.Channels(false); len(again) != 1 {
+		t.Errorf("reopened, the list has %d channels, want it back", len(again))
+	}
+}
+
+// The promise archiving makes: the conversation is finished. A channel that
+// still took messages would be a filter, not a close.
+func TestAClosedChannelTakesNothing(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("api-redesign", AuthorUser, []string{"s2"})
+	_ = s.SetArchived(ch.ID, true)
+
+	if _, err := s.PostMessage(ch.ID, AuthorUser, "anyone there?", false); err == nil {
+		t.Error("want an error: a closed channel takes no messages")
+	}
+	if _, err := s.AddMember(ch.ID, "s7"); err == nil {
+		t.Error("want an error: joining a finished conversation is the thing this prevents")
+	}
+}
+
+// Reopening a finished conversation because somebody asked for the same two
+// sessions again would undo the close behind their back.
+func TestTheSameMembersDoNotReopenAClosedChannel(t *testing.T) {
+	s := channelStore(t)
+	first, _, _ := s.CreateChannel("", AuthorUser, []string{"s2", "s7"})
+	_ = s.SetArchived(first.ID, true)
+
+	again, reused, err := s.CreateChannel("", AuthorUser, []string{"s2", "s7"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if reused || again.ID == first.ID {
+		t.Error("the closed channel was handed back; want a new one")
+	}
+}
+
+func TestGeneralCannotBeClosed(t *testing.T) {
+	s := channelStore(t)
+	_ = s.EnsureGeneral()
+	if err := s.SetArchived(GeneralChannel, true); err == nil {
+		t.Error("want an error: the notice board is not somebody's to close")
+	}
+}
+
+func TestArchivingWhatIsNotThereSaysSo(t *testing.T) {
+	s := channelStore(t)
+	if err := s.SetArchived("ch_nope", true); err == nil {
+		t.Error("want an error naming the channel that does not exist")
+	}
+}
+
+func seedSession(t *testing.T, s *Store, id, status string) {
+	t.Helper()
+	if err := s.UpsertSession(&Session{
+		SessionID: id, Source: "claude", CWD: "/tmp/proj", Status: status,
+	}); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+// Nobody joins general and nobody is invited: it is every session on the
+// daemon, worked out rather than stored.
+func TestGeneralHoldsEverySessionThatHasNotEnded(t *testing.T) {
+	s := channelStore(t)
+	_ = s.EnsureGeneral()
+	seedSession(t, s, "s2", "idle")
+	seedSession(t, s, "s7", "active")
+	seedSession(t, s, "s9", "terminated")
+
+	members, err := s.ChannelMembers(GeneralChannel)
+	if err != nil {
+		t.Fatalf("members: %v", err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("members = %v, want the two that are still running", members)
+	}
+
+	// Ending one takes it out, and resuming it brings it back — with no
+	// membership row touched either way. That is the point of deriving it.
+	seedSession(t, s, "s2", "terminated")
+	if after, _ := s.ChannelMembers(GeneralChannel); len(after) != 1 || after[0] != "s7" {
+		t.Errorf("after terminating s2: %v, want only s7", after)
+	}
+	seedSession(t, s, "s2", "active")
+	if back, _ := s.ChannelMembers(GeneralChannel); len(back) != 2 {
+		t.Errorf("after resuming s2: %v, want it back in", back)
+	}
+}
+
+// A snippet per post per session is fine for a channel of three. Thirty
+// sessions and one sentence is thirty interruptions, which is the cost the
+// notice board exists to avoid.
+func TestGeneralDeliversToNobody(t *testing.T) {
+	s := channelStore(t)
+	_ = s.EnsureGeneral()
+	for _, id := range []string{"s2", "s7", "s9"} {
+		seedSession(t, s, id, "idle")
+	}
+
+	to, err := s.Unmuted(GeneralChannel, "")
+	if err != nil {
+		t.Fatalf("unmuted: %v", err)
+	}
+	if len(to) != 0 {
+		t.Errorf("delivering general to %v, want nobody: it is read, not pushed", to)
+	}
+}
+
+func TestNobodyJoinsOrLeavesGeneralByHand(t *testing.T) {
+	s := channelStore(t)
+	_ = s.EnsureGeneral()
+
+	if _, err := s.AddMember(GeneralChannel, "s2"); err == nil {
+		t.Error("want an error: every session is in it already")
+	}
+	if err := s.RemoveMember(GeneralChannel, "s2"); err == nil {
+		t.Error("want an error: a session leaves by ending")
 	}
 }
 

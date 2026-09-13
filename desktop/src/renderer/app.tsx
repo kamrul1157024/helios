@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { bridge } from './bridge.ts'
 import { store, terminalId, useStore } from './store.ts'
+import { ChannelPicker } from './components/channel-picker.tsx'
 import { Detail } from './components/detail.tsx'
 import { NewSessionDialog } from './components/newsession.tsx'
 import { Rail } from './components/rail.tsx'
@@ -100,6 +101,7 @@ export function App(): JSX.Element {
       </div>
 
       {dialog === 'new' && <NewSessionDialog seed={seed} onClose={() => setDialog(null)} />}
+      <ChannelPicker />
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>

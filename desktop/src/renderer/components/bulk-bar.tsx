@@ -16,26 +16,9 @@ import type { Session, SessionGroup } from '../../shared/models.ts'
  * opened from. Here the count is the first thing said, so what is about to
  * happen and how much of it are in the same sentence.
  */
-/**
- * Starts a channel from what is selected, or opens the one that already holds
- * exactly these sessions.
- *
- * The daemon decides which of those happened — an unnamed channel is its
- * members — and the notice says so, because being shown an existing
- * conversation when you asked for a new one is otherwise unexplained.
- */
-async function startChannel(hostId: string, held: string[]): Promise<void> {
-  const members = held.map((key) => key.slice(key.indexOf(':') + 1))
-  try {
-    const { channel, existing } = await api(hostId).createChannel({ members })
-    store.setSelectMode(false)
-    store.setSidebarMode('channels')
-    store.selectChannel(hostId, channel.id)
-    void store.invalidateChannels(hostId)
-    store.notify(existing ? 'These sessions already had a channel' : 'Channel started')
-  } catch (err) {
-    store.fail(err)
-  }
+/** The session ids behind the selection keys, which are `host:session`. */
+function sessionsOf(held: string[]): string[] {
+  return held.map((key) => key.slice(key.indexOf(':') + 1))
 }
 
 export function BulkBar({
@@ -101,9 +84,24 @@ export function BulkBar({
             ? 'Start a channel with these sessions'
             : 'The selection is on more than one host'
         }
-        onClick={() => void startChannel(hostId, held)}
+        onClick={() => void store.startChannel(hostId, sessionsOf(held))}
       >
         New group chat
+      </button>
+
+      {/* The other half of the same gesture: these sessions, but into a
+          conversation that is already running rather than a fresh one. */}
+      <button
+        className="ghost"
+        disabled={!summary.canFile}
+        title={
+          summary.canFile
+            ? 'Put these sessions in a channel that already exists'
+            : 'The selection is on more than one host'
+        }
+        onClick={() => store.pickChannelFor(hostId, sessionsOf(held))}
+      >
+        Add to channel…
       </button>
 
       <button

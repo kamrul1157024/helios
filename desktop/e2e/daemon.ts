@@ -65,6 +65,7 @@ interface StubChannel {
   id: string
   name: string
   members: string[]
+  archived: boolean
   messages: { id: string; author: string; from: string; body: string; created_at: string }[]
 }
 
@@ -79,12 +80,14 @@ export function seedChannel(channel: {
   id: string
   name?: string
   members: string[]
+  archived?: boolean
   messages?: { author: string; from: string; body: string }[]
 }): void {
   CHANNELS.push({
     id: channel.id,
     name: channel.name ?? '',
     members: channel.members,
+    archived: channel.archived ?? false,
     messages: (channel.messages ?? []).map((m, at) => ({
       id: `m_${String(at).padStart(12, '0')}`,
       author: m.author,
@@ -108,6 +111,8 @@ export type DaemonWrite =
   | { kind: 'delete'; sessionId: string }
   | { kind: 'channel'; name: string; members: string[]; message: string }
   | { kind: 'post'; channelId: string; message: string }
+  | { kind: 'join'; channelId: string; session: string }
+  | { kind: 'archive'; channelId: string; archived: boolean }
   | { kind: 'patch'; sessionId: string; patch: Record<string, unknown> }
 
 /** The session every create in these tests hands back. */
@@ -500,7 +505,8 @@ function written(path: string): boolean {
     path === '/api/uploads' ||
     path.endsWith('/send') ||
     path === '/api/channels' ||
-    (path.startsWith('/api/channels/') && path.endsWith('/messages'))
+    (path.startsWith('/api/channels/') &&
+      (path.endsWith('/messages') || path.endsWith('/members') || path.endsWith('/archive')))
   )
 }
 
@@ -533,13 +539,18 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
     // same set gives the same conversation back rather than a second one.
     const same = (a: string[], b: string[]): boolean =>
       a.length === b.length && [...a].sort().join() === [...b].sort().join()
-    const existing = spec.name ? undefined : CHANNELS.find((one) => !one.name && same(one.members, members))
+    // A closed channel is skipped: archiving says the conversation is over,
+    // and handing it back would reopen it behind the caller's back.
+    const existing = spec.name
+      ? undefined
+      : CHANNELS.find((one) => !one.name && !one.archived && same(one.members, members))
     if (existing) return { channel: existing, existing: true }
 
     const channel: StubChannel = {
       id: `ch_${CHANNELS.length + 1}`,
       name: spec.name ?? '',
       members,
+      archived: false,
       messages: [],
     }
     if (spec.message) {
@@ -553,6 +564,25 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
     }
     CHANNELS.push(channel)
     return { channel, existing: false }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/members')) {
+    const id = path.slice('/api/channels/'.length, -'/members'.length)
+    const { session } = JSON.parse(body.toString() || '{}') as { session?: string }
+    writes.push({ kind: 'join', channelId: id, session: session ?? '' })
+    const channel = CHANNELS.find((one) => one.id === id)
+    const added = Boolean(channel && session && !channel.members.includes(session))
+    if (added && channel && session) channel.members.push(session)
+    return { success: true, added }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/archive')) {
+    const id = path.slice('/api/channels/'.length, -'/archive'.length)
+    const { archived } = JSON.parse(body.toString() || '{}') as { archived?: boolean }
+    writes.push({ kind: 'archive', channelId: id, archived: Boolean(archived) })
+    const channel = CHANNELS.find((one) => one.id === id)
+    if (channel) channel.archived = Boolean(archived)
+    return { success: true, archived: Boolean(archived) }
   }
 
   if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
@@ -674,6 +704,7 @@ function answer(
           created_by: 'user',
           created_at: '2026-01-01T00:00:00Z',
           unread: 0,
+          archived: channel.archived,
         })),
       }
     // What the new-schedule form offers: a schedule runs unattended, so the

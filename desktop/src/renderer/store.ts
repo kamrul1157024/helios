@@ -289,6 +289,14 @@ export interface State {
   /** Which channel the panel is showing, if the sidebar is on that mode. */
   channelSelection: { hostId: string; channelId: string } | null
   /**
+   * The sessions waiting to be put in a channel, and the picker asking which.
+   *
+   * Here rather than in a component because two unrelated callers open it: the
+   * row's context menu, which is built as plain data with no React context
+   * around it, and the bulk bar, which sits elsewhere in the tree.
+   */
+  channelPicker: { hostId: string; sessions: string[] } | null
+  /**
    * An instruction to every tool card in the transcript to fold or unfold.
    *
    * A counter rather than a boolean, because it is an event and not a state: a
@@ -538,6 +546,7 @@ const initial: State = {
   terminalUploads: readTerminalUploads(),
   sessionSelection: [],
   channelSelection: null,
+  channelPicker: null,
   selectMode: false,
   selectionAnchor: null,
   foldAll: { seq: 0, open: false },
@@ -1255,6 +1264,86 @@ class Store {
   /** Which conversation the channels panel is showing. */
   selectChannel(hostId: string, channelId: string): void {
     this.set({ channelSelection: { hostId, channelId } })
+  }
+
+  /** Asks which channel these sessions should go into. */
+  pickChannelFor(hostId: string, sessions: string[]): void {
+    if (sessions.length > 0) this.set({ channelPicker: { hostId, sessions } })
+  }
+
+  closeChannelPicker(): void {
+    this.set({ channelPicker: null })
+  }
+
+  /** Shows a channel, having just done something to it. */
+  async revealChannel(hostId: string, channelId: string): Promise<void> {
+    this.setSelectMode(false)
+    this.closeChannelPicker()
+    this.setSidebarMode('channels')
+    this.selectChannel(hostId, channelId)
+    await this.invalidateChannels(hostId)
+  }
+
+  /**
+   * Starts a channel from a set of sessions, or opens the one that already
+   * holds exactly them.
+   *
+   * The daemon decides which of those happened — an unnamed channel is its
+   * members — and the notice says so, because being shown an existing
+   * conversation when you asked for a new one is otherwise unexplained. A
+   * named one is always new: naming is how somebody says "not that one".
+   */
+  async startChannel(hostId: string, sessions: string[], name?: string): Promise<void> {
+    try {
+      const { channel, existing } = await api(hostId).createChannel({ name, members: sessions })
+      await this.revealChannel(hostId, channel.id)
+      this.notify(existing ? 'These sessions already had a channel' : 'Channel started')
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /** Puts sessions into a channel that already exists. */
+  async addToChannel(hostId: string, channelId: string, sessions: string[]): Promise<void> {
+    try {
+      for (const session of sessions) {
+        await api(hostId).addToChannel(channelId, session)
+      }
+      await this.revealChannel(hostId, channelId)
+      this.notify(sessions.length === 1 ? 'Added to the channel' : `${sessions.length} added`)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /**
+   * Closes a channel, or reopens it.
+   *
+   * Closing is not hiding: the daemon refuses every message and every join
+   * afterwards, so the list and the delivery cannot disagree about whether the
+   * conversation is over.
+   */
+  async setChannelArchived(hostId: string, channelId: string, archived: boolean): Promise<void> {
+    try {
+      await api(hostId).setChannelArchived(channelId, archived)
+      await this.invalidateChannels(hostId)
+      this.notify(archived ? 'Channel closed' : 'Channel reopened')
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  async deleteChannel(hostId: string, channelId: string): Promise<void> {
+    try {
+      await api(hostId).deleteChannel(channelId)
+      const { channelSelection } = this.getSnapshot()
+      if (channelSelection?.hostId === hostId && channelSelection.channelId === channelId) {
+        this.set({ channelSelection: null })
+      }
+      await this.invalidateChannels(hostId)
+    } catch (err) {
+      this.fail(err)
+    }
   }
 
   /**

@@ -742,6 +742,54 @@ small {
   font-size: 11px;
 }
 
+/* A closed channel is readable, not gone — dimmed rather than struck through,
+   so it reads as put away rather than broken. */
+.channel-row.closed .channel-name {
+  color: var(--on-surface-variant);
+}
+
+.channel-closed-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  text-align: left;
+  cursor: default;
+}
+
+.channel-closed-head:hover {
+  color: var(--on-surface);
+}
+
+.channel-closed-mark {
+  width: 10px;
+}
+
+/* Where the composer was. The box goes rather than being disabled: one that
+   takes text and then refuses it is worse than none at all. */
+.channel-closed-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  box-shadow: inset 0 1px 0 var(--outline-variant);
+}
+
+.channel-note {
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
 .channel {
   flex: 1;
   display: flex;

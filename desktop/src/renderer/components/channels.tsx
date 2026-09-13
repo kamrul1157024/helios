@@ -7,6 +7,7 @@ import { keys } from '../keys.ts'
 import { channelMessagesQuery, channelsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { renderMarkdown } from '../markdown.ts'
+import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import type { Channel, ChannelMessage } from '../../shared/models.ts'
 
 /**
@@ -18,7 +19,7 @@ import type { Channel, ChannelMessage } from '../../shared/models.ts'
  * and its messages never leave it.
  */
 
-/** What the sidebar shows: one host's channels. */
+/** What the sidebar shows: one host's channels, with the closed ones put away. */
 export function ChannelList({ hostId, name, showName }: {
   hostId: string
   name: string
@@ -26,8 +27,39 @@ export function ChannelList({ hostId, name, showName }: {
 }): JSX.Element | null {
   const { data: channels = [] } = useQuery(channelsQuery(hostId))
   const selected = useStore((s) => s.channelSelection)
+  const [menu, setMenu] = useState<{ channel: Channel; x: number; y: number } | null>(null)
+  // Shut to begin with: the point of closing a conversation is not to be shown
+  // it. Opened by hand when somebody wants to read one back.
+  const [showClosed, setShowClosed] = useState(false)
+
+  const open = channels.filter((channel) => !channel.archived)
+  const closed = channels.filter((channel) => channel.archived)
 
   if (channels.length === 0) return null
+
+  const row = (channel: Channel): JSX.Element => (
+    <div
+      key={channel.id}
+      className={[
+        'channel-row',
+        channel.archived ? 'closed' : '',
+        selected?.hostId === hostId && selected.channelId === channel.id ? 'active' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      onClick={() => store.selectChannel(hostId, channel.id)}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        setMenu({ channel, x: event.clientX, y: event.clientY })
+      }}
+    >
+      <span className="channel-row-top">
+        <span className="channel-name">{channelLabel(channel)}</span>
+        {channel.unread > 0 && !channel.archived && <span className="badge">{channel.unread}</span>}
+      </span>
+      <span className="channel-row-sub">{memberSummary(channel)}</span>
+    </div>
+  )
 
   return (
     <div className="host-group">
@@ -38,27 +70,63 @@ export function ChannelList({ hostId, name, showName }: {
           </span>
         </div>
       )}
-      {channels.map((channel) => (
-        <div
-          key={channel.id}
-          className={[
-            'channel-row',
-            selected?.hostId === hostId && selected.channelId === channel.id ? 'active' : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          onClick={() => store.selectChannel(hostId, channel.id)}
-        >
-          <span className="channel-row-top">
-            <span className="channel-name">{channelLabel(channel)}</span>
-            {channel.unread > 0 && <span className="badge">{channel.unread}</span>}
-          </span>
-          <span className="channel-row-sub">{memberSummary(channel)}</span>
-        </div>
-      ))}
+      {open.map(row)}
+
+      {closed.length > 0 && (
+        <>
+          <button className="channel-closed-head" onClick={() => setShowClosed(!showClosed)}>
+            <span className="channel-closed-mark">{showClosed ? '▾' : '▸'}</span>
+            Closed ({closed.length})
+          </button>
+          {showClosed && closed.map(row)}
+        </>
+      )}
+
+      {menu && (
+        <SelectionMenu
+          x={menu.x}
+          y={menu.y}
+          actions={channelActions(hostId, menu.channel)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   )
 }
+
+/**
+ * What can be done to a channel from its row.
+ *
+ * General gets none of it: every session is in it and it is the one channel
+ * that is always there, so neither closing nor deleting it is somebody's to do.
+ */
+function channelActions(hostId: string, channel: Channel): MenuAction[] {
+  if (channel.id === GENERAL) {
+    return [{ label: 'Everyone is in this one, always', disabled: true }]
+  }
+
+  return [
+    {
+      label: channel.archived ? 'Reopen' : 'Close',
+      title: channel.archived
+        ? 'Messages are delivered again'
+        : 'It stays readable, but takes no more messages',
+      run: () => void store.setChannelArchived(hostId, channel.id, !channel.archived),
+    },
+    {
+      label: 'Delete',
+      danger: true,
+      run: () => {
+        if (confirm(`Delete ${channelLabel(channel)}? Everything said in it goes too.`)) {
+          void store.deleteChannel(hostId, channel.id)
+        }
+      },
+    },
+  ]
+}
+
+/** internal/store/channels.go — the channel every session is in. */
+const GENERAL = 'general'
 
 /**
  * A channel's name as a person reads it.
@@ -76,6 +144,12 @@ export function channelLabel(channel: Channel): string {
 
 function memberSummary(channel: Channel): string {
   const count = channel.members.length
+  if (channel.archived) return `closed · ${count} ${count === 1 ? 'session' : 'sessions'}`
+  // General's members are every session on the daemon, so it is the count that
+  // says something, not the list — and it says nothing about being invited.
+  if (channel.id === GENERAL) {
+    return `everyone · ${count} ${count === 1 ? 'session' : 'sessions'}, and you`
+  }
   return `${count} ${count === 1 ? 'session' : 'sessions'}, and you`
 }
 
@@ -173,6 +247,15 @@ function ChannelConversation({
         </span>
       </header>
 
+      {/* General behaves differently from the channel above it in the list, and
+          the difference is invisible until somebody posts and nothing happens. */}
+      {channelId === GENERAL && (
+        <p className="channel-note">
+          The notice board. Every session is in it, and posting here interrupts nobody —
+          agents read it when they look.
+        </p>
+      )}
+
       <div className="channel-scroll" ref={scroller}>
         {messages.length === 0 && <p className="empty-note">Nothing said yet.</p>}
         {messages.map((message) => (
@@ -180,6 +263,18 @@ function ChannelConversation({
         ))}
       </div>
 
+      {/* Closed is read-only, so the box goes rather than being disabled: a
+          composer that takes text and then refuses it is worse than none. */}
+      {channel?.archived && (
+        <div className="channel-closed-note">
+          <span>This channel is closed. It takes no more messages.</span>
+          <button className="ghost" onClick={() => void store.setChannelArchived(hostId, channelId, false)}>
+            Reopen
+          </button>
+        </div>
+      )}
+
+      {!channel?.archived && (
       <div className="composer">
         <div className="composer-input">
           <textarea
@@ -206,6 +301,7 @@ function ChannelConversation({
           </div>
         </div>
       </div>
+      )}
     </div>
   )
 }

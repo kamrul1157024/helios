@@ -503,6 +503,8 @@ export interface Channel {
   created_at: string
   /** What this reader has not seen. */
   unread: number
+  /** Closed: still readable, but it takes no more messages and delivers nothing. */
+  archived: boolean
 }
 
 export interface ChannelMessage {

@@ -160,8 +160,15 @@ export class ApiClient {
 
   // ─── Channels ──────────────────────────────────────────────────────────
 
+  /**
+   * Every channel, the closed ones included.
+   *
+   * One request rather than two: the sidebar shows both lists at once, and a
+   * second query key for the closed ones would be a second cache to keep in
+   * step with the first. The renderer separates them.
+   */
   async listChannels(): Promise<Channel[]> {
-    const res = await this.request<{ channels?: Channel[] }>('GET', '/api/channels')
+    const res = await this.request<{ channels?: Channel[] }>('GET', '/api/channels?archived=1')
     return res.channels ?? []
   }
 
@@ -197,6 +204,12 @@ export class ApiClient {
 
   async addToChannel(id: string, session: string): Promise<void> {
     await this.request('POST', `/api/channels/${encodeURIComponent(id)}/members`, { session })
+  }
+
+  /** Closes a channel, or reopens it. The daemon refuses everything said in a
+   *  closed one, so this is not a filter on the list. */
+  async setChannelArchived(id: string, archived: boolean): Promise<void> {
+    await this.request('POST', `/api/channels/${encodeURIComponent(id)}/archive`, { archived })
   }
 
   async deleteChannel(id: string): Promise<void> {

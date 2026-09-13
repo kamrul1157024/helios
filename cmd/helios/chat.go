@@ -39,6 +39,8 @@ const chatUsage = `Usage: helios chat <command>
   read <channel> [--since-last]         the conversation, and marks it read
   join <channel> --session <id>         add a session to it
   leave <channel> --session <id>        take one out
+  archive <channel>                     close it: readable, but it takes no more
+  unarchive <channel>                   reopen it
   delete <channel>                      remove it and everything said in it
 
 Flags:
@@ -47,18 +49,24 @@ Flags:
   --session <id>      act as, or act on, this session instead of the one you are in
   --since-last        only what has arrived since you last read
   --urgent            interrupt the members rather than queue behind their work
+  --archived          include the closed channels in the list
   --json              machine-readable output
 
 A channel is named by its name where it has one, and by its id where it does
 not. ` + "`helios chat list`" + ` prints whichever will work.
+
+general is the notice board: every session on this daemon is in it, and a post
+there interrupts nobody. Read it at the start of a piece of work and before
+anything wide, and post there before doing something wide yourself.
 `
 
 type wireChannel struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Members []string          `json:"members"`
-	Titles  map[string]string `json:"titles"`
-	Unread  int               `json:"unread"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Members  []string          `json:"members"`
+	Titles   map[string]string `json:"titles"`
+	Unread   int               `json:"unread"`
+	Archived bool              `json:"archived"`
 }
 
 type wireMessage struct {
@@ -91,6 +99,10 @@ func handleChat(args []string) {
 		chatMember(args[1:], http.MethodPost)
 	case "leave":
 		chatMember(args[1:], http.MethodDelete)
+	case "archive":
+		chatArchive(args[1:], true)
+	case "unarchive":
+		chatArchive(args[1:], false)
 	case "delete", "rm":
 		chatDelete(args[1:])
 	case "help", "--help", "-h":
@@ -166,6 +178,7 @@ type chatOpts struct {
 	session   string
 	sinceLast bool
 	urgent    bool
+	archived  bool
 	asJSON    bool
 	rest      []string
 }
@@ -196,6 +209,8 @@ func chatFlags(args []string) chatOpts {
 			opts.sinceLast = true
 		case "--urgent":
 			opts.urgent = true
+		case "--archived":
+			opts.archived = true
 		case "--json":
 			opts.asJSON = true
 		default:
@@ -231,11 +246,14 @@ func fetchChannels(query url.Values) ([]wireChannel, error) {
 
 // findChannel resolves what somebody typed. A name is what they will have read
 // off a prompt, and an id is what an unnamed channel has instead.
+//
+// Closed channels are included: `unarchive` has to be able to find the channel
+// it exists to reopen, and a refusal saying why beats "no channel called that".
 func findChannel(name string) (*wireChannel, error) {
 	if name == "" {
 		return nil, fmt.Errorf("which channel? try: helios chat list")
 	}
-	channels, err := fetchChannels(nil)
+	channels, err := fetchChannels(url.Values{"archived": {"1"}})
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +274,15 @@ func chatLabel(ch wireChannel) string {
 
 func chatList(args []string) {
 	opts := chatFlags(args)
-	channels, err := fetchChannels(opts.reader())
+	query := opts.reader()
+	if opts.archived {
+		if query == nil {
+			query = url.Values{}
+		}
+		query.Set("archived", "1")
+	}
+
+	channels, err := fetchChannels(query)
 	if err != nil {
 		chatFail(err)
 	}
@@ -275,6 +301,9 @@ func chatList(args []string) {
 		unread := ""
 		if ch.Unread > 0 {
 			unread = fmt.Sprintf("%d", ch.Unread)
+		}
+		if ch.Archived {
+			unread = "closed"
 		}
 		who := make([]string, 0, len(ch.Members))
 		for _, member := range ch.Members {
@@ -507,6 +536,29 @@ func chatMember(args []string, method string) {
 		return
 	}
 	fmt.Printf("%s is in %s, and has been told so.\n", opts.session, chatLabel(*ch))
+}
+
+// chatArchive closes a channel, or reopens it. Closing is not deleting: what
+// was said stays readable, and only the next message is refused.
+func chatArchive(args []string, archived bool) {
+	opts := chatFlags(args)
+	name := ""
+	if len(opts.rest) > 0 {
+		name = opts.rest[0]
+	}
+	ch, err := findChannel(name)
+	if err != nil {
+		chatFail(err)
+	}
+	if _, err := callChat(http.MethodPost, "/"+ch.ID+"/archive", nil,
+		map[string]any{"archived": archived}); err != nil {
+		chatFail(err)
+	}
+	if archived {
+		fmt.Printf("%s is closed. It still reads, and it takes no more messages.\n", chatLabel(*ch))
+		return
+	}
+	fmt.Printf("%s is open again.\n", chatLabel(*ch))
 }
 
 func chatDelete(args []string) {

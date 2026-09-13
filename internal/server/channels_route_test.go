@@ -207,6 +207,65 @@ func TestTheListCountsWhatSomebodyElseSaid(t *testing.T) {
 	t.Fatalf("the channel was not in the list: %v", out)
 }
 
+// Archiving is a promise about delivery, not a filter on a list. The status
+// code matters less than the fact that nobody was typed at.
+func TestAClosedChannelDeliversNothing(t *testing.T) {
+	shared, be := liveChannelTest(t, "s2", "s7")
+	id := madeChannel(t, channelCall(t, shared, http.MethodPost, "",
+		`{"name":"api-redesign","members":["s2","s7"]}`))
+	channelCall(t, shared, http.MethodPost, "/"+id+"/archive", `{"archived":true}`)
+
+	be.sent = nil
+	req := httptest.NewRequest(http.MethodPost, "/internal/channels/"+id+"/messages",
+		strings.NewReader(`{"message":"anyone there?"}`))
+	rec := httptest.NewRecorder()
+	shared.channelRoute(rec, req, "/internal/channels")
+
+	if rec.Code < 400 {
+		t.Errorf("posting to a closed channel answered %d, want a refusal", rec.Code)
+	}
+	if sent := be.sentTexts(); len(sent) != 0 {
+		t.Errorf("a closed channel typed at %d members: %v", len(sent), sent)
+	}
+
+	// Reopened, it works again — closing is not deleting.
+	channelCall(t, shared, http.MethodPost, "/"+id+"/archive", `{"archived":false}`)
+	channelCall(t, shared, http.MethodPost, "/"+id+"/messages", `{"message":"back"}`)
+	if got := countContaining(be.sentTexts(), "back"); got != 2 {
+		t.Errorf("%d members got the message after reopening, want both", got)
+	}
+}
+
+// The one that stops the notice board quietly becoming a broadcast. Everybody
+// is in general, and a post there interrupts none of them.
+func TestGeneralIsEveryoneAndPushesToNoOne(t *testing.T) {
+	shared, be := liveChannelTest(t, "s2", "s7", "s9")
+
+	out := channelCall(t, shared, http.MethodGet, "", "")
+	channels, _ := out["channels"].([]any)
+	first, _ := channels[0].(map[string]any)
+	members, _ := first["members"].([]any)
+	if first["id"] != store.GeneralChannel {
+		t.Fatalf("first channel is %v, want general", first["id"])
+	}
+	if len(members) != 3 {
+		t.Errorf("general holds %v, want all three live sessions", members)
+	}
+
+	be.sent = nil
+	channelCall(t, shared, http.MethodPost, "/"+store.GeneralChannel+"/messages",
+		`{"message":"about to force-push main, hold your rebases"}`)
+
+	if sent := be.sentTexts(); len(sent) != 0 {
+		t.Errorf("general typed at %d sessions: %v — it is read, not pushed", len(sent), sent)
+	}
+	// Recorded all the same: the point is that it is there when somebody looks.
+	read := channelCall(t, shared, http.MethodGet, "/"+store.GeneralChannel+"/messages", "")
+	if messages, _ := read["messages"].([]any); len(messages) != 1 {
+		t.Errorf("general holds %d messages, want the one that was posted", len(messages))
+	}
+}
+
 // The notice board is not somebody's to delete, and the list must always have
 // it: an agent told to post to #general has to find it there.
 func TestGeneralIsInTheListAndStays(t *testing.T) {

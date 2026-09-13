@@ -272,6 +272,10 @@ func (s *Store) migrate() error {
 			last_read  TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (channel_id, reader)
 		)`},
+		// A closed conversation: still readable, but it takes no more messages
+		// and delivers nothing. What shortens the list without destroying what
+		// was said.
+		{"add_channels_archived", `ALTER TABLE channels ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`},
 	}
 
 	for _, cm := range columnMigrations {
