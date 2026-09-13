@@ -1,3 +1,4 @@
+import { unwrap, type CallResult } from './errors.ts'
 import type { SegmentId } from '../shared/status-line.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 import type { BackdropSpec } from '../shared/theme/vscode.ts'
@@ -101,7 +102,7 @@ interface RawBridge {
     onEvent(fn: (payload: { hostId: string; event: SSEEvent }) => void): Unsubscribe
   }
   api: {
-    call<T>(hostId: string, method: string, args?: unknown[]): Promise<T>
+    call<T>(hostId: string, method: string, args?: unknown[]): Promise<CallResult<T>>
   }
   term: {
     open(req: {
@@ -189,8 +190,11 @@ export { statusOf, type BridgeError } from './errors.ts'
 export class HostApi {
   constructor(readonly hostId: string) {}
 
-  private call<T>(method: string, ...args: unknown[]): Promise<T> {
-    return bridge.api.call<T>(this.hostId, method, args)
+  // Thrown here rather than in the preload: contextBridge clones an Error by
+  // its message and stack alone, so a status attached on the far side arrives
+  // as undefined. See unwrap.
+  private async call<T>(method: string, ...args: unknown[]): Promise<T> {
+    return unwrap(await bridge.api.call<T>(this.hostId, method, args), method)
   }
 
   listSessions(

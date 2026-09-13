@@ -71,9 +71,23 @@ interface StubChannel {
 
 const CHANNELS: StubChannel[] = []
 
+/** Whether this daemon pretends to predate channels and 404s the routes. */
+let channelsUnsupported = false
+
 /** Back to no channels, for a test that is not about them. */
 export function resetChannels(): void {
   CHANNELS.length = 0
+}
+
+/**
+ * Answers every channel route with 404, as a daemon too old for them does.
+ *
+ * Set by the `channelsSupported` fixture option and cleared when that daemon
+ * closes — not by resetChannels, which runs in a beforeEach, after the option
+ * has already decided what this daemon is.
+ */
+export function setChannelsUnsupported(value: boolean): void {
+  channelsUnsupported = value
 }
 
 export function seedChannel(channel: {
@@ -427,6 +441,15 @@ export async function startDaemon(): Promise<StubDaemon> {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
     const q = (name: string): string => url.searchParams.get(name) ?? ''
+
+    // A daemon older than channels has no such route at all. The app has to
+    // cope, because one out-of-date machine in the sidebar must not break the
+    // mode on the others.
+    if (channelsUnsupported && path.startsWith('/api/channels')) {
+      res.writeHead(404, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Not Found', message: 'no such route' }))
+      return
+    }
 
     if (path === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })

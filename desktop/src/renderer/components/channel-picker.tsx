@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
+import { statusOf } from '../errors.ts'
 import { channelsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { channelLabel } from './channels.tsx'
@@ -23,7 +24,7 @@ export function ChannelPicker(): JSX.Element | null {
 }
 
 function Picker({ hostId, sessions }: { hostId: string; sessions: string[] }): JSX.Element {
-  const { data: channels = [] } = useQuery(channelsQuery(hostId))
+  const { data: channels = [], error } = useQuery(channelsQuery(hostId))
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const list = useRef<HTMLDivElement | null>(null)
@@ -41,7 +42,10 @@ function Picker({ hostId, sessions }: { hostId: string; sessions: string[] }): J
   // where the eye already is after typing a name that matched nothing.
   const naming = query.trim()
   const exact = matches.some((channel) => channel.name.toLowerCase() === naming.toLowerCase())
-  const rows = exact ? matches.length : matches.length + 1
+  // A daemon older than channels answers 404. Offering to make one on a
+  // machine that cannot hold it would be offering a button that fails.
+  const unsupported = statusOf(error) === 404
+  const rows = exact || unsupported ? matches.length : matches.length + 1
 
   useEffect(() => {
     setActive(0)
@@ -102,7 +106,13 @@ function Picker({ hostId, sessions }: { hostId: string; sessions: string[] }): J
             </button>
           ))}
 
-          {!exact && (
+          {unsupported && (
+            <p className="empty-note">
+              This machine is running a Helios without channels. Update it to start one here.
+            </p>
+          )}
+
+          {!exact && !unsupported && (
             <button
               className={`quick-row new-channel ${active === matches.length ? 'active' : ''}`}
               onMouseEnter={() => setActive(matches.length)}

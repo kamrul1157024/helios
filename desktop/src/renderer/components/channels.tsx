@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
 import { clearDraft, loadDraft, saveDraft } from '../drafts.ts'
+import { statusOf } from '../errors.ts'
 import { keys } from '../keys.ts'
 import { channelMessagesQuery, channelsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
@@ -25,7 +26,7 @@ export function ChannelList({ hostId, name, showName }: {
   name: string
   showName: boolean
 }): JSX.Element | null {
-  const { data: channels = [] } = useQuery(channelsQuery(hostId))
+  const { data: channels = [], error } = useQuery(channelsQuery(hostId))
   const selected = useStore((s) => s.channelSelection)
   const [menu, setMenu] = useState<{ channel: Channel; x: number; y: number } | null>(null)
   // Shut to begin with: the point of closing a conversation is not to be shown
@@ -35,6 +36,11 @@ export function ChannelList({ hostId, name, showName }: {
   const open = channels.filter((channel) => !channel.archived)
   const closed = channels.filter((channel) => channel.archived)
 
+  // A daemon older than channels answers 404, and a host that cannot hold one
+  // contributes nothing to the list rather than an error. The same rule the
+  // session groups already follow, for the same reason: one out-of-date
+  // machine in the sidebar must not break the feature on the others.
+  if (statusOf(error) === 404) return null
   if (channels.length === 0) return null
 
   const row = (channel: Channel): JSX.Element => (
