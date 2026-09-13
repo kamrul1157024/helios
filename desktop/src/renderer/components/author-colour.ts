@@ -38,6 +38,21 @@ export function authorColour(author: string): string | undefined {
 }
 
 /**
+ * The one or two letters that stand for an author on its avatar.
+ *
+ * Taken from the title the daemon resolved rather than the id, because the
+ * avatar sits beside the name and initials that do not match the name read as
+ * somebody else's. A title like "[INFRA] Debug SSH auth" leads with a bracket,
+ * so anything that is not a letter or a digit is skipped rather than shown.
+ */
+export function authorInitials(from: string): string {
+  const words = from.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  if (words.length === 0) return '?'
+  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase()
+  return (words[0]![0]! + words[1]![0]!).toUpperCase()
+}
+
+/**
  * FNV-1a, for a hue that is stable across restarts and machines.
  *
  * Not for security, and not for uniqueness: two sessions sharing a hue is a

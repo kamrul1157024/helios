@@ -296,6 +296,8 @@ export interface State {
    * around it, and the bulk bar, which sits elsewhere in the tree.
    */
   channelPicker: { hostId: string; sessions: string[] } | null
+  /** The thread the side panel is showing, if one is open. */
+  threadSelection: { hostId: string; channelId: string; root: string } | null
   /**
    * An instruction to every tool card in the transcript to fold or unfold.
    *
@@ -547,6 +549,7 @@ const initial: State = {
   sessionSelection: [],
   channelSelection: null,
   channelPicker: null,
+  threadSelection: null,
   selectMode: false,
   selectionAnchor: null,
   foldAll: { seq: 0, open: false },
@@ -1263,7 +1266,18 @@ class Store {
 
   /** Which conversation the channels panel is showing. */
   selectChannel(hostId: string, channelId: string): void {
-    this.set({ channelSelection: { hostId, channelId } })
+    // A thread belongs to the conversation it hangs off, so it does not follow
+    // the reader into the next one.
+    this.set({ channelSelection: { hostId, channelId }, threadSelection: null })
+  }
+
+  /** Opens the thread hanging off a message, beside the conversation. */
+  openThread(hostId: string, channelId: string, root: string): void {
+    this.set({ threadSelection: { hostId, channelId, root } })
+  }
+
+  closeThread(): void {
+    this.set({ threadSelection: null })
   }
 
   /** Asks which channel these sessions should go into. */

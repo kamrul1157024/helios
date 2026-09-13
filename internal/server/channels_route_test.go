@@ -207,6 +207,122 @@ func TestTheListCountsWhatSomebodyElseSaid(t *testing.T) {
 	t.Fatalf("the channel was not in the list: %v", out)
 }
 
+// seedTitles gives sessions the titles their handles are derived from.
+func seedTitles(t *testing.T, sh *Shared, titles map[string]string) {
+	t.Helper()
+	for id, title := range titles {
+		session, err := sh.DB.GetSession(id)
+		if err != nil || session == nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		named := title
+		session.Title = &named
+		if err := sh.DB.UpsertSession(session); err != nil {
+			t.Fatalf("title %s: %v", id, err)
+		}
+	}
+}
+
+// The reason threads exist. Two members settle a detail; the other one is not
+// prompted about any of it.
+func TestAThreadOnlyWakesThePeopleInIt(t *testing.T) {
+	shared, be := liveChannelTest(t, "s2", "s7", "s9")
+	id := madeChannel(t, channelCall(t, shared, http.MethodPost, "",
+		`{"name":"api-redesign","members":["s2","s7","s9"]}`))
+
+	out := channelCall(t, shared, http.MethodPost, "/"+id+"/messages",
+		`{"author":"session:s2","message":"the response shape changed"}`)
+	root, _ := out["message"].(map[string]any)
+	rootID, _ := root["id"].(string)
+
+	// s7 answers in a thread. Only s2, whose message it hangs off, is told.
+	be.sent = nil
+	channelCall(t, shared, http.MethodPost, "/"+id+"/messages",
+		`{"author":"session:s7","message":"which call sites?","thread_root":"`+rootID+`"}`)
+	if sent := be.sentTexts(); len(sent) != 1 {
+		t.Fatalf("sent %d prompts, want only the author of the message it answers: %v", len(sent), sent)
+	}
+
+	// s2 answers back. s7 is in it now; s9 never is.
+	be.sent = nil
+	channelCall(t, shared, http.MethodPost, "/"+id+"/messages",
+		`{"author":"session:s2","message":"orders.ts only","thread_root":"`+rootID+`"}`)
+	if sent := be.sentTexts(); len(sent) != 1 {
+		t.Errorf("sent %d prompts, want only s7: %v", len(sent), sent)
+	}
+}
+
+// The spine is what the channel is about, and a thread must not crowd it.
+func TestAThreadStaysOffTheSpine(t *testing.T) {
+	shared, _ := liveChannelTest(t, "s2", "s7")
+	id := madeChannel(t, channelCall(t, shared, http.MethodPost, "",
+		`{"name":"api-redesign","members":["s2","s7"]}`))
+
+	out := channelCall(t, shared, http.MethodPost, "/"+id+"/messages", `{"message":"the shape changed"}`)
+	root, _ := out["message"].(map[string]any)
+	rootID, _ := root["id"].(string)
+	channelCall(t, shared, http.MethodPost, "/"+id+"/messages",
+		`{"author":"session:s7","message":"which call sites?","thread_root":"`+rootID+`"}`)
+
+	spine := channelCall(t, shared, http.MethodGet, "/"+id+"/messages", "")
+	messages, _ := spine["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("spine holds %d, want the one said to the channel", len(messages))
+	}
+	first, _ := messages[0].(map[string]any)
+	if replies, _ := first["reply_count"].(float64); replies != 1 {
+		t.Errorf("reply_count = %v, want the spine to say what hangs off it", first["reply_count"])
+	}
+
+	thread := channelCall(t, shared, http.MethodGet, "/"+id+"/threads/"+rootID, "")
+	if held, _ := thread["messages"].([]any); len(held) != 2 {
+		t.Errorf("thread holds %d, want the root and its reply", len(held))
+	}
+}
+
+// The notice board notifies nobody — except the session actually addressed.
+func TestAMentionReachesThroughGeneral(t *testing.T) {
+	shared, be := liveChannelTest(t, "s2", "s7", "s9")
+	seedTitles(t, shared, map[string]string{
+		"s2": "Port the client", "s7": "Split the orders", "s9": "Chase the flake",
+	})
+	// General is made on demand, as it is for a real client opening the list.
+	channelCall(t, shared, http.MethodGet, "", "")
+
+	be.sent = nil
+	channelCall(t, shared, http.MethodPost, "/"+store.GeneralChannel+"/messages",
+		`{"message":"@port-client are you touching orders.ts?"}`)
+
+	sent := be.sentTexts()
+	if len(sent) != 1 {
+		t.Fatalf("sent %d prompts, want only the session named: %v", len(sent), sent)
+	}
+	if !strings.Contains(sent[0], "orders.ts") {
+		t.Errorf("the named session got %q", sent[0])
+	}
+}
+
+// Mute is an explicit "do not interrupt me". If an @ could override it the
+// setting would be worth nothing the first time an agent learned the trick.
+func TestAMentionDoesNotOverrideMute(t *testing.T) {
+	shared, be := liveChannelTest(t, "s2", "s7")
+	id := madeChannel(t, channelCall(t, shared, http.MethodPost, "",
+		`{"name":"api-redesign","members":["s2","s7"]}`))
+	seedTitles(t, shared, map[string]string{"s2": "Port the client", "s7": "Split the orders"})
+	if err := shared.DB.SetMuted(id, "s2", true); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+
+	be.sent = nil
+	channelCall(t, shared, http.MethodPost, "/"+id+"/messages", `{"message":"@port-client ping"}`)
+
+	// s7 is unmuted and hears the spine message; s2 is muted and hears nothing,
+	// mention or no mention.
+	if sent := be.sentTexts(); len(sent) != 1 {
+		t.Errorf("sent %d prompts, want only the unmuted member: %v", len(sent), sent)
+	}
+}
+
 // Renaming is the alternative to deleting and starting again, so the thing it
 // must not do is disturb the conversation or who is in it.
 func TestRenamingChangesTheNameAndNothingElse(t *testing.T) {

@@ -804,6 +804,108 @@ small {
   box-shadow: inset 0 -1px 0 var(--outline-variant);
 }
 
+/* The conversation, and the thread beside it. Slack's shape, and the reason
+   the thread is not inline: twenty replies indented under one message push the
+   channel off the screen. */
+.channel-with-thread {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.channel-thread {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 380px;
+  min-width: 0;
+  min-height: 0;
+  box-shadow: inset 1px 0 0 var(--outline-variant);
+}
+
+/* The line under a message that says a thread hangs off it. */
+.channel-replies {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: default;
+}
+
+.channel-replies:hover {
+  text-decoration: underline;
+}
+
+/* A message that named the reader. Findable when scrolling back, which is the
+   whole point of addressing somebody rather than saying it to the room. */
+.channel-msg.addressed .channel-bubble {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.badge.mention {
+  background: var(--primary);
+  color: var(--surface);
+}
+
+/* The @ menu, above the box it types into. */
+.mention-menu {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  margin-bottom: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface);
+}
+
+.mention-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.mention-option:hover,
+.mention-option:focus-visible {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.mention-handle {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mention-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+}
+
+/* A resolved @ inside a message. */
+.mention-chip {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--primary);
+  font-weight: 500;
+}
+
 .channel {
   flex: 1;
   display: flex;
@@ -860,17 +962,70 @@ small {
   padding: 12px 14px;
 }
 
+/* A chat, read the way a chat is: an avatar, a bubble, and the person's own
+   messages down the other side so a glance at the margin says who is talking
+   before a single word is read. */
 .channel-msg {
-  margin-bottom: 12px;
-  max-width: var(--prose-width, 70%);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 2px;
 }
 
-/* A rule in the session's own colour, so one agent can be followed down a busy
-   channel without reading a single name. The person gets none: the absence is
-   what separates them from every agent at a glance. */
-.channel-msg.from-session {
-  padding-left: 10px;
-  box-shadow: inset 2px 0 0 var(--author, var(--primary));
+/* A run from one author is one block: the gap opens at the top of a run, not
+   between every line of it. */
+.channel-msg.opens {
+  margin-top: 14px;
+}
+
+.channel-msg.you {
+  flex-direction: row-reverse;
+}
+
+.channel-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--author, var(--primary));
+  background: color-mix(in srgb, var(--author, var(--primary)) 18%, transparent);
+}
+
+/* Held open on a continuation so the bubbles of one run line up under the
+   first rather than stepping left into the avatar's place. */
+.channel-msg.continues .channel-avatar,
+.channel-msg.you .channel-avatar {
+  background: none;
+}
+
+.channel-bubble {
+  min-width: 0;
+  max-width: var(--prose-width, 70%);
+  padding: 7px 11px;
+  border-radius: var(--r-md, 10px);
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+/* The corner nearest the avatar is squared off on the first of a run, which is
+   what points the bubble at whoever said it. */
+.channel-msg.opens .channel-bubble {
+  border-top-left-radius: 3px;
+}
+
+.channel-msg.you.opens .channel-bubble {
+  border-top-left-radius: var(--r-md, 10px);
+  border-top-right-radius: 3px;
+}
+
+/* The person's own messages carry the accent, as the sent side of a chat does. */
+.channel-msg.you .channel-bubble {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
 }
 
 .channel-msg.from-session .channel-from {
@@ -900,12 +1055,16 @@ small {
 }
 
 /* An urgent message stopped everybody's work; it should not look like the rest
-   of the conversation. */
-.channel-msg.urgent {
-  padding: 6px 10px;
-  border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--error) 12%, transparent);
+   of the conversation. On the bubble rather than the row, which is now the
+   flex line that holds the avatar too. */
+.channel-msg.urgent .channel-bubble {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
   box-shadow: inset 2px 0 0 var(--error);
+}
+
+.channel-msg.urgent .channel-avatar {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 18%, transparent);
 }
 
 .channel-urgent {

@@ -226,8 +226,11 @@ export class HostApi {
   channelMessages(id: string): Promise<ChannelMessage[]> {
     return this.call('channelMessages', id)
   }
-  postToChannel(id: string, message: string, urgent = false): Promise<void> {
-    return this.call('postToChannel', id, message, urgent)
+  postToChannel(id: string, message: string, urgent = false, threadRoot = ''): Promise<void> {
+    return this.call('postToChannel', id, message, urgent, threadRoot)
+  }
+  channelThread(id: string, root: string): Promise<ChannelMessage[]> {
+    return this.call('channelThread', id, root)
   }
   addToChannel(id: string, session: string): Promise<void> {
     return this.call('addToChannel', id, session)

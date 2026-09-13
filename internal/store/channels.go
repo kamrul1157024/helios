@@ -41,10 +41,15 @@ type ChannelMessage struct {
 	ID        string `json:"id"`
 	ChannelID string `json:"channel_id"`
 	// "user", or "session:<id>".
-	Author    string `json:"author"`
-	Body      string `json:"body"`
-	Urgent    bool   `json:"urgent,omitempty"`
-	CreatedAt string `json:"created_at"`
+	Author string `json:"author"`
+	Body   string `json:"body"`
+	Urgent bool   `json:"urgent,omitempty"`
+	// The message this one hangs off, or "" for one on the channel's spine.
+	// Always a spine message: threads are one layer deep.
+	ThreadRoot string `json:"thread_root,omitempty"`
+	// The readers this message named, resolved when it was posted.
+	Mentions  []string `json:"mentions,omitempty"`
+	CreatedAt string   `json:"created_at"`
 }
 
 func newID(prefix string) (string, error) {
@@ -335,6 +340,24 @@ func (s *Store) RemoveMember(channelID, sessionID string) error {
 	return nil
 }
 
+// IsMuted answers for one member. Asked separately from Unmuted because that
+// one also carries general's rule that it delivers to nobody, and a mention has
+// to get past that rule while still respecting this one.
+func (s *Store) IsMuted(channelID, sessionID string) (bool, error) {
+	var muted int
+	err := s.db.QueryRow(
+		`SELECT muted FROM channel_members WHERE channel_id = ? AND session_id = ?`,
+		channelID, sessionID,
+	).Scan(&muted)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read mute: %w", err)
+	}
+	return muted == 1, nil
+}
+
 func (s *Store) SetMuted(channelID, sessionID string, muted bool) error {
 	flag := 0
 	if muted {
@@ -387,8 +410,21 @@ func (s *Store) Unmuted(channelID, exceptSession string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// PostMessage records what was said. Delivering it is the server's business.
-func (s *Store) PostMessage(channelID, author, body string, urgent bool) (*ChannelMessage, error) {
+/*
+PostMessage records what was said. Delivering it is the server's business.
+
+`inThread` is the message being answered, or "" for one on the channel's spine.
+It is resolved to a root here rather than trusted: answering a reply attaches to
+the thread that reply is in, never to the reply itself. That is the whole of the
+one-layer rule, kept in the one place every caller goes through, so no route and
+no client can create a second level by asking for it.
+
+`mentions` is who the body named, already resolved by the caller — the server
+owns what an `@` means, and the store owns writing it down.
+*/
+func (s *Store) PostMessage(
+	channelID, author, body string, urgent bool, inThread string, mentions []string,
+) (*ChannelMessage, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, fmt.Errorf("a message needs a body")
@@ -399,6 +435,11 @@ func (s *Store) PostMessage(channelID, author, body string, urgent bool) (*Chann
 	}
 	if archived {
 		return nil, fmt.Errorf("that channel is closed")
+	}
+
+	root, err := s.rootOf(channelID, inThread)
+	if err != nil {
+		return nil, err
 	}
 
 	flag := 0
@@ -412,9 +453,9 @@ func (s *Store) PostMessage(channelID, author, body string, urgent bool) (*Chann
 	// conversation ran. A clock does not — two messages can share a
 	// millisecond, and then their order is whatever the random suffix said.
 	result, err := s.db.Exec(
-		`INSERT INTO channel_messages (channel_id, author, body, urgent, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		channelID, author, body, flag, now,
+		`INSERT INTO channel_messages (channel_id, author, body, urgent, thread_root, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		channelID, author, body, flag, root, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert message: %w", err)
@@ -427,22 +468,77 @@ func (s *Store) PostMessage(channelID, author, body string, urgent bool) (*Chann
 	if _, err := s.db.Exec(`UPDATE channel_messages SET id = ? WHERE seq = ?`, id, seq); err != nil {
 		return nil, fmt.Errorf("name message: %w", err)
 	}
+
+	for _, reader := range dedupe(mentions) {
+		if _, err := s.db.Exec(
+			`INSERT OR IGNORE INTO channel_mentions (channel_id, message_id, reader) VALUES (?, ?, ?)`,
+			channelID, id, reader,
+		); err != nil {
+			return nil, fmt.Errorf("record mention: %w", err)
+		}
+	}
+
 	return &ChannelMessage{
-		ID: id, ChannelID: channelID, Author: author, Body: body, Urgent: urgent, CreatedAt: now,
+		ID: id, ChannelID: channelID, Author: author, Body: body, Urgent: urgent,
+		ThreadRoot: root, Mentions: dedupe(mentions), CreatedAt: now,
 	}, nil
+}
+
+// rootOf is the thread a reply belongs to: the target's own root when the
+// target is itself a reply, and the target otherwise. Empty in, empty out.
+func (s *Store) rootOf(channelID, target string) (string, error) {
+	if target == "" {
+		return "", nil
+	}
+	var root string
+	err := s.db.QueryRow(
+		`SELECT thread_root FROM channel_messages WHERE id = ? AND channel_id = ?`,
+		target, channelID,
+	).Scan(&root)
+	if err == sql.ErrNoRows {
+		// Refused rather than ignored: a thread hung off a message that is not
+		// in this channel would render as a quote of nothing.
+		return "", fmt.Errorf("no message %s in this channel", target)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read message: %w", err)
+	}
+	if root != "" {
+		return root, nil
+	}
+	return target, nil
 }
 
 // Messages reads a channel, oldest first. `after` is a message id: pass the
 // reader's receipt to get what they have not seen.
+// The spine only: what is said to the channel, without the asides hanging off
+// it. A thread is read with ThreadMessages, by whoever cares about that thread.
 func (s *Store) Messages(channelID, after string, limit int) ([]ChannelMessage, error) {
-	if limit <= 0 {
-		limit = 200
-	}
-	rows, err := s.db.Query(
-		`SELECT id, channel_id, author, body, urgent, created_at FROM channel_messages
-		 WHERE channel_id = ? AND id > ? ORDER BY seq LIMIT ?`,
-		channelID, after, limit,
+	return s.messagesWhere(
+		`channel_id = ? AND thread_root = '' AND id > ? ORDER BY seq LIMIT ?`,
+		channelID, after, messageLimit(limit),
 	)
+}
+
+// ThreadMessages is one thread, the message it hangs off first.
+func (s *Store) ThreadMessages(channelID, root string) ([]ChannelMessage, error) {
+	return s.messagesWhere(
+		`channel_id = ? AND (id = ? OR thread_root = ?) ORDER BY seq LIMIT ?`,
+		channelID, root, root, messageLimit(0),
+	)
+}
+
+func messageLimit(limit int) int {
+	if limit <= 0 {
+		return 200
+	}
+	return limit
+}
+
+func (s *Store) messagesWhere(where string, args ...any) ([]ChannelMessage, error) {
+	rows, err := s.db.Query(
+		`SELECT id, channel_id, author, body, urgent, thread_root, created_at
+		 FROM channel_messages WHERE `+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read messages: %w", err)
 	}
@@ -452,7 +548,9 @@ func (s *Store) Messages(channelID, after string, limit int) ([]ChannelMessage, 
 	for rows.Next() {
 		var m ChannelMessage
 		var urgent int
-		if err := rows.Scan(&m.ID, &m.ChannelID, &m.Author, &m.Body, &urgent, &m.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&m.ID, &m.ChannelID, &m.Author, &m.Body, &urgent, &m.ThreadRoot, &m.CreatedAt,
+		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		m.Urgent = urgent == 1
@@ -461,19 +559,114 @@ func (s *Store) Messages(channelID, after string, limit int) ([]ChannelMessage, 
 	return out, rows.Err()
 }
 
-// Unread counts what a reader has not seen. A reader is a session id or "user".
+// ThreadSummary is what the spine shows where a thread hangs off a message.
+type ThreadSummary struct {
+	Replies int      `json:"replies"`
+	Authors []string `json:"authors"`
+	LastAt  string   `json:"last_at"`
+}
+
+// ThreadSummaries is every thread in a channel, keyed by the message it hangs
+// off. One query rather than one per message, because the spine asks for all of
+// them every time it is drawn.
+func (s *Store) ThreadSummaries(channelID string) (map[string]ThreadSummary, error) {
+	rows, err := s.db.Query(
+		`SELECT thread_root, author, created_at FROM channel_messages
+		 WHERE channel_id = ? AND thread_root != '' ORDER BY seq`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("read threads: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]ThreadSummary{}
+	seen := map[string]map[string]bool{}
+	for rows.Next() {
+		var root, author, at string
+		if err := rows.Scan(&root, &author, &at); err != nil {
+			return nil, fmt.Errorf("scan thread: %w", err)
+		}
+		summary := out[root]
+		summary.Replies++
+		summary.LastAt = at
+		if seen[root] == nil {
+			seen[root] = map[string]bool{}
+		}
+		if !seen[root][author] {
+			seen[root][author] = true
+			summary.Authors = append(summary.Authors, author)
+		}
+		out[root] = summary
+	}
+	return out, rows.Err()
+}
+
+// ThreadParticipants is who a thread is delivered to: everyone who has said
+// something in it, the message it hangs off included.
+func (s *Store) ThreadParticipants(channelID, root string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT author FROM channel_messages
+		 WHERE channel_id = ? AND (id = ? OR thread_root = ?)`, channelID, root, root)
+	if err != nil {
+		return nil, fmt.Errorf("read participants: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var author string
+		if err := rows.Scan(&author); err != nil {
+			return nil, fmt.Errorf("scan participant: %w", err)
+		}
+		out = append(out, author)
+	}
+	return out, rows.Err()
+}
+
+/*
+Unread counts what a reader has not seen and was told about.
+
+The spine, plus replies in threads the reader has a part in. It has to match the
+delivery rule exactly: a reply goes to the thread's participants, so counting a
+thread the reader has never touched would raise a badge for a conversation they
+were never prompted about and cannot clear by reading their own channel.
+*/
 func (s *Store) Unread(channelID, reader string) (int, error) {
 	var count int
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM channel_messages
-		 WHERE channel_id = ?
-		   AND id > COALESCE((SELECT last_read FROM channel_receipts
-		                      WHERE channel_id = ? AND reader = ?), '')
-		   AND author != ?`,
-		channelID, channelID, reader, reader,
+		`SELECT COUNT(*) FROM channel_messages m
+		 WHERE m.channel_id = ?
+		   AND m.id > COALESCE((SELECT last_read FROM channel_receipts
+		                        WHERE channel_id = ? AND reader = ?), '')
+		   AND m.author != ?
+		   AND (m.thread_root = '' OR EXISTS (
+		         SELECT 1 FROM channel_messages t
+		         WHERE t.channel_id = m.channel_id
+		           AND (t.id = m.thread_root OR t.thread_root = m.thread_root)
+		           AND t.author = ?))`,
+		channelID, channelID, reader, reader, reader,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count unread: %w", err)
+	}
+	return count, nil
+}
+
+// Mentions counts the unread messages that named this reader. Kept apart from
+// Unread because "somebody addressed me" and "there is traffic" are different
+// questions, and the first one is the one worth interrupting for.
+func (s *Store) Mentions(channelID, reader string) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM channel_mentions n
+		 JOIN channel_messages m ON m.id = n.message_id
+		 WHERE n.channel_id = ? AND n.reader = ?
+		   AND m.id > COALESCE((SELECT last_read FROM channel_receipts
+		                        WHERE channel_id = ? AND reader = ?), '')
+		   AND m.author != ?`,
+		channelID, reader, channelID, reader, reader,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count mentions: %w", err)
 	}
 	return count, nil
 }
@@ -588,7 +781,9 @@ func (s *Store) DeleteChannel(id string) error {
 	}
 	// The rows in the other three tables reference this one, but foreign keys
 	// are not enforced by default in SQLite, so they go by hand.
-	for _, table := range []string{"channel_members", "channel_messages", "channel_receipts"} {
+	for _, table := range []string{
+		"channel_members", "channel_messages", "channel_receipts", "channel_mentions",
+	} {
 		if _, err := s.db.Exec(`DELETE FROM `+table+` WHERE channel_id = ?`, id); err != nil {
 			return fmt.Errorf("delete %s: %w", table, err)
 		}

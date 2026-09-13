@@ -383,3 +383,43 @@ test('⌘U reaches for a file without touching the ⊕', async ({ window }) => {
 
   await expect(window.locator('.attachment-name')).toHaveText('note.txt')
 })
+
+/*
+Two submits in one tick, one session.
+
+`starting` is React state, so it is not true until the next render: both halves
+of a double-click — and two Enters in the same tick, which is the likelier way
+in because the prompt box stays live — read it as false and each start a
+session. Two agents launch in the same directory on one prompt, and the second
+is nobody's and never noticed.
+
+Dispatched synchronously rather than through two awaited actions, because
+awaiting lets React flush in between and the race never happens: the first
+submit closes the dialog and the second has nothing to click.
+*/
+test('submitting twice in one tick starts one session', async ({ window, daemon }) => {
+  await openComposer(window)
+  await window.locator('.composer textarea').fill('do the thing')
+
+  await window.locator('.composer-actions button.filled').evaluate((button) => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+
+  await expect.poll(() => daemon.writes().filter((w) => w.kind === 'create').length).toBe(1)
+})
+
+test('two Enters in one tick start one session', async ({ window, daemon }) => {
+  await openComposer(window)
+  const box = window.locator('.composer textarea')
+  await box.fill('do the thing')
+
+  await box.evaluate((field) => {
+    const enter = (): KeyboardEvent =>
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    field.dispatchEvent(enter())
+    field.dispatchEvent(enter())
+  })
+
+  await expect.poll(() => daemon.writes().filter((w) => w.kind === 'create').length).toBe(1)
+})

@@ -195,11 +195,21 @@ export class ApiClient {
     return res.messages ?? []
   }
 
-  async postToChannel(id: string, message: string, urgent = false): Promise<void> {
+  async postToChannel(id: string, message: string, urgent = false, threadRoot = ''): Promise<void> {
     await this.request('POST', `/api/channels/${encodeURIComponent(id)}/messages`, {
       message,
       urgent,
+      thread_root: threadRoot,
     })
+  }
+
+  /** One thread: the message it hangs off, then its replies. */
+  async channelThread(id: string, root: string): Promise<ChannelMessage[]> {
+    const res = await this.request<{ messages?: ChannelMessage[] }>(
+      'GET',
+      `/api/channels/${encodeURIComponent(id)}/threads/${encodeURIComponent(root)}`,
+    )
+    return res.messages ?? []
   }
 
   async addToChannel(id: string, session: string): Promise<void> {

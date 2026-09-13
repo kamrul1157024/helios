@@ -33,6 +33,8 @@ export const keys = {
   channels: (hostId: string) => ['host', hostId, 'channels'] as const,
   channelMessages: (hostId: string, channelId: string) =>
     ['host', hostId, 'channels', channelId, 'messages'] as const,
+  channelThread: (hostId: string, channelId: string, root: string) =>
+    ['host', hostId, 'channels', channelId, 'threads', root] as const,
   /** Every session a schedule started, which the sessions list keeps folded. */
   jobSessions: (hostId: string) => ['host', hostId, 'job-sessions'] as const,
   /** One session on its own, for the ones the list does not carry. */

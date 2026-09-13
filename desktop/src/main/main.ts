@@ -230,12 +230,24 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // A window that is never shown counts as hidden, and Chromium throttles
+      // a hidden renderer's timers to about one a second. Harmless for a
+      // minimised app and ruinous under test, where it turns a three-minute
+      // suite into a quarter of an hour of nothing happening.
+      backgroundThrottling: process.env.HELIOS_E2E_HIDDEN !== '1',
       webviewTag: false,
       spellcheck: false,
     },
   })
 
-  window.once('ready-to-show', () => window?.show())
+  // Under test the window is driven through the debug protocol and never
+  // looked at, so showing it only steals focus from whatever the developer is
+  // doing — once per spec, and the suite is over a hundred of them. It still
+  // renders and still screenshots; it is simply never brought to the front.
+  window.once('ready-to-show', () => {
+    if (process.env.HELIOS_E2E_HIDDEN === '1') return
+    window?.show()
+  })
 
   /*
    * The close button puts the window away; it does not end the app.

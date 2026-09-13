@@ -37,6 +37,7 @@ const chatUsage = `Usage: helios chat <command>
   new [name] --with <id,id>             start one, optionally with a first message
   post <channel> "<message>"            say something to everyone in it
   read <channel> [--since-last]         the conversation, and marks it read
+  read <channel> --thread <message-id>  one thread, whole
   join <channel> --session <id>         add a session to it
   leave <channel> --session <id>        take one out
   rename <channel> "<new name>"         change what it is called
@@ -49,12 +50,21 @@ Flags:
   --message "<text>"  a first message to open a new channel with
   --session <id>      act as, or act on, this session instead of the one you are in
   --since-last        only what has arrived since you last read
+  --thread <msg-id>   answer in the thread on that message, or read that thread
   --urgent            interrupt the members rather than queue behind their work
   --archived          include the closed channels in the list
   --json              machine-readable output
 
 A channel is named by its name where it has one, and by its id where it does
 not. ` + "`helios chat list`" + ` prints whichever will work.
+
+Address one member with @ and its handle — ` + "`helios chat read`" + ` prints the handle
+beside each name. Only the session you name is told, and that is the one thing
+that reaches through general.
+
+Answer a specific message with --thread and its id. A thread is told to the
+people already in it and to nobody else in the channel, which is how two agents
+settle a detail without interrupting the rest.
 
 general is the notice board: every session on this daemon is in it, and a post
 there interrupts nobody. Read it at the start of a piece of work and before
@@ -67,16 +77,22 @@ type wireChannel struct {
 	Members  []string          `json:"members"`
 	Titles   map[string]string `json:"titles"`
 	Unread   int               `json:"unread"`
+	Mentions int               `json:"mentions"`
+	Slugs    map[string]string `json:"slugs"`
 	Archived bool              `json:"archived"`
 }
 
 type wireMessage struct {
-	ID        string `json:"id"`
-	Author    string `json:"author"`
-	From      string `json:"from"`
-	Body      string `json:"body"`
-	Urgent    bool   `json:"urgent"`
-	CreatedAt string `json:"created_at"`
+	ID           string   `json:"id"`
+	Author       string   `json:"author"`
+	From         string   `json:"from"`
+	Body         string   `json:"body"`
+	Urgent       bool     `json:"urgent"`
+	CreatedAt    string   `json:"created_at"`
+	ThreadRoot   string   `json:"thread_root"`
+	Mentions     []string `json:"mentions"`
+	ReplyCount   int      `json:"reply_count"`
+	ReplyAuthors []string `json:"reply_authors"`
 }
 
 func handleChat(args []string) {
@@ -180,6 +196,7 @@ type chatOpts struct {
 	message   string
 	session   string
 	sinceLast bool
+	thread    string
 	urgent    bool
 	archived  bool
 	asJSON    bool
@@ -210,6 +227,8 @@ func chatFlags(args []string) chatOpts {
 			opts.session = next()
 		case "--since-last":
 			opts.sinceLast = true
+		case "--thread":
+			opts.thread = next()
 		case "--urgent":
 			opts.urgent = true
 		case "--archived":
@@ -298,8 +317,8 @@ func chatList(args []string) {
 		return
 	}
 
-	fmt.Printf("%-24s %-7s %s\n", "Channel", "Unread", "Members")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-24s %-7s %-9s %s\n", "Channel", "Unread", "Mentions", "Members")
+	fmt.Println(strings.Repeat("-", 90))
 	for _, ch := range channels {
 		unread := ""
 		if ch.Unread > 0 {
@@ -316,7 +335,13 @@ func chatList(args []string) {
 				who = append(who, member)
 			}
 		}
-		fmt.Printf("%-24s %-7s %s\n", chatLabel(ch), unread, strings.Join(who, ", "))
+		// Kept apart from unread: "somebody addressed me" is the one worth
+		// stopping for, and it disappears inside a count of general traffic.
+		mentions := ""
+		if ch.Mentions > 0 {
+			mentions = fmt.Sprintf("%d", ch.Mentions)
+		}
+		fmt.Printf("%-24s %-7s %-9s %s\n", chatLabel(ch), unread, mentions, strings.Join(who, ", "))
 	}
 }
 
@@ -448,12 +473,17 @@ func chatPost(args []string) {
 	}
 	out, err := callChat(http.MethodPost, "/"+ch.ID+"/messages", nil, map[string]any{
 		"message": message, "author": chatAuthor(opts.session), "urgent": opts.urgent,
+		"thread_root": opts.thread,
 	})
 	if err != nil {
 		chatFail(err)
 	}
 	if opts.asJSON {
 		printJSON(out)
+		return
+	}
+	if opts.thread != "" {
+		fmt.Printf("Posted in the thread on %s. Only the people in it were told.\n", opts.thread)
 		return
 	}
 	fmt.Printf("Posted to %s.\n", chatLabel(*ch))
@@ -478,7 +508,15 @@ func chatRead(args []string) {
 		query.Set("since_last", "1")
 	}
 
-	out, err := callChat(http.MethodGet, "/"+ch.ID+"/messages", query, nil)
+	path := "/" + ch.ID + "/messages"
+	if opts.thread != "" {
+		// A thread is read whole: a receipt is kept for the channel, not for
+		// each aside in it.
+		path = "/" + ch.ID + "/threads/" + opts.thread
+		query = nil
+	}
+
+	out, err := callChat(http.MethodGet, path, query, nil)
 	if err != nil {
 		chatFail(err)
 	}
@@ -500,12 +538,57 @@ func chatRead(args []string) {
 	}
 
 	for _, m := range messages {
-		mark := ""
-		if m.Urgent {
-			mark = " (urgent)"
-		}
-		fmt.Printf("%s %s%s\n%s\n\n", chatWhen(m.CreatedAt), m.From, mark, m.Body)
+		printMessage(ch, m, opts.thread != "")
 	}
+}
+
+/*
+printMessage is one message as an agent reads it.
+
+The id leads, because an agent cannot answer or quote what it cannot name, and
+until now `read` printed no ids at all — the thread commands below would have
+been unusable. The handle follows the author for the same reason: it is what
+somebody types to address them.
+*/
+func printMessage(ch *wireChannel, m wireMessage, inThread bool) {
+	mark := ""
+	if m.Urgent {
+		mark = "  (urgent)"
+	}
+	handle := ""
+	if slug, ok := ch.Slugs[sessionOfAuthor(m.Author)]; ok && slug != "" {
+		handle = "  @" + slug
+	}
+
+	fmt.Printf("%s  %s  %s%s%s\n", m.ID, chatWhen(m.CreatedAt), m.From, handle, mark)
+	for _, line := range strings.Split(m.Body, "\n") {
+		fmt.Printf("  %s\n", line)
+	}
+	// Only on the spine: inside a thread every message is already in it.
+	if !inThread && m.ReplyCount > 0 {
+		fmt.Printf("  \u21b3 %s \u00b7 helios chat read %s --thread %s\n",
+			replyCount(m), chatLabel(*ch), m.ID)
+	}
+	fmt.Println()
+}
+
+func replyCount(m wireMessage) string {
+	who := ""
+	if len(m.ReplyAuthors) > 0 {
+		who = " from " + strings.Join(m.ReplyAuthors, ", ")
+	}
+	if m.ReplyCount == 1 {
+		return "1 reply" + who
+	}
+	return fmt.Sprintf("%d replies%s", m.ReplyCount, who)
+}
+
+// sessionOfAuthor is the session id behind an author, or "" for the person.
+func sessionOfAuthor(author string) string {
+	if author == "user" || !strings.HasPrefix(author, "session:") {
+		return ""
+	}
+	return strings.TrimPrefix(author, "session:")
 }
 
 func chatMember(args []string, method string) {
