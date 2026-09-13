@@ -19,6 +19,7 @@ import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { GitPanel } from './git.tsx'
+import { ChannelPanel } from './channels.tsx'
 import { SchedulePanel } from './schedules.tsx'
 import { SelectionMenu } from './selection-menu.tsx'
 import { sessionActions } from './session-menu.ts'
@@ -207,6 +208,7 @@ export function Detail(): JSX.Element {
   // with no layout, and TerminalPane's ResizeObserver refits it on the way
   // back.
   const showingSchedules = sidebarMode === 'schedules'
+  const showingChannels = sidebarMode === 'channels'
   const showingSettings = sidebarMode === 'settings'
 
   return (
@@ -218,6 +220,13 @@ export function Detail(): JSX.Element {
           </PanelBoundary>
         </div>
       )}
+      {showingChannels && (
+        <div className="detail">
+          <PanelBoundary resetKey="channels">
+            <ChannelPanel />
+          </PanelBoundary>
+        </div>
+      )}
       {showingSettings && (
         <div className="detail">
           <PanelBoundary resetKey="settings">
@@ -225,7 +234,10 @@ export function Detail(): JSX.Element {
           </PanelBoundary>
         </div>
       )}
-      <div className="detail" style={showingSchedules || showingSettings ? { display: 'none' } : undefined}>
+      <div
+        className="detail"
+        style={showingSchedules || showingChannels || showingSettings ? { display: 'none' } : undefined}
+      >
       {hostId && session && <ShowNoteStrip hostId={hostId} sessionId={session.session_id} />}
 
       <div

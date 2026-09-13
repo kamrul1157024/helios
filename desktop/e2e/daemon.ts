@@ -60,6 +60,45 @@ export interface StubDaemon {
 }
 
 /** One thing the app asked of the daemon. */
+/** Channels the stub is holding, and what was said in them. */
+interface StubChannel {
+  id: string
+  name: string
+  members: string[]
+  messages: { id: string; author: string; from: string; body: string; created_at: string }[]
+}
+
+const CHANNELS: StubChannel[] = []
+
+/** Back to no channels, for a test that is not about them. */
+export function resetChannels(): void {
+  CHANNELS.length = 0
+}
+
+export function seedChannel(channel: {
+  id: string
+  name?: string
+  members: string[]
+  messages?: { author: string; from: string; body: string }[]
+}): void {
+  CHANNELS.push({
+    id: channel.id,
+    name: channel.name ?? '',
+    members: channel.members,
+    messages: (channel.messages ?? []).map((m, at) => ({
+      id: `m_${String(at).padStart(12, '0')}`,
+      author: m.author,
+      from: m.from,
+      body: m.body,
+      created_at: '2026-01-01T00:00:00Z',
+    })),
+  })
+}
+
+export function channelsHeld(): StubChannel[] {
+  return CHANNELS.map((one) => ({ ...one, messages: [...one.messages] }))
+}
+
 export type DaemonWrite =
   | { kind: 'create'; spec: Record<string, unknown> }
   | { kind: 'upload'; names: string[] }
@@ -67,6 +106,8 @@ export type DaemonWrite =
   // What a bulk action issues: one call per session held, so a test can check
   // that all of them went out and none went twice.
   | { kind: 'delete'; sessionId: string }
+  | { kind: 'channel'; name: string; members: string[]; message: string }
+  | { kind: 'post'; channelId: string; message: string }
   | { kind: 'patch'; sessionId: string; patch: Record<string, unknown> }
 
 /** The session every create in these tests hands back. */
@@ -454,7 +495,13 @@ export async function startDaemon(): Promise<StubDaemon> {
 
 /** The calls that start a session and give it its first turn. */
 function written(path: string): boolean {
-  return path === '/api/sessions' || path === '/api/uploads' || path.endsWith('/send')
+  return (
+    path === '/api/sessions' ||
+    path === '/api/uploads' ||
+    path.endsWith('/send') ||
+    path === '/api/channels' ||
+    (path.startsWith('/api/channels/') && path.endsWith('/messages'))
+  )
 }
 
 /**
@@ -467,6 +514,62 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
   if (path === '/api/sessions') {
     writes.push({ kind: 'create', spec: JSON.parse(body.toString() || '{}') })
     return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
+  }
+
+  if (path === '/api/channels') {
+    const spec = JSON.parse(body.toString() || '{}') as {
+      name?: string
+      members?: string[]
+      message?: string
+    }
+    const members = spec.members ?? []
+    writes.push({
+      kind: 'channel',
+      name: spec.name ?? '',
+      members,
+      message: spec.message ?? '',
+    })
+    // The rule the daemon applies: an unnamed channel is its members, so the
+    // same set gives the same conversation back rather than a second one.
+    const same = (a: string[], b: string[]): boolean =>
+      a.length === b.length && [...a].sort().join() === [...b].sort().join()
+    const existing = spec.name ? undefined : CHANNELS.find((one) => !one.name && same(one.members, members))
+    if (existing) return { channel: existing, existing: true }
+
+    const channel: StubChannel = {
+      id: `ch_${CHANNELS.length + 1}`,
+      name: spec.name ?? '',
+      members,
+      messages: [],
+    }
+    if (spec.message) {
+      channel.messages.push({
+        id: 'm_000000000000',
+        author: 'user',
+        from: 'user',
+        body: spec.message,
+        created_at: '2026-01-01T00:00:00Z',
+      })
+    }
+    CHANNELS.push(channel)
+    return { channel, existing: false }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
+    const id = path.slice('/api/channels/'.length, -'/messages'.length)
+    const { message } = JSON.parse(body.toString() || '{}') as { message?: string }
+    writes.push({ kind: 'post', channelId: id, message: message ?? '' })
+    const channel = CHANNELS.find((one) => one.id === id)
+    if (channel) {
+      channel.messages.push({
+        id: `m_${String(channel.messages.length).padStart(12, '0')}`,
+        author: 'user',
+        from: 'user',
+        body: message ?? '',
+        created_at: '2026-01-01T00:00:00Z',
+      })
+    }
+    return { success: true }
   }
 
   if (path.endsWith('/send')) {
@@ -556,6 +659,23 @@ function answer(
       return { root: q('path'), matches: [], scanned: 0, truncated: false }
     case '/api/schedules':
       return { schedules: SCHEDULES }
+    case '/api/channels':
+      return {
+        channels: CHANNELS.map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          members: channel.members,
+          // The daemon resolves a session's title for its clients, so the stub
+          // does too: a client showing ids would be a client under test that
+          // never sees what the real one shows.
+          titles: Object.fromEntries(
+            channel.members.map((id) => [id, SESSIONS.find((s) => s.session_id === id)?.title ?? id]),
+          ),
+          created_by: 'user',
+          created_at: '2026-01-01T00:00:00Z',
+          unread: 0,
+        })),
+      }
     // What the new-schedule form offers: a schedule runs unattended, so the
     // model and the permission mode are picked rather than guessed.
     case '/api/providers':
@@ -578,6 +698,10 @@ function answer(
         const id = path.slice('/api/sessions/'.length)
         const one = [...SESSIONS, ...RUNS].find((s) => s.session_id === id)
         if (path.startsWith('/api/sessions/') && one) return { session: statusOf(one), pending_permissions: 0 }
+      }
+      if (path.startsWith('/api/channels/') && path.endsWith('/messages')) {
+        const id = path.slice('/api/channels/'.length, -'/messages'.length)
+        return { messages: CHANNELS.find((one) => one.id === id)?.messages ?? [] }
       }
       if (path.endsWith('/transcript')) {
         const id = path.slice('/api/sessions/'.length, -'/transcript'.length)

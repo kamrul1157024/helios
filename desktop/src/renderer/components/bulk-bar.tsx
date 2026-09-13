@@ -16,6 +16,28 @@ import type { Session, SessionGroup } from '../../shared/models.ts'
  * opened from. Here the count is the first thing said, so what is about to
  * happen and how much of it are in the same sentence.
  */
+/**
+ * Starts a channel from what is selected, or opens the one that already holds
+ * exactly these sessions.
+ *
+ * The daemon decides which of those happened — an unnamed channel is its
+ * members — and the notice says so, because being shown an existing
+ * conversation when you asked for a new one is otherwise unexplained.
+ */
+async function startChannel(hostId: string, held: string[]): Promise<void> {
+  const members = held.map((key) => key.slice(key.indexOf(':') + 1))
+  try {
+    const { channel, existing } = await api(hostId).createChannel({ members })
+    store.setSelectMode(false)
+    store.setSidebarMode('channels')
+    store.selectChannel(hostId, channel.id)
+    void store.invalidateChannels(hostId)
+    store.notify(existing ? 'These sessions already had a channel' : 'Channel started')
+  } catch (err) {
+    store.fail(err)
+  }
+}
+
 export function BulkBar({
   held,
   rows,
@@ -67,6 +89,22 @@ export function BulkBar({
   return (
     <div className="bulk-bar">
       <span className="bulk-count">{summary.count} selected</span>
+
+      {/* The gesture the channels were asked for: pick a few sessions and
+          start a conversation between them. Only on one host, because a
+          channel belongs to the daemon that holds its members. */}
+      <button
+        className="ghost"
+        disabled={!summary.canFile}
+        title={
+          summary.canFile
+            ? 'Start a channel with these sessions'
+            : 'The selection is on more than one host'
+        }
+        onClick={() => void startChannel(hostId, held)}
+      >
+        New group chat
+      </button>
 
       <button
         className="ghost"

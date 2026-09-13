@@ -1,5 +1,7 @@
 import { signJWT, type DeviceKey } from './keys.ts'
 import type {
+  Channel,
+  ChannelMessage,
   CheckResult,
   CommandInfo,
   DeviceInfo,
@@ -154,6 +156,51 @@ export class ApiClient {
       `/api/sessions${queryString(params)}`,
     )
     return { sessions: res.sessions ?? [], host: res.host }
+  }
+
+  // ─── Channels ──────────────────────────────────────────────────────────
+
+  async listChannels(): Promise<Channel[]> {
+    const res = await this.request<{ channels?: Channel[] }>('GET', '/api/channels')
+    return res.channels ?? []
+  }
+
+  /**
+   * Makes one, or opens the one that already holds exactly these sessions.
+   *
+   * `existing` is what says which happened: an unnamed channel is its members,
+   * so asking twice for the same set gives the same conversation rather than a
+   * second one nobody can tell apart.
+   */
+  async createChannel(spec: {
+    name?: string
+    members: string[]
+    message?: string
+  }): Promise<{ channel: Channel; existing: boolean }> {
+    return this.request<{ channel: Channel; existing: boolean }>('POST', '/api/channels', spec)
+  }
+
+  async channelMessages(id: string): Promise<ChannelMessage[]> {
+    const res = await this.request<{ messages?: ChannelMessage[] }>(
+      'GET',
+      `/api/channels/${encodeURIComponent(id)}/messages`,
+    )
+    return res.messages ?? []
+  }
+
+  async postToChannel(id: string, message: string, urgent = false): Promise<void> {
+    await this.request('POST', `/api/channels/${encodeURIComponent(id)}/messages`, {
+      message,
+      urgent,
+    })
+  }
+
+  async addToChannel(id: string, session: string): Promise<void> {
+    await this.request('POST', `/api/channels/${encodeURIComponent(id)}/members`, { session })
+  }
+
+  async deleteChannel(id: string): Promise<void> {
+    await this.request('DELETE', `/api/channels/${encodeURIComponent(id)}`)
   }
 
   // ─── Schedules ─────────────────────────────────────────────────────────

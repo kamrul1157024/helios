@@ -85,6 +85,28 @@ export function schedulesQuery(hostId: string) {
   })
 }
 
+/** Every channel on a host, with what this reader has not seen in each. */
+export function channelsQuery(hostId: string) {
+  return queryOptions({
+    queryKey: keys.channels(hostId),
+    queryFn: () => api(hostId).listChannels(),
+  })
+}
+
+/**
+ * One channel's conversation.
+ *
+ * Reading it marks it read on the daemon, which is what the unread count is
+ * counted against — so opening a channel is what clears its badge.
+ */
+export function channelMessagesQuery(hostId: string, channelId: string) {
+  return queryOptions({
+    queryKey: keys.channelMessages(hostId, channelId),
+    queryFn: () => api(hostId).channelMessages(channelId),
+    enabled: channelId !== '',
+  })
+}
+
 /**
  * One schedule's runs.
  *

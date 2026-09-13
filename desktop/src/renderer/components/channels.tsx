@@ -1,0 +1,233 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
+import { api } from '../bridge.ts'
+import { clearDraft, loadDraft, saveDraft } from '../drafts.ts'
+import { keys } from '../keys.ts'
+import { channelMessagesQuery, channelsQuery } from '../queries.ts'
+import { store, useStore } from '../store.ts'
+import { renderMarkdown } from '../markdown.ts'
+import type { Channel, ChannelMessage } from '../../shared/models.ts'
+
+/**
+ * Channels: several sessions and the person, with one conversation running
+ * through them. See docs/specs/60-group-chat.md.
+ *
+ * The list is grouped by host, as the session list is, because a channel
+ * belongs to the daemon that holds it — its members are that daemon's sessions
+ * and its messages never leave it.
+ */
+
+/** What the sidebar shows: one host's channels. */
+export function ChannelList({ hostId, name, showName }: {
+  hostId: string
+  name: string
+  showName: boolean
+}): JSX.Element | null {
+  const { data: channels = [] } = useQuery(channelsQuery(hostId))
+  const selected = useStore((s) => s.channelSelection)
+
+  if (channels.length === 0) return null
+
+  return (
+    <div className="host-group">
+      {showName && (
+        <div className="host-head">
+          <span className="host-title">
+            <span className="host-name">{name}</span>
+          </span>
+        </div>
+      )}
+      {channels.map((channel) => (
+        <div
+          key={channel.id}
+          className={[
+            'channel-row',
+            selected?.hostId === hostId && selected.channelId === channel.id ? 'active' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onClick={() => store.selectChannel(hostId, channel.id)}
+        >
+          <span className="channel-row-top">
+            <span className="channel-name">{channelLabel(channel)}</span>
+            {channel.unread > 0 && <span className="badge">{channel.unread}</span>}
+          </span>
+          <span className="channel-row-sub">{memberSummary(channel)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * A channel's name as a person reads it.
+ *
+ * An unnamed channel is its members, so it is shown by them rather than by the
+ * id nobody chose — `ch_8f21a0` on a row says nothing about the conversation.
+ */
+export function channelLabel(channel: Channel): string {
+  if (channel.name) return channel.name
+  const titles = channel.members.map((id) => channel.titles[id] ?? id)
+  if (titles.length === 0) return channel.id
+  if (titles.length <= 2) return titles.join(', ')
+  return `${titles.slice(0, 2).join(', ')} +${titles.length - 2}`
+}
+
+function memberSummary(channel: Channel): string {
+  const count = channel.members.length
+  return `${count} ${count === 1 ? 'session' : 'sessions'}, and you`
+}
+
+/** The conversation, and the box to add to it. */
+export function ChannelPanel(): JSX.Element {
+  const selection = useStore((s) => s.channelSelection)
+  const hosts = useStore((s) => s.hosts)
+
+  if (!selection) {
+    return (
+      <div className="panel-empty">
+        <p>Pick a channel, or start one from a few sessions.</p>
+      </div>
+    )
+  }
+  const host = hosts.find((one) => one.id === selection.hostId)
+  return (
+    <ChannelConversation
+      key={`${selection.hostId}:${selection.channelId}`}
+      hostId={selection.hostId}
+      hostName={host?.name ?? selection.hostId}
+      channelId={selection.channelId}
+    />
+  )
+}
+
+function ChannelConversation({
+  hostId,
+  channelId,
+}: {
+  hostId: string
+  hostName: string
+  channelId: string
+}): JSX.Element {
+  const client = useQueryClient()
+  const { data: channels = [] } = useQuery(channelsQuery(hostId))
+  const { data: messages = [] } = useQuery(channelMessagesQuery(hostId, channelId))
+  const channel = channels.find((one) => one.id === channelId)
+
+  const draftKey = `channel:${hostId}:${channelId}`
+  const [draft, setDraft] = useState(() => loadDraft(draftKey))
+  const [sending, setSending] = useState(false)
+  const composer = useRef<HTMLTextAreaElement | null>(null)
+  const scroller = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    saveDraft(draftKey, draft)
+  }, [draftKey, draft])
+
+  // The box takes the keyboard when a channel opens, as the transcript's does:
+  // the reason for opening one is usually to say something in it.
+  useEffect(() => {
+    composer.current?.focus()
+  }, [channelId])
+
+  // Newest last, and the reader wants the end of it.
+  useEffect(() => {
+    const el = scroller.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages.length])
+
+  const post = async (): Promise<void> => {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    try {
+      await api(hostId).postToChannel(channelId, text)
+      setDraft('')
+      clearDraft(draftKey)
+      await client.invalidateQueries({ queryKey: keys.channelMessages(hostId, channelId) })
+      await client.invalidateQueries({ queryKey: keys.channels(hostId) })
+    } catch (err) {
+      store.fail(err)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="channel">
+      <header className="channel-head">
+        <span className="channel-head-name">{channel ? channelLabel(channel) : channelId}</span>
+        <span className="channel-head-members">
+          {channel?.members.map((id) => (
+            <button
+              key={id}
+              className="member-chip"
+              title="Open this session"
+              onClick={() => store.select(hostId, id)}
+            >
+              {channel.titles[id] ?? id}
+            </button>
+          ))}
+          <span className="member-chip you">user</span>
+        </span>
+      </header>
+
+      <div className="channel-scroll" ref={scroller}>
+        {messages.length === 0 && <p className="empty-note">Nothing said yet.</p>}
+        {messages.map((message) => (
+          <ChannelMessageRow key={message.id} message={message} />
+        ))}
+      </div>
+
+      <div className="composer">
+        <div className="composer-input">
+          <textarea
+            ref={composer}
+            value={draft}
+            rows={1}
+            placeholder="Message the channel (↵ to send, ⇧↵ for a new line)"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              void post()
+            }}
+          />
+          <div className="composer-bar">
+            <button
+              className="filled send-btn"
+              disabled={!draft.trim() || sending}
+              aria-label="Send to the channel"
+              onClick={() => void post()}
+            >
+              {sending ? <span className="spinner" /> : '↑'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ChannelMessageRow({ message }: { message: ChannelMessage }): JSX.Element {
+  const html = useMemo(() => renderMarkdown(message.body), [message.body])
+  return (
+    <div className={message.urgent ? 'channel-msg urgent' : 'channel-msg'}>
+      <span className="channel-msg-head">
+        <span className={message.author === 'user' ? 'channel-from you' : 'channel-from'}>
+          {message.from}
+        </span>
+        {message.urgent && <span className="channel-urgent">urgent</span>}
+        <span className="channel-when">{shortTime(message.created_at)}</span>
+      </span>
+      <div className="channel-msg-body md" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  )
+}
+
+function shortTime(iso: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ''
+  return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}

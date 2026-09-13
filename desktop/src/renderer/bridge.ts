@@ -24,6 +24,8 @@ export interface ThemePayload {
 }
 import type {
   AppearancePrefs,
+  Channel,
+  ChannelMessage,
   BackdropState,
   CommandInfo,
   Density,
@@ -205,6 +207,30 @@ export class HostApi {
     return this.call('listSessions', params)
   }
   // ─── Schedules ─────────────────────────────────────────────────────────
+
+  // ─── Channels ──────────────────────────────────────────────────────────
+
+  listChannels(): Promise<Channel[]> {
+    return this.call('listChannels')
+  }
+  createChannel(spec: { name?: string; members: string[]; message?: string }): Promise<{
+    channel: Channel
+    existing: boolean
+  }> {
+    return this.call('createChannel', spec)
+  }
+  channelMessages(id: string): Promise<ChannelMessage[]> {
+    return this.call('channelMessages', id)
+  }
+  postToChannel(id: string, message: string, urgent = false): Promise<void> {
+    return this.call('postToChannel', id, message, urgent)
+  }
+  addToChannel(id: string, session: string): Promise<void> {
+    return this.call('addToChannel', id, session)
+  }
+  deleteChannel(id: string): Promise<void> {
+    return this.call('deleteChannel', id)
+  }
 
   listSchedules(): Promise<Schedule[]> {
     return this.call('listSchedules')

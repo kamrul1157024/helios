@@ -91,7 +91,7 @@ function shellLabel(termId: string): string {
  * dialog because it is a screen and a half of controls, which a 760px box was
  * never the shape for.
  */
-export type SidebarMode = 'sessions' | 'schedules' | 'settings'
+export type SidebarMode = 'sessions' | 'schedules' | 'channels' | 'settings'
 
 /** What the main panel is showing about a schedule. */
 export interface ScheduleSelection {
@@ -286,6 +286,8 @@ export interface State {
   selectMode: boolean
   /** The row a Shift-click measures its range from. */
   selectionAnchor: string | null
+  /** Which channel the panel is showing, if the sidebar is on that mode. */
+  channelSelection: { hostId: string; channelId: string } | null
   /**
    * An instruction to every tool card in the transcript to fold or unfold.
    *
@@ -535,6 +537,7 @@ const initial: State = {
   diffLines: bridge.theme.boot().sizes.diff,
   terminalUploads: readTerminalUploads(),
   sessionSelection: [],
+  channelSelection: null,
   selectMode: false,
   selectionAnchor: null,
   foldAll: { seq: 0, open: false },
@@ -1243,6 +1246,15 @@ class Store {
 
   setSidebarMode(mode: SidebarMode): void {
     this.set({ sidebarMode: mode })
+  }
+
+  invalidateChannels(hostId: string): Promise<void> {
+    return queryClient.invalidateQueries({ queryKey: keys.channels(hostId) })
+  }
+
+  /** Which conversation the channels panel is showing. */
+  selectChannel(hostId: string, channelId: string): void {
+    this.set({ channelSelection: { hostId, channelId } })
   }
 
   /**

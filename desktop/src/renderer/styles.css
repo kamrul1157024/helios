@@ -703,6 +703,151 @@ small {
   margin-bottom: 2px;
 }
 
+/* ─── Channels ──────────────────────────────────────────────────────────── */
+
+.channel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  cursor: default;
+  transition: background-color 120ms ease;
+}
+
+.channel-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+}
+
+.channel-row.active {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.channel-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.channel-row-sub {
+  color: var(--on-surface-variant);
+  font-size: 11px;
+}
+
+.channel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.channel-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+}
+
+.channel-head-name {
+  font-weight: 600;
+}
+
+.channel-head-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Who is in it, and a way into each: two seconds after reading a message the
+   reader wants the session that wrote it. */
+.member-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-chip:hover {
+  color: var(--primary);
+}
+
+.member-chip.you {
+  background: none;
+  cursor: default;
+}
+
+.channel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+.channel-msg {
+  margin-bottom: 12px;
+  max-width: var(--prose-width, 70%);
+}
+
+.channel-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.channel-from {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.channel-from.you {
+  color: var(--on-surface-variant);
+}
+
+.channel-when {
+  font-size: 10.5px;
+  color: var(--on-surface-variant);
+}
+
+/* An urgent message stopped everybody's work; it should not look like the rest
+   of the conversation. */
+.channel-msg.urgent {
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--error);
+}
+
+.channel-urgent {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--error);
+  color: var(--surface);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.channel-msg-body {
+  white-space: normal;
+  word-break: break-word;
+}
+
 /* ─── Bulk selection ────────────────────────────────────────────────────── */
 
 /* The tick takes a column of its own down the left, so it sits beside the

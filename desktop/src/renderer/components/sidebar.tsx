@@ -41,6 +41,7 @@ import { Modal } from './newsession.tsx'
 import { ScheduleHost } from './schedules.tsx'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import { BulkBar } from './bulk-bar.tsx'
+import { ChannelList } from './channels.tsx'
 import { sessionActions } from './session-menu.ts'
 import { coverage, extend, keysInNode, refKey, toggle, toggleAll } from './session-selection.ts'
 import { SECTIONS } from './settings.tsx'
@@ -483,6 +484,19 @@ export function Sidebar({
             ))}
           </div>
         </>
+      )}
+
+      {mode === 'channels' && (
+        <div className="sidebar-list">
+          {hosts.map((host, index) => (
+            <ChannelList
+              key={host.id}
+              hostId={host.id}
+              name={host.name}
+              showName={hosts.length > 1 || index > 0}
+            />
+          ))}
+        </div>
       )}
 
       {mode === 'sessions' && (
