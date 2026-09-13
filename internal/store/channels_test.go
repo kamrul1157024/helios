@@ -338,6 +338,65 @@ func TestArchivingWhatIsNotThereSaysSo(t *testing.T) {
 	}
 }
 
+func TestRenamingAChannelKeepsWhatWasSaidInIt(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("api-redesing", AuthorUser, []string{"s2"})
+	_, _ = s.PostMessage(ch.ID, AuthorUser, "the typo is in the name", false)
+
+	if err := s.RenameChannel(ch.ID, "  api-redesign  "); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	again, _, _ := s.Channel(ch.ID)
+	if again.Name != "api-redesign" {
+		t.Errorf("name = %q, want it trimmed and changed", again.Name)
+	}
+	messages, _ := s.Messages(ch.ID, "", 0)
+	if len(messages) != 1 {
+		t.Error("renaming lost the conversation; deleting is the thing it exists to avoid")
+	}
+}
+
+// Naming an unnamed channel takes it out of the pool matched by member set.
+// That is the existing rule — naming is how somebody says "not that one" —
+// but it is a change of identity, not only of label.
+func TestNamingAnUnnamedChannelTakesItOutOfTheMemberMatch(t *testing.T) {
+	s := channelStore(t)
+	first, _, _ := s.CreateChannel("", AuthorUser, []string{"s2", "s7"})
+	if err := s.RenameChannel(first.ID, "api-redesign"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	again, reused, err := s.CreateChannel("", AuthorUser, []string{"s2", "s7"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if reused || again.ID == first.ID {
+		t.Error("the named channel was matched by its members; naming should have taken it out")
+	}
+}
+
+// Clearing the name would put it back in the member-set pool, where it could
+// collide with the channel already sitting there.
+func TestAChannelCannotBeRenamedToNothing(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("api-redesign", AuthorUser, []string{"s2"})
+	if err := s.RenameChannel(ch.ID, "   "); err == nil {
+		t.Error("want an error for an empty name")
+	}
+}
+
+func TestGeneralCannotBeRenamed(t *testing.T) {
+	s := channelStore(t)
+	_ = s.EnsureGeneral()
+	if err := s.RenameChannel(GeneralChannel, "notices"); err == nil {
+		t.Error("want an error: the notice board is not somebody's to rename")
+	}
+	if err := s.RenameChannel("ch_nope", "whatever"); err == nil {
+		t.Error("want an error naming the channel that does not exist")
+	}
+}
+
 func seedSession(t *testing.T, s *Store, id, status string) {
 	t.Helper()
 	if err := s.UpsertSession(&Session{

@@ -39,6 +39,7 @@ const chatUsage = `Usage: helios chat <command>
   read <channel> [--since-last]         the conversation, and marks it read
   join <channel> --session <id>         add a session to it
   leave <channel> --session <id>        take one out
+  rename <channel> "<new name>"         change what it is called
   archive <channel>                     close it: readable, but it takes no more
   unarchive <channel>                   reopen it
   delete <channel>                      remove it and everything said in it
@@ -99,6 +100,8 @@ func handleChat(args []string) {
 		chatMember(args[1:], http.MethodPost)
 	case "leave":
 		chatMember(args[1:], http.MethodDelete)
+	case "rename":
+		chatRename(args[1:])
 	case "archive":
 		chatArchive(args[1:], true)
 	case "unarchive":
@@ -536,6 +539,31 @@ func chatMember(args []string, method string) {
 		return
 	}
 	fmt.Printf("%s is in %s, and has been told so.\n", opts.session, chatLabel(*ch))
+}
+
+func chatRename(args []string) {
+	opts := chatFlags(args)
+	if len(opts.rest) < 2 {
+		chatFail(fmt.Errorf(`usage: helios chat rename <channel> "<new name>"`))
+	}
+	ch, err := findChannel(opts.rest[0])
+	if err != nil {
+		chatFail(err)
+	}
+	name := strings.Join(opts.rest[1:], " ")
+
+	if _, err := callChat(http.MethodPost, "/"+ch.ID+"/rename", nil,
+		map[string]any{"name": name}); err != nil {
+		chatFail(err)
+	}
+	// Worth saying, because it is the part nobody expects: an unnamed channel
+	// is matched by its members, and naming it takes it out of that match.
+	if ch.Name == "" {
+		fmt.Printf("%s is now %q. Asking for those sessions again will start a new channel.\n",
+			ch.ID, strings.TrimSpace(name))
+		return
+	}
+	fmt.Printf("%s is now %q.\n", ch.Name, strings.TrimSpace(name))
 }
 
 // chatArchive closes a channel, or reopens it. Closing is not deleting: what

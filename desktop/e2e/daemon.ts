@@ -127,6 +127,7 @@ export type DaemonWrite =
   | { kind: 'post'; channelId: string; message: string }
   | { kind: 'join'; channelId: string; session: string }
   | { kind: 'archive'; channelId: string; archived: boolean }
+  | { kind: 'rename'; channelId: string; name: string }
   | { kind: 'patch'; sessionId: string; patch: Record<string, unknown> }
 
 /** The session every create in these tests hands back. */
@@ -529,7 +530,10 @@ function written(path: string): boolean {
     path.endsWith('/send') ||
     path === '/api/channels' ||
     (path.startsWith('/api/channels/') &&
-      (path.endsWith('/messages') || path.endsWith('/members') || path.endsWith('/archive')))
+      (path.endsWith('/messages') ||
+        path.endsWith('/members') ||
+        path.endsWith('/archive') ||
+        path.endsWith('/rename')))
   )
 }
 
@@ -597,6 +601,15 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
     const added = Boolean(channel && session && !channel.members.includes(session))
     if (added && channel && session) channel.members.push(session)
     return { success: true, added }
+  }
+
+  if (path.startsWith('/api/channels/') && path.endsWith('/rename')) {
+    const id = path.slice('/api/channels/'.length, -'/rename'.length)
+    const { name } = JSON.parse(body.toString() || '{}') as { name?: string }
+    writes.push({ kind: 'rename', channelId: id, name: name ?? '' })
+    const channel = CHANNELS.find((one) => one.id === id)
+    if (channel) channel.name = (name ?? '').trim()
+    return { success: true, name: (name ?? '').trim() }
   }
 
   if (path.startsWith('/api/channels/') && path.endsWith('/archive')) {

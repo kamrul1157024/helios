@@ -142,6 +142,53 @@ test('a closed channel has no composer, and says why', async ({ window }) => {
   await expect(window.locator('.channel-msg')).toContainText('that is the last of it')
 })
 
+// Renaming is the alternative to deleting a channel and starting again, which
+// throws away the conversation. It edits on the row, because window.prompt
+// throws in Electron and a dialog would do nothing at all.
+test('a channel is renamed on its row', async ({ window, daemon }) => {
+  seedChannel({ id: 'ch_1', name: 'api-redesing', members: [ALPHA_ID] })
+  await openChannels(window)
+
+  await window.locator('.channel-row').click({ button: 'right' })
+  await window.getByText('Rename', { exact: true }).click()
+
+  const field = window.locator('.channel-name-field')
+  await expect(field).toBeFocused()
+  await expect(field).toHaveValue('api-redesing')
+  await field.fill('api-redesign')
+  await window.keyboard.press('Enter')
+
+  const renamed = daemon.writes().filter((write) => write.kind === 'rename')
+  expect(renamed).toHaveLength(1)
+  if (renamed[0]?.kind === 'rename') expect(renamed[0].name).toBe('api-redesign')
+  await expect(window.locator('.channel-row')).toContainText('api-redesign')
+})
+
+test('Escape leaves the name alone', async ({ window, daemon }) => {
+  seedChannel({ id: 'ch_1', name: 'api-redesign', members: [ALPHA_ID] })
+  await openChannels(window)
+
+  await window.locator('.channel-row').click({ button: 'right' })
+  await window.getByText('Rename', { exact: true }).click()
+  await window.locator('.channel-name-field').fill('something else')
+  await window.keyboard.press('Escape')
+
+  expect(daemon.writes().filter((write) => write.kind === 'rename')).toHaveLength(0)
+  await expect(window.locator('.channel-row')).toContainText('api-redesign')
+})
+
+// An unnamed channel is shown by its members. Seeding the field with that
+// would invite somebody to accept a name they never chose.
+test('an unnamed channel opens the field empty', async ({ window }) => {
+  seedChannel({ id: 'ch_1', members: [ALPHA_ID, BETA_ID] })
+  await openChannels(window)
+
+  await window.locator('.channel-row').click({ button: 'right' })
+  await window.getByText('Rename', { exact: true }).click()
+
+  await expect(window.locator('.channel-name-field')).toHaveValue('')
+})
+
 test('Reopen brings the composer back', async ({ window, daemon }) => {
   seedChannel({ id: 'ch_1', name: 'api-redesign', members: [ALPHA_ID], archived: true })
   await openChannels(window)

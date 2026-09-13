@@ -742,6 +742,20 @@ small {
   font-size: 11px;
 }
 
+/* Renamed on the row, the way a session and a group header are. */
+.channel-name-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  margin: -1px 0;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
 /* A closed channel is readable, not gone — dimmed rather than struck through,
    so it reads as put away rather than broken. */
 .channel-row.closed .channel-name {
@@ -849,6 +863,18 @@ small {
 .channel-msg {
   margin-bottom: 12px;
   max-width: var(--prose-width, 70%);
+}
+
+/* A rule in the session's own colour, so one agent can be followed down a busy
+   channel without reading a single name. The person gets none: the absence is
+   what separates them from every agent at a glance. */
+.channel-msg.from-session {
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--author, var(--primary));
+}
+
+.channel-msg.from-session .channel-from {
+  color: var(--author, var(--primary));
 }
 
 .channel-msg-head {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
@@ -8,6 +8,7 @@ import { keys } from '../keys.ts'
 import { channelMessagesQuery, channelsQuery } from '../queries.ts'
 import { store, useStore } from '../store.ts'
 import { renderMarkdown } from '../markdown.ts'
+import { AUTHOR_USER, authorColour } from './author-colour.ts'
 import { SelectionMenu, type MenuAction } from './selection-menu.tsx'
 import type { Channel, ChannelMessage } from '../../shared/models.ts'
 
@@ -32,6 +33,10 @@ export function ChannelList({ hostId, name, showName }: {
   // Shut to begin with: the point of closing a conversation is not to be shown
   // it. Opened by hand when somebody wants to read one back.
   const [showClosed, setShowClosed] = useState(false)
+  // Renamed on the row itself, as a group header is. Not through a dialog:
+  // window.prompt throws in Electron, so an item that opened one would do
+  // nothing at all.
+  const [renaming, setRenaming] = useState<string | null>(null)
 
   const open = channels.filter((channel) => !channel.archived)
   const closed = channels.filter((channel) => channel.archived)
@@ -60,7 +65,17 @@ export function ChannelList({ hostId, name, showName }: {
       }}
     >
       <span className="channel-row-top">
-        <span className="channel-name">{channelLabel(channel)}</span>
+        {renaming === channel.id ? (
+          <ChannelNameField
+            channel={channel}
+            onDone={(name) => {
+              setRenaming(null)
+              if (name && name !== channel.name) void store.renameChannel(hostId, channel.id, name)
+            }}
+          />
+        ) : (
+          <span className="channel-name">{channelLabel(channel)}</span>
+        )}
         {channel.unread > 0 && !channel.archived && <span className="badge">{channel.unread}</span>}
       </span>
       <span className="channel-row-sub">{memberSummary(channel)}</span>
@@ -92,7 +107,7 @@ export function ChannelList({ hostId, name, showName }: {
         <SelectionMenu
           x={menu.x}
           y={menu.y}
-          actions={channelActions(hostId, menu.channel)}
+          actions={channelActions(hostId, menu.channel, () => setRenaming(menu.channel.id))}
           onClose={() => setMenu(null)}
         />
       )}
@@ -106,12 +121,21 @@ export function ChannelList({ hostId, name, showName }: {
  * General gets none of it: every session is in it and it is the one channel
  * that is always there, so neither closing nor deleting it is somebody's to do.
  */
-function channelActions(hostId: string, channel: Channel): MenuAction[] {
+function channelActions(hostId: string, channel: Channel, rename: () => void): MenuAction[] {
   if (channel.id === GENERAL) {
     return [{ label: 'Everyone is in this one, always', disabled: true }]
   }
 
   return [
+    {
+      label: 'Rename',
+      // Worth saying before the click rather than after: an unnamed channel is
+      // found again by who is in it, and naming it ends that.
+      title: channel.name
+        ? undefined
+        : 'Naming it means asking for these sessions again starts a new channel',
+      run: rename,
+    },
     {
       label: channel.archived ? 'Reopen' : 'Close',
       title: channel.archived
@@ -129,6 +153,45 @@ function channelActions(hostId: string, channel: Channel): MenuAction[] {
       },
     },
   ]
+}
+
+/**
+ * The name, editable in place.
+ *
+ * Seeded with the name it has rather than what the row shows: an unnamed
+ * channel is shown by its members, and offering that as the text to edit would
+ * invite somebody to accept a name they never chose.
+ */
+function ChannelNameField({
+  channel,
+  onDone,
+}: {
+  channel: Channel
+  onDone: (name: string | null) => void
+}): JSX.Element {
+  const [draft, setDraft] = useState(channel.name)
+
+  return (
+    <input
+      autoFocus
+      className="channel-name-field"
+      value={draft}
+      placeholder="Name this channel"
+      aria-label="Channel name"
+      onChange={(event) => setDraft(event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      onBlur={() => onDone(draft.trim() || null)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          onDone(draft.trim() || null)
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          onDone(null)
+        }
+      }}
+    />
+  )
 }
 
 /** internal/store/channels.go — the channel every session is in. */
@@ -314,12 +377,25 @@ function ChannelConversation({
 
 function ChannelMessageRow({ message }: { message: ChannelMessage }): JSX.Element {
   const html = useMemo(() => renderMarkdown(message.body), [message.body])
+  // The colour is the session's, carried on the row as a variable so the name
+  // and the rule down its left edge cannot disagree. The person gets none, and
+  // falls back to the ordinary text colour.
+  const colour = authorColour(message.author)
+  const mine = message.author === AUTHOR_USER
+
   return (
-    <div className={message.urgent ? 'channel-msg urgent' : 'channel-msg'}>
+    <div
+      className={[
+        'channel-msg',
+        mine ? 'you' : 'from-session',
+        message.urgent ? 'urgent' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={colour ? ({ '--author': colour } as CSSProperties) : undefined}
+    >
       <span className="channel-msg-head">
-        <span className={message.author === 'user' ? 'channel-from you' : 'channel-from'}>
-          {message.from}
-        </span>
+        <span className={mine ? 'channel-from you' : 'channel-from'}>{message.from}</span>
         {message.urgent && <span className="channel-urgent">urgent</span>}
         <span className="channel-when">{shortTime(message.created_at)}</span>
       </span>

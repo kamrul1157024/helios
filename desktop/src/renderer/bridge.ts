@@ -232,6 +232,9 @@ export class HostApi {
   addToChannel(id: string, session: string): Promise<void> {
     return this.call('addToChannel', id, session)
   }
+  renameChannel(id: string, name: string): Promise<void> {
+    return this.call('renameChannel', id, name)
+  }
   setChannelArchived(id: string, archived: boolean): Promise<void> {
     return this.call('setChannelArchived', id, archived)
   }

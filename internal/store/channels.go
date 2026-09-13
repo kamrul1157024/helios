@@ -548,6 +548,37 @@ func (s *Store) SetArchived(id string, archived bool) error {
 	return nil
 }
 
+/*
+RenameChannel gives a channel a name, or changes the one it has.
+
+Naming an unnamed channel changes what it is, not only what it is called. An
+unnamed channel *is* its member set — that is what channelWithMembers matches
+on, and it matches only rows with no name. So the next ask for those same
+sessions will make a new channel rather than find this one, which is the
+existing rule rather than a new exception: naming is how somebody says "not
+that one".
+
+The name may not be cleared. An empty one would put the channel back into the
+pool matched by member set, where it could collide with a channel that is
+already there, and the caller has no way to say which of the two they meant.
+*/
+func (s *Store) RenameChannel(id, name string) error {
+	if id == GeneralChannel {
+		return fmt.Errorf("the general channel cannot be renamed")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("a channel needs a name to be renamed to")
+	}
+	if _, err := s.archived(id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE channels SET name = ? WHERE id = ?`, name, id); err != nil {
+		return fmt.Errorf("rename channel: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) DeleteChannel(id string) error {
 	if id == GeneralChannel {
 		return fmt.Errorf("the general channel cannot be deleted")

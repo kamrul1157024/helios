@@ -83,6 +83,8 @@ func (sh *Shared) channelRoute(w http.ResponseWriter, r *http.Request, prefix st
 		sh.markRead(w, r, parts[0])
 	case len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodPost:
 		sh.setArchived(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "rename" && r.Method == http.MethodPost:
+		sh.renameChannel(w, r, parts[0])
 	default:
 		jsonError(w, "no such channel route", http.StatusNotFound)
 	}
@@ -294,6 +296,22 @@ func (sh *Shared) removeMember(w http.ResponseWriter, id, session string) {
 	}
 	sh.SSE.Broadcast(SSEEvent{Type: "channel_updated", Data: map[string]any{"id": id}})
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// renameChannel changes what a channel is called. Naming an unnamed one also
+// takes it out of the member-set match, which the store's comment explains.
+func (sh *Shared) renameChannel(w http.ResponseWriter, r *http.Request, id string) {
+	var body channelBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := sh.DB.RenameChannel(id, body.Name); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sh.SSE.Broadcast(SSEEvent{Type: "channel_updated", Data: map[string]any{"id": id}})
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "name": strings.TrimSpace(body.Name)})
 }
 
 // setArchived closes a channel, or reopens it. Closing is not hiding: the

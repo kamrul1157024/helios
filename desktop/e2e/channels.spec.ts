@@ -103,6 +103,42 @@ test('a channel has the pane to itself', async ({ window }) => {
   expect(pane?.height).toBeGreaterThan((app?.height ?? 0) * 0.9)
 })
 
+// Every session used to render in the same accent, so a busy channel was a
+// wall of identical headers and telling who said what meant reading each one.
+test('each session is a different colour, and the person is not coloured at all', async ({
+  window,
+}) => {
+  seedChannel({
+    id: 'ch_1',
+    name: 'api-redesign',
+    members: [ALPHA_ID, BETA_ID],
+    messages: [
+      { author: `session:${ALPHA_ID}`, from: 'Alpha', body: 'the response shape changed' },
+      { author: `session:${BETA_ID}`, from: 'Beta', body: 'porting it now' },
+      { author: 'user', from: 'user', body: 'does the client cope?' },
+    ],
+  })
+  await window.locator('.rail-item[aria-label="Channels"]').click()
+  await window.locator('.channel-row').click()
+
+  const colourOf = (at: number): Promise<string> =>
+    window
+      .locator('.channel-msg')
+      .nth(at)
+      .locator('.channel-from')
+      .evaluate((node) => getComputedStyle(node).color)
+
+  const [alpha, beta, person] = [await colourOf(0), await colourOf(1), await colourOf(2)]
+  expect(alpha).not.toBe(beta)
+  expect(person).not.toBe(alpha)
+  expect(person).not.toBe(beta)
+
+  // The rule down the left edge carries the same colour, so one agent can be
+  // followed without reading a name. The person has no rule.
+  await expect(window.locator('.channel-msg.from-session')).toHaveCount(2)
+  await expect(window.locator('.channel-msg.you')).toHaveCount(1)
+})
+
 test('a member chip opens that session', async ({ window }) => {
   seedChannel({ id: 'ch_1', name: 'api-redesign', members: [ALPHA_ID] })
   await window.locator('.rail-item[aria-label="Channels"]').click()

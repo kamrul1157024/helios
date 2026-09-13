@@ -34,6 +34,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'channelMessages',
   'postToChannel',
   'addToChannel',
+  'renameChannel',
   'setChannelArchived',
   'deleteChannel',
   'listSchedules',

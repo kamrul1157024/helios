@@ -206,6 +206,12 @@ export class ApiClient {
     await this.request('POST', `/api/channels/${encodeURIComponent(id)}/members`, { session })
   }
 
+  /** Changes what a channel is called. Naming an unnamed one also takes it out
+   *  of the match by member set — see RenameChannel in the store. */
+  async renameChannel(id: string, name: string): Promise<void> {
+    await this.request('POST', `/api/channels/${encodeURIComponent(id)}/rename`, { name })
+  }
+
   /** Closes a channel, or reopens it. The daemon refuses everything said in a
    *  closed one, so this is not a filter on the list. */
   async setChannelArchived(id: string, archived: boolean): Promise<void> {

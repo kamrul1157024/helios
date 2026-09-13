@@ -1333,6 +1333,15 @@ class Store {
     }
   }
 
+  async renameChannel(hostId: string, channelId: string, name: string): Promise<void> {
+    try {
+      await api(hostId).renameChannel(channelId, name.trim())
+      await this.invalidateChannels(hostId)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
   async deleteChannel(hostId: string, channelId: string): Promise<void> {
     try {
       await api(hostId).deleteChannel(channelId)

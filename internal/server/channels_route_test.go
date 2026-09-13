@@ -207,6 +207,48 @@ func TestTheListCountsWhatSomebodyElseSaid(t *testing.T) {
 	t.Fatalf("the channel was not in the list: %v", out)
 }
 
+// Renaming is the alternative to deleting and starting again, so the thing it
+// must not do is disturb the conversation or who is in it.
+func TestRenamingChangesTheNameAndNothingElse(t *testing.T) {
+	shared, be := liveChannelTest(t, "s2", "s7")
+	id := madeChannel(t, channelCall(t, shared, http.MethodPost, "",
+		`{"name":"api-redesing","members":["s2","s7"]}`))
+	channelCall(t, shared, http.MethodPost, "/"+id+"/messages", `{"message":"the typo is in the name"}`)
+
+	be.sent = nil
+	channelCall(t, shared, http.MethodPost, "/"+id+"/rename", `{"name":"api-redesign"}`)
+
+	out := channelCall(t, shared, http.MethodGet, "/"+id, "")
+	channel, _ := out["channel"].(map[string]any)
+	if channel["name"] != "api-redesign" {
+		t.Errorf("name = %v", channel["name"])
+	}
+	if members, _ := channel["members"].([]any); len(members) != 2 {
+		t.Errorf("members = %v, want both still in it", members)
+	}
+	read := channelCall(t, shared, http.MethodGet, "/"+id+"/messages", "")
+	if messages, _ := read["messages"].([]any); len(messages) != 1 {
+		t.Errorf("holds %d messages, want the one that was posted", len(messages))
+	}
+	// A rename is not news worth interrupting an agent over.
+	if sent := be.sentTexts(); len(sent) != 0 {
+		t.Errorf("renaming typed at %d members: %v", len(sent), sent)
+	}
+}
+
+func TestRenamingGeneralIsRefused(t *testing.T) {
+	shared, _ := liveChannelTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/channels/"+store.GeneralChannel+"/rename",
+		strings.NewReader(`{"name":"notices"}`))
+	rec := httptest.NewRecorder()
+	shared.channelRoute(rec, req, "/internal/channels")
+
+	if rec.Code < 400 {
+		t.Errorf("renaming general answered %d, want a refusal", rec.Code)
+	}
+}
+
 // Archiving is a promise about delivery, not a filter on a list. The status
 // code matters less than the fact that nobody was typed at.
 func TestAClosedChannelDeliversNothing(t *testing.T) {
