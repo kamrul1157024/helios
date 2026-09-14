@@ -60,6 +60,9 @@ dependencies:
   xterm: ^4.0.0
   web_socket_channel: ^3.0.3
   flutter_riverpod: ^2.6.1
+  # The agent marks on a session card are the makers' logos, which are paths
+  # rather than glyphs.
+  flutter_svg: ^2.0.10
 
 dev_dependencies:
   flutter_test:
@@ -74,6 +77,8 @@ flutter:
   # assets/mermaid/mermaid-LICENSE.txt.
   assets:
     - assets/mermaid/mermaid.min.js
+    # Which agent a session runs, as its maker draws it. simple-icons, CC0.
+    - assets/logos/
 
   # A real terminal face, because Android's "monospace" is Droid Sans Mono:
   # its box-drawing characters do not join, which is most of what a TUI is

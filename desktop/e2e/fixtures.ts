@@ -12,6 +12,7 @@ import path from 'node:path'
 import { _electron as electron, test as base, type ElectronApplication, type Page } from '@playwright/test'
 
 import { setChannelsUnsupported, startDaemon, type StubDaemon } from './daemon.ts'
+import type { Density } from '../src/shared/models.ts'
 
 export const HOST_ID = 'e2e-host'
 
@@ -26,6 +27,15 @@ interface Options {
    * ordering this needs. Use it with `test.use({ channelsSupported: false })`.
    */
   channelsSupported: boolean
+
+  /**
+   * Which session row the app starts with.
+   *
+   * Seeded into `appearance.json` before launch, for the same reason as the
+   * option above: the sidebar is rendered from the preference the main process
+   * read at startup. Use it with `test.use({ density: 'comfortable' })`.
+   */
+  density: Density
 }
 
 interface Fixtures {
@@ -36,6 +46,7 @@ interface Fixtures {
 
 export const test = base.extend<Options & Fixtures>({
   channelsSupported: [true, { option: true }],
+  density: ['compact', { option: true }],
 
   daemon: async ({ channelsSupported }, use) => {
     setChannelsUnsupported(!channelsSupported)
@@ -45,8 +56,11 @@ export const test = base.extend<Options & Fixtures>({
     setChannelsUnsupported(false)
   },
 
-  app: async ({ daemon }, use) => {
+  app: async ({ daemon, density }, use) => {
     const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'helios-e2e-'))
+    // Only the one key: everything else in the file falls back to its default,
+    // which is what a fresh install reads.
+    await fs.writeFile(path.join(userData, 'appearance.json'), JSON.stringify({ density }))
     await fs.writeFile(
       path.join(userData, 'hosts.json'),
       JSON.stringify([
