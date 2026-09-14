@@ -298,6 +298,8 @@ export interface State {
   channelPicker: { hostId: string; sessions: string[] } | null
   /** The thread the side panel is showing, if one is open. */
   threadSelection: { hostId: string; channelId: string; root: string } | null
+  /** Whether that same panel is showing who is in the channel instead. */
+  membersOpen: boolean
   /**
    * An instruction to every tool card in the transcript to fold or unfold.
    *
@@ -550,6 +552,7 @@ const initial: State = {
   channelSelection: null,
   channelPicker: null,
   threadSelection: null,
+  membersOpen: false,
   selectMode: false,
   selectionAnchor: null,
   foldAll: { seq: 0, open: false },
@@ -1268,16 +1271,27 @@ class Store {
   selectChannel(hostId: string, channelId: string): void {
     // A thread belongs to the conversation it hangs off, so it does not follow
     // the reader into the next one.
-    this.set({ channelSelection: { hostId, channelId }, threadSelection: null })
+    this.set({ channelSelection: { hostId, channelId }, threadSelection: null, membersOpen: false })
   }
 
-  /** Opens the thread hanging off a message, beside the conversation. */
+  /**
+   * Opens the thread hanging off a message, beside the conversation.
+   *
+   * The members list uses the same slot: two panels down one side would leave
+   * the conversation a column wide, and nobody reads a thread and a roster at
+   * the same time.
+   */
   openThread(hostId: string, channelId: string, root: string): void {
-    this.set({ threadSelection: { hostId, channelId, root } })
+    this.set({ threadSelection: { hostId, channelId, root }, membersOpen: false })
   }
 
   closeThread(): void {
     this.set({ threadSelection: null })
+  }
+
+  toggleMembers(): void {
+    const { membersOpen } = this.getSnapshot()
+    this.set({ membersOpen: !membersOpen, threadSelection: null })
   }
 
   /** Asks which channel these sessions should go into. */

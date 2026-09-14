@@ -826,6 +826,10 @@ small {
 /* The line under a message that says a thread hangs off it. */
 .channel-replies {
   display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin-top: 4px;
   padding: 0;
   border: 0;
@@ -925,6 +929,67 @@ small {
 
 .channel-head-name {
   font-weight: 600;
+}
+
+.channel-members-toggle {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 999px;
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  cursor: default;
+}
+
+.channel-members-toggle:hover {
+  color: var(--on-surface);
+  border-color: var(--outline);
+}
+
+.member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.member-list .member-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm, 6px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.member-list .member-chip:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.member-of {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.member-handle {
+  color: var(--on-surface-variant);
+  font-size: 11px;
 }
 
 .channel-head-members {
@@ -1035,14 +1100,28 @@ small {
 .channel-msg-head {
   display: flex;
   align-items: baseline;
+  flex-wrap: nowrap;
   gap: 8px;
   margin-bottom: 2px;
 }
 
+/* A session title is up to 48 characters — "[INFRA] Debug SSH authentication
+   kamul-dev integ…" — which wrapped onto a second line above every single
+   message and pushed the words out of the bubble. Cut here rather than at the
+   daemon: the CLI has a terminal's width and this has a column's. */
 .channel-from {
+  min-width: 0;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
   color: var(--primary);
+}
+
+.channel-when {
+  flex: none;
 }
 
 .channel-from.you {

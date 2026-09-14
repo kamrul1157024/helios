@@ -70,13 +70,14 @@ export const test = base.extend<Options & Fixtures>({
     // suite lands on its backdrop.
     const app = await electron.launch({
       args: ['.', `--user-data-dir=${userData}`],
-      env: {
-        ...process.env,
-        HELIOS_RELEASES_URL: 'data:application/json,[]',
-        // Never brought to the front: a hundred specs each stealing focus is
-        // why this suite was not runnable while doing anything else.
-        HELIOS_E2E_HIDDEN: '1',
-      },
+      // HELIOS_E2E_HIDDEN is deliberately not set here. Passing it keeps the
+      // window off the screen, which is pleasant locally, but a window that is
+      // never shown does not repaint after a reload — so the two specs that
+      // reload the window ("a draft outlives the window itself" and "the fold
+      // outlives the panel, and the window") time out waiting for a click on
+      // something Chromium never painted. Opt in per run instead:
+      //   HELIOS_E2E_HIDDEN=1 npx playwright test e2e/<spec>.spec.ts
+      env: { ...process.env, HELIOS_RELEASES_URL: 'data:application/json,[]' },
     })
     await use(app)
     await app.close()

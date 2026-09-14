@@ -144,7 +144,8 @@ test('a member chip opens that session', async ({ window }) => {
   await window.locator('.rail-item[aria-label="Channels"]').click()
   await window.locator('.channel-row').click()
 
-  await window.locator('.member-chip').first().click()
+  await window.locator('.channel-members-toggle').click()
+  await window.locator('.member-list .member-chip').first().click()
 
   // Two seconds after reading a message, the reader wants the session that
   // wrote it.
