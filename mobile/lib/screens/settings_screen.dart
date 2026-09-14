@@ -23,6 +23,10 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
   late bool _soundEnabled;
   late bool _vibrationEnabled;
 
+  /// Where the thumb is while it is being dragged. The saved size only moves
+  /// when the finger lifts: a write per frame is a write per pixel.
+  double? _titleDrag;
+
   // Update check
   String _currentVersion = '';
   UpdateInfo? _updateInfo;
@@ -106,6 +110,7 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
                   context.read<ThemeProvider>().setCompactSessions(value);
                 },
               ),
+              _buildTitleSizeTile(context),
               const _SectionHeader('Notifications'),
               SwitchListTile(
                 title: const Text('Sound'),
@@ -196,6 +201,41 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
       subtitle: Text(
         'Up to date',
         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+      ),
+    );
+  }
+
+  /// The size of the name on a session card, at either density.
+  ///
+  /// Only the title. The time, the status and the rest of the card keep their
+  /// sizes — the title is what the list is read for, and scaling everything
+  /// with it would just make the same list take more screen.
+  Widget _buildTitleSizeTile(BuildContext context) {
+    final appearance = context.watch<ThemeProvider>();
+    final size = _titleDrag ?? appearance.titleSize;
+    return ListTile(
+      title: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text('Session title size'),
+          Text(
+            '${size.round()} pt',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+      subtitle: Slider(
+        value: size,
+        min: ThemeProvider.minTitleSize,
+        max: ThemeProvider.maxTitleSize,
+        divisions: (ThemeProvider.maxTitleSize - ThemeProvider.minTitleSize)
+            .round(),
+        label: '${size.round()} pt',
+        onChanged: (value) => setState(() => _titleDrag = value),
+        onChangeEnd: (value) {
+          context.read<ThemeProvider>().setTitleSize(value);
+          setState(() => _titleDrag = null);
+        },
       ),
     );
   }

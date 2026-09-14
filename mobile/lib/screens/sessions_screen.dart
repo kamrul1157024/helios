@@ -784,7 +784,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     final host = hm.hostById(session.hostId);
     final hostColor = host?.color ?? theme.colorScheme.primary;
     final hostLabel = host?.label ?? '';
-    final compact = context.watch<ThemeProvider>().compactSessions;
+    final appearance = context.watch<ThemeProvider>();
+    final compact = appearance.compactSessions;
+    final titleSize = appearance.titleSize;
 
     // Square, at either density. A rounded card says "this is one object,
     // lifted off the page", which is true of a four-line card and a lie about a
@@ -838,7 +840,12 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                       ],
                       if (compact)
                         Expanded(
-                          child: _compactBody(session, statusColor, theme),
+                          child: _compactBody(
+                            session,
+                            statusColor,
+                            theme,
+                            titleSize,
+                          ),
                         )
                       else
                         Expanded(
@@ -926,7 +933,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                               Text(
                                 session.displayTitle,
                                 style: TextStyle(
-                                  fontSize: 14,
+                                  fontSize: titleSize,
                                   fontWeight: FontWeight.w600,
                                   color: theme.colorScheme.onSurface,
                                 ),
@@ -1010,7 +1017,12 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   /// list is read to pick a session out of. How long ago stays: it costs no
   /// line of its own, and it is the only thing here that says which of these
   /// have gone cold.
-  Widget _compactBody(Session session, Color statusColor, ThemeData theme) {
+  Widget _compactBody(
+    Session session,
+    Color statusColor,
+    ThemeData theme,
+    double titleSize,
+  ) {
     return Row(
       children: [
         ProviderMark(source: session.source),
@@ -1024,7 +1036,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           child: Text(
             session.displayTitle,
             style: TextStyle(
-              fontSize: 14,
+              fontSize: titleSize,
               fontWeight: FontWeight.w600,
               color: theme.colorScheme.onSurface,
             ),

@@ -15,8 +15,8 @@ export interface ThemePayload {
   proseSize: number
   /** Font ids for the interface, code, and the terminal. */
   fonts: { ui: string; code: string; terminal: string }
-  /** Window scale in percent, two text sizes in px, and a count of lines. */
-  sizes: { ui: number; code: number; terminal: number; diff: number; prose: number }
+  /** Window scale in percent, three text sizes in px, and a count of lines. */
+  sizes: { ui: number; code: number; terminal: number; diff: number; prose: number; title: number }
   density: Density
   /** Which segments the session status line draws, in the order it draws them. */
   statusLine: SegmentId[]

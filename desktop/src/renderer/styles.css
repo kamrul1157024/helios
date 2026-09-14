@@ -1969,7 +1969,9 @@ small {
   /* The glyph font is first, but only claims the Private Use Area — the words
      fall through to the stack behind it. */
   font-family: 'Helios Glyphs', var(--font-ui);
-  font-size: 13.5px;
+  /* A setting, with the size it has always been as the fallback: the variable
+     is absent until the preference has been painted onto the root. */
+  font-size: var(--title-size, 13.5px);
   font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;

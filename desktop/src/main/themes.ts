@@ -24,6 +24,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   diffLines: 5,
   proseWidth: 70,
   density: 'compact',
+  titleSize: 13.5,
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,
 }
@@ -61,6 +62,11 @@ const MAX_DIFF_LINES = 200
 const MIN_STATUS = 9
 const MAX_STATUS = 16
 
+/* The name on each row in the sidebar. The floor is where a list stops being
+   scannable and the ceiling is where two rows fill the panel. */
+const MIN_TITLE = 10
+const MAX_TITLE = 24
+
 /** What a backdrop image may be, and therefore what the media scheme serves. */
 const IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 
@@ -85,6 +91,15 @@ function bounded(value: unknown, min: number, max: number, fallback: number): nu
 
 function proseWidth(value: unknown): number {
   return bounded(value, MIN_PROSE_WIDTH, MAX_PROSE_WIDTH, DEFAULT_APPEARANCE.proseWidth)
+}
+
+/* Clamped but not rounded, which is why this is not `bounded`. The default is
+   13.5 — the size the sidebar has always drawn — and rounding on read would
+   resize the title on every install that has never touched the setting. */
+function titleSize(value: unknown): number {
+  const size = Number(value)
+  if (!Number.isFinite(size)) return DEFAULT_APPEARANCE.titleSize
+  return Math.min(Math.max(size, MIN_TITLE), MAX_TITLE)
 }
 
 function statusLineSize(value: unknown): number {
@@ -135,6 +150,7 @@ export class ThemeRegistry {
         diffLines: bounded(parsed.diffLines, MIN_DIFF_LINES, MAX_DIFF_LINES, DEFAULT_APPEARANCE.diffLines),
         proseWidth: proseWidth(parsed.proseWidth),
         density: density(parsed.density ?? DEFAULT_APPEARANCE.density),
+        titleSize: titleSize(parsed.titleSize),
         statusLine: parseStatusLine(parsed.statusLine),
         statusLineSize: statusLineSize(parsed.statusLineSize),
       }
@@ -295,6 +311,7 @@ export class ThemeRegistry {
     )
     this.prefs.proseWidth = proseWidth(this.prefs.proseWidth)
     this.prefs.density = density(this.prefs.density)
+    this.prefs.titleSize = titleSize(this.prefs.titleSize)
     this.prefs.statusLine = parseStatusLine(this.prefs.statusLine)
     this.prefs.statusLineSize = statusLineSize(this.prefs.statusLineSize)
     fs.mkdirSync(path.dirname(this.file), { recursive: true })

@@ -65,6 +65,17 @@ export function applyStatusSize(root: HTMLElement, size: number): void {
 }
 
 /**
+ * The name on each row in the sidebar.
+ *
+ * A size of its own rather than a share of the interface scale: the list is
+ * read by scanning and the panel beside it is read by reading, and the size
+ * that suits one is not the size that suits the other.
+ */
+export function applyTitleSize(root: HTMLElement, size: number): void {
+  root.style.setProperty('--title-size', `${size}px`)
+}
+
+/**
  * How much of a session the sidebar shows.
  *
  * An attribute rather than variables, for the same reason as glass: density
