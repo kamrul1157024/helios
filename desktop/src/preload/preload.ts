@@ -9,6 +9,7 @@ import {
   applyProseWidth,
   applyStatusSize,
   applyTheme,
+  applyTitleSize,
 } from '../shared/theme/apply.ts'
 import type { HeliosTheme, XtermTheme } from '../shared/theme/resolve.ts'
 
@@ -19,7 +20,7 @@ interface ThemeBoot {
   glassSupported: boolean
   proseSize: number
   fonts: { ui: string; code: string; terminal: string }
-  sizes: { ui: number; code: number; terminal: number; diff: number; prose: number }
+  sizes: { ui: number; code: number; terminal: number; diff: number; prose: number; title: number }
   density: Density
   statusLineSize: number
 }
@@ -89,6 +90,7 @@ const paint = (): void => {
   applyCodeSize(document.documentElement, boot.sizes.code)
   applyProseWidth(document.documentElement, boot.sizes.prose)
   applyStatusSize(document.documentElement, boot.statusLineSize)
+  applyTitleSize(document.documentElement, boot.sizes.title)
   applyDensity(document.documentElement, boot.density)
 }
 

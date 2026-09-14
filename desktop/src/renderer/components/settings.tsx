@@ -213,6 +213,15 @@ export function SettingsPane(): JSX.Element {
         </Row>
 
         <PixelSize
+          label="Session title"
+          info="In pixels, between 10 and 24. The name on each row of the sidebar — the one thing on that list read by scanning rather than by reading. Measured after Interface size, which scales the window and everything in it."
+          size={appearance?.titleSize}
+          min={10}
+          max={24}
+          onPick={(titleSize) => void setTheme({ titleSize })}
+        />
+
+        <PixelSize
           label="Text size"
           info="In pixels, between 10 and 28. Sets the size of rendered markdown — the transcript and the file previews both. It does not touch the terminal."
           size={appearance?.proseSize}

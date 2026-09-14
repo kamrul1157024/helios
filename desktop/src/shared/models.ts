@@ -692,6 +692,8 @@ export interface AppearancePrefs {
   proseWidth: number
   /** How much of a session the sidebar shows: everything, or one line each. */
   density: Density
+  /** Size of the session title in the sidebar, in px. */
+  titleSize: number
   /** Which segments the session status line draws, in the order it draws them. */
   statusLine: SegmentId[]
   /** Text size of the status line, in px. The bar's height follows it. */

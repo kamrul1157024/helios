@@ -42,6 +42,7 @@ import {
   applyProseWidth,
   applyStatusSize,
   applyTheme,
+  applyTitleSize,
 } from '../shared/theme/apply.ts'
 import { hasTerminal } from '../shared/models.ts'
 import type {
@@ -652,6 +653,7 @@ class Store {
       applyCodeSize(document.documentElement, sizes.code)
       applyProseWidth(document.documentElement, sizes.prose)
       applyStatusSize(document.documentElement, statusLineSize)
+      applyTitleSize(document.documentElement, sizes.title)
       applyDensity(document.documentElement, density)
       this.set({
         terminalTheme: terminal,
