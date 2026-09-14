@@ -26,8 +26,16 @@ test('the app boots on the bundled code font', async ({ window }) => {
 
   expect(await cssVar(window, '--mono')).toContain('Fira Code')
   expect(await cssVar(window, '--font-term')).toContain('Fira Code')
-  // The shipped face, not a hope that the machine has it.
-  expect(await window.evaluate(() => document.fonts.check('12px "Fira Code"'))).toBe(true)
+  // The shipped face, not a hope that the machine has it. Asked for rather
+  // than assumed loaded: a face is fetched when something on screen is set in
+  // it, and the compact session row the app starts with has no monospace text
+  // on it. What matters here is that the request is answerable from dist.
+  expect(
+    await window.evaluate(async () => {
+      await document.fonts.load('12px "Fira Code"')
+      return document.fonts.check('12px "Fira Code"')
+    }),
+  ).toBe(true)
 })
 
 test('picking a code font moves the variable the diffs and code blocks read', async ({ window }) => {

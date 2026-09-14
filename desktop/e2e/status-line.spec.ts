@@ -2,8 +2,11 @@
 //
 // A 67px header used to carry the session's directory, status and permission
 // mode. It is gone; this checks that what it carried is still reachable — from
-// an 18px bar, and from the row's own context menu. Those rules live in
+// a 15px bar, and from the row's own context menu. Those rules live in
 // components, and there is no component test framework here.
+//
+// The heights below are the compact density's, which is what an install starts
+// with: the bar is its text size plus 4. Roomy spends 7 instead.
 import type { Page } from '@playwright/test'
 
 import { ALPHA as ALPHA_ID } from './daemon.ts'
@@ -44,7 +47,7 @@ test('the header is gone and the status line carries what it held', async ({ win
 test('the bar is no taller than the text it holds', async ({ window }) => {
   await open(window, ALPHA)
   const box = await bar(window).boundingBox()
-  expect(box?.height).toBe(18)
+  expect(box?.height).toBe(15)
 
   // The strip above it is the other half of the saving, and the buttons a
   // terminal tab brings with it used to be what set its height.
@@ -61,7 +64,7 @@ test('the bar is no taller than the text it holds', async ({ window }) => {
 
 test('the bar grows with the text size rather than clipping it', async ({ window }) => {
   await open(window, ALPHA)
-  expect((await bar(window).boundingBox())?.height).toBe(18)
+  expect((await bar(window).boundingBox())?.height).toBe(15)
 
   await openSettings(window)
   // Scoped to the group: "Text size" is also the label of the markdown size in
@@ -74,10 +77,10 @@ test('the bar grows with the text size rather than clipping it', async ({ window
   await field.blur()
   await closeSettings(window)
 
-  // Height is derived from the size, not set beside it: 16 + 7.
+  // Height is derived from the size, not set beside it: 16 + 4.
   await expect
     .poll(async () => (await bar(window).boundingBox())?.height)
-    .toBe(23)
+    .toBe(20)
 })
 
 test('the permission mode is on the row menu, ticked on the one in force', async ({ window }) => {
