@@ -6,8 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../providers/daemon_providers.dart';
+import '../providers/theme_provider.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
+import '../widgets/provider_mark.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
 
@@ -784,6 +786,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     final host = hm.hostById(session.hostId);
     final hostColor = host?.color ?? theme.colorScheme.primary;
     final hostLabel = host?.label ?? '';
+    final compact = context.watch<ThemeProvider>().compactSessions;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -819,7 +822,9 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
               Container(width: 2, color: hostColor.withValues(alpha: 0.4)),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: compact
+                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
+                      : const EdgeInsets.all(12),
                   child: Row(
                     children: [
                       if (_multiSelect) ...[
@@ -830,134 +835,144 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                         ),
                         const SizedBox(width: 4),
                       ],
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Row 1: Status + pin + time
-                            Row(
-                              children: [
-                                if (session.isActive)
-                                  _PulsingIcon(
-                                    icon: statusIcon,
-                                    color: statusColor,
-                                    size: 14,
-                                  )
-                                else
-                                  Icon(
-                                    statusIcon,
-                                    size: 14,
-                                    color: statusColor,
-                                  ),
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: statusColor.withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    _statusLabel(session.status),
-                                    style: TextStyle(
-                                      fontSize: 11,
+                      if (compact)
+                        Expanded(
+                          child: _compactBody(session, statusColor, theme),
+                        )
+                      else
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Row 1: Status + pin + time
+                              Row(
+                                children: [
+                                  if (session.isActive)
+                                    _PulsingIcon(
+                                      icon: statusIcon,
                                       color: statusColor,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                if (session.memoryLabel.isNotEmpty) ...[
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    session.memoryLabel,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                                if (session.needsRecovery) ...[
-                                  const SizedBox(width: 6),
-                                  Tooltip(
-                                    message: 'Cold — tap to resume',
-                                    child: Icon(
-                                      Icons.link_off,
                                       size: 14,
-                                      color: Colors.amber.shade700,
+                                    )
+                                  else
+                                    Icon(
+                                      statusIcon,
+                                      size: 14,
+                                      color: statusColor,
+                                    ),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: statusColor.withValues(
+                                        alpha: 0.12,
+                                      ),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      _statusLabel(session.status),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: statusColor,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
-                                ],
-                                if (session.pinned) ...[
-                                  const SizedBox(width: 6),
-                                  Icon(
-                                    Icons.push_pin,
-                                    size: 14,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                ],
-                                const Spacer(),
-                                Text(
-                                  session.timeAgo,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            // Row 2: Title / Prompt
-                            Text(
-                              session.displayTitle,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: theme.colorScheme.onSurface,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 6),
-                            // Row 3: Workspace
-                            Text(
-                              session.shortCwd,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontFamily: 'monospace',
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            // Row 4: Model + host name
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    session.model ?? '',
+                                  if (session.memoryLabel.isNotEmpty) ...[
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      session.memoryLabel,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                  if (session.needsRecovery) ...[
+                                    const SizedBox(width: 6),
+                                    Tooltip(
+                                      message: 'Cold — tap to resume',
+                                      child: Icon(
+                                        Icons.link_off,
+                                        size: 14,
+                                        color: Colors.amber.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                  if (session.pinned) ...[
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      Icons.push_pin,
+                                      size: 14,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ],
+                                  const Spacer(),
+                                  Text(
+                                    session.timeAgo,
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: theme.colorScheme.onSurfaceVariant,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              // Row 2: Title / Prompt
+                              Text(
+                                session.displayTitle,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.onSurface,
                                 ),
-                                Text(
-                                  hostLabel,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: hostColor,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 6),
+                              // Row 3: Workspace
+                              Text(
+                                session.shortCwd,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontFamily: 'monospace',
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              // Row 4: Model + host name
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      session.model ?? '',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
+                                  Text(
+                                    hostLabel,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: hostColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
                       // A handle rather than the whole card, because a card
                       // already answers a long press by opening its options:
                       // the drag would never win that gesture. Dragging starts
@@ -983,6 +998,38 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// The card with everything but the answer to "which one is this?" removed.
+  ///
+  /// Which agent it runs and how it is doing are glyphs at the head of the
+  /// title, in place of the four lines that say them in words. The directory,
+  /// the model, the memory and the time are all a tap away in the session
+  /// itself, and this list is read to pick a session out of.
+  Widget _compactBody(Session session, Color statusColor, ThemeData theme) {
+    return Row(
+      children: [
+        ProviderMark(source: session.source),
+        const SizedBox(width: 8),
+        if (session.isActive)
+          _PulsingIcon(icon: Icons.circle, color: statusColor, size: 8)
+        else
+          Icon(Icons.circle, size: 8, color: statusColor),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            session.displayTitle,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 

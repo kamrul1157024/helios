@@ -23,7 +23,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   terminalSize: 13,
   diffLines: 5,
   proseWidth: 70,
-  density: 'comfortable',
+  density: 'compact',
   statusLine: DEFAULT_STATUS_LINE,
   statusLineSize: 11,
 }
@@ -64,10 +64,10 @@ const MAX_STATUS = 16
 /** What a backdrop image may be, and therefore what the media scheme serves. */
 const IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 
-/* Anything else in the file — a typo, an older name — reads as the roomy
-   layout, which is the one that shows everything. */
+/* Anything else in the file — a typo, an older name — reads as the default,
+   which is the compact one. */
 function density(value: unknown): Density {
-  return value === 'compact' ? 'compact' : 'comfortable'
+  return value === 'comfortable' ? 'comfortable' : DEFAULT_APPEARANCE.density
 }
 
 function proseSize(value: unknown): number {

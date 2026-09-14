@@ -95,6 +95,17 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
               ),
               const _SectionHeader('Appearance'),
               _buildThemeTile(context),
+              SwitchListTile(
+                title: const Text('Compact session list'),
+                subtitle: const Text(
+                  'One line a session: which agent, how it is doing, and what '
+                  'it is called. Off adds the directory, the model and the time.',
+                ),
+                value: context.watch<ThemeProvider>().compactSessions,
+                onChanged: (value) {
+                  context.read<ThemeProvider>().setCompactSessions(value);
+                },
+              ),
               const _SectionHeader('Notifications'),
               SwitchListTile(
                 title: const Text('Sound'),

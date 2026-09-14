@@ -27,7 +27,7 @@ import {
   type Session,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Ticks, Console, Cpu, Memory, Pencil, Plus, Search, Sort } from './icons.tsx'
+import { Chevron, Ticks, Console, Cpu, Memory, Pencil, Plus, ProviderMark, Search, Sort } from './icons.tsx'
 import {
   buildCwdTree,
   buildTree,
@@ -1317,6 +1317,19 @@ function SessionRow({
         />
       )}
       <div className="row-main">
+        {/* Compact's whole second line, folded into two glyphs at the head of
+            the first: which agent, and how it is doing. Both are drawn at
+            either density and hidden by the stylesheet at the roomy one, where
+            the line below already says each in words — the alternative is a
+            store subscription per row, in a list that can run to hundreds. */}
+        <ProviderMark source={session.source} />
+        {/* `dot` as well as `row-dot`: the app dims every `.dot.pulse` from one
+            timer rather than animating each, and a dot outside that class
+            would be the only still one on the screen. */}
+        <span
+          className={`row-dot dot ${session.status}${busy ? ' pulse' : ''}`}
+          title={statusLabel(session.status)}
+        />
         {editing ? (
           <InlineNameField
             className="row-rename"

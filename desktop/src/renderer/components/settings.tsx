@@ -196,6 +196,22 @@ export function SettingsPane(): JSX.Element {
           onPick={(id) => void setTheme({ terminalTheme: id })}
         />
 
+        <Row
+          label="Session list"
+          info="Compact is one line a session: which agent it runs, how it is doing, and what it is called. Roomy adds the directory it runs in, its model, its permission mode and what it holds in memory, under the title."
+        >
+          <select
+            value={appearance?.density ?? 'compact'}
+            disabled={!appearance}
+            onChange={(event) =>
+              void setTheme({ density: event.target.value as AppearancePrefs['density'] })
+            }
+          >
+            <option value="compact">Compact</option>
+            <option value="comfortable">Roomy</option>
+          </select>
+        </Row>
+
         <PixelSize
           label="Text size"
           info="In pixels, between 10 and 28. Sets the size of rendered markdown — the transcript and the file previews both. It does not touch the terminal."

@@ -2106,8 +2106,19 @@ small {
 }
 
 /* The second line is what comfortable buys. Compact is the same row without
-   it, which is a difference worth a button. */
+   it, which is a difference worth a button. The directory goes with it: it is
+   a third line, and the group headers already say where a session runs. */
+[data-density='compact'] .row-cwd,
+[data-density='compact'] .row-sub {
+  display: none;
+}
 
+/* What replaces them, and only here. At the roomy density the row says both in
+   words on the line below, and a second copy in glyphs is noise. */
+[data-density='compact'] .provider-mark,
+[data-density='compact'] .row-dot {
+  display: block;
+}
 
 [data-density='compact'] .row-act {
   height: 18px;
@@ -6486,8 +6497,48 @@ hr {
 .session-row.compacting .row-status { color: var(--s-compacting); }
 .session-row.error .row-status { color: var(--s-error); }
 
-/* Always shown now: there is one row shape, so there is nothing to toggle. */
+/* Shown unless the compact density has folded it away. */
 .row-sub { display: flex; }
+
+/* ── The compact row's two glyphs ────────────────────────────────────────────
+   Which agent, and how it is doing, at the head of the title's line. Drawn at
+   both densities and shown at one: the roomy row says each in words below, and
+   deciding it in the markup instead would put a store subscription on every
+   row of a list that can run to hundreds.
+
+   The mark is a filled path, so it cannot borrow `.ui-icon` — that class sets
+   `fill: none`, which would draw both logos as nothing. */
+.provider-mark,
+.row-dot {
+  display: none;
+  flex: none;
+}
+
+.provider-mark {
+  line-height: 0;
+  color: var(--on-surface-variant);
+}
+
+.brand-mark {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.row-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--on-surface-variant);
+}
+
+/* The colours of the status word it stands in for. */
+.session-row.active .row-dot,
+.session-row.starting .row-dot { background: var(--s-active); }
+.session-row.waiting_permission .row-dot { background: var(--s-waiting); }
+.session-row.compacting .row-dot { background: var(--s-compacting); }
+.session-row.error .row-dot { background: var(--s-error); }
 
 /* The guide belonging to the group under the pointer, so hovering a header
    says how far its contents reach. */
