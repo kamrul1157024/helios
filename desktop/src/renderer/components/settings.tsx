@@ -822,7 +822,10 @@ function SessionTitles({ hostId }: { hostId: string }): JSX.Element {
           onChange={(event) => change({ enabled: event.target.checked })}
         />
         <span>Generate titles automatically</span>
-        <Info>Off by default. Costs a Haiku call per session, about a tenth of a cent.</Info>
+        <Info>
+          On for a new install; a host that predates this setting being on keeps whatever it was doing.
+          Costs a Haiku call per session, about a tenth of a cent.
+        </Info>
       </label>
 
       <label className="check">

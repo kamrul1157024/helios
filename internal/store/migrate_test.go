@@ -45,6 +45,57 @@ func writeLegacyDB(t *testing.T, rows ...string) string {
 	return path
 }
 
+// Titling is on out of the box, and only out of the box. The distinction is the
+// whole point: a database that has been running for months has an owner who has
+// already decided by leaving the setting alone, and a default is not a licence
+// to start spending their money on Haiku calls.
+func TestMigrate_AutoTitleSeededOnlyOnNewDatabases(t *testing.T) {
+	fresh, err := Open(filepath.Join(t.TempDir(), "new.db"))
+	if err != nil {
+		t.Fatalf("open new: %v", err)
+	}
+	defer fresh.Close()
+
+	if got, _ := fresh.GetSetting("autotitle.enabled"); got != "true" {
+		t.Errorf("new database autotitle.enabled = %q, want true", got)
+	}
+
+	upgraded, err := Open(writeLegacyDB(t))
+	if err != nil {
+		t.Fatalf("open legacy: %v", err)
+	}
+	defer upgraded.Close()
+
+	if got, _ := upgraded.GetSetting("autotitle.enabled"); got != "" {
+		t.Errorf("upgraded database autotitle.enabled = %q, want it left unset", got)
+	}
+}
+
+// Reopening is not a first run. The seed writes once, so a setting turned off
+// afterwards stays off however many times the daemon restarts.
+func TestMigrate_AutoTitleSeedDoesNotReturn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.db")
+
+	first, err := Open(path)
+	if err != nil {
+		t.Fatalf("open first: %v", err)
+	}
+	if err := first.SetSetting("autotitle.enabled", "false"); err != nil {
+		t.Fatalf("turn it off: %v", err)
+	}
+	first.Close()
+
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer again.Close()
+
+	if got, _ := again.GetSetting("autotitle.enabled"); got != "false" {
+		t.Errorf("after reopen autotitle.enabled = %q, want false", got)
+	}
+}
+
 func TestMigrate_ArchivedBecomesTerminated(t *testing.T) {
 	path := writeLegacyDB(t,
 		`INSERT INTO sessions (session_id, cwd, project, status, archived) VALUES ('put-away', '/tmp/a', 'a', 'idle', 1)`,
