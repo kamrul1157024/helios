@@ -419,7 +419,9 @@ export function ChatPanel({
               placeholder={
                 cold
                   ? 'Send a prompt — the session wakes first'
-                  : 'Send a prompt (↵ to send, ⇧↵ for a new line)'
+                  : busy
+                    ? 'Send a prompt (esc to stop)'
+                    : 'Send a prompt (↵ to send, ⇧↵ for a new line)'
               }
               onChange={(event) => setDraft(event.target.value)}
               onPaste={(event) => {
@@ -433,6 +435,22 @@ export function ChatPanel({
                 files.noticePaste(event.clipboardData.getData('text'))
               }}
               onKeyDown={(event) => {
+                // The same thing the ■ beside it does, from the keyboard: the
+                // hand that wants to stop the agent is already on the keys.
+                //
+                // Whatever is half-typed stays put. Writing the follow-up while
+                // the agent works is the normal way to use this box, so a draft
+                // is no reason to withhold the shortcut — and it is no reason to
+                // throw the draft away either.
+                //
+                // Only while there is a turn to end. Idle, it falls through to
+                // whatever else may want Escape.
+                if (event.key === 'Escape') {
+                  if (!busy) return
+                  event.preventDefault()
+                  void api(hostId).stop(session.session_id)
+                  return
+                }
                 if (event.key !== 'Enter') return
                 // An IME uses Enter to accept a candidate; sending there would
                 // post half a word and swallow the rest.
