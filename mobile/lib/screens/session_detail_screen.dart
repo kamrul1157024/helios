@@ -13,7 +13,7 @@ import '../providers/card_registry.dart' as registry;
 import '../providers/daemon_providers.dart';
 import '../providers/transcript.dart';
 import '../providers/notification_ext.dart';
-import '../providers/verbs.dart';
+
 import '../services/api_client.dart';
 import '../services/host_manager.dart';
 import '../services/daemon_api_service.dart';
@@ -64,8 +64,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
   (String, String) get _transcriptKey =>
       (widget.session.hostId, widget.session.sessionId);
   StreamSubscription<SSEEvent>? _eventSub;
-  String _currentVerb = randomVerb();
-  Timer? _verbTimer;
+
   Timer? _transcriptDebounce;
   List<Timer> _resendReads = [];
   late final AnimationController _breathController;
@@ -93,9 +92,6 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
       _breathingActive = true;
     }
     _loadGitStatus();
-    _verbTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (mounted) setState(() => _currentVerb = randomVerb());
-    });
     final sse = context.read<HostManager>().serviceFor(widget.session.hostId);
     _eventSub = sse?.events.listen((event) {
       // Addressed to every viewer rather than to a session: the socket came
@@ -165,7 +161,6 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     _promptController.dispose();
     _scrollController.dispose();
     _eventSub?.cancel();
-    _verbTimer?.cancel();
     _transcriptDebounce?.cancel();
     for (final timer in _resendReads) {
       timer.cancel();
@@ -950,10 +945,18 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
             ),
           );
         }
-        // Reverse the index: index 0 → last message, index N → first message
         final msgIndex = _messages.length - 1 - index;
+        final msg = _messages[msgIndex];
+        final nextMsg =
+            msgIndex + 1 < _messages.length ? _messages[msgIndex + 1] : null;
+        final isMerged = msg.role == 'tool_result' &&
+            msgIndex > 0 &&
+            _messages[msgIndex - 1].role == 'tool_use' &&
+            _messages[msgIndex - 1].tool == msg.tool;
         return MessageCard(
-          message: _messages[msgIndex],
+          message: msg,
+          nextMessage: nextMsg,
+          isMergedToolResult: isMerged,
           hostId: widget.session.hostId,
           sessionCwd: widget.session.cwd,
         );
@@ -1347,46 +1350,27 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Verb animation above the input when queueing
-          if (isQueueing)
+          if (isQueueing || (session.isActive && !canSend))
             AnimatedBuilder(
               animation: _breathController,
               builder: (context, _) {
                 final t = _breathController.value;
-                final accentColor = theme.colorScheme.primary;
-                final verbColor = Color.lerp(
-                  theme.colorScheme.onSurfaceVariant,
-                  accentColor,
-                  0.3 + 0.3 * t,
-                )!;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 400),
-                    transitionBuilder: (child, animation) {
-                      final slideIn =
-                          Tween<Offset>(
-                            begin: const Offset(0, 0.5),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: animation,
-                              curve: Curves.easeOut,
-                            ),
-                          );
-                      return SlideTransition(
-                        position: slideIn,
-                        child: FadeTransition(opacity: animation, child: child),
-                      );
-                    },
-                    child: Text(
-                      '$_currentVerb...',
-                      key: ValueKey(_currentVerb),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: verbColor,
-                        fontWeight: FontWeight.w500,
-                      ),
+                return Container(
+                  height: 3,
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(1.5),
+                    gradient: LinearGradient(
+                      colors: [
+                        theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                        theme.colorScheme.primary.withValues(alpha: 0.8),
+                        theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                      ],
+                      stops: [
+                        (t - 0.3).clamp(0.0, 1.0),
+                        t,
+                        (t + 0.3).clamp(0.0, 1.0),
+                      ],
                     ),
                   ),
                 );
@@ -1430,102 +1414,46 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
                   builder: (context, _) {
                     final isBreathing = session.isActive && !canSend;
                     final t = _breathController.value;
-
-                    // Morph border radius: pill (24) -> squircle (16) -> pill
                     final breathingAnim = isBreathing || isQueueing;
                     final radius = breathingAnim ? 24.0 - 8.0 * t : 24.0;
 
-                    final accentColor = theme.colorScheme.primary;
-
-                    // Verb text: fade between muted and slightly tinted
-                    final verbColor = isBreathing
-                        ? Color.lerp(
-                            theme.colorScheme.onSurfaceVariant,
-                            accentColor,
-                            0.3 + 0.3 * t,
-                          )!
-                        : theme.colorScheme.onSurfaceVariant;
-
-                    return Stack(
-                      alignment: Alignment.centerLeft,
-                      children: [
-                        TextField(
-                          controller: _promptController,
-                          enabled: canSend && !_sending,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => canSend ? _sendPrompt() : null,
-                          maxLines: 3,
-                          minLines: 1,
-                          decoration: InputDecoration(
-                            hintText: isQueueing
-                                ? 'Queue a prompt...'
-                                : canSend
-                                ? 'Send a prompt...'
-                                : session.isActive
-                                ? ''
-                                : 'Session ${session.status}',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(radius),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(radius),
-                              borderSide: BorderSide.none,
-                            ),
-                            disabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(radius),
-                              borderSide: BorderSide.none,
-                            ),
-                            filled: true,
-                            fillColor:
-                                theme.colorScheme.surfaceContainerHighest,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                            isDense: true,
-                          ),
-                          style: const TextStyle(fontSize: 14),
+                    return TextField(
+                      controller: _promptController,
+                      enabled: canSend && !_sending,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => canSend ? _sendPrompt() : null,
+                      maxLines: 3,
+                      minLines: 1,
+                      decoration: InputDecoration(
+                        hintText: isQueueing
+                            ? 'Queue a prompt...'
+                            : canSend
+                            ? 'Send a prompt...'
+                            : session.isActive
+                            ? ''
+                            : 'Session ${session.status}',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: BorderSide.none,
                         ),
-                        // Verb animation inside the disabled field (non-queue active sessions)
-                        if (isBreathing)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 16),
-                            child: IgnorePointer(
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 400),
-                                transitionBuilder: (child, animation) {
-                                  final slideIn =
-                                      Tween<Offset>(
-                                        begin: const Offset(0, 0.5),
-                                        end: Offset.zero,
-                                      ).animate(
-                                        CurvedAnimation(
-                                          parent: animation,
-                                          curve: Curves.easeOut,
-                                        ),
-                                      );
-                                  return SlideTransition(
-                                    position: slideIn,
-                                    child: FadeTransition(
-                                      opacity: animation,
-                                      child: child,
-                                    ),
-                                  );
-                                },
-                                child: Text(
-                                  '$_currentVerb...',
-                                  key: ValueKey(_currentVerb),
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: verbColor,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: BorderSide.none,
+                        ),
+                        disabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor:
+                            theme.colorScheme.surfaceContainerHighest,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        isDense: true,
+                      ),
+                      style: const TextStyle(fontSize: 14),
                     );
                   },
                 ),

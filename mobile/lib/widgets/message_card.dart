@@ -11,12 +11,16 @@ import 'mermaid_diagram.dart';
 
 class MessageCard extends StatelessWidget {
   final Message message;
+  final Message? nextMessage;
+  final bool isMergedToolResult;
   final String hostId;
   final String sessionCwd;
 
   const MessageCard({
     super.key,
     required this.message,
+    this.nextMessage,
+    this.isMergedToolResult = false,
     this.hostId = '',
     this.sessionCwd = '',
   });
@@ -33,8 +37,15 @@ class MessageCard extends StatelessWidget {
           sessionCwd: sessionCwd,
         );
       case 'tool_use':
-        return _ToolUseCard(message: message);
+        final bool? resultStatus =
+            (nextMessage != null &&
+                    nextMessage!.role == 'tool_result' &&
+                    nextMessage!.tool == message.tool)
+                ? nextMessage!.success ?? true
+                : null;
+        return _ToolUseCard(message: message, resultStatus: resultStatus);
       case 'tool_result':
+        if (isMergedToolResult) return const SizedBox.shrink();
         return _ToolResultCard(message: message);
       default:
         return const SizedBox.shrink();
@@ -169,24 +180,18 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
         ? _extractFilePaths(content)
         : <String>[];
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.85,
-        ),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(4),
-            bottomRight: Radius.circular(16),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: theme.colorScheme.outlineVariant,
+            width: 2,
           ),
         ),
-        child: Column(
+      ),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             MarkdownBody(
@@ -328,14 +333,14 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
             ],
           ],
         ),
-      ),
     );
   }
 }
 
 class _ToolUseCard extends StatefulWidget {
   final Message message;
-  const _ToolUseCard({required this.message});
+  final bool? resultStatus;
+  const _ToolUseCard({required this.message, this.resultStatus});
 
   @override
   State<_ToolUseCard> createState() => _ToolUseCardState();
@@ -397,6 +402,17 @@ class _ToolUseCardState extends State<_ToolUseCard> {
                     ),
                   ),
                 ],
+                if (widget.resultStatus != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Icon(
+                      widget.resultStatus! ? Icons.check_circle : Icons.error,
+                      size: 12,
+                      color: widget.resultStatus!
+                          ? Colors.green
+                          : theme.colorScheme.error,
+                    ),
+                  ),
                 if (hasDetails)
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,

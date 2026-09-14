@@ -544,28 +544,70 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     HostManager hm,
     List<Session> visible,
   ) {
-    // Counting what the tab would show, not what exists: a chip reading 155
-    // over a list of twelve is a chip that has to be explained. Terminated
-    // sessions have their own tab, and it holds them on purpose.
     bool counted(Session s) => !(_hidingTerminated && s.isTerminated);
     final allCount = allSessions.where(counted).length;
     final pinnedCount = allSessions.where((s) => s.pinned && counted(s)).length;
     final terminatedCount = allSessions.where((s) => s.isTerminated).length;
+    final theme = Theme.of(context);
+    final isFiltered = _filter != SessionFilter.all;
+    final filterLabel = switch (_filter) {
+      SessionFilter.all => 'All ($allCount)',
+      SessionFilter.pinned => 'Pinned ($pinnedCount)',
+      SessionFilter.terminated => 'Terminated ($terminatedCount)',
+    };
 
     return Row(
       children: [
-        _filterChip('All', allCount, SessionFilter.all),
-        const SizedBox(width: 8),
-        _filterChip('Pinned', pinnedCount, SessionFilter.pinned),
-        const SizedBox(width: 8),
-        _filterChip('Terminated', terminatedCount, SessionFilter.terminated),
+        PopupMenuButton<SessionFilter>(
+          tooltip: 'Filter sessions',
+          onSelected: (value) {
+            setState(() {
+              _filter = value;
+              _exitMultiSelect();
+            });
+            _triggerSearch();
+          },
+          itemBuilder: (_) => [
+            _filterMenuItem('All', allCount, SessionFilter.all),
+            _filterMenuItem('Pinned', pinnedCount, SessionFilter.pinned),
+            _filterMenuItem(
+              'Terminated',
+              terminatedCount,
+              SessionFilter.terminated,
+            ),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.filter_list,
+                  size: 20,
+                  color: isFiltered ? theme.colorScheme.primary : null,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  filterLabel,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isFiltered ? FontWeight.w600 : FontWeight.normal,
+                    color: isFiltered
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         const Spacer(),
         IconButton(
           icon: Icon(
             ref.watch(manualOrderProvider) ? Icons.swap_vert : Icons.sort,
             size: 20,
             color: ref.watch(manualOrderProvider)
-                ? Theme.of(context).colorScheme.primary
+                ? theme.colorScheme.primary
                 : null,
           ),
           tooltip: ref.watch(manualOrderProvider)
@@ -650,20 +692,24 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     );
   }
 
-  Widget _filterChip(String label, int count, SessionFilter filter) {
+  PopupMenuItem<SessionFilter> _filterMenuItem(
+    String label,
+    int count,
+    SessionFilter filter,
+  ) {
     final isSelected = _filter == filter;
-    return FilterChip(
-      label: Text(count > 0 ? '$label ($count)' : label),
-      selected: isSelected,
-      onSelected: (_) {
-        setState(() {
-          _filter = filter;
-          _exitMultiSelect();
-        });
-        _triggerSearch();
-      },
-      showCheckmark: false,
-      visualDensity: VisualDensity.compact,
+    return PopupMenuItem<SessionFilter>(
+      value: filter,
+      child: Row(
+        children: [
+          if (isSelected)
+            Icon(Icons.check, size: 18, color: Theme.of(context).colorScheme.primary)
+          else
+            const SizedBox(width: 18),
+          const SizedBox(width: 8),
+          Text(count > 0 ? '$label ($count)' : label),
+        ],
+      ),
     );
   }
 

@@ -207,7 +207,9 @@ class _MessageRow extends StatelessWidget {
     final colour = authorColour(message.author, theme.brightness);
 
     final bubble = Container(
-      constraints: const BoxConstraints(maxWidth: 320),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.85,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
       decoration: BoxDecoration(
         color: _bubbleColour(theme, mine),
