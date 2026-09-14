@@ -197,3 +197,107 @@ test('the members list and a thread share the one panel', async ({ window }) => 
   await expect(window.locator('.member-list')).toHaveCount(0)
   await expect(window.locator('.channel-thread')).toContainText('which call sites?')
 })
+
+/*
+A message body is rendered, not printed, and anything can post one.
+
+Markdown is what agents are told to write, but raw HTML goes through the same
+renderer, so the sanitiser is the only thing between a channel and a script tag
+posted by whatever could reach the daemon. Worth a test: nobody would notice
+this regressing until it mattered.
+*/
+test('a message renders its markup and cannot run anything', async ({ window }) => {
+  seedChannel({
+    id: 'ch_1',
+    name: 'api-redesign',
+    members: [ALPHA_ID],
+    messages: [
+      {
+        author: `session:${ALPHA_ID}`,
+        from: 'Alpha',
+        body: '<table><tr><th>field</th><th>now</th></tr><tr><td>page</td><td><b>gone</b></td></tr></table>',
+      },
+      {
+        author: `session:${ALPHA_ID}`,
+        from: 'Alpha',
+        body: 'markdown too:\n\n| field | now |\n| --- | --- |\n| items | array |',
+      },
+      {
+        author: 'user',
+        from: 'user',
+        body: '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>after',
+      },
+    ],
+  })
+  await openChannel(window)
+
+  // Both kinds render: the raw table and the markdown one.
+  await expect(window.locator('.channel-msg table')).toHaveCount(2)
+  await expect(window.locator('.channel-msg b')).toHaveText('gone')
+
+  // And nothing ran.
+  expect(await window.evaluate(() => (window as never as Record<string, unknown>).__xss)).toBeUndefined()
+  await expect(window.locator('.channel-msg script')).toHaveCount(0)
+  await expect(window.locator('.channel-msg').last()).toContainText('after')
+})
+
+/*
+Colour an agent can use without seeing the theme.
+
+Inline styles survive the sanitiser, so an agent can pick its own hex — chosen
+blind, against a surface it cannot see. These classes map onto the status
+palette instead, which is derived from the active theme and contrast-checked
+against what it is drawn on, so the same markup is legible on every theme.
+*/
+test('the status classes take their colour from the theme', async ({ window }) => {
+  seedChannel({
+    id: 'ch_1',
+    name: 'api-redesign',
+    members: [ALPHA_ID],
+    messages: [
+      {
+        author: `session:${ALPHA_ID}`,
+        from: 'Alpha',
+        body: '<span class="ok">ok</span> <span class="warn">slow</span> <span class="bad">failed</span> <span class="muted">aside</span>',
+      },
+    ],
+  })
+  await openChannel(window)
+
+  const colourOf = (cls: string): Promise<string> =>
+    window
+      .locator(`.channel-msg-body .${cls}`)
+      .evaluate((node) => getComputedStyle(node).color)
+
+  const [ok, warn, bad, muted] = [
+    await colourOf('ok'),
+    await colourOf('warn'),
+    await colourOf('bad'),
+    await colourOf('muted'),
+  ]
+
+  // Four distinct colours, none of them the inherited body colour.
+  expect(new Set([ok, warn, bad, muted]).size).toBe(4)
+  const plain = await window
+    .locator('.channel-msg-body')
+    .evaluate((node) => getComputedStyle(node).color)
+  expect(ok).not.toBe(plain)
+  expect(bad).not.toBe(plain)
+})
+
+// The browser paints mark black-on-yellow, which is built for a white page and
+// shouts on a dark one.
+test('mark is toned to the surface rather than left browser-yellow', async ({ window }) => {
+  seedChannel({
+    id: 'ch_1',
+    name: 'api-redesign',
+    members: [ALPHA_ID],
+    messages: [{ author: `session:${ALPHA_ID}`, from: 'Alpha', body: 'the <mark>page</mark> field' }],
+  })
+  await openChannel(window)
+
+  const background = await window
+    .locator('.channel-msg-body mark')
+    .evaluate((node) => getComputedStyle(node).backgroundColor)
+  expect(background).not.toBe('rgb(255, 255, 0)')
+})
