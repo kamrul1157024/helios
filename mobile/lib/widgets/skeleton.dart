@@ -80,7 +80,9 @@ class SessionCardSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      // Square, like the card it stands in for: a placeholder of another shape
+      // makes the list change shape as it loads.
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
