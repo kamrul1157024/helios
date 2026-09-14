@@ -544,8 +544,7 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
         // for channels answers 404 and contributes nothing rather than
         // breaking the badge.
         final channelUnread = ref
-            .watch(hostManagerProvider)
-            .hosts
+            .watch(pairedHostsProvider)
             .map(
               (h) =>
                   (ref.watch(channelsProvider(h.id)).valueOrNull ?? const [])
