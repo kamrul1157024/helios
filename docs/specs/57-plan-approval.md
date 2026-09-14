@@ -188,8 +188,52 @@ Either surface builds the same `permissionAnswer`, so the daemon does not care w
 answered: `handlePermissionAction` turns it into a decision, and the decision presses the
 CLI's dialog.
 
+## A row that says yes and throws the conversation away
+
+Claude Code 2.1.270 added a row above the ones helios means, and worded it with the same
+words:
+
+```
+Claude has written up a plan and is ready to execute. Would you like to proceed?
+❯ 1. Yes, clear context (23% used) and use auto mode
+  2. Yes, and use auto mode
+  3. Yes, manually approve edits
+  4. Tell Claude what to change
+```
+
+Both rows carry `auto mode`, `planRowKey` reads the screen top down, and the topmost match
+wins. So approving a plan from a phone pressed row 1: the plan started, and the
+conversation that produced it was gone. From the surface that answered, that is
+indistinguishable from the approval doing nothing — and it left no trace in the log,
+because a row *was* found and pressed.
+
+The CLI's builder pushes the clear-context row first and words it from whichever mode is on
+offer, so there are three of them to walk into:
+
+| The CLI can offer | The row it puts first |
+| --- | --- |
+| bypass permissions | `Yes, clear context (N% used) and bypass permissions` |
+| auto mode | `Yes, clear context (N% used) and use auto mode` |
+| neither | `Yes, clear context (N% used) and auto-accept edits` |
+
+Helios excludes `clear context` outright rather than ranking it below the others. Neither
+choice the card offers means "and clear context", so no row carrying those words is ever
+the right answer, whatever else it says. Someone who wants one answers the CLI at the
+keyboard.
+
+Ranking was the other option — prefer a row without the words, fall back to one with them.
+It is worse: the fallback fires exactly when the CLI has renamed the row helios wanted, and
+the thing it would then press is the one that destroys the session's context. A quiet miss
+is the better failure.
+
 ## Known limit
 
 A plan answered at the keyboard is invisible to helios. The CLI's dialog is the CLI's, so
 the notification stays pending until it is dismissed or the session moves on — helios
 learns the mode only when a later hook reports it.
+
+When the CLI can offer bypass-permissions mode it draws that row *instead of* the auto-mode
+row, so `Yes, and use auto mode` is not on screen to press. The card still offers it, and
+answering it degrades to the quiet miss: nothing is pressed, the CLI's dialog stays up, and
+the log prints the screen it looked at. Pressing a bypass row for someone who asked for
+auto mode would be the wrong trade — the two are not the same permission.
