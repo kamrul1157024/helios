@@ -487,16 +487,32 @@ export function Sidebar({
       )}
 
       {mode === 'channels' && (
-        <div className="sidebar-list">
-          {hosts.map((host, index) => (
-            <ChannelList
-              key={host.id}
-              hostId={host.id}
-              name={host.name}
-              showName={hosts.length > 1 || index > 0}
-            />
-          ))}
-        </div>
+        <>
+          <header className="sidebar-head">
+            <span className="grow" />
+            <button
+              className="tool primary"
+              aria-label="New channel"
+              title="New channel — select sessions, then add to a channel"
+              onClick={() => {
+                store.setSidebarMode('sessions')
+                store.setSelectMode(true)
+              }}
+            >
+              <Plus />
+            </button>
+          </header>
+          <div className="sidebar-list">
+            {hosts.map((host, index) => (
+              <ChannelList
+                key={host.id}
+                hostId={host.id}
+                name={host.name}
+                showName={hosts.length > 1 || index > 0}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {mode === 'sessions' && (
