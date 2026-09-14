@@ -683,11 +683,12 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
 
     return Dismissible(
       key: ValueKey(_compositeKey(session)),
+      // Square like the card it sits behind: a rounded corner here would show
+      // as a sliver of colour outside the square one being swiped away.
       background: Container(
         margin: const EdgeInsets.only(bottom: 8),
         decoration: BoxDecoration(
           color: isTerminated ? Colors.green : Colors.teal,
-          borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.only(left: 20),
@@ -710,10 +711,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
       ),
       secondaryBackground: Container(
         margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.error,
-          borderRadius: BorderRadius.circular(12),
-        ),
+        decoration: BoxDecoration(color: theme.colorScheme.error),
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
         child: const Row(
@@ -788,11 +786,15 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     final hostLabel = host?.label ?? '';
     final compact = context.watch<ThemeProvider>().compactSessions;
 
+    // Square, at either density. A rounded card says "this is one object,
+    // lifted off the page", which is true of a four-line card and a lie about a
+    // one-line row — a column of them reads as a stack of pills rather than a
+    // list. The corner is what carried that reading, so it goes.
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.zero,
         side: isSelected
             ? BorderSide(color: theme.colorScheme.primary, width: 2)
             : session.isActive
@@ -800,7 +802,6 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
             : BorderSide.none,
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
         onTap: () {
           if (_multiSelect) {
             _toggleSelection(session);
