@@ -452,6 +452,14 @@ class _ToolUseCard extends StatefulWidget {
 class _ToolUseCardState extends State<_ToolUseCard> {
   bool _expanded = false;
 
+  String? _displaySummary(Message msg) {
+    final desc = msg.metadata?['description'] as String?;
+    if (desc != null && desc.isNotEmpty) return desc;
+    final summary = msg.summary;
+    if (summary != null && summary.isNotEmpty) return summary;
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -490,12 +498,11 @@ class _ToolUseCardState extends State<_ToolUseCard> {
                     color: theme.colorScheme.tertiary,
                   ),
                 ),
-                if (widget.message.summary != null &&
-                    widget.message.summary!.isNotEmpty) ...[
+                if (_displaySummary(widget.message) != null) ...[
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      widget.message.summary!,
+                      _displaySummary(widget.message)!,
                       style: TextStyle(
                         fontSize: 12,
                         fontFamily: 'monospace',
