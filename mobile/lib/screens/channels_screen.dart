@@ -20,7 +20,9 @@ class ChannelsScreen extends rp.ConsumerWidget {
 
   @override
   Widget build(BuildContext context, rp.WidgetRef ref) {
-    final hosts = ref.watch(hostManagerProvider).hosts;
+    // The picker at the top narrows this tab too: a host that is not checked
+    // out has nothing to say here.
+    final hosts = ref.watch(visibleHostsProvider);
 
     if (hosts.isEmpty) {
       return const Center(child: Text('Pair a machine first.'));
