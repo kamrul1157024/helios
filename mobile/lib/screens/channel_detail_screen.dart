@@ -162,15 +162,20 @@ class _Conversation extends StatelessWidget {
     if (messages.isEmpty) {
       return const Center(child: Text('Nothing said yet.'));
     }
+    // reverse: true opens on the newest message and keeps it in view as more
+    // arrive. The messages read oldest-first, so the index is counted back.
     return ListView.builder(
+      reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 12),
       itemCount: messages.length,
       itemBuilder: (context, at) {
-        final message = messages[at];
+        final index = messages.length - 1 - at;
+        final message = messages[index];
         // A run from one author shares a header: four messages from one agent
         // repeating its title four times is noise, and the repetition says
         // nothing the first line did not.
-        final opens = at == 0 || messages[at - 1].author != message.author;
+        final opens =
+            index == 0 || messages[index - 1].author != message.author;
         return _MessageRow(
           message: message,
           channel: channel,
