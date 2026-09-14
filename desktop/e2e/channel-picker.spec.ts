@@ -202,3 +202,36 @@ test('Reopen brings the composer back', async ({ window, daemon }) => {
   if (archived[0]?.kind === 'archive') expect(archived[0].archived).toBe(false)
   await expect(window.locator('.channel textarea')).toBeVisible()
 })
+
+// A channel opened with the question that prompted it saves its members a round
+// trip: the joining prompt carries the message, so nobody has to go and fetch
+// it. The daemon has taken one since the first cut; the picker never offered it.
+test('a new channel can be opened with something to say', async ({ window, daemon }) => {
+  await openRowMenu(window)
+  await window.getByText('Add to channel…').click()
+  await window.keyboard.type('orders-migration')
+  await window.locator('.quick-message').fill('align on {items, next} before Friday')
+  await window.locator('.quick-message').press('Enter')
+
+  const made = daemon.writes().filter((write) => write.kind === 'channel')
+  expect(made).toHaveLength(1)
+  if (made[0]?.kind === 'channel') {
+    expect(made[0].name).toBe('orders-migration')
+    expect(made[0].message).toBe('align on {items, next} before Friday')
+  }
+})
+
+// Posted after the joins, so it reaches the people it was written for rather
+// than only the ones already there.
+test('adding to a channel can carry a message too', async ({ window, daemon }) => {
+  seedChannel({ id: 'ch_1', name: 'api-redesign', members: [BETA_ID] })
+  await openRowMenu(window)
+  await window.getByText('Add to channel…').click()
+  await window.locator('.quick-message').fill('bringing you in on this')
+  await window.locator('.quick-message').press('Enter')
+
+  expect(daemon.writes().filter((write) => write.kind === 'join')).toHaveLength(1)
+  const posted = daemon.writes().filter((write) => write.kind === 'post')
+  expect(posted).toHaveLength(1)
+  if (posted[0]?.kind === 'post') expect(posted[0].message).toBe('bringing you in on this')
+})

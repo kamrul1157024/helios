@@ -1321,9 +1321,18 @@ class Store {
    * conversation when you asked for a new one is otherwise unexplained. A
    * named one is always new: naming is how somebody says "not that one".
    */
-  async startChannel(hostId: string, sessions: string[], name?: string): Promise<void> {
+  async startChannel(
+    hostId: string,
+    sessions: string[],
+    name?: string,
+    message?: string,
+  ): Promise<void> {
     try {
-      const { channel, existing } = await api(hostId).createChannel({ name, members: sessions })
+      const { channel, existing } = await api(hostId).createChannel({
+        name,
+        members: sessions,
+        message: message?.trim() || undefined,
+      })
       await this.revealChannel(hostId, channel.id)
       this.notify(existing ? 'These sessions already had a channel' : 'Channel started')
     } catch (err) {
@@ -1331,12 +1340,24 @@ class Store {
     }
   }
 
-  /** Puts sessions into a channel that already exists. */
-  async addToChannel(hostId: string, channelId: string, sessions: string[]): Promise<void> {
+  /**
+   * Puts sessions into a channel that already exists, with something to say.
+   *
+   * The message goes after the joins so the newcomers are in the channel when
+   * it arrives — posted first, it would reach the people already there and not
+   * the ones it was written for.
+   */
+  async addToChannel(
+    hostId: string,
+    channelId: string,
+    sessions: string[],
+    message?: string,
+  ): Promise<void> {
     try {
       for (const session of sessions) {
         await api(hostId).addToChannel(channelId, session)
       }
+      if (message?.trim()) await api(hostId).postToChannel(channelId, message.trim())
       await this.revealChannel(hostId, channelId)
       this.notify(sessions.length === 1 ? 'Added to the channel' : `${sessions.length} added`)
     } catch (err) {
