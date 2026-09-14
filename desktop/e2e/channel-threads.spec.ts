@@ -165,3 +165,35 @@ test('a message that names you is marked, and the row counts it apart', async ({
   await expect(window.locator('.channel-msg.addressed')).toHaveCount(1)
   await expect(window.locator('.channel-msg.addressed')).toContainText('can you look?')
 })
+
+// Four sessions with 48-character titles wrapped the header onto three lines
+// and pushed the conversation down the screen, so the header carries a count
+// and the names live in a panel.
+test('the header counts the members and opens the list', async ({ window }) => {
+  seedChannel({ id: 'ch_1', name: 'api-redesign', members: [ALPHA_ID, BETA_ID] })
+  await openChannel(window)
+
+  // Two sessions and the person.
+  await expect(window.locator('.channel-members-toggle')).toHaveText('3 members')
+  await expect(window.locator('.member-list')).toHaveCount(0)
+
+  await window.locator('.channel-members-toggle').click()
+  await expect(window.locator('.member-list .member-chip')).toHaveCount(3)
+  // The handle belongs beside the name it stands for: it is what you type.
+  await expect(window.locator('.member-list')).toContainText('@alpha')
+  await expect(window.locator('.member-list')).toContainText('@user')
+})
+
+// One slot down the side. Two panels would leave the conversation a column
+// wide, and nobody reads a thread and a roster at once.
+test('the members list and a thread share the one panel', async ({ window }) => {
+  seedWithThread()
+  await openChannel(window)
+
+  await window.locator('.channel-members-toggle').click()
+  await expect(window.locator('.member-list')).toBeVisible()
+
+  await window.locator('.channel-replies').click()
+  await expect(window.locator('.member-list')).toHaveCount(0)
+  await expect(window.locator('.channel-thread')).toContainText('which call sites?')
+})

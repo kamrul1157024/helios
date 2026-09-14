@@ -255,18 +255,30 @@ export function ChannelPanel(): JSX.Element {
         hostName={host?.name ?? selection.hostId}
         channelId={selection.channelId}
       />
-      <OpenThread />
+      <ChannelAside />
     </div>
   )
 }
 
-/** The thread panel, when one is open on the channel being shown. */
-function OpenThread(): JSX.Element | null {
+/** Whichever panel is open beside the conversation: a thread, or the members. */
+function ChannelAside(): JSX.Element | null {
   const selection = useStore((s) => s.channelSelection)
   const thread = useStore((s) => s.threadSelection)
-  if (!thread || !selection) return null
-  if (thread.hostId !== selection.hostId || thread.channelId !== selection.channelId) return null
+  const membersOpen = useStore((s) => s.membersOpen)
+  if (!selection) return null
 
+  if (membersOpen) {
+    return (
+      <MembersPanel
+        key={`${selection.hostId}:${selection.channelId}:members`}
+        hostId={selection.hostId}
+        channelId={selection.channelId}
+      />
+    )
+  }
+
+  if (!thread) return null
+  if (thread.hostId !== selection.hostId || thread.channelId !== selection.channelId) return null
   return (
     <ThreadPanel
       key={`${thread.hostId}:${thread.channelId}:${thread.root}`}
@@ -299,21 +311,19 @@ function ChannelConversation({
 
   return (
     <div className="channel">
+      {/* A count and a button, not every member spelled out. Four sessions
+          with 48-character titles wrapped the header onto three lines and
+          pushed the conversation down the screen. */}
       <header className="channel-head">
         <span className="channel-head-name">{channel ? channelLabel(channel) : channelId}</span>
-        <span className="channel-head-members">
-          {channel?.members.map((id) => (
-            <button
-              key={id}
-              className="member-chip"
-              title="Open this session"
-              onClick={() => store.select(hostId, id)}
-            >
-              {channel.titles[id] ?? id}
-            </button>
-          ))}
-          <span className="member-chip you">user</span>
-        </span>
+        <span className="grow" />
+        <button
+          className="channel-members-toggle"
+          aria-label="Show who is in this channel"
+          onClick={() => store.toggleMembers()}
+        >
+          {memberCount(channel)}
+        </button>
       </header>
 
       {/* General behaves differently from the channel above it in the list, and
@@ -424,6 +434,56 @@ function ThreadPanel({
           autoFocus
         />
       )}
+    </aside>
+  )
+}
+
+/**
+ * Who is in the channel, in the panel the thread uses.
+ *
+ * A list rather than a row of chips in the header: the handle belongs beside
+ * the name it stands for, and a session's title is far too long to put four of
+ * them on one line.
+ */
+function MembersPanel({ hostId, channelId }: { hostId: string; channelId: string }): JSX.Element {
+  const { data: channels = [] } = useQuery(channelsQuery(hostId))
+  const channel = channels.find((one) => one.id === channelId)
+
+  return (
+    <aside className="channel-thread">
+      <header className="channel-head">
+        <span className="channel-head-name">{memberCount(channel)}</span>
+        <span className="grow" />
+        <button className="ghost" aria-label="Close the member list" onClick={() => store.toggleMembers()}>
+          ✕
+        </button>
+      </header>
+
+      <div className="member-list">
+        {channel?.members.map((id) => (
+          <button
+            key={id}
+            className="member-chip"
+            title="Open this session"
+            onClick={() => store.select(hostId, id)}
+          >
+            <span className="channel-avatar" style={{ color: authorColour(`session:${id}`) }}>
+              {authorInitials(channel.titles[id] ?? id)}
+            </span>
+            <span className="member-of">
+              <span className="member-name">{channel.titles[id] ?? id}</span>
+              <span className="member-handle">@{channel.slugs?.[id] ?? id.slice(0, 8)}</span>
+            </span>
+          </button>
+        ))}
+        <span className="member-chip you">
+          <span className="channel-avatar">you</span>
+          <span className="member-of">
+            <span className="member-name">user</span>
+            <span className="member-handle">@user</span>
+          </span>
+        </span>
+      </div>
     </aside>
   )
 }
@@ -633,7 +693,12 @@ function ChannelMessageRow({
       <div className="channel-bubble">
         {opens && (
           <span className="channel-msg-head">
-            <span className={mine ? 'channel-from you' : 'channel-from'}>{message.from}</span>
+              <span
+              className={mine ? 'channel-from you' : 'channel-from'}
+              title={message.from}
+            >
+              {message.from}
+            </span>
             {message.urgent && <span className="channel-urgent">urgent</span>}
             <span className="channel-when">{shortTime(message.created_at)}</span>
           </span>
@@ -641,13 +706,19 @@ function ChannelMessageRow({
         <div className="channel-msg-body md" dangerouslySetInnerHTML={{ __html: html }} />
 
         {onOpenThread && (message.reply_count ?? 0) > 0 && (
-          <button className="channel-replies" onClick={onOpenThread}>
+          <button className="channel-replies" onClick={onOpenThread} title={replyLine(message)}>
             {replyLine(message)}
           </button>
         )}
       </div>
     </div>
   )
+}
+
+/** "4 members" — the person counts, because they are in the conversation. */
+function memberCount(channel: Channel | undefined): string {
+  const count = (channel?.members.length ?? 0) + 1
+  return `${count} ${count === 1 ? 'member' : 'members'}`
 }
 
 function replyLine(message: ChannelMessage): string {
