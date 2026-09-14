@@ -41,6 +41,13 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
+	// Asked before anything is created, because everything below is written
+	// with IF NOT EXISTS and a database that has been upgraded is
+	// indistinguishable from a new one by the time the loop has run. The
+	// sessions table is the one every version of Helios has had, so its absence
+	// means no daemon has ever opened this file. See seedNewDatabase.
+	brandNew := !s.hasTable("sessions")
+
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS notifications (
 			id TEXT PRIMARY KEY,
@@ -308,7 +315,35 @@ func (s *Store) migrate() error {
 		s.db.Exec(`INSERT OR IGNORE INTO _migrations (id) VALUES (?)`, cm.id)
 	}
 
+	// After the loop: the settings table is created in it.
+	if brandNew {
+		if err := s.seedNewDatabase(); err != nil {
+			return fmt.Errorf("seed new database: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func (s *Store) hasTable(name string) bool {
+	var found string
+	s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&found)
+	return found != ""
+}
+
+// The settings a first run starts with, as opposed to the ones absence implies.
+//
+// Written once, on a database no daemon has opened before. A migration would
+// not do: migrations run on upgrade too, and this is the difference between
+// choosing a default for new installs and reaching into the settings of people
+// who have been running Helios for months.
+//
+// Only autotitle for now. It costs a Haiku call per session — about a tenth of
+// a cent — which is cheap enough to be worth having on out of the box and not
+// cheap enough to switch on behind someone's back.
+func (s *Store) seedNewDatabase() error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('autotitle.enabled', 'true')`)
+	return err
 }
 
 // promoteArchivedToTerminated files every archived session as terminated, which
