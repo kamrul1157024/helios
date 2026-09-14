@@ -260,21 +260,59 @@ final notificationsProvider =
 /// screen above the host picker wants them merged, and the counts on the
 /// dashboard are across all of them.
 
+/// The machine the picker has checked out, or null for all of them.
+///
+/// `hostManagerProvider` holds one long-lived manager, so watching it never
+/// fires: the instance is the same before and after the picker moves. The
+/// manager announces the move itself, so this subscribes to that. Without it a
+/// provider reads the choice once and never hears about the next one, which
+/// leaves every list showing the host you switched away from.
+final activeHostIdProvider = Provider<String?>((ref) {
+  final manager = ref.watch(hostManagerProvider);
+  final current = manager.activeHostId;
+  // The manager also announces connections coming and going, which does not
+  // change whose machine is in view.
+  void onChange() {
+    if (manager.activeHostId != current) ref.invalidateSelf();
+  }
+
+  manager.addListener(onChange);
+  ref.onDispose(() => manager.removeListener(onChange));
+  return current;
+});
+
+/// Every paired host, as something Riverpod can watch. Pairing a machine or
+/// dropping one has to reach the lists the same way the picker does.
+final pairedHostsProvider = Provider<List<HostConnection>>((ref) {
+  final manager = ref.watch(hostManagerProvider);
+  final current = List<HostConnection>.of(manager.hosts);
+  final signature = current.map((h) => h.id).join(',');
+  void onChange() {
+    if (manager.hosts.map((h) => h.id).join(',') != signature) {
+      ref.invalidateSelf();
+    }
+  }
+
+  manager.addListener(onChange);
+  ref.onDispose(() => manager.removeListener(onChange));
+  return current;
+});
+
 /// The hosts the picker has checked out: one, or all of them.
 ///
 /// A screen that lists per-host things reads this rather than `hosts`, so
 /// picking a machine at the top narrows every tab. Choosing one and still
 /// being shown the others makes the picker look broken.
 final visibleHostsProvider = Provider<List<HostConnection>>((ref) {
-  final manager = ref.watch(hostManagerProvider);
-  final active = manager.activeHostId;
-  if (active == null) return manager.hosts;
-  return manager.hosts.where((h) => h.id == active).toList();
+  final hosts = ref.watch(pairedHostsProvider);
+  final active = ref.watch(activeHostIdProvider);
+  if (active == null) return hosts;
+  return hosts.where((h) => h.id == active).toList();
 });
 
 /// Every host's sessions, merged.
 final allHostSessionsProvider = Provider<AsyncValue<List<Session>>>((ref) {
-  final hosts = ref.watch(hostManagerProvider).hosts;
+  final hosts = ref.watch(pairedHostsProvider);
   return _merge(
     hosts.map((h) => ref.watch(sessionsProvider(allSessionsKey(h.id)))),
   );
@@ -283,7 +321,7 @@ final allHostSessionsProvider = Provider<AsyncValue<List<Session>>>((ref) {
 /// Every host's pending notifications, merged.
 final allHostNotificationsProvider =
     Provider<AsyncValue<List<HeliosNotification>>>((ref) {
-      final hosts = ref.watch(hostManagerProvider).hosts;
+      final hosts = ref.watch(pairedHostsProvider);
       return _merge(hosts.map((h) => ref.watch(notificationsProvider(h.id))));
     });
 
@@ -294,9 +332,9 @@ final allHostNotificationsProvider =
 /// the filters of the last fetch in order to repeat it.
 final visibleSessionsForProvider =
     Provider.family<AsyncValue<List<Session>>, SessionQuery>((ref, query) {
-      final active = ref.watch(hostManagerProvider).activeHostId;
+      final active = ref.watch(activeHostIdProvider);
       if (active != null) return ref.watch(sessionsProvider((active, query)));
-      final hosts = ref.watch(hostManagerProvider).hosts;
+      final hosts = ref.watch(pairedHostsProvider);
       return _merge(
         hosts.map((h) => ref.watch(sessionsProvider((h.id, query)))),
       );
@@ -310,7 +348,7 @@ final visibleSessionsProvider = Provider<AsyncValue<List<Session>>>(
 /// The notifications for the current filter.
 final visibleNotificationsProvider =
     Provider<AsyncValue<List<HeliosNotification>>>((ref) {
-      final active = ref.watch(hostManagerProvider).activeHostId;
+      final active = ref.watch(activeHostIdProvider);
       if (active == null) return ref.watch(allHostNotificationsProvider);
       return ref.watch(notificationsProvider(active));
     });
@@ -449,7 +487,7 @@ final hostSettingsProvider =
 /// One switch for every host: the arrangement is stored per daemon, but a list
 /// that sorts itself on one host and holds still on another is neither.
 final manualOrderProvider = Provider<bool>((ref) {
-  final hosts = ref.watch(hostManagerProvider).hosts;
+  final hosts = ref.watch(pairedHostsProvider);
   return hosts.any(
     (h) =>
         ref.watch(hostSettingsProvider(h.id)).valueOrNull?.manualOrder ?? false,
