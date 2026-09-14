@@ -13,6 +13,7 @@ class MessageCard extends StatelessWidget {
   final Message message;
   final Message? nextMessage;
   final bool isMergedToolResult;
+  final List<ToolCallEntry>? toolGroup;
   final String hostId;
   final String sessionCwd;
 
@@ -21,12 +22,16 @@ class MessageCard extends StatelessWidget {
     required this.message,
     this.nextMessage,
     this.isMergedToolResult = false,
+    this.toolGroup,
     this.hostId = '',
     this.sessionCwd = '',
   });
 
   @override
   Widget build(BuildContext context) {
+    if (toolGroup != null) {
+      return _ToolCallGroupCard(entries: toolGroup!);
+    }
     switch (message.role) {
       case 'user':
         return _UserMessageCard(message: message);
@@ -38,9 +43,7 @@ class MessageCard extends StatelessWidget {
         );
       case 'tool_use':
         final bool? resultStatus =
-            (nextMessage != null &&
-                    nextMessage!.role == 'tool_result' &&
-                    nextMessage!.tool == message.tool)
+            (nextMessage != null && nextMessage!.role == 'tool_result')
                 ? nextMessage!.success ?? true
                 : null;
         return _ToolUseCard(message: message, resultStatus: resultStatus);
@@ -50,6 +53,106 @@ class MessageCard extends StatelessWidget {
       default:
         return const SizedBox.shrink();
     }
+  }
+}
+
+class ToolCallEntry {
+  final Message toolUse;
+  final bool? success;
+  const ToolCallEntry({required this.toolUse, this.success});
+}
+
+class _ToolCallGroupCard extends StatefulWidget {
+  final List<ToolCallEntry> entries;
+  const _ToolCallGroupCard({required this.entries});
+
+  @override
+  State<_ToolCallGroupCard> createState() => _ToolCallGroupCardState();
+}
+
+class _ToolCallGroupCardState extends State<_ToolCallGroupCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final count = widget.entries.length;
+    final allDone = widget.entries.every((e) => e.success != null);
+    final allSuccess = widget.entries.every((e) => e.success == true);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: theme.colorScheme.tertiaryContainer,
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.construction,
+                    size: 14,
+                    color: theme.colorScheme.tertiary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$count tool calls',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.tertiary,
+                    ),
+                  ),
+                  if (allDone) ...[
+                    const SizedBox(width: 6),
+                    Icon(
+                      allSuccess ? Icons.check_circle : Icons.error,
+                      size: 12,
+                      color: allSuccess
+                          ? Colors.green
+                          : theme.colorScheme.error,
+                    ),
+                  ],
+                  const Spacer(),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 16,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Column(
+                children: widget.entries
+                    .map((e) => Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 8),
+                          child: _ToolUseCard(
+                            message: e.toolUse,
+                            resultStatus: e.success,
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

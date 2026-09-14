@@ -947,12 +947,25 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         }
         final msgIndex = _messages.length - 1 - index;
         final msg = _messages[msgIndex];
+
+        final group = _toolGroupAt(msgIndex);
+        if (group != null) {
+          if (group.startIndex == msgIndex) {
+            return MessageCard(
+              message: msg,
+              toolGroup: group.entries,
+              hostId: widget.session.hostId,
+              sessionCwd: widget.session.cwd,
+            );
+          }
+          return const SizedBox.shrink();
+        }
+
         final nextMsg =
             msgIndex + 1 < _messages.length ? _messages[msgIndex + 1] : null;
         final isMerged = msg.role == 'tool_result' &&
             msgIndex > 0 &&
-            _messages[msgIndex - 1].role == 'tool_use' &&
-            _messages[msgIndex - 1].tool == msg.tool;
+            _messages[msgIndex - 1].role == 'tool_use';
         return MessageCard(
           message: msg,
           nextMessage: nextMsg,
@@ -962,6 +975,40 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         );
       },
     );
+  }
+
+  _ToolGroup? _toolGroupAt(int msgIndex) {
+    final msg = _messages[msgIndex];
+    if (msg.role != 'tool_use' && msg.role != 'tool_result') return null;
+
+    // Walk backward to find the start of this tool run.
+    var start = msgIndex;
+    while (start > 0 &&
+        (_messages[start - 1].role == 'tool_use' ||
+            _messages[start - 1].role == 'tool_result')) {
+      start--;
+    }
+    // Walk forward to find the end.
+    var end = msgIndex;
+    while (end + 1 < _messages.length &&
+        (_messages[end + 1].role == 'tool_use' ||
+            _messages[end + 1].role == 'tool_result')) {
+      end++;
+    }
+
+    // Count tool_use entries in the run.
+    final entries = <ToolCallEntry>[];
+    for (var i = start; i <= end; i++) {
+      if (_messages[i].role == 'tool_use') {
+        final next = i + 1 <= end && _messages[i + 1].role == 'tool_result'
+            ? _messages[i + 1].success
+            : null;
+        entries.add(ToolCallEntry(toolUse: _messages[i], success: next));
+      }
+    }
+    // Only group when there are 2+ tool calls; a single call renders inline.
+    if (entries.length < 2) return null;
+    return _ToolGroup(startIndex: start, endIndex: end, entries: entries);
   }
 
   /// Offers the modes the daemon says this provider has. Picking one
@@ -1334,48 +1381,47 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
       );
     }
 
-    return Container(
-      padding: EdgeInsets.only(
-        left: 12,
-        right: 8,
-        top: 8,
-        bottom: MediaQuery.of(context).padding.bottom + 8,
-      ),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          top: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (isQueueing || (session.isActive && !canSend))
-            AnimatedBuilder(
-              animation: _breathController,
-              builder: (context, _) {
-                final t = _breathController.value;
-                return Container(
-                  height: 3,
-                  margin: const EdgeInsets.only(bottom: 6),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(1.5),
-                    gradient: LinearGradient(
-                      colors: [
-                        theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
-                        theme.colorScheme.primary.withValues(alpha: 0.8),
-                        theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
-                      ],
-                      stops: [
-                        (t - 0.3).clamp(0.0, 1.0),
-                        t,
-                        (t + 0.3).clamp(0.0, 1.0),
-                      ],
-                    ),
+    final isWorking = isQueueing || (session.isActive && !canSend);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isWorking)
+          AnimatedBuilder(
+            animation: _breathController,
+            builder: (context, _) {
+              final t = _breathController.value;
+              return Container(
+                height: 3,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                      theme.colorScheme.primary.withValues(alpha: 0.8),
+                      theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                    ],
+                    stops: [
+                      (t - 0.3).clamp(0.0, 1.0),
+                      t,
+                      (t + 0.3).clamp(0.0, 1.0),
+                    ],
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
+          )
+        else
+          Divider(height: 1, thickness: 1, color: theme.colorScheme.outlineVariant),
+        Container(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 8,
+            top: 8,
+            bottom: MediaQuery.of(context).padding.bottom + 8,
+          ),
+          color: theme.colorScheme.surface,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
           if (_pastedBlock != null &&
               _promptController.text.contains(_pastedBlock!))
             _PasteOffer(
@@ -1500,6 +1546,8 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
           ),
         ],
       ),
+        ),
+      ],
     );
   }
 
@@ -1867,4 +1915,15 @@ class _AttachmentChip extends StatelessWidget {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).round()} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+}
+
+class _ToolGroup {
+  final int startIndex;
+  final int endIndex;
+  final List<ToolCallEntry> entries;
+  const _ToolGroup({
+    required this.startIndex,
+    required this.endIndex,
+    required this.entries,
+  });
 }
