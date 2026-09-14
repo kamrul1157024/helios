@@ -1178,6 +1178,89 @@ small {
   word-break: break-word;
 }
 
+/*
+ * Colour an agent can use that stays readable.
+ *
+ * A message can carry any HTML it likes and the sanitiser lets inline styles
+ * through, so an agent *can* pick its own hex — and the one it picks is chosen
+ * blind, against a theme it cannot see. #000 on the dark surface is invisible
+ * and nobody finds out until a person squints at it.
+ *
+ * These map onto the status palette, which is derived from the active theme and
+ * contrast-checked against the surface it is drawn on (see theme/mapping.ts).
+ * So `<span class="bad">` is red on every theme and legible on all of them.
+ */
+.channel-msg-body .ok {
+  color: var(--s-active);
+}
+
+.channel-msg-body .warn {
+  color: var(--s-waiting);
+}
+
+.channel-msg-body .bad {
+  color: var(--s-error);
+}
+
+.channel-msg-body .info {
+  color: var(--s-idle);
+}
+
+.channel-msg-body .muted {
+  color: var(--on-surface-variant);
+}
+
+/* The same four as a chip, for a status worth seeing before the sentence. */
+.channel-msg-body .pill {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* Browser defaults are built for a white page: mark is black on yellow and
+   progress is a light-grey trough, both of which shout on a dark surface. */
+.channel-msg-body mark {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--s-waiting) 24%, transparent);
+  color: inherit;
+}
+
+.channel-msg-body blockquote {
+  margin: 0 0 10px;
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--outline-variant);
+  color: var(--on-surface-variant);
+}
+
+.channel-msg-body details {
+  margin-bottom: 10px;
+}
+
+.channel-msg-body summary {
+  cursor: default;
+  color: var(--on-surface-variant);
+}
+
+.channel-msg-body progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--primary);
+}
+
+/* An image wider than the bubble would push the conversation sideways.
+   A broken one still shows its placeholder: the sanitiser keeps the src it
+   could not load, and CSS cannot tell a failed image from a pending one. Not
+   worth scripting around — it only appears for a source that was already
+   wrong. */
+.channel-msg-body img {
+  max-width: 100%;
+}
+
+
 /* ─── Bulk selection ────────────────────────────────────────────────────── */
 
 /* The tick takes a column of its own down the left, so it sits beside the
