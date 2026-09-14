@@ -60,6 +60,24 @@ const cliPlanDialogAutoAccept = `Claude has written up a plan and is ready to ex
   3. Tell Claude what to change
       shift+tab to approve with this feedback`
 
+// The dialog Claude Code 2.1.270 draws. It puts a row that throws the
+// conversation away above every row helios means, worded with the same words.
+const cliPlanDialogClearContext = `Claude has written up a plan and is ready to execute. Would you like to proceed?
+❯ 1. Yes, clear context (23% used) and use auto mode
+  2. Yes, and use auto mode
+  3. Yes, manually approve edits
+  4. Tell Claude what to change
+      shift+tab to approve with this feedback
+  ctrl+g to edit in Vim · ~/.claude/plans/rows.md`
+
+// The same dialog where auto mode is unavailable, so the CLI words both the
+// clear-context row and the row helios means with "auto-accept".
+const cliPlanDialogClearContextAutoAccept = `Claude has written up a plan and is ready to execute. Would you like to proceed?
+❯ 1. Yes, clear context (23% used) and auto-accept edits
+  2. Yes, auto-accept edits
+  3. Yes, manually approve edits
+  4. Tell Claude what to change`
+
 // awaitKeys waits for the handoff goroutine to finish pressing rows.
 func awaitKeys(t *testing.T, f *fakeBackend, want int) []string {
 	t.Helper()
@@ -185,6 +203,65 @@ func TestPlan_AutoModeIsPressedWhateverTheCLICallsIt(t *testing.T) {
 	}
 	if got := sessionMode(t, db, "sess-1"); got != "auto" {
 		t.Errorf("recorded mode = %q, want auto", got)
+	}
+}
+
+// The bug this closes: 2.1.270 added "Yes, clear context (23% used) and use
+// auto mode" above the row helios means, and the match took the topmost row
+// carrying "auto mode". Approving a plan from a phone started it with the
+// conversation thrown away.
+func TestPlan_AutoModeSkipsTheRowThatClearsContext(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	withTerminal(ctx)
+	terminalOf(ctx).setScreen(cliPlanDialogClearContext)
+
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"auto"}`)})
+
+	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:2" {
+		t.Errorf("keys = %v, want the row that keeps the context pressed", got)
+	}
+	if got := sessionMode(t, db, "sess-1"); got != "auto" {
+		t.Errorf("recorded mode = %q, want auto", got)
+	}
+}
+
+// The clear-context row is worded from whichever mode the CLI can offer, so
+// excluding one wording is not enough.
+func TestPlan_AutoAcceptSkipsTheRowThatClearsContext(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	withTerminal(ctx)
+	terminalOf(ctx).setScreen(cliPlanDialogClearContextAutoAccept)
+
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"auto"}`)})
+
+	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:2" {
+		t.Errorf("keys = %v, want the row that keeps the context pressed", got)
+	}
+}
+
+// Manual approval has no clear-context twin, but the extra row moves its
+// number: it is the third row on 2.1.270, not the second.
+func TestPlan_ManualApprovalFollowsItsRowNumber(t *testing.T) {
+	ctx, db, _ := setupCtx(t)
+	seedSession(t, db, "sess-1", "/tmp/proj", "active")
+	withTerminal(ctx)
+	terminalOf(ctx).setScreen(cliPlanDialogClearContext)
+
+	answerFromPhone(t, ctx, planHook(samplePlan),
+		notifications.Decision{Status: "approved",
+			Response: json.RawMessage(`{"plan_choice":"manual"}`)})
+
+	if got := awaitKeys(t, terminalOf(ctx), 1); got[0] != "sess-1:3" {
+		t.Errorf("keys = %v, want the row pressed by its own number", got)
+	}
+	if got := sessionMode(t, db, "sess-1"); got != "manual" {
+		t.Errorf("recorded mode = %q, want manual", got)
 	}
 }
 

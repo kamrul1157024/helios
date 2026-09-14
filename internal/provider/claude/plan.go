@@ -72,6 +72,20 @@ var planChoices = map[string]struct {
 	planChoiceManual: {dialogRows: []string{"manually approve"}, mode: "manual"},
 }
 
+// planClearsContext is the wording of the rows that say yes and throw the
+// conversation away.
+//
+// They have to be excluded rather than ranked below the others, because they
+// are worded with the same words and the CLI lists them first: 2.1.270 draws
+// "Yes, clear context (23% used) and use auto mode" directly above "Yes, and
+// use auto mode". Both carry "auto mode", the match takes the topmost row, and
+// a plan approved from a phone started with the session wiped.
+//
+// Neither choice helios offers means "and clear context", so no row carrying
+// these words is ever the right answer. A user who wants one answers the CLI at
+// the keyboard.
+const planClearsContext = "clear context"
+
 // planDialogWait is how long helios keeps looking for the CLI's dialog.
 //
 // The hook has to answer before the dialog is drawn — the CLI holds it back
@@ -149,6 +163,9 @@ func planRowKey(b backend.Backend, sessionID string, want []string) (backend.Key
 	for _, line := range strings.Split(lower, "\n") {
 		number := planRowNumber.FindStringSubmatch(strings.TrimSpace(line))
 		if number == nil {
+			continue
+		}
+		if strings.Contains(line, planClearsContext) {
 			continue
 		}
 		for _, w := range want {
