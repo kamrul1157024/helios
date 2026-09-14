@@ -47,6 +47,13 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
       ref.invalidate(notificationsProvider(host));
     case CacheTarget.schedules:
       ref.invalidate(schedulesProvider(host));
+    case CacheTarget.channels:
+      ref.invalidate(channelsProvider(host));
+      // The families are keyed by channel and by thread, and the event names
+      // neither in a form worth threading through — the lists are short and a
+      // refetch is one request.
+      ref.invalidate(channelMessagesProvider);
+      ref.invalidate(channelThreadProvider);
     case CacheTarget.providers:
       ref.invalidate(providersProvider(host));
       ref.invalidate(readyProvidersProvider(host));

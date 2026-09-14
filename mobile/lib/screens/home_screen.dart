@@ -18,7 +18,9 @@ import 'setup_screen.dart';
 import 'new_schedule_sheet.dart';
 import 'schedules_screen.dart';
 import 'sessions_screen.dart';
+import 'new_channel_sheet.dart';
 import 'new_session_sheet.dart';
+import 'channels_screen.dart';
 import 'dashboard_screen.dart';
 import 'settings_screen.dart';
 
@@ -261,6 +263,15 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
     if (confirmed == true && mounted) {
       await _hm.removeHost(host.id);
     }
+  }
+
+  void _showNewChannelSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => const NewChannelSheet(),
+    );
   }
 
   void _showNewSessionSheet() {
@@ -529,6 +540,19 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
             .where((n) => registry.needsAction(n))
             .length;
         final activeSessionCount = allSessions.where((s) => s.isActive).length;
+        // Across every paired host, as the session count is. A host too old
+        // for channels answers 404 and contributes nothing rather than
+        // breaking the badge.
+        final channelUnread = ref
+            .watch(hostManagerProvider)
+            .hosts
+            .map(
+              (h) =>
+                  (ref.watch(channelsProvider(h.id)).valueOrNull ?? const [])
+                      .where((c) => !c.archived)
+                      .fold<int>(0, (sum, c) => sum + c.unread),
+            )
+            .fold<int>(0, (sum, n) => sum + n);
 
         return Scaffold(
           appBar: PreferredSize(
@@ -541,6 +565,27 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
                 centerTitle: true,
                 actions: [
                   _buildConnectionDots(),
+                  // Off the bottom bar to make room for Chat, and it belongs
+                  // here anyway: notifications are something to glance at and
+                  // clear, not one of the three places the app lives in.
+                  IconButton(
+                    icon: Badge(
+                      isLabelVisible: pendingCount > 0,
+                      label: Text('$pendingCount'),
+                      child: const Icon(Icons.notifications_outlined),
+                    ),
+                    tooltip: 'Notifications',
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => Scaffold(
+                            appBar: AppBar(title: const Text('Notifications')),
+                            body: const DashboardScreen(),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                   IconButton(
                     icon: const Icon(Icons.settings_outlined),
                     tooltip: 'Settings',
@@ -565,7 +610,7 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
                   children: const [
                     SessionsScreen(),
                     SchedulesScreen(),
-                    DashboardScreen(),
+                    ChannelsScreen(),
                   ],
                 ),
               ),
@@ -588,6 +633,11 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
               },
               tooltip: 'New schedule',
               child: const Icon(Icons.add_alarm),
+            ),
+            2 => FloatingActionButton(
+              onPressed: _showNewChannelSheet,
+              tooltip: 'New channel',
+              child: const Icon(Icons.add_comment_outlined),
             ),
             _ => null,
           },
@@ -616,16 +666,16 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
               ),
               NavigationDestination(
                 icon: Badge(
-                  isLabelVisible: pendingCount > 0,
-                  label: Text('$pendingCount'),
-                  child: const Icon(Icons.notifications_outlined),
+                  isLabelVisible: channelUnread > 0,
+                  label: Text('$channelUnread'),
+                  child: const Icon(Icons.forum_outlined),
                 ),
                 selectedIcon: Badge(
-                  isLabelVisible: pendingCount > 0,
-                  label: Text('$pendingCount'),
-                  child: const Icon(Icons.notifications),
+                  isLabelVisible: channelUnread > 0,
+                  label: Text('$channelUnread'),
+                  child: const Icon(Icons.forum),
                 ),
-                label: 'Notifications',
+                label: 'Chat',
               ),
             ],
           ),

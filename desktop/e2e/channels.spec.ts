@@ -51,6 +51,16 @@ test('the channel is named by who is in it', async ({ window }) => {
   // "ch_1" on a row would say nothing about the conversation.
   await expect(window.locator('.channel-row')).toContainText('Alpha')
   await expect(window.locator('.channel-row')).toContainText('Beta')
+  // And no `#`: that mark belongs to a name somebody chose, not to a list of
+  // members that happens to stand in for one.
+  await expect(window.locator('.channel-name')).not.toContainText('#')
+})
+
+test('a named channel wears a hash', async ({ window }) => {
+  seedChannel({ id: 'ch_1', name: 'api-redesign', members: [ALPHA_ID] })
+  await window.locator('.rail-item[aria-label="Channels"]').click()
+
+  await expect(window.locator('.channel-name')).toHaveText('#api-redesign')
 })
 
 test('asking twice for the same sessions opens the conversation they have', async ({

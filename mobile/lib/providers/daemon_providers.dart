@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cache_effects.dart';
+import '../models/channel.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/schedule.dart';
@@ -54,6 +55,43 @@ final scheduleRunsProvider =
       final service = ref.watch(serviceProvider(hostId));
       if (service == null) return const [];
       return service.listSessions(SessionQuery(scheduleId: scheduleId));
+    });
+
+// ─── Channels ───────────────────────────────────────────────────────────────
+
+/// A host's channels, general first, then open, then closed.
+final channelsProvider = FutureProvider.family<List<Channel>, String>((
+  ref,
+  hostId,
+) async {
+  final service = ref.watch(serviceProvider(hostId));
+  if (service == null) return const [];
+  return service.listChannels();
+});
+
+/// One channel's spine. Reading it marks it read on the daemon, which is what
+/// clears the badge, so this is asked for when the conversation opens.
+final channelMessagesProvider =
+    FutureProvider.family<List<ChannelMessage>, (String, String)>((
+      ref,
+      arg,
+    ) async {
+      final (hostId, channelId) = arg;
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null || channelId.isEmpty) return const [];
+      return service.channelMessages(channelId);
+    });
+
+/// One thread, read when its screen opens.
+final channelThreadProvider =
+    FutureProvider.family<List<ChannelMessage>, (String, String, String)>((
+      ref,
+      arg,
+    ) async {
+      final (hostId, channelId, root) = arg;
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null || root.isEmpty) return const [];
+      return service.channelThread(channelId, root);
     });
 
 // ─── Sessions and notifications ─────────────────────────────────────────────

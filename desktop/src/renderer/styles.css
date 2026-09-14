@@ -737,6 +737,13 @@ small {
   font-size: 13px;
 }
 
+/* A `#name` is a handle, and is coloured like one — the same accent an
+   `@mention` wears. A member list is not a handle and keeps the text colour. */
+.channel-name.named {
+  color: var(--primary);
+  font-weight: 500;
+}
+
 .channel-row-sub {
   color: var(--on-surface-variant);
   font-size: 11px;
