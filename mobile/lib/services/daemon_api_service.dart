@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
+import '../models/channel.dart';
 import '../models/schedule.dart';
 import '../models/session.dart';
 import '../models/message.dart';
@@ -521,6 +522,136 @@ class DaemonAPIService extends ChangeNotifier {
       );
     }
     return Schedule.fromJson(data['schedule'] as Map<String, dynamic>);
+  }
+
+  // ─── Channels ──────────────────────────────────────────────────────────
+
+  /// Every channel on this host, the closed ones included.
+  ///
+  /// One request rather than two: the list shows the open ones and keeps the
+  /// closed behind a disclosure, and a second call would be a second thing to
+  /// keep in step.
+  Future<List<Channel>> listChannels() async {
+    final resp = await _api.get('/api/channels?archived=1');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('channels', resp.statusCode);
+    }
+    final data = jsonDecode(resp.body);
+    final list = (data['channels'] as List?) ?? [];
+    return list
+        .map((c) => Channel.fromJson(c as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// A channel's spine: what was said to it, without the threads hanging off.
+  /// Reading marks it read, which is what the unread count is counted against.
+  Future<List<ChannelMessage>> channelMessages(String id) async {
+    return _messages('/api/channels/${Uri.encodeComponent(id)}/messages');
+  }
+
+  /// One thread: the message it hangs off, then its replies.
+  Future<List<ChannelMessage>> channelThread(String id, String root) async {
+    return _messages(
+      '/api/channels/${Uri.encodeComponent(id)}/threads/${Uri.encodeComponent(root)}',
+    );
+  }
+
+  Future<List<ChannelMessage>> _messages(String path) async {
+    final resp = await _api.get(path);
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('channels', resp.statusCode);
+    }
+    final data = jsonDecode(resp.body);
+    final list = (data['messages'] as List?) ?? [];
+    return list
+        .map((m) => ChannelMessage.fromJson(m as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Says something. [threadRoot] answers a message rather than the channel,
+  /// and the daemon resolves it to a thread root so a reply to a reply joins
+  /// the same thread rather than opening a second layer.
+  Future<void> postToChannel(
+    String id,
+    String message, {
+    String threadRoot = '',
+    bool urgent = false,
+  }) async {
+    final resp = await _api.post(
+      '/api/channels/${Uri.encodeComponent(id)}/messages',
+      body: {'message': message, 'urgent': urgent, 'thread_root': threadRoot},
+    );
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('channels', resp.statusCode);
+    }
+  }
+
+  /// Makes a channel, or opens the one that already holds exactly these
+  /// sessions. The reply says which, because being shown an existing
+  /// conversation when you asked for a new one is otherwise unexplained.
+  Future<(Channel, bool)> createChannel({
+    required List<String> members,
+    String name = '',
+    String message = '',
+  }) async {
+    final resp = await _api.post(
+      '/api/channels',
+      body: {'name': name, 'members': members, 'message': message},
+    );
+    final data = jsonDecode(resp.body);
+    if (resp.statusCode != 200) {
+      throw Exception(
+        (data['message'] as String?) ?? 'could not start the channel',
+      );
+    }
+    return (
+      Channel.fromJson(data['channel'] as Map<String, dynamic>),
+      data['existing'] as bool? ?? false,
+    );
+  }
+
+  Future<void> addToChannel(String id, String sessionId) async {
+    final resp = await _api.post(
+      '/api/channels/${Uri.encodeComponent(id)}/members',
+      body: {'session': sessionId},
+    );
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('channels', resp.statusCode);
+    }
+  }
+
+  Future<void> renameChannel(String id, String name) async {
+    await _channelAction(id, 'rename', {'name': name});
+  }
+
+  /// Closes a channel, or reopens it. Closing is not hiding: the daemon
+  /// refuses every message and every join afterwards.
+  Future<void> setChannelArchived(String id, bool archived) async {
+    await _channelAction(id, 'archive', {'archived': archived});
+  }
+
+  Future<void> _channelAction(
+    String id,
+    String action,
+    Map<String, dynamic> body,
+  ) async {
+    final resp = await _api.post(
+      '/api/channels/${Uri.encodeComponent(id)}/$action',
+      body: body,
+    );
+    if (resp.statusCode != 200) {
+      final data = jsonDecode(resp.body);
+      // The daemon refuses what it will not do and says why — general cannot
+      // be renamed or closed — so its message is worth more than the status.
+      throw Exception((data['message'] as String?) ?? 'could not $action it');
+    }
+  }
+
+  Future<void> deleteChannel(String id) async {
+    final resp = await _api.delete('/api/channels/${Uri.encodeComponent(id)}');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('channels', resp.statusCode);
+    }
   }
 
   Future<void> deleteSchedule(String id) async {

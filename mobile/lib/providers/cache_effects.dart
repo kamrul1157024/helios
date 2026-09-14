@@ -53,6 +53,11 @@ enum CacheTarget {
   /// A host's schedules. Host-wide: a fire changes one row and the list is
   /// short, so there is nothing to gain from narrowing it.
   schedules,
+
+  /// A host's channels and whatever is open of them. Host-wide for the same
+  /// reason as schedules, and because a message moves both the list's unread
+  /// count and the conversation it was said in.
+  channels,
 }
 
 /// One thing to do to the cache.
@@ -182,6 +187,12 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
         InvalidateTarget(CacheTarget.files, hostId),
         InvalidateTarget(CacheTarget.git, hostId),
       ];
+
+    case 'channel_created':
+    case 'channel_updated':
+    case 'channel_deleted':
+    case 'channel_message':
+      return [InvalidateTarget(CacheTarget.channels, hostId)];
 
     case 'schedule_created':
     case 'schedule_updated':

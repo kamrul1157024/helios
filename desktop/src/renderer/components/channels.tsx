@@ -75,7 +75,9 @@ export function ChannelList({ hostId, name, showName }: {
             }}
           />
         ) : (
-          <span className="channel-name">{channelLabel(channel)}</span>
+          <span className={`channel-name${channel.name ? ' named' : ''}`}>
+            {channelLabel(channel)}
+          </span>
         )}
         {channel.mentions > 0 && !channel.archived && (
           <span className="badge mention" title="Somebody addressed you">
@@ -214,9 +216,12 @@ const GENERAL = 'general'
  *
  * An unnamed channel is its members, so it is shown by them rather than by the
  * id nobody chose — `ch_8f21a0` on a row says nothing about the conversation.
+ *
+ * A name carries a `#`, the mark every chat tool uses for a channel. The member
+ * list does not: `#Alpha, Beta +2` reads as a name somebody chose.
  */
 export function channelLabel(channel: Channel): string {
-  if (channel.name) return channel.name
+  if (channel.name) return `#${channel.name}`
   const titles = channel.members.map((id) => channel.titles[id] ?? id)
   if (titles.length === 0) return channel.id
   if (titles.length <= 2) return titles.join(', ')
