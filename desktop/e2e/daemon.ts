@@ -150,6 +150,8 @@ export type DaemonWrite =
   // What a bulk action issues: one call per session held, so a test can check
   // that all of them went out and none went twice.
   | { kind: 'delete'; sessionId: string }
+  // Ending the turn, not the session.
+  | { kind: 'stop'; sessionId: string }
   | { kind: 'channel'; name: string; members: string[]; message: string }
   | { kind: 'post'; channelId: string; message: string; threadRoot: string }
   | { kind: 'join'; channelId: string; session: string }
@@ -555,6 +557,7 @@ function written(path: string): boolean {
     path === '/api/sessions' ||
     path === '/api/uploads' ||
     path.endsWith('/send') ||
+    path.endsWith('/stop') ||
     path === '/api/channels' ||
     (path.startsWith('/api/channels/') &&
       (path.endsWith('/messages') ||
@@ -676,6 +679,14 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
     const id = path.slice('/api/sessions/'.length, path.lastIndexOf('/'))
     const { message } = JSON.parse(body.toString() || '{}')
     writes.push({ kind: 'send', sessionId: id, message: String(message ?? '') })
+    return { success: true }
+  }
+
+  if (path.endsWith('/stop')) {
+    writes.push({
+      kind: 'stop',
+      sessionId: path.slice('/api/sessions/'.length, path.lastIndexOf('/')),
+    })
     return { success: true }
   }
 
