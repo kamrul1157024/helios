@@ -1005,8 +1005,10 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   ///
   /// Which agent it runs and how it is doing are glyphs at the head of the
   /// title, in place of the four lines that say them in words. The directory,
-  /// the model, the memory and the time are all a tap away in the session
-  /// itself, and this list is read to pick a session out of.
+  /// the model and the memory are a tap away in the session itself, and this
+  /// list is read to pick a session out of. How long ago stays: it costs no
+  /// line of its own, and it is the only thing here that says which of these
+  /// have gone cold.
   Widget _compactBody(Session session, Color statusColor, ThemeData theme) {
     return Row(
       children: [
@@ -1027,6 +1029,14 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          session.timeAgo,
+          style: TextStyle(
+            fontSize: 11,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
       ],
