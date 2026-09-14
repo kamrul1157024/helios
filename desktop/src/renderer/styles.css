@@ -901,6 +901,24 @@ small {
   font-size: 11px;
 }
 
+/* The opening message, under the channel list in the picker. */
+.quick-message {
+  margin: 0 8px 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  resize: none;
+}
+
+.quick-message:focus-visible {
+  border-color: var(--primary);
+  outline: none;
+}
+
 /* A resolved @ inside a message. */
 .mention-chip {
   padding: 0 3px;

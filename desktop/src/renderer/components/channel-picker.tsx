@@ -26,6 +26,10 @@ export function ChannelPicker(): JSX.Element | null {
 function Picker({ hostId, sessions }: { hostId: string; sessions: string[] }): JSX.Element {
   const { data: channels = [], error } = useQuery(channelsQuery(hostId))
   const [query, setQuery] = useState('')
+  // Optional, and worth offering here rather than after: a channel opened with
+  // the question that prompted it saves its members a round trip, and the
+  // joining prompt carries it so nobody has to go and fetch it.
+  const [opening, setOpening] = useState('')
   const [active, setActive] = useState(0)
   const list = useRef<HTMLDivElement | null>(null)
 
@@ -57,8 +61,8 @@ function Picker({ hostId, sessions }: { hostId: string; sessions: string[] }): J
 
   const take = (index: number): void => {
     const channel = matches[index]
-    if (channel) void store.addToChannel(hostId, channel.id, sessions)
-    else void store.startChannel(hostId, sessions, naming)
+    if (channel) void store.addToChannel(hostId, channel.id, sessions, opening)
+    else void store.startChannel(hostId, sessions, naming, opening)
   }
 
   const keys = (event: React.KeyboardEvent): void => {
@@ -127,6 +131,26 @@ function Picker({ hostId, sessions }: { hostId: string; sessions: string[] }): J
             </button>
           )}
         </div>
+
+        {/* Below the list, because which channel comes first and what to say
+            comes second. Enter in here sends rather than picking a row. */}
+        <textarea
+          className="quick-message"
+          rows={2}
+          placeholder="Say something to open with (optional)"
+          value={opening}
+          onChange={(event) => setOpening(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              store.closeChannelPicker()
+              return
+            }
+            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            take(active)
+          }}
+        />
       </div>
     </div>
   )
