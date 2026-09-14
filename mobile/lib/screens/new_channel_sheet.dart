@@ -75,7 +75,9 @@ class _NewChannelSheetState extends rp.ConsumerState<NewChannelSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final hosts = ref.watch(hostManagerProvider).hosts;
+    // The machine the picker has checked out, so a channel is started on the
+    // one whose sessions are being looked at.
+    final hosts = ref.watch(visibleHostsProvider);
     if (hosts.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(24),

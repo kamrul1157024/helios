@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cache_effects.dart';
 import '../models/channel.dart';
+import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/schedule.dart';
@@ -258,6 +259,18 @@ final notificationsProvider =
 /// the cache — it has to be, because a host is what answers for it — but every
 /// screen above the host picker wants them merged, and the counts on the
 /// dashboard are across all of them.
+
+/// The hosts the picker has checked out: one, or all of them.
+///
+/// A screen that lists per-host things reads this rather than `hosts`, so
+/// picking a machine at the top narrows every tab. Choosing one and still
+/// being shown the others makes the picker look broken.
+final visibleHostsProvider = Provider<List<HostConnection>>((ref) {
+  final manager = ref.watch(hostManagerProvider);
+  final active = manager.activeHostId;
+  if (active == null) return manager.hosts;
+  return manager.hosts.where((h) => h.id == active).toList();
+});
 
 /// Every host's sessions, merged.
 final allHostSessionsProvider = Provider<AsyncValue<List<Session>>>((ref) {
