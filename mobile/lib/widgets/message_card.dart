@@ -94,6 +94,11 @@ class _ToolCallGroupCardState extends State<_ToolCallGroupCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
+            // The whole bar, not the glyphs on it. A detector defers to its
+            // child by default, and the child here is a row with a Spacer in
+            // the middle of it — so every tap that landed on the gap between
+            // the label and the chevron fell through to nothing.
+            behavior: HitTestBehavior.opaque,
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
               padding:
