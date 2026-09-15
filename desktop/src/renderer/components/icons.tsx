@@ -32,9 +32,19 @@ export function Chevron({
   dir?: ChevronDir
   className?: string
 }): JSX.Element {
-  const facing = dir ?? (open ? 'down' : 'right')
+  // A disclosure turns; a caret that merely points does not. Swapping the path
+  // for `down` would be a cut rather than a movement, so the open state is the
+  // right-facing path rotated, and the rotation is what the stylesheet eases.
+  const disclosing = dir === undefined
+  const facing = dir ?? 'right'
+  const turned = disclosing && open ? ' turned' : ''
   return (
-    <svg className={`chevron-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <svg
+      className={`chevron-icon${turned} ${className}`.trim()}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path d={PATHS[facing]} />
     </svg>
   )

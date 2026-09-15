@@ -76,6 +76,11 @@
   --r-lg: 10px;
   --r-xl: 12px;
   --sidebar: 360px;
+  /* Every disclosure in the window, and `COLLAPSE_MS` in collapsible.tsx,
+     which has to agree with it: that timer is when a shut row stops being
+     rendered. Long enough to read as a movement, short enough that nobody
+     waits for it — the same order as the colour transitions around it. */
+  --fold-ms: 140ms;
   /* The strip across the top of both panes: the sidebar's sessions/schedules
      switch, and the detail's tabs. One variable because they sit side by side
      at the same y, and a reader sees them as one row — two numbers that agreed
@@ -456,6 +461,12 @@ small {
   .spinner,
   .skeleton-line {
     animation-play-state: paused;
+  }
+
+  /* The disclosure still opens and shuts; it just does it in one frame. */
+  .collapsible,
+  .chevron-icon {
+    transition: none;
   }
 }
 
@@ -1749,6 +1760,31 @@ small {
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: transform var(--fold-ms) ease;
+}
+
+/* Open. The same 90 degrees the swapped path used to jump.  */
+.chevron-icon.turned {
+  transform: rotate(90deg);
+}
+
+/* A disclosure, opening and shutting on a height nobody can name in advance:
+   one grid row going from nothing to its content's height. `min-height: 0` is
+   what lets the inner box be smaller than what is in it, and the overflow is
+   what hides the part that has not arrived yet. */
+.collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--fold-ms) ease;
+}
+
+.collapsible.open {
+  grid-template-rows: 1fr;
+}
+
+.collapsible > .collapsible-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chevron {
