@@ -81,6 +81,26 @@ export function groupRuns(messages: TranscriptMessage[], live: boolean): Item[] 
 }
 
 /**
+ * Whether a turn has to mount open: the reader already opened a row in it.
+ *
+ * A run is only grouped once the agent has moved on from it, so a turn can
+ * form around rows that were on screen as themselves a moment ago. Folding it
+ * then would take back a press — the reader opened that call, and nothing they
+ * did closed it.
+ */
+export function holdsOpenedRow(
+  messages: TranscriptMessage[],
+  indices: number[],
+  opened: ReadonlySet<number>,
+): boolean {
+  if (opened.size === 0) return false
+  return indices.some((index) => {
+    const message = messages[index]
+    return message !== undefined && opened.has(message.seq)
+  })
+}
+
+/**
  * What the turn did, counted by kind: "6 shell, 2 writes, 4 reads".
  *
  * Kinds rather than tool names: "3 Edits, 1 MultiEdit, 1 Write" is the same
