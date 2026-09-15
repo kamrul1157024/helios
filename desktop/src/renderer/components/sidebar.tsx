@@ -49,6 +49,7 @@ import {
   rankOf,
   type GroupNode,
 } from './grouping.ts'
+import { Collapsible } from './collapsible.tsx'
 import { GroupPicker } from './group-picker.tsx'
 import { Modal } from './newsession.tsx'
 import { ScheduleHost } from './schedules.tsx'
@@ -871,8 +872,7 @@ export function Sidebar({
                   )}
                 </div>
 
-                {!isFolded && (
-                  <div className="group-rows">
+                <Collapsible open={!isFolded} className="group-rows">
                     {/* `real`, because Ungrouped's key is "" — the same string
                         the host's own "+ Group" sets. Without this the one
                         click mounts two fields, the second steals focus from
@@ -886,10 +886,9 @@ export function Sidebar({
                         }}
                       />
                     )}
-                    {node.children.map((child) => renderNode(child))}
-                    {node.sessions.map((session) => renderRow(session, path))}
-                  </div>
-                )}
+                  {node.children.map((child) => renderNode(child))}
+                  {node.sessions.map((session) => renderRow(session, path))}
+                </Collapsible>
               </div>
             )
           }
@@ -920,33 +919,34 @@ export function Sidebar({
                     left, and the sessions it is not showing on the right. Both
                     are facts about this machine, and neither is worth a row of
                     its own. */}
-                {!isCollapsed && (
-                  <div className="host-meta">
-                    <HostMeter stats={stats[host.id]} />
-                    {groupMode === 'manual' && !groupsUnsupported[host.id] && (
-                      <button
-                        className="link"
-                        onClick={() => setCreatingIn(`${host.id}:`)}
-                        title="A group at the top level, with no parent"
-                      >
-                        + Group
-                      </button>
-                    )}
-                    {(hidden > 0 || revealed) && (
-                      <button
-                        className="link show-terminated"
-                        onClick={() =>
-                          setShowTerminated((current) => ({ ...current, [host.id]: !current[host.id] }))
-                        }
-                      >
-                        {revealed ? 'Hide terminated' : `Show ${hidden} terminated`}
-                      </button>
-                    )}
-                  </div>
-                )}
+                <Collapsible open={!isCollapsed} className="host-meta">
+                  <HostMeter stats={stats[host.id]} />
+                  {groupMode === 'manual' && !groupsUnsupported[host.id] && (
+                    <button
+                      className="link"
+                      onClick={() => setCreatingIn(`${host.id}:`)}
+                      title="A group at the top level, with no parent"
+                    >
+                      + Group
+                    </button>
+                  )}
+                  {(hidden > 0 || revealed) && (
+                    <button
+                      className="link show-terminated"
+                      onClick={() =>
+                        setShowTerminated((current) => ({ ...current, [host.id]: !current[host.id] }))
+                      }
+                    >
+                      {revealed ? 'Hide terminated' : `Show ${hidden} terminated`}
+                    </button>
+                  )}
+                </Collapsible>
               </div>
 
-              {!isCollapsed && groupMode === 'manual' && creatingIn === `${host.id}:` && (
+              {/* One wrapper for the whole body, so collapsing a host is one
+                  movement rather than four things leaving at once. */}
+              <Collapsible open={!isCollapsed}>
+              {groupMode === 'manual' && creatingIn === `${host.id}:` && (
                 <InlineNameField
                   onCancel={() => setCreatingIn(null)}
                   onCommit={(name) => {
@@ -956,17 +956,16 @@ export function Sidebar({
                 />
               )}
 
-              {!isCollapsed &&
-                (grouping
-                  ? nodes.map((node) => renderNode(node))
-                  : rows.map((row) => renderRow(row.session, '')))}
+              {grouping
+                ? nodes.map((node) => renderNode(node))
+                : rows.map((row) => renderRow(row.session, ''))}
 
               {/* What a schedule started, under what the user started. Folded
                   until asked for, because a schedule that fires hourly would
                   otherwise bury the sessions the sidebar is for. Opening a run
                   from the schedules tab unfolds it, so the row it selects is on
                   screen rather than behind a header. */}
-              {!isCollapsed && automated.length > 0 && (
+              {automated.length > 0 && (
                 <div className="auto-runs">
                   <button
                     className={autoOpen ? 'auto-head open' : 'auto-head'}
@@ -1018,8 +1017,7 @@ export function Sidebar({
                   Built from the row's own elements rather than a stack of bars,
                   so it is the height of a session row by construction and stays
                   that way when the row changes. */}
-              {!isCollapsed &&
-                loading &&
+              {loading &&
                 [0, 1, 2].map((index) => (
                   <div key={index} className="session-row skeleton" aria-hidden="true">
                     <div className="row-main">
@@ -1034,9 +1032,10 @@ export function Sidebar({
                   </div>
                 ))}
 
-              {!isCollapsed && !loading && count === 0 && hidden === 0 && automated.length === 0 && (
+              {!loading && count === 0 && hidden === 0 && automated.length === 0 && (
                 <p className="empty-note">{query ? 'Nothing matches' : 'No sessions'}</p>
               )}
+              </Collapsible>
             </section>
           )
         })}
