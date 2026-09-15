@@ -27,7 +27,20 @@ import {
   type Session,
   type HostStats,
 } from '../../shared/models.ts'
-import { Chevron, Ticks, Console, Cpu, Memory, Pencil, Plus, ProviderMark, Search, Sort } from './icons.tsx'
+import {
+  Chevron,
+  Ticks,
+  Console,
+  Cpu,
+  Folder,
+  FolderLines,
+  FolderStack,
+  Memory,
+  Pencil,
+  Plus,
+  ProviderMark,
+  Search,
+} from './icons.tsx'
 import {
   buildCwdTree,
   buildTree,
@@ -542,7 +555,16 @@ export function Sidebar({
             title={'Arrange — grouping, and what each level sorts by.'}
             onClick={() => setPicker((open) => !open)}
           >
-            <Sort />
+            {/* A folder, and which folder says what the list is grouped by.
+                The phone wears the same three glyphs on the same control, and
+                one button in two apps should not look like two buttons. */}
+            {groupMode === 'manual' ? (
+              <FolderStack />
+            ) : groupMode === 'auto' ? (
+              <FolderLines />
+            ) : (
+              <Folder />
+            )}
           </button>
           {picker && (
             <GroupPicker

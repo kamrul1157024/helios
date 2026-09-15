@@ -220,6 +220,26 @@ export function Folder({ className = '' }: { className?: string }): JSX.Element 
   )
 }
 
+/** Two folders, one behind the other: the tree of groups the user keeps. */
+export function FolderStack({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M6.5 7.5V6A1.5 1.5 0 018 4.5h3l1.6 2h6.4A1.5 1.5 0 0120.5 8v1.5" />
+      <path d="M3.5 10.5A1.5 1.5 0 015 9h3.5l1.6 2H17a1.5 1.5 0 011.5 1.5V18A1.5 1.5 0 0117 19.5H5A1.5 1.5 0 013.5 18v-7.5z" />
+    </svg>
+  )
+}
+
+/** A folder with the rows inside showing: groups worked out, not made. */
+export function FolderLines({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3.5 6.5A1.5 1.5 0 015 5h4l2 2.5h8A1.5 1.5 0 0120.5 9v8.5A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-11z" />
+      <path d="M8 12h8M8 15.5h5" />
+    </svg>
+  )
+}
+
 /** A terminal, for the one action a row offers under the pointer. */
 export function Console({ className = '' }: { className?: string }): JSX.Element {
   return (
