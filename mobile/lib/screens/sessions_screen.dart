@@ -5,10 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/session.dart';
+import '../models/session_group.dart';
 import '../providers/daemon_providers.dart';
+import '../providers/grouping_providers.dart';
 import '../providers/theme_provider.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
+import '../utils/grouping.dart';
+import '../widgets/group_header.dart';
+import '../widgets/group_picker_sheet.dart';
 import '../widgets/provider_mark.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
@@ -77,9 +82,22 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     return 3;
   }
 
-  List<Session> _sortSessions(List<Session> sessions, {bool manual = false}) {
+  List<Session> _sortSessions(
+    List<Session> sessions, {
+    bool manual = false,
+    bool grouped = false,
+  }) {
+    // Inside a tree, a session's place is the positions of the groups above it
+    // with its own order last. Comparing only `sortOrder` would arrange the
+    // whole host as one list and then hang it on a tree that disagrees.
+    final depth = grouped ? depthOf(sessions) : 0;
     sessions.sort((a, b) {
       if (manual) {
+        if (grouped) {
+          final rankCmp = byRank(rankOf(a, depth), rankOf(b, depth));
+          if (rankCmp != 0) return rankCmp;
+          return b.createdAt.compareTo(a.createdAt);
+        }
         final handCmp = a.sortOrder.compareTo(b.sortOrder);
         if (handCmp != 0) return handCmp;
         return b.createdAt.compareTo(a.createdAt);
@@ -140,6 +158,25 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     await ref
         .read(sessionsProvider(allSessionsKey(service.hostId)).notifier)
         .reorder(ids);
+  }
+
+  /// A card moved inside one group.
+  ///
+  /// The whole tree is posted, not the node: the daemon holds one flat order
+  /// per host, so naming only these sessions would renumber them from zero and
+  /// scatter every other group around them.
+  Future<void> _onNodeReorder(
+    DaemonAPIService service,
+    List<GroupNode> tree,
+    GroupNode node,
+    int from,
+    int to,
+  ) async {
+    if (to > from) to -= 1;
+    node.sessions.insert(to, node.sessions.removeAt(from));
+    await ref
+        .read(sessionsProvider(allSessionsKey(service.hostId)).notifier)
+        .reorder(flattenSessions(tree).map((s) => s.sessionId).toList());
   }
 
   String get _filterParam {
@@ -422,12 +459,14 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
 
         final manual = ref.watch(manualOrderProvider);
         final orderable = manual ? _orderableService(hm) : null;
+        final grouping = _groupingFor(hm);
         final matching = _filterSessions(sessions);
         final filtered = _sortSessions(
           _hidingTerminated
               ? matching.where((s) => !s.isTerminated).toList()
               : matching,
           manual: manual,
+          grouped: grouping != null,
         );
 
         return Column(
@@ -442,7 +481,14 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                       onRefresh: () => hm.activeHostId != null
                           ? ref.refreshHost(hm.activeHostId!)
                           : ref.refreshAllHosts(),
-                      child: manual && orderable != null
+                      child: grouping != null
+                          ? _buildGroupedList(
+                              grouping,
+                              filtered,
+                              hm,
+                              orderable,
+                            )
+                          : manual && orderable != null
                           ? ReorderableListView.builder(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
@@ -475,6 +521,430 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
         );
       },
     );
+  }
+
+  /// Whether the list is drawn as a tree, and what it needs to draw one.
+  ///
+  /// Null means flat. Three things force that: the mode is off; more than one
+  /// host is in view, and a group key from one daemon means nothing on
+  /// another; or the mode is Groups against a daemon that has none.
+  _Grouping? _groupingFor(HostManager hm) {
+    final prefs = ref.watch(groupingProvider);
+    if (prefs.mode == GroupMode.off) return null;
+    final hostId = hm.activeHostId;
+    if (hostId == null) return null;
+
+    if (prefs.mode == GroupMode.auto) {
+      return _Grouping(hostId, prefs, GroupCatalog.empty);
+    }
+    final catalog =
+        ref.watch(groupsProvider(hostId)).valueOrNull ?? GroupCatalog.empty;
+    if (catalog.unsupported) return null;
+    return _Grouping(hostId, prefs, catalog);
+  }
+
+  IconData _groupingIcon(GroupMode mode) => switch (mode) {
+    GroupMode.off => Icons.folder_open_outlined,
+    GroupMode.manual => Icons.folder_copy,
+    GroupMode.auto => Icons.snippet_folder,
+  };
+
+  void _openGroupingSheet(HostManager hm, List<Session> visible) {
+    final hostId = hm.activeHostId;
+    final catalog = hostId == null
+        ? GroupCatalog.empty
+        : ref.read(groupsProvider(hostId)).valueOrNull ?? GroupCatalog.empty;
+    showGroupingSheet(
+      context,
+      ref,
+      unsupported: catalog.unsupported,
+      hostName: hostId == null
+          ? 'This machine'
+          : hm.hostById(hostId)?.label ?? 'This machine',
+      manualOrder: ref.read(manualOrderProvider),
+      onManualOrder: (manual) {
+        if (manual == ref.read(manualOrderProvider)) return;
+        _toggleManualOrder(hm, visible);
+      },
+    );
+  }
+
+  /// Whether this host can be filed into at all: the mode has to be Groups,
+  /// and the daemon has to hold them.
+  bool _canFile(String hostId) {
+    if (ref.read(groupingProvider).mode != GroupMode.manual) return false;
+    final catalog = ref.read(groupsProvider(hostId)).valueOrNull;
+    return catalog != null && !catalog.unsupported;
+  }
+
+  GroupCatalog _catalogOf(String hostId) =>
+      ref.read(groupsProvider(hostId)).valueOrNull ?? GroupCatalog.empty;
+
+  /// Makes a group and answers with its key, or null if the name was left
+  /// empty or the daemon refused.
+  Future<String?> _createGroup(String hostId, {String parent = ''}) async {
+    final name = await promptForGroupName(
+      context,
+      title: parent.isEmpty ? 'New group' : 'New subgroup',
+      action: 'Create',
+    );
+    if (name == null || !mounted) return null;
+    final made = await ref
+        .read(groupsProvider(hostId).notifier)
+        .create(name, parent: parent);
+    return made?.key;
+  }
+
+  Future<void> _fileSession(Session session) async {
+    final chosen = await showGroupPicker(
+      context,
+      catalog: _catalogOf(session.hostId),
+      current: session.groupKey,
+      rootLabel: kUngroupedName,
+      onCreate: () => _createGroup(session.hostId),
+    );
+    if (chosen == null || !mounted) return;
+    await _fileSessionUnder(session, chosen);
+  }
+
+  /// Files [session] under [groupKey], or unfiles it when that is empty.
+  ///
+  /// The ancestry goes with the key because the row sorts by the positions in
+  /// it: painting the key alone would drop the session to the end of the tree
+  /// until the refetch landed.
+  Future<void> _fileSessionUnder(Session session, String groupKey) async {
+    if (groupKey == session.groupKey) return;
+    await ref
+        .read(sessionsProvider(allSessionsKey(session.hostId)).notifier)
+        .patch(
+          session.sessionId,
+          group: groupKey,
+          groupPath: _catalogOf(session.hostId).ancestryOf(groupKey),
+        );
+  }
+
+  /// The grip that drags a session onto a group.
+  ///
+  /// Its own target rather than a long press on the card: a long press already
+  /// opens the options sheet, and two long-press gestures on one widget is a
+  /// coin toss. This one drags on contact, and it is only there in the mode
+  /// where there is something to drop onto.
+  Widget _fileHandle(Session session, ThemeData theme) {
+    final icon = Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Icon(
+        Icons.drive_file_move_outline,
+        size: 20,
+        color: theme.colorScheme.onSurfaceVariant,
+        semanticLabel: 'Drag onto a group to file',
+      ),
+    );
+
+    return Draggable<Session>(
+      data: session,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: Material(
+        elevation: 4,
+        color: theme.colorScheme.surfaceContainerHighest,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Text(
+            session.displayTitle,
+            style: const TextStyle(fontSize: 13),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: icon),
+      child: icon,
+    );
+  }
+
+  /// The group a node sits in, which is what its siblings share.
+  String _parentOf(GroupNode node) =>
+      node.path.length > 1 ? node.path[node.path.length - 2] : '';
+
+  Future<void> _nudgeGroup(GroupNode node, String hostId, int by) async {
+    final parent = _parentOf(node);
+    final keys = _catalogOf(
+      hostId,
+    ).childrenOf(parent).map((g) => g.key).toList();
+    final at = keys.indexOf(node.key);
+    final to = at + by;
+    if (at < 0 || to < 0 || to >= keys.length) return;
+    keys.insert(to, keys.removeAt(at));
+    await ref.read(groupsProvider(hostId).notifier).reorder(parent, keys);
+  }
+
+  Future<void> _renameGroup(GroupNode node, String hostId) async {
+    final name = await promptForGroupName(
+      context,
+      title: 'Rename group',
+      initial: node.name,
+    );
+    if (name == null || !mounted) return;
+    await ref.read(groupsProvider(hostId).notifier).rename(node.key, name);
+  }
+
+  Future<void> _moveGroup(GroupNode node, String hostId) async {
+    final chosen = await showGroupPicker(
+      context,
+      catalog: _catalogOf(hostId),
+      current: _parentOf(node),
+      excludeSubtreeOf: node.key,
+      title: 'Move ${node.name} into',
+      rootLabel: 'Top level',
+      onCreate: () => _createGroup(hostId),
+    );
+    if (chosen == null || !mounted) return;
+    await ref.read(groupsProvider(hostId).notifier).move(node.key, chosen);
+  }
+
+  Future<void> _deleteGroup(GroupNode node, String hostId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${node.name}'),
+        content: const Text(
+          'The sessions and subgroups inside it move up a level. Nothing is '
+          'deleted but the group itself.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(groupsProvider(hostId).notifier).delete(node.key);
+  }
+
+  /// What a group header offers. Nothing here applies to Ungrouped, which is
+  /// synthetic, or to a directory, whose key is a path nobody stored.
+  void _showGroupMenu(GroupNode node, String hostId) {
+    final siblings = _catalogOf(hostId).childrenOf(_parentOf(node));
+    final at = siblings.indexWhere((g) => g.key == node.key);
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      node.name,
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(
+                    '${node.total}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Rename'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (mounted) _renameGroup(node, hostId);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.create_new_folder_outlined),
+              title: const Text('New subgroup'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (mounted) _createGroup(hostId, parent: node.key);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_move_outlined),
+              title: const Text('Move to…'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (mounted) _moveGroup(node, hostId);
+              },
+            ),
+            if (at > 0)
+              ListTile(
+                leading: const Icon(Icons.arrow_upward),
+                title: const Text('Move up'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (mounted) _nudgeGroup(node, hostId, -1);
+                },
+              ),
+            if (at >= 0 && at < siblings.length - 1)
+              ListTile(
+                leading: const Icon(Icons.arrow_downward),
+                title: const Text('Move down'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (mounted) _nudgeGroup(node, hostId, 1);
+                },
+              ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_outline,
+                color: Theme.of(ctx).colorScheme.error,
+              ),
+              title: Text(
+                'Delete',
+                style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (mounted) _deleteGroup(node, hostId);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupedList(
+    _Grouping grouping,
+    List<Session> visible,
+    HostManager hm,
+    DaemonAPIService? orderable,
+  ) {
+    final tree = grouping.prefs.mode == GroupMode.auto
+        ? buildCwdTree(visible, grouping.prefs.order, grouping.prefs.dirOrder)
+        : buildTree(visible, grouping.catalog.groups);
+
+    return CustomScrollView(
+      slivers: [
+        for (final node in tree)
+          ..._nodeSlivers(node, tree, 0, grouping, hm, orderable),
+        // The only way to make the first group: until one exists there is no
+        // header to long-press, and the tree is a single Ungrouped bucket.
+        if (grouping.prefs.mode == GroupMode.manual)
+          SliverToBoxAdapter(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New group'),
+                onPressed: () => _createGroup(grouping.hostId),
+              ),
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+  }
+
+  /// One node: its header, then the groups inside it, then the sessions that
+  /// stop here. Children first, as the desktop draws them — a subgroup is a
+  /// heading over its sessions, not a footnote under them.
+  ///
+  /// A list per node rather than one list of mixed rows. The daemon holds one
+  /// flat order per host and a card may only be dropped inside the node it
+  /// started in, so giving each node its own index space is what makes that
+  /// rule hold without policing a drag across a header.
+  List<Widget> _nodeSlivers(
+    GroupNode node,
+    List<GroupNode> tree,
+    int depth,
+    _Grouping grouping,
+    HostManager hm,
+    DaemonAPIService? orderable,
+  ) {
+    final folded = grouping.prefs.isFolded(grouping.hostId, node.path);
+    // A directory node's key is where the sessions run, and Ungrouped is not a
+    // group at all, so neither has anything a menu could change.
+    final editable =
+        grouping.prefs.mode == GroupMode.manual && !node.isUngrouped;
+    Widget header({bool highlighted = false}) => GroupHeader(
+      node: node,
+      depth: depth,
+      folded: folded,
+      highlighted: highlighted,
+      onTap: () => ref
+          .read(groupingPrefsProvider.notifier)
+          .toggleFold(grouping.hostId, node.path),
+      onMenu: editable ? () => _showGroupMenu(node, grouping.hostId) : null,
+    );
+
+    final slivers = <Widget>[
+      SliverToBoxAdapter(
+        // A directory is where a session runs, so it is not a place anything
+        // can be dropped. Ungrouped is: dropping there unfiles the session.
+        child: grouping.prefs.mode != GroupMode.manual
+            ? header()
+            : DragTarget<Session>(
+                onWillAcceptWithDetails: (details) =>
+                    details.data.hostId == grouping.hostId &&
+                    details.data.groupKey != node.key,
+                onAcceptWithDetails: (details) =>
+                    _fileSessionUnder(details.data, node.key),
+                builder: (context, candidate, _) =>
+                    header(highlighted: candidate.isNotEmpty),
+              ),
+      ),
+    ];
+    if (folded) return slivers;
+
+    for (final child in node.children) {
+      slivers.addAll(
+        _nodeSlivers(child, tree, depth + 1, grouping, hm, orderable),
+      );
+    }
+
+    if (node.sessions.isNotEmpty) {
+      final padding = EdgeInsets.fromLTRB(12.0 + depth * 8, 0, 12, 0);
+      final fileable = grouping.prefs.mode == GroupMode.manual;
+      slivers.add(
+        SliverPadding(
+          padding: padding,
+          sliver: orderable == null
+              ? SliverList.builder(
+                  itemCount: node.sessions.length,
+                  itemBuilder: (context, index) => _buildSwipeableCard(
+                    node.sessions[index],
+                    hm,
+                    fileable: fileable,
+                  ),
+                )
+              : SliverReorderableList(
+                  itemCount: node.sessions.length,
+                  onReorder: (from, to) =>
+                      _onNodeReorder(orderable, tree, node, from, to),
+                  itemBuilder: (context, index) => _buildSwipeableCard(
+                    node.sessions[index],
+                    hm,
+                    reorderIndex: index,
+                    fileable: fileable,
+                  ),
+                ),
+        ),
+      );
+    }
+    return slivers;
   }
 
   Widget _buildMultiSelectBar(HostManager hm) {
@@ -602,19 +1072,25 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           ),
         ),
         const Spacer(),
-        IconButton(
-          icon: Icon(
-            ref.watch(manualOrderProvider) ? Icons.swap_vert : Icons.sort,
-            size: 20,
-            color: ref.watch(manualOrderProvider)
-                ? theme.colorScheme.primary
-                : null,
-          ),
-          tooltip: ref.watch(manualOrderProvider)
-              ? 'Sort: Manual — long-press a session to move it. Tap to sort by activity instead.'
-              : 'Sort: Activity — active first, then most recent. Tap to arrange them by hand instead.',
-          visualDensity: VisualDensity.compact,
-          onPressed: () => _toggleManualOrder(hm, visible),
+        // One control for both questions, as the desktop has it: grouping and
+        // sorting both arrange the list, and two buttons that mean "order"
+        // make the reader guess which one they want.
+        Builder(
+          builder: (context) {
+            final mode = ref.watch(groupingProvider).mode;
+            final manual = ref.watch(manualOrderProvider);
+            final on = mode != GroupMode.off || manual;
+            return IconButton(
+              icon: Icon(
+                _groupingIcon(mode),
+                size: 20,
+                color: on ? theme.colorScheme.primary : null,
+              ),
+              tooltip: 'Arrange — grouping, and what the list sorts by',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _openGroupingSheet(hm, visible),
+            );
+          },
         ),
         IconButton(
           icon: const Icon(Icons.folder_outlined, size: 20),
@@ -716,10 +1192,13 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   /// [reorderIndex] is the card's place in a list arranged by hand, and null
   /// when the list sorts itself. The drag handle needs it to say which card is
   /// being moved.
+  ///
+  /// [fileable] adds the grip that drags the session onto a group.
   Widget _buildSwipeableCard(
     Session session,
     HostManager hm, {
     int? reorderIndex,
+    bool fileable = false,
   }) {
     final theme = Theme.of(context);
     // Terminated is the archival state: putting a session away is ending it,
@@ -814,7 +1293,12 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           return false;
         }
       },
-      child: _buildSessionCard(session, hm, reorderIndex: reorderIndex),
+      child: _buildSessionCard(
+        session,
+        hm,
+        reorderIndex: reorderIndex,
+        fileable: fileable,
+      ),
     );
   }
 
@@ -822,6 +1306,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     Session session,
     HostManager hm, {
     int? reorderIndex,
+    bool fileable = false,
   }) {
     final theme = Theme.of(context);
     final statusColor = _statusColor(session.status, theme);
@@ -1031,6 +1516,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                       // already answers a long press by opening its options:
                       // the drag would never win that gesture. Dragging starts
                       // the moment the handle is touched.
+                      if (fileable) _fileHandle(session, theme),
                       if (reorderIndex != null)
                         ReorderableDragStartListener(
                           index: reorderIndex,
@@ -1170,6 +1656,18 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                   _setCwdFilter(session.cwd, session.project);
                 },
               ),
+              // Only against a daemon that holds groups. A directory group is
+              // where the session runs, which is not something a menu moves.
+              if (_canFile(hostId))
+                ListTile(
+                  leading: const Icon(Icons.drive_file_move_outlined),
+                  title: const Text('Move to group…'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    if (!mounted) return;
+                    _fileSession(session);
+                  },
+                ),
               ListTile(
                 leading: Icon(
                   session.pinned ? Icons.push_pin : Icons.push_pin_outlined,
@@ -1547,4 +2045,14 @@ class _PulsingIconState extends State<_PulsingIcon>
       },
     );
   }
+}
+
+/// What the list needs to draw a tree: whose groups, the reader's choices, and
+/// the catalogue those choices are read against.
+class _Grouping {
+  final String hostId;
+  final GroupingPrefs prefs;
+  final GroupCatalog catalog;
+
+  const _Grouping(this.hostId, this.prefs, this.catalog);
 }

@@ -1,3 +1,5 @@
+import 'session_group.dart';
+
 class Session {
   final String hostId;
   final String sessionId;
@@ -33,6 +35,13 @@ class Session {
   /// it goes negative: a new session takes one less than the smallest.
   final int sortOrder;
 
+  /// The group the session is filed under, or empty for none.
+  final String groupKey;
+
+  /// That group and its ancestors, outermost first. Served only when the list
+  /// was asked for with `grouped=1`, and empty for an unfiled session.
+  final List<SessionGroup> groupPath;
+
   Session({
     this.hostId = '',
     required this.sessionId,
@@ -54,6 +63,8 @@ class Session {
     required this.createdAt,
     this.endedAt,
     this.sortOrder = 0,
+    this.groupKey = '',
+    this.groupPath = const [],
   });
 
   factory Session.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
@@ -78,6 +89,11 @@ class Session {
       createdAt: json['created_at'] as String,
       endedAt: json['ended_at'] as String?,
       sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
+      groupKey: json['group_key'] as String? ?? '',
+      groupPath: [
+        for (final g in (json['group_path'] as List? ?? const []))
+          SessionGroup.fromJson(g as Map<String, dynamic>),
+      ],
     );
   }
 
@@ -138,6 +154,8 @@ class Session {
     int? sortOrder,
     String? status,
     String? terminal,
+    String? groupKey,
+    List<SessionGroup>? groupPath,
   }) {
     return Session(
       hostId: hostId,
@@ -160,6 +178,8 @@ class Session {
       createdAt: createdAt,
       endedAt: endedAt,
       sortOrder: sortOrder ?? this.sortOrder,
+      groupKey: groupKey ?? this.groupKey,
+      groupPath: groupPath ?? this.groupPath,
     );
   }
 

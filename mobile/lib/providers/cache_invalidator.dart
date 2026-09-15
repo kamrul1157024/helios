@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cache_effects.dart';
 import 'daemon_providers.dart';
+import 'grouping_providers.dart';
 
 /// Subscribes the cache to the daemon's event stream.
 ///
@@ -43,6 +44,11 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
       // moved too, and naming a single argument would miss whatever the user
       // has since typed. Invalidating the family covers all of them.
       ref.invalidate(sessionsProvider);
+      // A group made, renamed or deleted anywhere announces itself as
+      // `session_updated` and nothing else (internal/server/groups.go), so the
+      // catalogue rides along with the list. Without this, a group made on the
+      // desktop reaches the phone as a session whose key names nothing.
+      ref.invalidate(groupsProvider(host));
     case CacheTarget.notifications:
       ref.invalidate(notificationsProvider(host));
     case CacheTarget.schedules:
