@@ -9,6 +9,7 @@ import '../models/provider.dart';
 import '../models/channel.dart';
 import '../models/schedule.dart';
 import '../models/session.dart';
+import '../models/session_group.dart';
 import '../models/message.dart';
 import '../utils/file_types.dart';
 import 'api_client.dart';
@@ -702,6 +703,11 @@ class DaemonAPIService extends ChangeNotifier {
     if (query.scheduleId != null && query.scheduleId!.isNotEmpty) {
       params['schedule_id'] = query.scheduleId!;
     }
+    // Always, rather than only when the tree is on screen: the query is the
+    // cache key, and a second variant of it would leave every optimistic write
+    // painting an entry the screen is not reading. A daemon from before
+    // grouping ignores the parameter.
+    params['grouped'] = '1';
 
     final queryString = params.entries
         .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
@@ -916,16 +922,22 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
-  /// Writes a session's pinned flag or title. The painting is the cache's job.
+  /// Writes a session's pinned flag, title, or group. The painting is the
+  /// cache's job.
+  ///
+  /// An empty [group] unfiles the session, so the field is sent whenever it is
+  /// given rather than whenever it is non-empty: the empty string is an answer.
   Future<bool> patchSession(
     String sessionId, {
     bool? pinned,
     String? title,
+    String? group,
   }) async {
     try {
       final body = <String, dynamic>{};
       if (pinned != null) body['pinned'] = pinned;
       if (title != null) body['title'] = title;
+      if (group != null) body['group'] = group;
       final resp = await _api.patch('/api/sessions/$sessionId', body: body);
       if (resp.statusCode == 200) return true;
     } catch (e) {
@@ -1074,6 +1086,85 @@ class DaemonAPIService extends ChangeNotifier {
       if (resp.statusCode == 200) return true;
     } catch (e) {
       debugPrint('[$hostId] setSessionOrder error: $e');
+    }
+    return false;
+  }
+
+  // ==================== Groups API ====================
+
+  /// Every group on this host, parents before children.
+  ///
+  /// Throws rather than swallowing, because the caller has to tell a daemon
+  /// that cannot hold groups from one that failed to answer: a 404 is the old
+  /// daemon, and the tree falls back to flat without saying anything is wrong.
+  Future<List<SessionGroup>> listGroups() async {
+    final resp = await _api.get('/api/groups');
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('groups', resp.statusCode);
+    }
+    final data = jsonDecode(resp.body);
+    final list = (data['groups'] as List?) ?? [];
+    return list
+        .map((g) => SessionGroup.fromJson(g as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Makes a group. An empty [parent] makes it a root.
+  Future<SessionGroup?> createGroup(String name, {String parent = ''}) async {
+    try {
+      final resp = await _api.post(
+        '/api/groups',
+        body: {'name': name, 'parent': parent},
+      );
+      if (resp.statusCode == 200) {
+        return SessionGroup.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+    } catch (e) {
+      debugPrint('[$hostId] createGroup error: $e');
+    }
+    return null;
+  }
+
+  /// Renames a group, moves it under another, or both.
+  Future<bool> patchGroup(String key, {String? name, String? parent}) async {
+    try {
+      final body = <String, dynamic>{};
+      if (name != null) body['name'] = name;
+      if (parent != null) body['parent'] = parent;
+      final resp = await _api.patch(
+        '/api/groups/${Uri.encodeComponent(key)}',
+        body: body,
+      );
+      if (resp.statusCode == 200) return true;
+    } catch (e) {
+      debugPrint('[$hostId] patchGroup error: $e');
+    }
+    return false;
+  }
+
+  /// Deletes a group. Its subgroups and sessions come up a level.
+  Future<bool> deleteGroup(String key) async {
+    try {
+      final resp = await _api.delete('/api/groups/${Uri.encodeComponent(key)}');
+      if (resp.statusCode == 200) return true;
+    } catch (e) {
+      debugPrint('[$hostId] deleteGroup error: $e');
+    }
+    return false;
+  }
+
+  /// Arranges one parent's children. [keys] is that whole sibling list.
+  Future<bool> setGroupOrder(String parent, List<String> keys) async {
+    try {
+      final resp = await _api.post(
+        '/api/groups/order',
+        body: {'parent': parent, 'order': keys},
+      );
+      if (resp.statusCode == 200) return true;
+    } catch (e) {
+      debugPrint('[$hostId] setGroupOrder error: $e');
     }
     return false;
   }

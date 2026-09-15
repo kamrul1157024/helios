@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cache_effects.dart';
+import 'grouping_providers.dart';
 import '../models/channel.dart';
 import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/schedule.dart';
 import '../models/session.dart';
+import '../models/session_group.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
 
@@ -150,12 +152,23 @@ class SessionsNotifier
     state = AsyncData(patchSessionRow(held, sessionId, status, terminal));
   }
 
-  /// Pins or renames a row, painting it before the daemon answers.
+  /// Pins, renames or files a row, painting it before the daemon answers.
   ///
   /// The paint is deferred by a microtask because the sheet that triggered it
   /// is usually mid-pop, and rebuilding its dependents inside that transition
   /// trips the framework's `_dependents.isEmpty` assertion.
-  Future<bool> patch(String sessionId, {bool? pinned, String? title}) async {
+  ///
+  /// [group] is the key to file under, or empty to unfile. [groupPath] is that
+  /// group's ancestry, which the caller reads out of the catalogue: the row
+  /// sorts by the positions in it, so painting the key alone would drop the
+  /// session to the end of the tree until the refetch landed.
+  Future<bool> patch(
+    String sessionId, {
+    bool? pinned,
+    String? title,
+    String? group,
+    List<SessionGroup>? groupPath,
+  }) async {
     final service = ref.read(serviceProvider(arg.$1));
     final previous = state.valueOrNull;
     if (service == null) return false;
@@ -164,14 +177,24 @@ class SessionsNotifier
       final next = [
         for (final s in previous)
           if (s.sessionId == sessionId)
-            s.copyWith(pinned: pinned ?? s.pinned, title: title ?? s.title)
+            s.copyWith(
+              pinned: pinned ?? s.pinned,
+              title: title ?? s.title,
+              groupKey: group,
+              groupPath: group == null ? null : (groupPath ?? const []),
+            )
           else
             s,
       ];
       await Future.microtask(() => state = AsyncData(next));
     }
 
-    if (await service.patchSession(sessionId, pinned: pinned, title: title)) {
+    if (await service.patchSession(
+      sessionId,
+      pinned: pinned,
+      title: title,
+      group: group,
+    )) {
       return true;
     }
     if (previous != null) state = AsyncData(previous);
@@ -689,9 +712,11 @@ extension RefreshHosts on WidgetRef {
   Future<void> refreshHost(String hostId) {
     invalidate(sessionsProvider(allSessionsKey(hostId)));
     invalidate(notificationsProvider(hostId));
+    invalidate(groupsProvider(hostId));
     return Future.wait([
       read(sessionsProvider(allSessionsKey(hostId)).future),
       read(notificationsProvider(hostId).future),
+      read(groupsProvider(hostId).future),
     ]);
   }
 
