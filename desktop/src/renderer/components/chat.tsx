@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -11,7 +19,7 @@ import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { hunkHeader, lineOf } from './edit-offsets.ts'
 import { DiffView } from './diff-view.tsx'
 import { foldedCommand, followsItsCall, headline, oneLine, resultOf } from './tool-calls.ts'
-import { groupRuns, runSucceeded, summariseTurn } from './tool-runs.ts'
+import { groupRuns, holdsOpenedRow, runSucceeded, summariseTurn } from './tool-runs.ts'
 import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
 import {
@@ -68,11 +76,16 @@ export function ChatPanel({
     if (!message || followsItsCall(messages, index)) return null
     return (
       <Message
-        key={`${message.timestamp}-${index}`}
+        // The seq, not the place in the list: loading an older page shifts
+        // every index down, and a key that moved would remount the card and
+        // take back whatever the reader had opened.
+        key={message.seq}
         message={message}
         result={resultOf(messages, index)}
         recent={recentCalls.has(index)}
         folded={folded}
+        opened={opened.has(message.seq)}
+        onOpened={(open) => remember(message.seq, open)}
         hostId={hostId}
         cwd={session.cwd}
       />
@@ -81,6 +94,24 @@ export function ChatPanel({
 
   // Set by the button beside the tab, and remembered for this session.
   const folded = useStore((s) => s.foldModes[sessionKey(hostId, session.session_id)]) === 'folded'
+  /**
+   * The rows the reader opened by hand, by seq.
+   *
+   * Held here rather than in the cards because a card does not outlive the
+   * shape of the list around it: a run of calls is drawn as its own rows while
+   * the agent is still in it and as one folded turn once the agent has moved
+   * on, and the remount in between would otherwise close what was open.
+   */
+  const [opened, setOpened] = useState<ReadonlySet<number>>(() => new Set())
+  const remember = useCallback((seq: number, open: boolean) => {
+    setOpened((held) => {
+      if (held.has(seq) === open) return held
+      const next = new Set(held)
+      if (open) next.add(seq)
+      else next.delete(seq)
+      return next
+    })
+  }, [])
   const recentCalls = useMemo(() => {
     const calls = messages.reduce<number[]>((held, message, index) => {
       if (message.role === 'tool_use') held.push(index)
@@ -352,9 +383,11 @@ export function ChatPanel({
             {items.map((item) =>
               item.kind === 'turn' ? (
                 <TurnRow
-                  key={`turn-${item.indices[0]}`}
+                  key={`turn-${messages[item.indices[0] ?? 0]?.seq ?? item.indices[0]}`}
                   messages={messages}
                   indices={item.indices}
+                  opened={opened}
+                  onOpened={remember}
                   hostId={hostId}
                   cwd={session.cwd}
                 />
@@ -508,13 +541,26 @@ interface MessageProps {
   recent?: boolean
   /** The session is being read folded, so nothing opens itself. */
   folded?: boolean
+  /** The reader opened this row already, before the list changed shape. */
+  opened?: boolean
+  /** Reports a press, so the panel can put the row back the way it was. */
+  onOpened?: (open: boolean) => void
 }
 
 /**
  * One transcript entry. The roles are the daemon's
  * (internal/transcript/reader.go): user, assistant, tool_use, tool_result.
  */
-function Message({ message, hostId, cwd, result, recent, folded }: MessageProps): JSX.Element | null {
+function Message({
+  message,
+  hostId,
+  cwd,
+  result,
+  recent,
+  folded,
+  opened,
+  onOpened,
+}: MessageProps): JSX.Element | null {
   switch (message.role) {
     case 'tool_use':
       return (
@@ -525,6 +571,8 @@ function Message({ message, hostId, cwd, result, recent, folded }: MessageProps)
           result={result}
           recent={recent}
           folded={folded}
+          opened={opened}
+          onOpened={onOpened}
         />
       )
     case 'tool_result':
@@ -709,16 +757,28 @@ function useHiddenLines(text: string, open: boolean): [RefObject<HTMLSpanElement
 function TurnRow({
   messages,
   indices,
+  opened,
+  onOpened,
   hostId,
   cwd,
 }: {
   messages: TranscriptMessage[]
   indices: number[]
+  /** Rows the reader has opened by hand, by seq. */
+  opened: ReadonlySet<number>
+  onOpened: (seq: number, open: boolean) => void
   hostId: string
   cwd: string
 }): JSX.Element {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => holdsOpenedRow(messages, indices, opened))
   const ok = runSucceeded(messages, indices)
+  // Against the first row it holds, which is the seq its key is drawn from: a
+  // turn opened by hand and then re-formed around a later call stays open.
+  const head = messages[indices[0] ?? 0]?.seq
+  const toggle = (next: boolean): void => {
+    setOpen(next)
+    if (head !== undefined) onOpened(head, next)
+  }
   // Fold all reaches a turn as it reaches a card: "open every tool call" that
   // left the groups shut would have opened nothing a reader could see.
   const foldAll = useStore((s) => s.foldAll)
@@ -736,11 +796,11 @@ function TurnRow({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onClick={() => toggle(!open)}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()
-          setOpen(!open)
+          toggle(!open)
         }}
       >
         <span className="tool-icon">◈</span>
@@ -790,6 +850,8 @@ function ToolUse({
   result,
   recent = true,
   folded = false,
+  opened = false,
+  onOpened,
 }: MessageProps): JSX.Element {
   const tool = message.tool ?? 'tool'
   const input = (message.metadata ?? {}) as Record<string, unknown>
@@ -800,7 +862,12 @@ function ToolUse({
   // the session is being read folded — that is a standing instruction, not a
   // press that expires. A card mounted open stays open as the transcript grows
   // past it: shutting one under a reader mid-diff is worse than the rule.
-  const [open, setOpen] = useState(!folded && WRITING_TOOLS.has(tool) && recent)
+  // A press the reader has already made outranks every rule below it.
+  const [open, setOpen] = useState(opened || (!folded && WRITING_TOOLS.has(tool) && recent))
+  const toggle = (next: boolean): void => {
+    setOpen(next)
+    onOpened?.(next)
+  }
   // Fold all, from the strip above. Keyed on the counter so a card opened by
   // hand since the last press is reached by the next one.
   const foldAll = useStore((s) => s.foldAll)
@@ -829,11 +896,11 @@ function ToolUse({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onClick={() => toggle(!open)}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()
-          setOpen(!open)
+          toggle(!open)
         }}
       >
         <span className="tool-icon">{TOOL_ICONS[tool] ?? '⚙'}</span>

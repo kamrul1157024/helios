@@ -3,7 +3,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { groupRuns, runSucceeded, summariseTurn } from '../src/renderer/components/tool-runs.ts'
+import {
+  groupRuns,
+  holdsOpenedRow,
+  runSucceeded,
+  summariseTurn,
+} from '../src/renderer/components/tool-runs.ts'
 import type { TranscriptMessage } from '../src/shared/models.ts'
 
 const stamp = '2026-01-01T00:00:00Z'
@@ -102,4 +107,40 @@ test('a call with no result yet is not a failure', () => {
 
 test('an empty transcript groups into nothing', () => {
   assert.deepEqual(groupRuns([], false), [])
+})
+
+// A run is only grouped once the agent has moved on from it, so a turn forms
+// around rows that were on screen as themselves a moment ago. Folding it then
+// takes back a press the reader made.
+test('a turn holding a row the reader opened says so', () => {
+  const messages = [
+    { seq: 10, role: 'tool_use', tool: 'Bash', timestamp: stamp },
+    { seq: 11, role: 'tool_result', tool: 'Bash', success: true, timestamp: stamp },
+    { seq: 12, role: 'tool_use', tool: 'Read', timestamp: stamp },
+  ] as TranscriptMessage[]
+
+  assert.equal(holdsOpenedRow(messages, [0, 2], new Set([12])), true)
+  assert.equal(holdsOpenedRow(messages, [0, 2], new Set([10])), true)
+})
+
+test('a turn holding none of them does not', () => {
+  const messages = [
+    { seq: 10, role: 'tool_use', tool: 'Bash', timestamp: stamp },
+    { seq: 12, role: 'tool_use', tool: 'Read', timestamp: stamp },
+  ] as TranscriptMessage[]
+
+  assert.equal(holdsOpenedRow(messages, [0, 1], new Set([99])), false)
+  assert.equal(holdsOpenedRow(messages, [0, 1], new Set()), false)
+})
+
+// The seq is the identity, not the place in the list: loading an older page
+// shifts every index and must not decide what is open.
+test('the opened set is read by seq, not by index', () => {
+  const messages = [
+    { seq: 4, role: 'tool_use', tool: 'Bash', timestamp: stamp },
+    { seq: 5, role: 'tool_use', tool: 'Read', timestamp: stamp },
+  ] as TranscriptMessage[]
+
+  assert.equal(holdsOpenedRow(messages, [0, 1], new Set([0])), false)
+  assert.equal(holdsOpenedRow(messages, [0, 1], new Set([5])), true)
 })
