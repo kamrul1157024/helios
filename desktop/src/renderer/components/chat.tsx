@@ -19,6 +19,7 @@ import { multiEditDiff, unifiedDiff } from '../diff.ts'
 import { hunkHeader, lineOf } from './edit-offsets.ts'
 import { DiffView } from './diff-view.tsx'
 import { foldedCommand, followsItsCall, headline, oneLine, resultOf } from './tool-calls.ts'
+import { Collapsible } from './collapsible.tsx'
 import { groupRuns, holdsOpenedRow, runSucceeded, summariseTurn } from './tool-runs.ts'
 import { Chevron } from './icons.tsx'
 import { SelectionMenu, useTextSelection } from './selection-menu.tsx'
@@ -812,8 +813,7 @@ function TurnRow({
         <span className={ok ? 'tool-verdict' : 'tool-verdict failed'}>{ok ? '✓' : '✕'}</span>
         <Chevron className="chevron" open={open} />
       </div>
-      {open && (
-        <div className="turn-members">
+      <Collapsible open={open} className="turn-members">
           {indices.map((index) => {
             const message = messages[index]
             if (!message) return null
@@ -829,8 +829,7 @@ function TurnRow({
               />
             )
           })}
-        </div>
-      )}
+      </Collapsible>
     </div>
   )
 }
@@ -942,11 +941,9 @@ function ToolUse({
         <Chevron className="chevron" open={open} />
       </div>
 
-      {open && (
-        <div className="tool-detail">
-          <ToolInput tool={tool} input={input} hostId={hostId} cwd={cwd} />
-        </div>
-      )}
+      <Collapsible open={open} className="tool-detail">
+        <ToolInput tool={tool} input={input} hostId={hostId} cwd={cwd} />
+      </Collapsible>
     </div>
   )
 }
