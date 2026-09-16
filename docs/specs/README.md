@@ -68,6 +68,7 @@ what is merged. Some are superseded and stay here for the history.
 | [58-files-without-a-root.md](58-files-without-a-root.md) | Files Without a Root: Folders, an Index, and a Path You Can Type |
 | [59-background-notifications.md](59-background-notifications.md) | Background Notifications: A Service on Android, a Push on iOS |
 | [60-group-chat.md](60-group-chat.md) | Group Chat: Sessions in a Channel |
+| [61-worktree-session-creation.md](61-worktree-session-creation.md) | Worktree-Aware Session Creation and Live Worktree Switching |
 | [62-groups-on-the-phone.md](62-groups-on-the-phone.md) | Groups on the Phone |
 | [ai-narration.md](ai-narration.md) | AI Narration for Voice Mode |
 | [desktop-notification-handoff.md](desktop-notification-handoff.md) | Hand desktop notifications to the desktop app |
