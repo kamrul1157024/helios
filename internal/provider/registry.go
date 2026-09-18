@@ -22,6 +22,7 @@ type registration struct {
 
 	// Each is nil when the provider does not offer it.
 	resume      Resumer
+	forker      Forker
 	hooks       Hooker
 	installer   HookInstaller
 	actor       Actor
@@ -61,6 +62,7 @@ func Register(p Provider) error {
 
 	reg := &registration{p: p}
 	reg.resume, _ = p.(Resumer)
+	reg.forker, _ = p.(Forker)
 	reg.hooks, _ = p.(Hooker)
 	reg.installer, _ = p.(HookInstaller)
 	reg.actor, _ = p.(Actor)
@@ -157,6 +159,13 @@ func ResumerFor(id string) Resumer {
 	return nil
 }
 
+func ForkerFor(id string) Forker {
+	if reg := lookup(id); reg != nil {
+		return reg.forker
+	}
+	return nil
+}
+
 func HookerFor(id string) Hooker {
 	if reg := lookup(id); reg != nil {
 		return reg.hooks
@@ -239,7 +248,11 @@ func ScreenWatcherFor(id string) ScreenWatcher {
 // Capabilities is what a client needs to know about a provider, derived from
 // the interfaces it implements rather than declared.
 type Capabilities struct {
-	Resume      bool `json:"resume"`
+	Resume bool `json:"resume"`
+	// Fork is whether a session of this provider can be branched into a second
+	// one carrying the same conversation. A client greys the action out rather
+	// than discovering the refusal by pressing it.
+	Fork        bool `json:"fork"`
 	Hooks       bool `json:"hooks"`
 	Transcript  bool `json:"transcript"`
 	Titles      bool `json:"titles"`
@@ -258,6 +271,7 @@ func CapabilitiesOf(id string) Capabilities {
 	}
 	caps := Capabilities{
 		Resume:      reg.resume != nil,
+		Fork:        reg.forker != nil,
 		Hooks:       reg.hooks != nil,
 		Transcript:  reg.transcriber != nil,
 		Titles:      reg.titler != nil,

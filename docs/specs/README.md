@@ -69,6 +69,7 @@ what is merged. Some are superseded and stay here for the history.
 | [59-background-notifications.md](59-background-notifications.md) | Background Notifications: A Service on Android, a Push on iOS |
 | [60-group-chat.md](60-group-chat.md) | Group Chat: Sessions in a Channel |
 | [62-groups-on-the-phone.md](62-groups-on-the-phone.md) | Groups on the Phone |
+| [64-session-forking.md](64-session-forking.md) | Session Forking: A Tree of Conversations, Rooted in One |
 | [ai-narration.md](ai-narration.md) | AI Narration for Voice Mode |
 | [desktop-notification-handoff.md](desktop-notification-handoff.md) | Hand desktop notifications to the desktop app |
 | [desktop-notification-service.md](desktop-notification-service.md) | Desktop Notification Service |

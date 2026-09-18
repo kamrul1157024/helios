@@ -242,6 +242,7 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/git/log", s.handleGitLog)
 	protectedMux.HandleFunc("GET /api/git/changes", s.handleGitChanges)
 	protectedMux.HandleFunc("GET /api/git/worktrees", s.handleGitWorktrees)
+	protectedMux.HandleFunc("POST /api/git/worktrees", s.handleCreateWorktree)
 	protectedMux.HandleFunc("GET /api/git/reviewed", s.handleGetReviewed)
 	protectedMux.HandleFunc("POST /api/git/reviewed", s.handleSetReviewed)
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
@@ -301,6 +302,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleSessionTerminate(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/resume"):
 			s.handleSessionResume(w, r)
+		case r.Method == "POST" && strings.HasSuffix(path, "/fork"):
+			s.handleForkSession(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/permission-mode"):
 			s.handleSessionPermissionMode(w, r)
 		case (r.Method == "POST" || r.Method == "GET") && strings.HasSuffix(path, "/terminals"):

@@ -69,6 +69,16 @@ func (p *Provider) Resume(sessionID, resumeID, mode string) (provider.Launch, er
 	return provider.Launch{Argv: ResumeArgs(sessionID, mode), Mode: mode}, nil
 }
 
+// Fork ignores parentResumeID for the same reason Resume ignores resumeID:
+// Claude takes the id Helios minted, so a parent's conversation is named by its
+// session id and its resume_id is nil.
+func (p *Provider) Fork(sessionID, parentSessionID, parentResumeID, mode string) (provider.Launch, error) {
+	if parentSessionID == "" {
+		return provider.Launch{}, nil
+	}
+	return provider.Launch{Argv: ForkArgs(sessionID, parentSessionID, mode), Mode: mode}, nil
+}
+
 func (p *Provider) PermissionModes() []string { return PermissionModes }
 
 func (p *Provider) ValidMode(mode string) bool { return ValidPermissionMode(mode) }

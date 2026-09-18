@@ -176,6 +176,32 @@ func (p *Provider) Resume(sessionID, resumeID, mode string) (provider.Launch, er
 	}, nil
 }
 
+// Fork starts a session holding a copy of another's conversation.
+//
+// By parentResumeID, not parentSessionID: Codex mints its own id and the id
+// Helios minted means nothing to it. An empty one means the parent's
+// session-start hook never reported in, so there is no conversation to name —
+// the same empty argv Resume returns, and for the same reason.
+//
+// Codex mints a fresh id for the fork too, which it reports through the hook
+// the environment below identifies. That is how the new session finds its row.
+func (p *Provider) Fork(sessionID, parentSessionID, parentResumeID, mode string) (provider.Launch, error) {
+	if parentResumeID == "" {
+		return provider.Launch{}, nil
+	}
+	if !slices.Contains(permissionModes, mode) {
+		mode = DefaultPermissionMode
+	}
+	argv := []string{p.bin}
+	argv = append(argv, modeArgs(mode)...)
+	argv = append(argv, "fork", parentResumeID)
+	return provider.Launch{
+		Argv: argv,
+		Env:  map[string]string{HeliosSessionEnv: sessionID},
+		Mode: mode,
+	}, nil
+}
+
 // ==================== Models ====================
 
 func (p *Provider) Models() ([]provider.ModelInfo, error) {

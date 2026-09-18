@@ -62,6 +62,17 @@ type NewSession struct {
 	// is the only thing that distinguishes one. Nothing in the session's
 	// behaviour reads it; the lists do.
 	ScheduleID string
+	// ForkOf is the session whose conversation this one begins with, and is nil
+	// for a session started from nothing.
+	//
+	// The whole session rather than its id: a provider needs both of the
+	// parent's ids to name the conversation, and which of the two it reads is
+	// the provider's business. See provider.Forker.
+	ForkOf *store.Session
+	// ForkWorkspace records how the fork was given somewhere to work:
+	// "worktree" for ground of its own, "same" for the parent's. Ignored unless
+	// ForkOf is set.
+	ForkWorkspace string
 }
 
 // StartedSession is what the caller gets back, and what both APIs report.
@@ -88,16 +99,22 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
 	req.CWD = resolved
 
 	sessionID := uuid.New().String()
-	launch, err := prov.Launch(provider.SessionSpec{
-		SessionID:       sessionID,
-		Prompt:          req.Prompt,
-		Model:           req.Model,
-		CWD:             req.CWD,
-		PermissionMode:  req.PermissionMode,
-		SkipPermissions: req.SkipPermissions,
-	})
+
+	var launch provider.Launch
+	if req.ForkOf != nil {
+		launch, err = forkLaunch(req, sessionID)
+	} else {
+		launch, err = prov.Launch(provider.SessionSpec{
+			SessionID:       sessionID,
+			Prompt:          req.Prompt,
+			Model:           req.Model,
+			CWD:             req.CWD,
+			PermissionMode:  req.PermissionMode,
+			SkipPermissions: req.SkipPermissions,
+		})
+	}
 	if err != nil {
-		return nil, statusError(http.StatusInternalServerError, "failed to build launch: %v", err)
+		return nil, err
 	}
 
 	handle, err := startTerminal(sh.Backend, sessionID, req.CWD, launch)
@@ -116,6 +133,12 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
 		LastEvent:  &event,
 		ScheduleID: req.ScheduleID,
 	}
+	if req.ForkOf != nil {
+		forkedAt := time.Now().UTC().Format(time.RFC3339)
+		sess.ForkedFrom = req.ForkOf.SessionID
+		sess.ForkedAt = &forkedAt
+		sess.ForkWorkspace = req.ForkWorkspace
+	}
 	if err := sh.DB.UpsertSession(sess); err != nil {
 		log.Printf("create-session: register session %s: %v", sessionID, err)
 	}
@@ -133,6 +156,45 @@ func (sh *Shared) StartSession(req NewSession) (*StartedSession, error) {
 	sh.Pending.Add(sessionID, req.CWD)
 
 	return &StartedSession{SessionID: sessionID, Terminal: handle, CWD: req.CWD}, nil
+}
+
+// forkLaunch asks the provider for the argv that continues the parent's
+// conversation under the new session's id.
+//
+// Both of the parent's ids go across, unresolved. Which one names the
+// conversation is the provider's business: Claude takes the id Helios minted
+// and leaves resume_id nil, Codex mints its own and reports it. A handler that
+// picked one here would work for exactly one of them.
+//
+// Empty argv is the provider saying this session cannot be forked — for Codex,
+// that its parent never reported an id. It is a 409 rather than a 500: nothing
+// failed, the request cannot be honoured.
+func forkLaunch(req NewSession, sessionID string) (provider.Launch, error) {
+	forker := provider.ForkerFor(req.Provider)
+	if forker == nil {
+		return provider.Launch{}, statusError(http.StatusNotImplemented,
+			"%s sessions cannot be forked", req.Provider)
+	}
+
+	mode := req.PermissionMode
+	if mode == "" && req.ForkOf.PermissionMode != nil {
+		mode = *req.ForkOf.PermissionMode
+	}
+	resumeID := ""
+	if req.ForkOf.ResumeID != nil {
+		resumeID = *req.ForkOf.ResumeID
+	}
+
+	launch, err := forker.Fork(sessionID, req.ForkOf.SessionID, resumeID, mode)
+	if err != nil {
+		return provider.Launch{}, statusError(http.StatusInternalServerError,
+			"failed to build fork: %v", err)
+	}
+	if len(launch.Argv) == 0 {
+		return provider.Launch{}, statusError(http.StatusConflict,
+			"session %s has no conversation to fork yet", req.ForkOf.SessionID)
+	}
+	return launch, nil
 }
 
 // awaitAgent waits for a spawned agent to report in before anything is typed
