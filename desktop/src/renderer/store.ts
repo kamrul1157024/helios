@@ -297,6 +297,14 @@ export interface State {
    * around it, and the bulk bar, which sits elsewhere in the tree.
    */
   channelPicker: { hostId: string; sessions: string[] } | null
+  /**
+   * The session a fork is being set up for, if the dialog is open.
+   *
+   * Here for the same reason as the picker above: the row's context menu is
+   * plain data with no React context around it, so it cannot hold the dialog
+   * itself.
+   */
+  forkDialog: { hostId: string; session: Session } | null
   /** The thread the side panel is showing, if one is open. */
   threadSelection: { hostId: string; channelId: string; root: string } | null
   /** Whether that same panel is showing who is in the channel instead. */
@@ -552,6 +560,7 @@ const initial: State = {
   sessionSelection: [],
   channelSelection: null,
   channelPicker: null,
+  forkDialog: null,
   threadSelection: null,
   membersOpen: false,
   selectMode: false,
@@ -1303,6 +1312,34 @@ class Store {
 
   closeChannelPicker(): void {
     this.set({ channelPicker: null })
+  }
+
+  /** Asks how this session should be branched. */
+  openForkDialog(hostId: string, session: Session): void {
+    this.set({ forkDialog: { hostId, session } })
+  }
+
+  closeForkDialog(): void {
+    this.set({ forkDialog: null })
+  }
+
+  /**
+   * Branches a session and selects the fork.
+   *
+   * Selecting it is the point of the action: a fork nobody is looking at is a
+   * second agent running where the user cannot see it. Warnings are surfaced
+   * rather than logged — "the fork shares the parent's folder" changes what the
+   * user should type next.
+   */
+  async forkSession(
+    hostId: string,
+    sessionId: string,
+    body: { workspace?: string; branch?: string; prompt?: string; title?: string },
+  ): Promise<void> {
+    const result = await api(hostId).forkSession(sessionId, body)
+    for (const warning of result.warnings ?? []) this.notify(warning, 'error')
+    await this.invalidateSessionsFor(hostId)
+    this.select(hostId, result.session_id)
   }
 
   /** Shows a channel, having just done something to it. */

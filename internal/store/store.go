@@ -302,6 +302,20 @@ func (s *Store) migrate() error {
 		)`},
 		{"create_channel_mentions_index",
 			`CREATE INDEX IF NOT EXISTS idx_channel_mentions ON channel_mentions(channel_id, reader)`},
+
+		// A session that began with another session's conversation. See
+		// docs/specs/64-session-forking.md.
+		//
+		// forked_from rather than parent_session_id: that name already means the
+		// Task tool's children over in subagents, and one name for two
+		// hierarchies is a trap for whoever greps next.
+		{"add_sessions_forked_from",
+			`ALTER TABLE sessions ADD COLUMN forked_from TEXT NOT NULL DEFAULT ''`},
+		{"add_sessions_forked_at", `ALTER TABLE sessions ADD COLUMN forked_at TEXT`},
+		{"add_sessions_fork_workspace",
+			`ALTER TABLE sessions ADD COLUMN fork_workspace TEXT NOT NULL DEFAULT ''`},
+		{"create_sessions_forked_from_index",
+			`CREATE INDEX IF NOT EXISTS idx_sessions_forked_from ON sessions(forked_from)`},
 	}
 
 	for _, cm := range columnMigrations {

@@ -102,6 +102,25 @@ type Resumer interface {
 	Resume(sessionID, resumeID, mode string) (Launch, error)
 }
 
+// Forker starts a new session that begins with another session's history.
+//
+// The new conversation must be independent from its first message: nothing said
+// in the fork may reach the parent, and the parent must stay resumable under
+// its own id.
+//
+// Four ids, because unlike Resume this names two sessions. sessionID is the new
+// one the daemon has just minted. parentSessionID and parentResumeID are the
+// source's, and are read the way Resumer describes: the resume id for an agent
+// that mints its own, the session id for one that accepts Helios's — for which
+// parentResumeID is empty, and an implementation that keys on it alone would
+// refuse every healthy session.
+//
+// An empty Argv means this particular session cannot be forked, which is not
+// the same as the provider being unable to fork at all.
+type Forker interface {
+	Fork(sessionID, parentSessionID, parentResumeID, mode string) (Launch, error)
+}
+
 // HookHandler processes an incoming hook request and writes the response.
 type HookHandler func(ctx *HookContext, w http.ResponseWriter, r *http.Request, input json.RawMessage)
 

@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,6 +63,7 @@ func TestConformance(t *testing.T) {
 			checkActionRoutes(t, p, info.ID)
 			checkModes(t, p)
 			checkResume(t, p)
+			checkFork(t, p)
 		})
 	}
 }
@@ -155,6 +157,46 @@ func checkResume(t *testing.T, p provider.Provider) {
 	}
 	if len(launch.Argv) == 0 {
 		t.Error("Resume with a resume id returned no argv")
+	}
+}
+
+func checkFork(t *testing.T, p provider.Provider) {
+	t.Helper()
+	f, ok := p.(provider.Forker)
+	if !ok {
+		return
+	}
+
+	// A parent it could have resumed is a parent it must be able to fork. Both
+	// ids are passed because a provider reads whichever one its agent answers
+	// to, and a fork that returns nothing here is a fork the API would refuse.
+	launch, err := f.Fork("new-1", "parent-1", "parent-1", "")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if len(launch.Argv) == 0 {
+		t.Fatal("Fork of a resumable parent returned no argv")
+	}
+
+	// The new session's id must reach the agent somehow — as a flag or through
+	// the environment — or its hooks land on no row and it is invisible.
+	named := slices.Contains(launch.Argv, "new-1")
+	for _, value := range launch.Env {
+		if value == "new-1" {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("Fork never names the new session: argv %q env %v", launch.Argv, launch.Env)
+	}
+
+	// Forking nothing is not an error, it is an empty answer.
+	empty, err := f.Fork("new-2", "", "", "")
+	if err != nil {
+		t.Fatalf("Fork with no parent: %v", err)
+	}
+	if len(empty.Argv) != 0 {
+		t.Errorf("Fork with no parent returned argv %q", empty.Argv)
 	}
 }
 

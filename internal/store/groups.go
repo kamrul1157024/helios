@@ -282,8 +282,30 @@ func (s *Store) SetGroupOrder(parent string, keys []string) error {
 	return tx.Commit()
 }
 
+// ErrForkNotFileable is what filing a fork under its own group gets.
+//
+// A fork sits with the session it came from, wherever that one is filed. Moving
+// it away would mean a list that no longer says where a conversation came from,
+// so there is no gesture for it. The root is named so the caller can offer to
+// move that instead, which moves the whole family.
+type ErrForkNotFileable struct {
+	SessionID string
+	Root      string
+}
+
+func (e *ErrForkNotFileable) Error() string {
+	return fmt.Sprintf("session %s is a fork: it is grouped with %s", e.SessionID, e.Root)
+}
+
 // SetSessionGroup files a session under one group. An empty key unassigns it.
 func (s *Store) SetSessionGroup(sessionID, key string) error {
+	sess, err := s.GetSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("read session %s: %w", sessionID, err)
+	}
+	if sess != nil && sess.IsFork() {
+		return &ErrForkNotFileable{SessionID: sessionID, Root: sess.RootSessionID}
+	}
 	if key != "" {
 		if err := s.mustExist(key); err != nil {
 			return err

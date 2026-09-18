@@ -3,11 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -240,6 +243,150 @@ func (s *PublicServer) handleGitWorktrees(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"worktrees": worktrees,
 	})
+}
+
+// handleCreateWorktree adds a worktree for a branch, creating the branch when it
+// does not exist yet.
+//
+// The path is not the caller's to choose. One convention, applied here, is what
+// lets a session started from a phone land somewhere the desktop can predict —
+// and it is a sibling of the main worktree rather than a child, because a child
+// would show up in git status and die to git clean -fdx.
+func (s *PublicServer) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Repo   string `json:"repo"`
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	created, err := createWorktree(req.Repo, req.Branch)
+	if err != nil {
+		jsonError(w, err.Error(), StatusOf(err))
+		return
+	}
+
+	jsonResponse(w, http.StatusCreated, map[string]interface{}{"worktree": created})
+}
+
+// createWorktree is the handler's body, minus the HTTP. The fork endpoint calls
+// it directly: going back out through the API to reach the daemon's own routine
+// would buy nothing but a second place for the convention to drift.
+func createWorktree(repo, branch string) (*worktreeEntry, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return nil, statusError(http.StatusBadRequest, "branch name is required")
+	}
+
+	root, err := gitRepoRoot(repo)
+	if err != nil {
+		return nil, statusError(http.StatusBadRequest, "%s", err.Error())
+	}
+	if _, err := gitCmd(root, "check-ref-format", "--branch", branch); err != nil {
+		return nil, statusError(http.StatusBadRequest, "invalid branch name: %s", branch)
+	}
+
+	out, err := gitCmd(root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "failed to list worktrees")
+	}
+	existing := parseWorktreeList(out, root)
+	for _, wt := range existing {
+		if wt.Branch == branch {
+			return nil, statusError(http.StatusConflict, "branch already checked out in %s", wt.Path)
+		}
+	}
+
+	main := findMainWorktree(root)
+	path := filepath.Join(
+		filepath.Dir(main),
+		filepath.Base(main)+"-worktrees",
+		sanitizeBranch(branch),
+	)
+
+	// An existing branch is checked out as it is; a new one is cut from HEAD.
+	// Passing -b for a branch that already exists is a hard failure, so this is
+	// a question that has to be asked before the fact.
+	args := []string{"worktree", "add", path, branch}
+	if _, err := gitCmd(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err != nil {
+		args = []string{"worktree", "add", "-b", branch, path}
+	}
+	if _, err := gitCmd(root, args...); err != nil {
+		return nil, statusError(http.StatusInternalServerError, "%s", err.Error())
+	}
+
+	entry := worktreeEntry{Path: path, Branch: branch}
+	if head, err := gitCmd(path, "rev-parse", "HEAD"); err == nil {
+		entry.Head = shortSHA(strings.TrimSpace(head))
+	}
+	describeWorktree(&entry)
+	return &entry, nil
+}
+
+// findMainWorktree returns the repository's main worktree, given any worktree
+// of it.
+//
+// This has to be asked of git rather than read off parseWorktreeList, whose
+// IsMain is computed against the path the caller happened to be standing in —
+// ask it from a linked worktree and that worktree calls itself main. Hanging
+// the -worktrees sibling off the answer would then nest each new worktree
+// inside the last, which is exactly what forking a fork would do.
+//
+// --git-common-dir is the main repository's .git for every worktree of it, so
+// its parent is the main worktree.
+func findMainWorktree(dir string) string {
+	out, err := gitCmd(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return dir
+	}
+	common := strings.TrimSpace(out)
+	if common == "" {
+		return dir
+	}
+	return filepath.Dir(common)
+}
+
+// deriveBranch invents a branch name from a session's label, and keeps trying
+// until it finds one the repository does not already hold.
+//
+// A fork that demanded a text field before it happened is a fork nobody takes,
+// so the common case has to need no typing. The suffix walks rather than using
+// a timestamp because -2 is a name a person can read back and find.
+func deriveBranch(repo, label string) string {
+	base := sanitizeBranch(strings.ToLower(label))
+	if len(base) > 40 {
+		base = strings.Trim(base[:40], "-.")
+	}
+	// sanitizeBranch answers "worktree" when a name has nothing usable in it.
+	// That is the right directory name and the wrong branch name — a session
+	// with no title yet is common, and "fork" says what the branch is.
+	if base == "" || base == "worktree" {
+		base = "fork"
+	}
+
+	candidate := base
+	for n := 2; n < 100; n++ {
+		if _, err := gitCmd(repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+candidate); err != nil {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d", base, n)
+	}
+	return candidate
+}
+
+var branchSeparators = regexp.MustCompile(`[^A-Za-z0-9._-]+|-{2,}`)
+
+// sanitizeBranch renders a branch name as one flat directory name, so
+// feat/auth/v2 becomes feat-auth-v2 instead of three nested folders.
+func sanitizeBranch(branch string) string {
+	flat := branchSeparators.ReplaceAllString(branch, "-")
+	flat = strings.Trim(flat, "-.")
+	if flat == "" {
+		return "worktree"
+	}
+	return flat
 }
 
 // describeWorktree fills in branch state. A worktree whose directory has been

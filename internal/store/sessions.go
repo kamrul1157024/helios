@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -62,7 +63,32 @@ type Session struct {
 	// it: it exists so the sidebar can leave the clock's work out and the runs
 	// list can show only it.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// ForkedFrom is the session this one's conversation was copied from, and is
+	// empty for a session started from nothing. A fork of a fork names the
+	// fork, so the whole tree is this one column.
+	//
+	// A fork is not an independent row in the list: its group and its place in
+	// the order both come from its root, and neither of its own columns is
+	// read. See docs/specs/64-session-forking.md.
+	ForkedFrom string `json:"forked_from,omitempty"`
+	// ForkedAt is when the branch was taken, and orders siblings.
+	ForkedAt *string `json:"forked_at,omitempty"`
+	// ForkWorkspace is the workspace mode the fork was made with: "worktree"
+	// for ground of its own, "same" for the parent's. Stored because the UI has
+	// to explain why two sessions do or do not share a directory.
+	ForkWorkspace string `json:"fork_workspace,omitempty"`
+	// ForkCount is how many sessions name this one as their parent. Computed on
+	// read, so a parent can draw a count without fetching its children.
+	ForkCount int `json:"fork_count"`
+	// RootSessionID is the session at the top of this one's fork chain, and is
+	// the session's own id when it is a root. Computed on read, so no client
+	// walks the chain itself.
+	RootSessionID string `json:"root_session_id,omitempty"`
 }
+
+// IsFork reports whether this session began as a copy of another's
+// conversation, which is the question every rule in spec 64 turns on.
+func (s *Session) IsFork() bool { return s.ForkedFrom != "" }
 
 // Label returns the session's display label: title, or truncated last user message, or "".
 func (s *Session) Label(maxLen int) string {
@@ -114,14 +140,22 @@ func (s *Store) UpsertSession(sess *Session) error {
 	// is what keeps manual grouping from needing an action per session.
 	// Inherited on insert only — a later reorganisation does not reach back and
 	// rewrite the sessions that already ran.
-	inherited, err := s.groupForCWD(sess.CWD)
-	if err != nil {
-		return fmt.Errorf("inherit groups for %s: %w", sess.CWD, err)
+	//
+	// A fork is the exception, and it has to be: its group comes from its root,
+	// its own group_key is never read, and a fork's fresh worktree would
+	// otherwise resolve to the repository's group and write a key that every
+	// reader is then told to ignore.
+	var inherited sql.NullString
+	if !sess.IsFork() {
+		var err error
+		if inherited, err = s.groupForCWD(sess.CWD); err != nil {
+			return fmt.Errorf("inherit groups for %s: %w", sess.CWD, err)
+		}
 	}
 
-	_, err = s.db.Exec(
-		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, group_key, schedule_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1, ?, ?)
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (session_id, source, cwd, project, title, transcript_path, model, status, last_event, last_event_at, sort_order, group_key, schedule_id, forked_from, forked_at, fork_workspace)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MIN(sort_order) FROM sessions), 0) - 1, ?, ?, ?, ?, ?)
 		 ON CONFLICT(session_id) DO UPDATE SET
 		   cwd = COALESCE(excluded.cwd, sessions.cwd),
 		   project = COALESCE(excluded.project, sessions.project),
@@ -133,7 +167,7 @@ func (s *Store) UpsertSession(sess *Session) error {
 		   last_event_at = excluded.last_event_at`,
 		sess.SessionID, sess.Source, sess.CWD, sess.Project,
 		sess.Title, sess.TranscriptPath, sess.Model, sess.Status, sess.LastEvent, now, inherited,
-		sess.ScheduleID,
+		sess.ScheduleID, sess.ForkedFrom, sess.ForkedAt, sess.ForkWorkspace,
 	)
 	return err
 }
@@ -227,16 +261,24 @@ func (s *Store) GetSession(sessionID string) (*Session, error) {
 	err := s.db.QueryRow(
 		`SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 		        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
-		        permission_mode, resume_id, created_at, ended_at, COALESCE(schedule_id, '')
+		        permission_mode, resume_id, created_at, ended_at, COALESCE(schedule_id, ''),
+		        COALESCE(forked_from, ''), forked_at, COALESCE(fork_workspace, '')
 		 FROM sessions WHERE session_id = ?`, sessionID,
 	).Scan(&sess.SessionID, &sess.Source, &sess.CWD, &sess.Project,
 		&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 		&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
-		&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt, &sess.ScheduleID)
+		&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt, &sess.ScheduleID,
+		&sess.ForkedFrom, &sess.ForkedAt, &sess.ForkWorkspace)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return sess, err
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachLineage([]*Session{sess}); err != nil {
+		return nil, err
+	}
+	return sess, nil
 }
 
 // SessionQuery is what a caller is asking the session list for. A struct
@@ -267,6 +309,9 @@ type SessionQuery struct {
 	Jobs string
 	// ScheduleID narrows to the runs of one schedule.
 	ScheduleID string
+	// Roots drops every fork, leaving the sessions nothing was forked from.
+	// For a caller that draws its own nesting and wants the tops of the trees.
+	Roots bool
 }
 
 // ListSessions returns all sessions ordered by most recent activity.
@@ -335,10 +380,17 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 		}
 	}
 
+	// Roots only: a caller drawing its own nesting asks for the tops of the
+	// trees and fetches a family when it opens one.
+	if sq.Roots {
+		where = append(where, `COALESCE(forked_from, '') = ''`)
+	}
+
 	q := `SELECT session_id, source, cwd, project, title, transcript_path, model, status,
 	        last_event, last_event_at, last_interacted_at, last_user_message, pinned, sort_order,
 	        permission_mode, resume_id, created_at, ended_at, group_key,
-	        COALESCE(schedule_id, '')
+	        COALESCE(schedule_id, ''),
+	        COALESCE(forked_from, ''), forked_at, COALESCE(fork_workspace, '')
 	 FROM sessions`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -363,7 +415,8 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 			&sess.Title, &sess.TranscriptPath, &sess.Model, &sess.Status,
 			&sess.LastEvent, &sess.LastEventAt, &sess.LastInteractedAt, &sess.LastUserMessage, &sess.Pinned, &sess.SortOrder,
 			&sess.PermissionMode, &sess.ResumeID, &sess.CreatedAt, &sess.EndedAt,
-			&held, &sess.ScheduleID); err != nil {
+			&held, &sess.ScheduleID,
+			&sess.ForkedFrom, &sess.ForkedAt, &sess.ForkWorkspace); err != nil {
 			return nil, err
 		}
 		result = append(result, sess)
@@ -373,18 +426,30 @@ func (s *Store) SearchSessions(sq SessionQuery) ([]Session, error) {
 		return nil, err
 	}
 
+	// Lineage first: a fork's group is its root's, so the root has to be known
+	// before the groups are resolved.
+	refs := make([]*Session, len(result))
+	for i := range result {
+		refs[i] = &result[i]
+	}
+	if err := s.attachLineage(refs); err != nil {
+		return nil, err
+	}
 	if sq.Grouped {
 		if err := s.attachGroups(result, raw); err != nil {
 			return nil, err
 		}
 	}
-	return result, nil
+	return treeOrder(result), nil
 }
 
 // attachGroups resolves each session's group into the path from the root down.
 // One read of a table with a handful of rows, rather than a recursive CTE per
 // query. A key naming a group that is gone resolves to nothing rather than to a
 // broken path.
+//
+// A fork has no group of its own and takes its root's, so that a family renders
+// as one block under one header. RootSessionID must already be filled.
 func (s *Store) attachGroups(sessions []Session, raw []sql.NullString) error {
 	groups, err := s.ListGroups()
 	if err != nil {
@@ -395,18 +460,197 @@ func (s *Store) attachGroups(sessions []Session, raw []sql.NullString) error {
 		byKey[g.Key] = g
 	}
 
+	rootKeys, err := s.groupKeysOfRoots(sessions)
+	if err != nil {
+		return err
+	}
+
 	for i := range sessions {
-		if !raw[i].Valid || raw[i].String == "" {
+		key := ""
+		if raw[i].Valid {
+			key = raw[i].String
+		}
+		// The root may have been filtered out of this result, so its key comes
+		// from the table rather than from the rows in hand.
+		if sessions[i].IsFork() {
+			key = rootKeys[sessions[i].RootSessionID]
+		}
+		if key == "" {
 			continue
 		}
-		path := pathOf(raw[i].String, byKey)
+		path := pathOf(key, byKey)
 		if len(path) == 0 {
 			continue
 		}
-		sessions[i].GroupKey = raw[i].String
+		sessions[i].GroupKey = key
 		sessions[i].GroupPath = path
 	}
 	return nil
+}
+
+// groupKeysOfRoots reads the group of every root a fork in this result hangs
+// from. Empty when the result holds no forks, which is the common case and
+// costs no query.
+func (s *Store) groupKeysOfRoots(sessions []Session) (map[string]string, error) {
+	wanted := map[string]bool{}
+	for i := range sessions {
+		if sessions[i].IsFork() && sessions[i].RootSessionID != "" {
+			wanted[sessions[i].RootSessionID] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+
+	ids := make([]interface{}, 0, len(wanted))
+	for id := range wanted {
+		ids = append(ids, id)
+	}
+	q := `SELECT session_id, COALESCE(group_key, '') FROM sessions WHERE session_id IN (` +
+		strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + `)`
+	rows, err := s.db.Query(q, ids...)
+	if err != nil {
+		return nil, fmt.Errorf("read groups of fork roots: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return nil, fmt.Errorf("scan group of fork root: %w", err)
+		}
+		keys[id] = key
+	}
+	return keys, rows.Err()
+}
+
+// attachLineage fills in ForkCount and RootSessionID.
+//
+// Both are read from the whole table rather than from the rows in hand. A
+// parent's count has to include forks the caller filtered out or the 1000-row
+// limit cut off, or a family looks smaller from a search than from the list;
+// and a root can sit outside any window its descendants landed in.
+//
+// One query of two columns over a table that holds sessions, not events.
+func (s *Store) attachLineage(sessions []*Session) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	rows, err := s.db.Query(
+		`SELECT session_id, forked_from FROM sessions WHERE COALESCE(forked_from, '') != ''`)
+	if err != nil {
+		return fmt.Errorf("read fork lineage: %w", err)
+	}
+	defer rows.Close()
+
+	parentOf := map[string]string{}
+	children := map[string]int{}
+	for rows.Next() {
+		var child, parent string
+		if err := rows.Scan(&child, &parent); err != nil {
+			return fmt.Errorf("scan fork lineage: %w", err)
+		}
+		parentOf[child] = parent
+		children[parent]++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, sess := range sessions {
+		sess.ForkCount = children[sess.SessionID]
+		sess.RootSessionID = rootOf(sess.SessionID, parentOf)
+	}
+	return nil
+}
+
+// rootOf walks to the top of a fork chain. The seen set guards a cycle that
+// only a bug could create: a walk that cannot terminate is worse than one that
+// stops early.
+func rootOf(id string, parentOf map[string]string) string {
+	seen := map[string]bool{}
+	for !seen[id] {
+		seen[id] = true
+		parent, ok := parentOf[id]
+		if !ok || parent == "" {
+			return id
+		}
+		id = parent
+	}
+	return id
+}
+
+// treeOrder puts every fork directly beneath the session it came from, so a
+// client that draws the list as it arrives draws the families whole.
+//
+// Roots keep the order they came in — whatever the caller sorted by is still
+// what decides where a family sits. Siblings go by forked_at, oldest first, so
+// a branch does not move when another one is taken.
+//
+// A fork whose parent is not in the slice is treated as a root. It has to be:
+// a search or the row limit can hand back a child without its parent, and the
+// alternative is a session that exists and is never drawn.
+func treeOrder(sessions []Session) []Session {
+	if len(sessions) == 0 {
+		return sessions
+	}
+
+	present := make(map[string]bool, len(sessions))
+	for _, sess := range sessions {
+		present[sess.SessionID] = true
+	}
+
+	children := map[string][]Session{}
+	var roots []Session
+	for _, sess := range sessions {
+		if sess.IsFork() && present[sess.ForkedFrom] {
+			children[sess.ForkedFrom] = append(children[sess.ForkedFrom], sess)
+			continue
+		}
+		roots = append(roots, sess)
+	}
+	for parent := range children {
+		sort.SliceStable(children[parent], func(i, j int) bool {
+			return derefString(children[parent][i].ForkedAt) < derefString(children[parent][j].ForkedAt)
+		})
+	}
+
+	out := make([]Session, 0, len(sessions))
+	var walk func(sess Session)
+	walk = func(sess Session) {
+		out = append(out, sess)
+		for _, child := range children[sess.SessionID] {
+			walk(child)
+		}
+	}
+	for _, root := range roots {
+		walk(root)
+	}
+
+	// A cycle would leave its members rootless and so unwalked. Only a bug can
+	// make one, and a bug that hides sessions is worse than a bug that draws
+	// them flat.
+	if len(out) < len(sessions) {
+		drawn := make(map[string]bool, len(out))
+		for _, sess := range out {
+			drawn[sess.SessionID] = true
+		}
+		for _, sess := range sessions {
+			if !drawn[sess.SessionID] {
+				out = append(out, sess)
+			}
+		}
+	}
+	return out
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // DirectoryInfo holds aggregated info about sessions in a given CWD.
@@ -526,12 +770,30 @@ func (s *Store) UpdateSessionPinned(sessionID string, pinned bool) error {
 }
 
 // DeleteSession permanently removes a session and its subagents.
+//
+// Its forks are lifted one level rather than orphaned: they take the deleted
+// session's own parent, or become roots when it was one. The family keeps its
+// shape, one level shorter — the same answer DeleteGroup gives to the group
+// tree. Deleting the session a branch came from is not a decision about the
+// branch.
 func (s *Store) DeleteSession(sessionID string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	var grandparent string
+	if err := tx.QueryRow(
+		`SELECT COALESCE(forked_from, '') FROM sessions WHERE session_id = ?`, sessionID,
+	).Scan(&grandparent); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("read parent of %s: %w", sessionID, err)
+	}
+	if _, err := tx.Exec(
+		`UPDATE sessions SET forked_from = ? WHERE forked_from = ?`, grandparent, sessionID,
+	); err != nil {
+		return fmt.Errorf("reparent forks of %s: %w", sessionID, err)
+	}
 
 	tx.Exec(`DELETE FROM subagents WHERE parent_session_id = ?`, sessionID)
 	tx.Exec(`DELETE FROM notifications WHERE source_session = ?`, sessionID)

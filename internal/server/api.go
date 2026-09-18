@@ -339,6 +339,10 @@ func (s *PublicServer) handleListSessions(w http.ResponseWriter, r *http.Request
 		GroupKey:   r.URL.Query().Get("group_key"),
 		Jobs:       jobs,
 		ScheduleID: scheduleID,
+		// For a caller that draws its own nesting and wants only the tops of
+		// the trees. Everyone else is served the families inline, in tree
+		// order.
+		Roots: r.URL.Query().Get("filter") == "roots",
 	})
 	if err != nil {
 		jsonError(w, "failed to list sessions", http.StatusInternalServerError)
@@ -875,7 +879,17 @@ func (s *PublicServer) handlePatchSession(w http.ResponseWriter, r *http.Request
 	// Before anything else is written: the store refuses a key that names no
 	// group, and a rejected grouping should not leave a half-applied patch.
 	if req.Group != nil {
-		if err := s.shared.DB.SetSessionGroup(id, *req.Group); err != nil {
+		err := s.shared.DB.SetSessionGroup(id, *req.Group)
+		// A fork is well-formed and simply not eligible — it is filed wherever
+		// its root is. 409 rather than 400 so a client can tell "you asked for
+		// something impossible" from "you asked wrongly", and offer to move the
+		// root instead.
+		var notFileable *store.ErrForkNotFileable
+		if errors.As(err, &notFileable) {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1024,7 +1038,20 @@ func (s *PublicServer) handleSessionOrder(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := s.shared.DB.SetSessionOrder(req.Order); err != nil {
+	// A fork has no place in this list: it sits with the session it came from,
+	// and its own sort_order is never read. SetSessionOrder numbers every id it
+	// is handed, so the filtering has to happen before the call — otherwise a
+	// client that posts a whole family renumbers rows the renderer ignores.
+	order := make([]string, 0, len(req.Order))
+	for _, id := range req.Order {
+		sess, err := s.shared.DB.GetSession(id)
+		if err == nil && sess != nil && sess.IsFork() {
+			continue
+		}
+		order = append(order, id)
+	}
+
+	if err := s.shared.DB.SetSessionOrder(order); err != nil {
 		log.Printf("session-order: %v", err)
 		jsonError(w, "failed to save order", http.StatusInternalServerError)
 		return
@@ -1777,6 +1804,137 @@ func (s *PublicServer) handleCreateSession(w http.ResponseWriter, r *http.Reques
 		"terminal":   started.Terminal,
 		"cwd":        started.CWD,
 	})
+}
+
+// Workspace modes a fork can be given. A worktree by default: a fork exists to
+// try a second answer, and two agents editing one checkout is not a second
+// answer, it is a race.
+const (
+	forkWorkspaceWorktree = "worktree"
+	forkWorkspaceSame     = "same"
+)
+
+// handleForkSession branches a session: a new one holding the parent's whole
+// conversation, and by default a worktree of its own to work in.
+//
+// See docs/specs/64-session-forking.md.
+func (s *PublicServer) handleForkSession(w http.ResponseWriter, r *http.Request) {
+	id := extractPathParam(r.URL.Path, "/api/sessions/", "/fork")
+	if id == "" {
+		jsonError(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Workspace string `json:"workspace,omitempty"`
+		Branch    string `json:"branch,omitempty"`
+		Prompt    string `json:"prompt,omitempty"`
+		Title     string `json:"title,omitempty"`
+	}
+	// An empty body is the ordinary request, and it does the right thing.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Workspace == "" {
+		req.Workspace = forkWorkspaceWorktree
+	}
+	if req.Workspace != forkWorkspaceWorktree && req.Workspace != forkWorkspaceSame {
+		jsonError(w, "workspace must be worktree or same", http.StatusBadRequest)
+		return
+	}
+
+	parent, err := s.shared.DB.GetSession(id)
+	if err != nil || parent == nil {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	cwd, workspace, warnings := forkWorkspaceFor(parent, req.Workspace, req.Branch)
+
+	started, err := s.shared.StartSession(NewSession{
+		Provider:      parent.Source,
+		Prompt:        req.Prompt,
+		CWD:           cwd,
+		ForkOf:        parent,
+		ForkWorkspace: workspace,
+	})
+	if err != nil {
+		jsonError(w, err.Error(), StatusOf(err))
+		return
+	}
+
+	if req.Title != "" {
+		if err := s.shared.DB.UpdateSessionTitle(started.SessionID, req.Title); err != nil {
+			log.Printf("fork-session: title for %s: %v", started.SessionID, err)
+		}
+	}
+
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "session_created",
+		Data: map[string]interface{}{
+			"session_id":  started.SessionID,
+			"forked_from": parent.SessionID,
+			"cwd":         started.CWD,
+		},
+	})
+	// The parent's fork count just changed. Without this a second client shows
+	// a parent with no children until something else makes it re-read.
+	s.shared.SSE.Broadcast(SSEEvent{
+		Type: "session_updated",
+		Data: map[string]interface{}{"session_id": parent.SessionID},
+	})
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"success":        true,
+		"session_id":     started.SessionID,
+		"terminal":       started.Terminal,
+		"cwd":            started.CWD,
+		"forked_from":    parent.SessionID,
+		"fork_workspace": workspace,
+		"warnings":       warnings,
+	})
+}
+
+// forkWorkspaceFor gives the fork somewhere to work, and reports what the user
+// needs to know about the ground it landed on.
+//
+// Falling back rather than refusing, in both directions. A session in /tmp is
+// still worth forking, and so is one whose repository will not take another
+// worktree: what was asked for was a fork, and the directory is a detail of it.
+// The warning is how the user finds out, and it travels with the response
+// rather than being logged where nobody is looking.
+func forkWorkspaceFor(parent *store.Session, mode, branch string) (cwd, workspace string, warnings []string) {
+	if mode == forkWorkspaceSame {
+		return parent.CWD, forkWorkspaceSame, nil
+	}
+
+	repo, err := gitRepoRoot(parent.CWD)
+	if err != nil {
+		return parent.CWD, forkWorkspaceSame, []string{
+			"not a git repository, so the fork shares the parent's folder",
+		}
+	}
+
+	if branch == "" {
+		branch = deriveBranch(repo, parent.Label(0))
+	}
+	created, err := createWorktree(repo, branch)
+	if err != nil {
+		return parent.CWD, forkWorkspaceSame, []string{
+			fmt.Sprintf("could not make a worktree (%s), so the fork shares the parent's folder", err.Error()),
+		}
+	}
+
+	// The fork starts at the parent's last commit. Saying so up front beats the
+	// agent discovering it the first time it reads a file it remembers editing.
+	if out, err := gitCmd(parent.CWD, "status", "--porcelain"); err == nil {
+		if dirty := countLines(out); dirty > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"the parent has %d uncommitted files; the fork starts from the last commit", dirty))
+		}
+	}
+	return created.Path, forkWorkspaceWorktree, warnings
 }
 
 // ==================== Helpers ====================

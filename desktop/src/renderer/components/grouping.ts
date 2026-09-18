@@ -32,6 +32,98 @@ export function byRank(a: number[], b: number[]): number {
   return 0
 }
 
+/**
+ * A fork whose parent is in the same list, and so renders under it.
+ *
+ * The qualifier is not pedantry. A search, a status filter or the daemon's
+ * thousand-row limit can hand back a child without its parent, and a fork that
+ * hangs off a session nobody has is a session that never draws. One that cannot
+ * find its parent is treated as a root.
+ */
+export function isNestedFork(session: Session, present: Set<string>): boolean {
+  return Boolean(session.forked_from && present.has(session.forked_from))
+}
+
+/** The ids in a list, for the lookup above. */
+export function idsOf(sessions: Session[]): Set<string> {
+  return new Set(sessions.map((session) => session.session_id))
+}
+
+/** Forks indexed by the session they came from, siblings oldest first. */
+export function forksByParent(sessions: Session[]): Map<string, Session[]> {
+  const byParent = new Map<string, Session[]>()
+  for (const session of sessions) {
+    if (!session.forked_from) continue
+    const siblings = byParent.get(session.forked_from) ?? []
+    siblings.push(session)
+    byParent.set(session.forked_from, siblings)
+  }
+  for (const siblings of byParent.values()) {
+    siblings.sort((a, b) => (a.forked_at ?? '').localeCompare(b.forked_at ?? ''))
+  }
+  return byParent
+}
+
+/** One drawn row of a family, with everything the tree lines need. */
+export interface FamilyRow {
+  session: Session
+  /** 0 for the root; one deeper for each fork above this one. */
+  depth: number
+  /**
+   * One entry per level of indent, outermost first, saying whether that level's
+   * trunk keeps running past this row.
+   *
+   * This is what makes a tree rather than an indent. A row three deep sits to
+   * the right of two ancestors, and each of those ancestors draws a vertical
+   * line through this row only if it still has a sibling waiting below —
+   * otherwise the line has already ended and the space is blank.
+   *
+   * The last entry is this row's own level, and is read as the elbow rather
+   * than as a trunk.
+   */
+  trunk: boolean[]
+  /** Whether this is the last fork of its parent, so its elbow closes (└)
+   *  instead of continuing (├). */
+  last: boolean
+}
+
+/**
+ * The visible rows of one family, depth-first, stopping wherever a row is
+ * folded.
+ *
+ * Depth is capped. Past the cap the rows stop moving right, or a chain of forks
+ * walks off the edge of a sidebar somebody has narrowed.
+ */
+export const MAX_FORK_DEPTH = 4
+
+export function familyRows(
+  root: Session,
+  forks: Map<string, Session[]>,
+  isFolded: (sessionId: string) => boolean,
+): FamilyRow[] {
+  const rows: FamilyRow[] = []
+  const seen = new Set<string>()
+
+  const walk = (session: Session, trunk: boolean[], last: boolean): void => {
+    if (seen.has(session.session_id)) return
+    seen.add(session.session_id)
+    rows.push({ session, depth: trunk.length, trunk, last })
+    if (isFolded(session.session_id)) return
+
+    const children = forks.get(session.session_id) ?? []
+    children.forEach((child, index) => {
+      const youngest = index === children.length - 1
+      // Capped by not growing: the deepest rows share a column rather than
+      // each claiming a new one.
+      const next = trunk.length >= MAX_FORK_DEPTH ? trunk : [...trunk, !youngest]
+      walk(child, next, youngest)
+    })
+  }
+
+  walk(root, [], true)
+  return rows
+}
+
 /** How deep the tree goes for these sessions: the most groups any one holds. */
 export function depthOf(sessions: Session[]): number {
   return sessions.reduce((deepest, session) => Math.max(deepest, session.group_path?.length ?? 0), 0)
@@ -119,6 +211,7 @@ export function buildTree(sessions: Session[], groups: SessionGroup[] = []): Gro
   }
 
   let ungrouped: GroupNode | null = null
+  const present = idsOf(sessions)
 
   for (const session of sessions) {
     let chain = chainOf(session.group_key)
@@ -130,9 +223,16 @@ export function buildTree(sessions: Session[], groups: SessionGroup[] = []): Gro
       chain = [ungrouped]
     }
 
+    // Counted either way: a family folded shut still contributes to the number
+    // on the header above it, or that number changes when nothing has left.
+    for (const node of chain) node.total += 1
+    // A fork is drawn by its parent, not filed beside it. The daemon already
+    // resolves a fork's group to its root's, so without this both would land
+    // in the same node and the fork would render twice.
+    if (isNestedFork(session, present)) continue
+
     const host = chain[chain.length - 1] as GroupNode
     host.sessions.push(session)
-    for (const node of chain) node.total += 1
   }
 
   sortNodes(roots)
@@ -232,8 +332,26 @@ export function buildCwdTree(
   placed: PathOrder = {},
 ): GroupNode[] {
   const nodes = new Map<string, GroupNode>()
+  const present = idsOf(sessions)
+  const byId = new Map(sessions.map((session) => [session.session_id, session]))
+
+  // A fork in a worktree of its own runs in a different directory from its
+  // parent, so grouping by directory would tear the family in half and put the
+  // halves under two headers. The family goes where its root is: that is what
+  // "a fork moves with its parent" has to mean in a mode that does not read
+  // the group column at all.
+  const rootDirOf = (session: Session): string => {
+    const seen = new Set<string>()
+    let at = session
+    while (at.forked_from && present.has(at.forked_from) && !seen.has(at.session_id)) {
+      seen.add(at.session_id)
+      at = byId.get(at.forked_from) as Session
+    }
+    return at.cwd
+  }
+
   for (const session of sessions) {
-    const cwd = session.cwd
+    const cwd = rootDirOf(session)
     let node = nodes.get(cwd)
     if (!node) {
       node = {
@@ -247,8 +365,9 @@ export function buildCwdTree(
       }
       nodes.set(cwd, node)
     }
-    node.sessions.push(session)
     node.total += 1
+    if (isNestedFork(session, present)) continue
+    node.sessions.push(session)
   }
   return orderGroups([...nodes.values()], order, placed)
 }

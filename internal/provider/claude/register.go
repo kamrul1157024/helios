@@ -78,6 +78,30 @@ func ResumeArgs(sessionID, mode string) []string {
 	return append(argv, "--permission-mode", mode)
 }
 
+// ForkArgs returns the argv that starts a new session holding a copy of
+// another's conversation.
+//
+// --fork-session is what makes the copy: resuming alone would continue the
+// parent, and two sessions writing one transcript is not a branch. Alone it
+// would also mint a random id, which is the one thing Helios cannot allow —
+// every hook correlates on the id Helios chose. --session-id is accepted
+// alongside it and names the new conversation, so a forked session keeps the
+// same resume_id-is-nil shape as every other Claude session.
+//
+// The mode is handled as ResumeArgs handles it, and for the same reason: it is
+// a per-invocation flag, and a fork inherits what its parent was running under
+// rather than the CLI's default.
+func ForkArgs(sessionID, parentSessionID, mode string) []string {
+	argv := []string{findClaude(), "--resume", parentSessionID, "--fork-session", "--session-id", sessionID}
+	if mode == "" {
+		return argv
+	}
+	if !ValidPermissionMode(mode) {
+		mode = DefaultPermissionMode
+	}
+	return append(argv, "--permission-mode", mode)
+}
+
 // LaunchPermissionMode reports the mode sessionArgs launches spec under, so a
 // caller can record what the session is actually running in rather than
 // inferring it later. Recording matters because an unrecorded mode means "the

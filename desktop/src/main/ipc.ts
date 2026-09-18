@@ -56,6 +56,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'stop',
   'terminate',
   'resume',
+  'forkSession',
   'wake',
   'openShell',
   'terminals',
