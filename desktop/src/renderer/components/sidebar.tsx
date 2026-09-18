@@ -46,7 +46,12 @@ import {
   buildTree,
   byRank,
   depthOf,
+  familyRows,
+  forksByParent,
+  idsOf,
+  isNestedFork,
   rankOf,
+  type FamilyRow,
   type GroupNode,
 } from './grouping.ts'
 import { Collapsible } from './collapsible.tsx'
@@ -226,6 +231,14 @@ export function Sidebar({
   // appear at two depths, and folding it in one place should not fold the
   // other.
   const [folded, setFolded] = useState<Record<string, boolean>>({})
+  // Folded families, keyed by host and the session the forks hang from. A
+  // separate map from the group folds above rather than a shared one with a
+  // prefix: one namespace holding two kinds of key is a collision waiting for
+  // the first group whose path spells a session id.
+  //
+  // Open by default. A fork exists because someone just made it, and a fork
+  // that appears already hidden is a fork the user thinks failed.
+  const [foldedForks, setFoldedForks] = useState<Record<string, boolean>>({})
   // A group header on the move. Separate from a session drag: they reorder
   // different things and a drop on one is never a drop on the other.
   const [groupDrag, setGroupDrag] = useState<GroupDrag | null>(null)
@@ -611,7 +624,17 @@ export function Sidebar({
           const isCollapsed = collapsed[host.id] ?? false
           const revealed = showTerminated[host.id] ?? false
           // The whole host in display order, which is what a reorder posts.
-          const order = rows.map((row) => row.session.session_id)
+          // Roots only: a fork has no place in the hand-sorted list, and the
+          // daemon drops fork ids from an order anyway.
+          const allSessions = rows.map((row) => row.session)
+          const present = idsOf(allSessions)
+          const forks = forksByParent(allSessions)
+          const order = allSessions
+            .filter((session) => !isNestedFork(session, present))
+            .map((session) => session.session_id)
+          const forkFoldKey = (sessionId: string): string => `${host.id}:fork:${sessionId}`
+          const isForkFolded = (sessionId: string): boolean =>
+            foldedForks[forkFoldKey(sessionId)] ?? false
           // One machine needs no header saying which machine: the rule that
           // hides a level splitting nothing survives here, where it started.
           const showHost = hosts.length > 1
@@ -625,14 +648,28 @@ export function Sidebar({
           })
           const autoOpen = autoRunsOpen[host.id] ?? false
 
-          const renderRow = (session: Session, path: string): JSX.Element => (
+          const renderRow = (session: Session, path: string, family?: FamilyRow): JSX.Element => (
             <SessionRow
               key={session.session_id}
               hostId={host.id}
               session={session}
               pending={pending.get(session.session_id) ?? 0}
               selected={selection?.hostId === host.id && selection.sessionId === session.session_id}
-              draggable={draggable}
+              forkTrunk={family?.trunk ?? []}
+              forkLast={family?.last ?? true}
+              forkCount={session.fork_count ?? 0}
+              forkFolded={isForkFolded(session.session_id)}
+              onToggleFork={() =>
+                setFoldedForks((f) => ({
+                  ...f,
+                  [forkFoldKey(session.session_id)]: !isForkFolded(session.session_id),
+                }))
+              }
+              // A fork is not in the host's hand-sorted order, so it is not a
+              // drag handle — the same answer the automated runs below get, and
+              // for the same reason. Dragging the parent carries the family
+              // because the family is drawn from the parent's row.
+              draggable={draggable && (family?.depth ?? 0) === 0}
               dragging={dragging?.sessionId === session.session_id}
               // Only inside the node it started in: the daemon holds one flat
               // order per host, so a card dropped across a divide would drag
@@ -667,6 +704,14 @@ export function Sidebar({
               onPick={(how) => pick(host.id, session.session_id, how)}
             />
           )
+
+          // A root and the forks hanging off it, drawn as one block. The root
+          // carries the drag, so the family moves as a unit without anything
+          // having to gather it up at drop time.
+          const renderFamily = (root: Session, path: string): JSX.Element[] =>
+            familyRows(root, forks, isForkFolded).map((row) =>
+              renderRow(row.session, path, row),
+            )
 
           const keysUnder = (node: GroupNode): string[] => keysInNode(host.id, node)
           const renderNode = (node: GroupNode): JSX.Element => {
@@ -887,7 +932,7 @@ export function Sidebar({
                       />
                     )}
                   {node.children.map((child) => renderNode(child))}
-                  {node.sessions.map((session) => renderRow(session, path))}
+                  {node.sessions.flatMap((session) => renderFamily(session, path))}
                 </Collapsible>
               </div>
             )
@@ -958,7 +1003,9 @@ export function Sidebar({
 
               {grouping
                 ? nodes.map((node) => renderNode(node))
-                : rows.map((row) => renderRow(row.session, ''))}
+                : allSessions
+                    .filter((session) => !isNestedFork(session, present))
+                    .flatMap((session) => renderFamily(session, ''))}
 
               {/* What a schedule started, under what the user started. Folded
                   until asked for, because a schedule that fires hourly would
@@ -987,6 +1034,13 @@ export function Sidebar({
                           selection?.hostId === host.id &&
                           selection.sessionId === session.session_id
                         }
+                        // A run is listed here, not under a parent, so it is
+                        // drawn flat whatever its lineage says.
+                        forkTrunk={[]}
+                        forkLast
+                        forkCount={0}
+                        forkFolded={false}
+                        onToggleFork={() => {}}
                         // A run has no place in the host's hand-sorted order:
                         // that order is one list, and this is not in it.
                         draggable={false}
@@ -1227,6 +1281,11 @@ function SessionRow({
   session,
   pending,
   selected,
+  forkTrunk,
+  forkLast,
+  forkCount,
+  forkFolded,
+  onToggleFork,
   draggable,
   dragging,
   accepts,
@@ -1243,6 +1302,15 @@ function SessionRow({
   session: Session
   pending: number
   selected: boolean
+  /** One entry per level of indent: whether that ancestor's line keeps running
+   *  past this row. Empty for a root. See FamilyRow. */
+  forkTrunk: boolean[]
+  /** Whether this is the last fork of its parent, so its elbow closes. */
+  forkLast: boolean
+  /** Direct forks of this session, which is what the count beside it reads. */
+  forkCount: number
+  forkFolded: boolean
+  onToggleFork: () => void
   /** Only in manual mode: dragging a card in an auto-sorted list means nothing. */
   draggable: boolean
   dragging: boolean
@@ -1273,10 +1341,19 @@ function SessionRow({
     picked ? 'picked' : '',
     dragging ? 'dragging' : '',
     draggable ? 'movable' : '',
+    forkTrunk.length > 0 ? 'forked' : '',
   ]
   return (
     <article
       className={classes.filter(Boolean).join(' ')}
+      // The row is a column flex, so the tree lines cannot be a sibling of the
+      // content — they would stack above it. They are absolutely positioned
+      // instead, and this is the padding that makes room for them.
+      style={
+        forkTrunk.length > 0
+          ? ({ '--fork-depth': forkTrunk.length } as React.CSSProperties)
+          : undefined
+      }
       // A draggable ancestor takes the pointer off the field inside it: the
       // browser starts a drag instead of placing the caret, so a title cannot
       // be clicked into while the row can be moved.
@@ -1353,7 +1430,37 @@ function SessionRow({
           onChange={() => onPick('toggle')}
         />
       )}
+      {/* The tree's own lines, one column per level of indent. Drawn as
+          elements rather than as a margin: an indent alone leaves the reader
+          to guess which row above a deep fork it belongs to, and the trunk is
+          what answers that. Each column is either a line running through,
+          blank where that ancestor's last child has already been drawn, or
+          this row's own elbow. */}
+      {forkTrunk.length > 0 && (
+        <span className="fork-guides" aria-hidden="true">
+          {forkTrunk.map((running, level) => {
+            const mine = level === forkTrunk.length - 1
+            const kind = mine ? (forkLast ? 'elbow last' : 'elbow') : running ? 'line' : 'blank'
+            return <span key={level} className={`fork-guide ${kind}`} />
+          })}
+        </span>
+      )}
       <div className="row-main">
+        {/* Its own target, so the rest of the row still opens the session. */}
+        {forkCount > 0 && (
+          <button
+            className="fork-chevron"
+            aria-expanded={!forkFolded}
+            aria-label={forkFolded ? `Show ${forkCount} forks` : `Hide ${forkCount} forks`}
+            title={forkFolded ? `Show ${forkCount} forks` : `Hide ${forkCount} forks`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleFork()
+            }}
+          >
+            <Chevron className="chevron" open={!forkFolded} />
+          </button>
+        )}
         {/* Compact's whole second line, folded into two glyphs at the head of
             the first: which agent, and how it is doing. Both are drawn at
             either density and hidden by the stylesheet at the roomy one, where
@@ -1393,6 +1500,13 @@ function SessionRow({
         {session.pinned && (
           <span className="pin" title="Pinned">
             ★
+          </span>
+        )}
+        {/* Shown whether the family is open or shut. Folded, it is the only
+            thing saying the branches are still there. */}
+        {forkCount > 0 && (
+          <span className="fork-count" title={forkCount === 1 ? '1 fork' : `${forkCount} forks`}>
+            {forkCount} ⑂
           </span>
         )}
         {pending > 0 && (

@@ -325,6 +325,21 @@ export class HostApi {
   resume(id: string): Promise<unknown> {
     return this.call('resume', id)
   }
+  /** Branches a session. See the daemon's POST /api/sessions/{id}/fork. */
+  forkSession(
+    id: string,
+    body: { workspace?: string; branch?: string; prompt?: string; title?: string } = {},
+  ): Promise<{
+    success: boolean
+    session_id: string
+    terminal: string
+    cwd: string
+    forked_from: string
+    fork_workspace: string
+    warnings?: string[] | null
+  }> {
+    return this.call('forkSession', id, body)
+  }
   wake(id: string): Promise<{ success: boolean; terminal: string }> {
     return this.call('wake', id)
   }

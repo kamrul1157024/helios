@@ -420,6 +420,29 @@ export class ApiClient {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/resume`)
   }
 
+  /**
+   * Branches a session: a new one holding this one's whole conversation, and by
+   * default a git worktree of its own to work in.
+   *
+   * An empty body is the ordinary request. `warnings` is how the daemon reports
+   * what it had to settle for — a repository that would not take a worktree, or
+   * uncommitted work the fork starts without.
+   */
+  forkSession(
+    id: string,
+    body: { workspace?: string; branch?: string; prompt?: string; title?: string } = {},
+  ): Promise<{
+    success: boolean
+    session_id: string
+    terminal: string
+    cwd: string
+    forked_from: string
+    fork_workspace: string
+    warnings?: string[] | null
+  }> {
+    return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/fork`, body)
+  }
+
   /** Warms a cold session's terminal host and returns its socket path. */
   wake(id: string): Promise<{ success: boolean; terminal: string }> {
     return this.request('POST', `/api/sessions/${encodeURIComponent(id)}/wake`)

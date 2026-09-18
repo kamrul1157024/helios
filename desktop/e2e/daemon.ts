@@ -152,6 +152,9 @@ export type DaemonWrite =
   | { kind: 'delete'; sessionId: string }
   // Ending the turn, not the session.
   | { kind: 'stop'; sessionId: string }
+  // Branching one. The body is what the dialog decided, which is the only
+  // record of whether it sent a branch name or left it to the daemon.
+  | { kind: 'fork'; sessionId: string; body: Record<string, unknown> }
   | { kind: 'channel'; name: string; members: string[]; message: string }
   | { kind: 'post'; channelId: string; message: string; threadRoot: string }
   | { kind: 'join'; channelId: string; session: string }
@@ -243,9 +246,40 @@ export function resetTranscripts(): void {
   for (const key of Object.keys(TOOL_CALLS)) delete TOOL_CALLS[key]
   for (const record of [...SESSIONS, ...RUNS]) {
     record.last_event_at = '2026-01-01T00:00:00Z'
+    delete record.forked_from
+    delete record.forked_at
+    delete record.fork_count
+    delete record.root_session_id
     if (record.session_id === PAST_RUN) continue
     record.status = 'idle'
     record.terminal = `/tmp/helios/${record.session_id}.sock`
+  }
+}
+
+/**
+ * Makes one session a fork of another, the way the daemon reports a branch.
+ *
+ * The parent's count is set here rather than derived, because the daemon
+ * derives it from the whole table and the stub has no table — a client that
+ * only counted the rows in front of it would disagree with a real daemon the
+ * moment a filter hid one.
+ */
+export function forkSessionFrom(childId: string, parentId: string, forkedAt = '2026-01-01T01:00:00Z'): void {
+  const all = [...SESSIONS, ...RUNS]
+  const child = all.find((s) => s.session_id === childId)
+  const parent = all.find((s) => s.session_id === parentId)
+  if (!child || !parent) return
+  child.forked_from = parentId
+  child.forked_at = forkedAt
+  child.fork_workspace = 'worktree'
+  child.root_session_id = parent.root_session_id ?? parentId
+  parent.root_session_id = parent.root_session_id ?? parentId
+
+  // Counted from the records rather than incremented. SESSIONS is a module
+  // constant shared by every test in the worker, so a += here would carry one
+  // test's forks into the next one's count.
+  for (const record of all) {
+    record.fork_count = all.filter((s) => s.forked_from === record.session_id).length
   }
 }
 
@@ -558,6 +592,7 @@ function written(path: string): boolean {
     path === '/api/uploads' ||
     path.endsWith('/send') ||
     path.endsWith('/stop') ||
+    path.endsWith('/fork') ||
     path === '/api/channels' ||
     (path.startsWith('/api/channels/') &&
       (path.endsWith('/messages') ||
@@ -577,6 +612,20 @@ function record(writes: DaemonWrite[], path: string, body: Buffer): unknown {
   if (path === '/api/sessions') {
     writes.push({ kind: 'create', spec: JSON.parse(body.toString() || '{}') })
     return { success: true, session_id: CREATED, terminal: `/tmp/helios/${CREATED}.sock`, cwd: REPO }
+  }
+
+  if (path.endsWith('/fork')) {
+    const sessionId = path.slice('/api/sessions/'.length, -'/fork'.length)
+    writes.push({ kind: 'fork', sessionId, body: JSON.parse(body.toString() || '{}') })
+    return {
+      success: true,
+      session_id: CREATED,
+      terminal: `/tmp/helios/${CREATED}.sock`,
+      cwd: OTHER_WORKTREE,
+      forked_from: sessionId,
+      fork_workspace: 'worktree',
+      warnings: null,
+    }
   }
 
   if (path === '/api/channels') {

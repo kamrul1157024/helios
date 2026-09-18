@@ -2123,6 +2123,181 @@ small {
   flex: none;
 }
 
+/* ── Forks ──────────────────────────────────────────────────────────────────
+   A fork is drawn as a child of the session it came from: indented, marked,
+   and reachable through a chevron on the parent. The indent is a margin on the
+   row rather than a wrapper element, so every row stays a sibling of every
+   other and a drop target can still compare them.
+   See docs/specs/64-session-forking.md. */
+
+/* The tree's lines, one column per level of indent. Columns rather than a
+   margin: a deep fork indented on its own leaves the reader counting pixels to
+   work out which row above it belongs to, and the trunk answers that instead.
+
+   Each column is 14px wide with the line down its centre, so an elbow and the
+   trunk below it land on the same pixel. */
+/* One column per level, on top of whatever padding the density already gives
+   the row. Repeated for compact rather than written once: that density sets
+   the padding through `[data-density] .session-row`, which outranks a plain
+   two-class selector, so a single rule here would be silently ignored at the
+   density most people run. */
+.session-row.forked {
+  position: relative;
+  padding-left: calc(13px + var(--fork-depth, 0) * 14px);
+}
+
+[data-density='compact'] .session-row.forked {
+  padding-left: calc(14px + var(--fork-depth, 0) * 14px);
+}
+
+/* Down the left edge rather than inline: .session-row is a column flex, so a
+   sibling of the content would stack above it instead of beside it.
+   Stretched 2px past the bottom to close the gap the row margin leaves, so a
+   trunk running through several rows is one unbroken line. */
+.fork-guides {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: -2px;
+  display: flex;
+  pointer-events: none;
+}
+
+.fork-guide {
+  position: relative;
+  flex: none;
+  width: 14px;
+}
+
+/* An ancestor with another child still to come: its line runs the full height
+   of this row and carries on past it. */
+.fork-guide.line::before,
+.fork-guide.elbow::before,
+.fork-guide.elbow.last::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  border-radius: 1px;
+  /* Grey, but a good deal stronger than the divider grey: the line is the only
+     thing saying one row came from another, and at --outline-variant it reads
+     as a rule between rows rather than a link between them. */
+  background: color-mix(in srgb, var(--on-surface-variant) 70%, transparent);
+}
+
+.fork-guide.line::before {
+  top: 0;
+  bottom: 0;
+}
+
+/* This row's own elbow. It reaches half a row upward so it meets the middle of
+   the row above — the parent's, for a first fork — rather than starting at its
+   own top and leaving the branch floating. Then it turns right into the row.
+
+   A last fork stops at the turn; one with siblings below carries on so the
+   next elbow joins the same line. */
+.fork-guide.elbow::before {
+  top: -50%;
+  bottom: 0;
+}
+
+.fork-guide.elbow.last::before {
+  top: -50%;
+  height: 100%;
+}
+
+.fork-guide.elbow::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--on-surface-variant) 70%, transparent);
+}
+
+/* An ancestor whose last child has already been drawn: the space is held so
+   the columns stay aligned, and nothing is drawn in it. */
+.fork-guide.blank::before,
+.fork-guide.blank::after {
+  content: none;
+}
+
+/* Its own target, so the rest of the row still opens the session. Always
+   visible, unlike the group chevron: a folded family is otherwise indistinguishable
+   from a session with nothing under it. */
+.fork-chevron {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--on-surface-variant);
+  opacity: 0.6;
+}
+
+.fork-chevron:hover {
+  opacity: 1;
+  background: var(--surface-container-high);
+}
+
+/* Shown whether the family is open or shut. Folded, it is the only thing
+   saying the branches are still there. */
+.fork-count {
+  flex: none;
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.fork-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 380px;
+}
+
+.fork-explain {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.fork-note {
+  margin: 0;
+  color: var(--s-waiting);
+  font-size: 11px;
+}
+
+.fork-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 12px;
+}
+
+/* A disclosure rather than a third radio: sharing the parent's folder answers
+   a narrow question, and putting it on the face invites a shared checkout by
+   accident. */
+.fork-more {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  background: none;
+}
+
+.fork-same {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+}
+
 /* No live host behind the status: the row says idle, this says it will take a
    moment to prove it. */
 .cold-mark {

@@ -36,6 +36,24 @@ export interface Session {
    *  no client walks the tree itself. Absent unless the request asked for
    *  grouping, so a client that does not group is served what it always was. */
   group_path?: SessionGroup[]
+  /** The session this one's conversation was copied from. Absent for a session
+   *  started from nothing. A fork of a fork names the fork, so the whole tree
+   *  is this one field.
+   *
+   *  A fork is not an independent row: it renders under its parent, it has no
+   *  group or sort position of its own, and no gesture separates the two.
+   *  See docs/specs/64-session-forking.md. */
+  forked_from?: string
+  /** When the branch was taken. Orders siblings. */
+  forked_at?: string
+  /** How the fork was given somewhere to work: "worktree" for ground of its
+   *  own, "same" for the parent's folder. */
+  fork_workspace?: string
+  /** How many sessions name this one as their parent. Direct children only, so
+   *  a chain three deep still reads 1. */
+  fork_count?: number
+  /** The top of this session's fork chain; itself when it is a root. */
+  root_session_id?: string
 }
 
 /** One node of the grouping tree. Position is its place among its own siblings,
@@ -573,7 +591,10 @@ export interface ProviderInfo {
   id: string
   name: string
   icon: string
-  capabilities: { prompt_queue: boolean }
+  /** Derived by the daemon from the interfaces the provider implements, so a
+   *  provider cannot claim something it has not got. Optional here because an
+   *  older daemon answers without the newer flags. */
+  capabilities: { prompt_queue: boolean; fork?: boolean }
   /**
    * Served rather than hardcoded: the vocabulary is the CLI's, and it has
    * already gained a mode between releases.

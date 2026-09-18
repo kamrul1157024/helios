@@ -135,6 +135,16 @@ export function sessionActions(
     },
   )
 
+  // Branching keeps everything said so far, so it belongs beside the actions
+  // that act on the conversation rather than among the ones that end it. The
+  // dialog asks for the branch name; the daemon decides everything else.
+  if (providers?.find((p) => p.id === session.source)?.capabilities?.fork !== false) {
+    actions.push({
+      label: 'Fork…',
+      run: () => store.openForkDialog(hostId, session),
+    })
+  }
+
   // A child menu rather than entries of its own: the list comes from the daemon
   // when the menu opens, and a parent row keeps its one-row height whether or
   // not it has arrived — entries appearing here would grow the menu under the
