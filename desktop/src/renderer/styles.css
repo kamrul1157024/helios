@@ -2224,34 +2224,28 @@ small {
   content: none;
 }
 
-/* Its own target, so the rest of the row still opens the session. Always
-   visible, unlike the group chevron: a folded family is otherwise indistinguishable
-   from a session with nothing under it. */
-.fork-chevron {
+/* The count and the fold in one control. Always visible, unlike the group
+   chevron that appears on hover: a folded family would otherwise look like a
+   session with nothing under it. Sized in its own right rather than collapsing
+   like the row's hover buttons beside it, so it is a target at rest. */
+.fork-toggle {
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border-radius: var(--r-sm);
-  color: var(--on-surface-variant);
-  opacity: 0.6;
-}
-
-.fork-chevron:hover {
-  opacity: 1;
-  background: var(--surface-container-high);
-}
-
-/* Shown whether the family is open or shut. Folded, it is the only thing
-   saying the branches are still there. */
-.fork-count {
-  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
   color: var(--on-surface-variant);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
-  opacity: 0.8;
+  background: var(--surface-container-high);
+  opacity: 0.85;
+}
+
+.fork-toggle:hover {
+  opacity: 1;
+  color: var(--on-surface);
 }
 
 .fork-dialog {

@@ -25,7 +25,7 @@ test('a fork renders under its parent, marked and indented', async ({ window }) 
 
   // Alpha is the parent, so it carries the count and draws no line of its own.
   const alpha = row(window, ALPHA)
-  await expect(alpha.locator('.fork-count')).toHaveText('1 ⑂')
+  await expect(alpha.locator('.fork-toggle')).toHaveText('1 ⑂')
   await expect(alpha.locator('.fork-guide')).toHaveCount(0)
 
   // Drawn directly after its parent rather than wherever activity put it.
@@ -39,13 +39,13 @@ test('the chevron folds the family and the count stays behind', async ({ window 
   await window.reload()
 
   await expect(row(window, BETA)).toBeVisible()
-  await row(window, ALPHA).locator('.fork-chevron').click()
+  await row(window, ALPHA).locator('.fork-toggle').click()
 
   await expect(row(window, BETA)).toHaveCount(0)
   // Folded, the count is the only thing saying the branch is still there.
-  await expect(row(window, ALPHA).locator('.fork-count')).toHaveText('1 ⑂')
+  await expect(row(window, ALPHA).locator('.fork-toggle')).toHaveText('1 ⑂')
 
-  await row(window, ALPHA).locator('.fork-chevron').click()
+  await row(window, ALPHA).locator('.fork-toggle').click()
   await expect(row(window, BETA)).toBeVisible()
 })
 
@@ -58,7 +58,7 @@ test('folding a branch hides what is under it and leaves its sibling alone', asy
   await expect(row(window, GAMMA)).toBeVisible()
   await expect(row(window, GAMMA).locator('.fork-guide')).toHaveCount(2)
 
-  await row(window, BETA).locator('.fork-chevron').click()
+  await row(window, BETA).locator('.fork-toggle').click()
 
   await expect(row(window, GAMMA)).toHaveCount(0)
   await expect(row(window, BETA)).toBeVisible()

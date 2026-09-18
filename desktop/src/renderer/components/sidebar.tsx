@@ -1446,21 +1446,6 @@ function SessionRow({
         </span>
       )}
       <div className="row-main">
-        {/* Its own target, so the rest of the row still opens the session. */}
-        {forkCount > 0 && (
-          <button
-            className="fork-chevron"
-            aria-expanded={!forkFolded}
-            aria-label={forkFolded ? `Show ${forkCount} forks` : `Hide ${forkCount} forks`}
-            title={forkFolded ? `Show ${forkCount} forks` : `Hide ${forkCount} forks`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleFork()
-            }}
-          >
-            <Chevron className="chevron" open={!forkFolded} />
-          </button>
-        )}
         {/* Compact's whole second line, folded into two glyphs at the head of
             the first: which agent, and how it is doing. Both are drawn at
             either density and hidden by the stylesheet at the roomy one, where
@@ -1502,12 +1487,26 @@ function SessionRow({
             ★
           </span>
         )}
-        {/* Shown whether the family is open or shut. Folded, it is the only
-            thing saying the branches are still there. */}
+        {/* The count and the fold are one control, not two. A chevron on the
+            left and a count on the right were two affordances for one action,
+            and the chevron sat among the row's hover-expanding buttons where
+            it was the smallest target on the row. Shown whether the family is
+            open or shut: folded, it is the only thing saying the branches are
+            still there. */}
         {forkCount > 0 && (
-          <span className="fork-count" title={forkCount === 1 ? '1 fork' : `${forkCount} forks`}>
-            {forkCount} ⑂
-          </span>
+          <button
+            className="fork-toggle"
+            aria-expanded={!forkFolded}
+            aria-label={forkFolded ? `Show ${forkCount} forks` : `Hide ${forkCount} forks`}
+            title={forkFolded ? `Show ${forkCount} forks` : `Hide ${forkCount} forks`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleFork()
+            }}
+          >
+            <Chevron className="chevron" open={!forkFolded} />
+            <span>{forkCount} ⑂</span>
+          </button>
         )}
         {pending > 0 && (
           <span className="badge" title={pending === 1 ? '1 waiting on you' : `${pending} waiting on you`}>
