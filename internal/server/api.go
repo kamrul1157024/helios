@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1871,8 +1872,18 @@ func (s *PublicServer) handleForkSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.Title != "" {
-		if err := s.shared.DB.UpdateSessionTitle(started.SessionID, req.Title); err != nil {
+	// A fork is named after the conversation it came from. Left unnamed it
+	// falls back to its project — the row reads "helios", sits under a parent
+	// called something else, and looks like an unrelated session that wandered
+	// in. The automatic titler will not rescue it either: it leaves a titled
+	// session alone, and for one that has said nothing of its own yet it
+	// answers SKIP.
+	title := req.Title
+	if title == "" {
+		title = forkTitle(parent, cwd, workspace)
+	}
+	if title != "" {
+		if err := s.shared.DB.UpdateSessionTitle(started.SessionID, title); err != nil {
 			log.Printf("fork-session: title for %s: %v", started.SessionID, err)
 		}
 	}
@@ -1902,6 +1913,31 @@ func (s *PublicServer) handleForkSession(w http.ResponseWriter, r *http.Request)
 		"warnings":       warnings,
 	})
 }
+
+// forkTitle names a fork after the conversation it came from.
+//
+// The parent's own label, plus the branch when the fork has one — "[FEAT]
+// Session forking ⑂ try-a-queue" says both what this is and which attempt it
+// is, which is the whole question a list of forks has to answer.
+//
+// The mark is the one the row already wears, so the title and the tree agree.
+func forkTitle(parent *store.Session, cwd, workspace string) string {
+	base := parent.Label(forkTitleParentLimit)
+	if base == "" {
+		base = parent.Project
+	}
+	if base == "" {
+		return ""
+	}
+	if workspace != forkWorkspaceWorktree {
+		return base + " ⑂"
+	}
+	return base + " ⑂ " + filepath.Base(cwd)
+}
+
+// forkTitleParentLimit keeps a long parent title from pushing the branch off
+// the end of every row that inherits it.
+const forkTitleParentLimit = 48
 
 // forkWorkspaceFor gives the fork somewhere to work, and reports what the user
 // needs to know about the ground it landed on.

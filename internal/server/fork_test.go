@@ -127,3 +127,54 @@ func TestForkWorkspaceSameLeavesTheParentsFolder(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// A fork left unnamed falls back to its project, so the row reads "helios",
+// sits under a parent called something else, and looks unrelated. The
+// automatic titler cannot rescue it: it skips a session that already has a
+// title, and answers SKIP for one that has said nothing of its own.
+func TestForkTitleNamesTheParentAndTheBranch(t *testing.T) {
+	parent := &store.Session{
+		SessionID: "p",
+		Project:   "helios",
+		Title:     strPtr("[FEAT] Session forking"),
+	}
+
+	got := forkTitle(parent, "/x/helios-worktrees/try-a-queue", forkWorkspaceWorktree)
+	if want := "[FEAT] Session forking ⑂ try-a-queue"; got != want {
+		t.Errorf("forkTitle = %q, want %q", got, want)
+	}
+
+	// No branch to name when the fork shares the parent's folder.
+	got = forkTitle(parent, "/x/helios", forkWorkspaceSame)
+	if want := "[FEAT] Session forking ⑂"; got != want {
+		t.Errorf("forkTitle = %q, want %q", got, want)
+	}
+}
+
+// An untitled parent still gives the fork something better than the bare
+// project name it would otherwise inherit from nowhere.
+func TestForkTitleFallsBackToTheProject(t *testing.T) {
+	parent := &store.Session{SessionID: "p", Project: "helios"}
+
+	got := forkTitle(parent, "/x/helios-worktrees/try", forkWorkspaceWorktree)
+	if want := "helios ⑂ try"; got != want {
+		t.Errorf("forkTitle = %q, want %q", got, want)
+	}
+}
+
+// A parent named at length must not push the branch off the end of the row.
+func TestForkTitleTrimsALongParentName(t *testing.T) {
+	parent := &store.Session{
+		SessionID: "p",
+		Project:   "helios",
+		Title:     strPtr(strings.Repeat("a very long session title ", 6)),
+	}
+
+	got := forkTitle(parent, "/x/helios-worktrees/try", forkWorkspaceWorktree)
+	if !strings.HasSuffix(got, "⑂ try") {
+		t.Errorf("forkTitle = %q, want it to still end with the branch", got)
+	}
+	if len([]rune(got)) > 64 {
+		t.Errorf("forkTitle is %d runes: %q", len([]rune(got)), got)
+	}
+}

@@ -468,6 +468,15 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           manual: manual,
           grouped: grouping != null,
         );
+        // The flat list draws families too, so it iterates roots and lets each
+        // one bring its own forks. Its reorder posts roots only, which is what
+        // the daemon keeps an order of.
+        final flatForks = forksByParent(filtered);
+        final flatPresent = idsOf(filtered);
+        final flatRoots = [
+          for (final session in filtered)
+            if (!isNestedFork(session, flatPresent)) session,
+        ];
 
         return Column(
           children: [
@@ -493,27 +502,32 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
                               ),
-                              itemCount: filtered.length,
+                              itemCount: flatRoots.length,
                               onReorder: (from, to) =>
-                                  _onReorder(orderable, filtered, from, to),
+                                  _onReorder(orderable, flatRoots, from, to),
                               // The cards carry their own handle, so the list's
                               // long-press drag would only fight the options
                               // sheet that a long press already opens.
                               buildDefaultDragHandles: false,
-                              itemBuilder: (context, index) =>
-                                  _buildSwipeableCard(
-                                    filtered[index],
-                                    hm,
-                                    reorderIndex: index,
-                                  ),
+                              itemBuilder: (context, index) => _buildFamily(
+                                flatRoots[index],
+                                hm,
+                                flatForks,
+                                hm.activeHostId ?? '',
+                                reorderIndex: index,
+                              ),
                             )
                           : ListView.builder(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
                               ),
-                              itemCount: filtered.length,
-                              itemBuilder: (context, index) =>
-                                  _buildSwipeableCard(filtered[index], hm),
+                              itemCount: flatRoots.length,
+                              itemBuilder: (context, index) => _buildFamily(
+                                flatRoots[index],
+                                hm,
+                                flatForks,
+                                hm.activeHostId ?? '',
+                              ),
                             ),
                     ),
             ),
@@ -835,11 +849,14 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     final tree = grouping.prefs.mode == GroupMode.auto
         ? buildCwdTree(visible, grouping.prefs.order, grouping.prefs.dirOrder)
         : buildTree(visible, grouping.catalog.groups);
+    // Built once over the whole list rather than per node: a fork is filed
+    // with its root, which may be in a different directory from its own.
+    final forks = forksByParent(visible);
 
     return CustomScrollView(
       slivers: [
         for (final node in tree)
-          ..._nodeSlivers(node, tree, 0, grouping, hm, orderable),
+          ..._nodeSlivers(node, tree, 0, grouping, hm, orderable, forks),
         // The only way to make the first group: until one exists there is no
         // header to long-press, and the tree is a single Ungrouped bucket.
         if (grouping.prefs.mode == GroupMode.manual)
@@ -873,6 +890,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     _Grouping grouping,
     HostManager hm,
     DaemonAPIService? orderable,
+    Map<String, List<Session>> forks,
   ) {
     final folded = grouping.prefs.isFolded(grouping.hostId, node.path);
     // A directory node's key is where the sessions run, and Ungrouped is not a
@@ -911,22 +929,26 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
 
     for (final child in node.children) {
       slivers.addAll(
-        _nodeSlivers(child, tree, depth + 1, grouping, hm, orderable),
+        _nodeSlivers(child, tree, depth + 1, grouping, hm, orderable, forks),
       );
     }
 
     if (node.sessions.isNotEmpty) {
       final padding = EdgeInsets.fromLTRB(12.0 + depth * 8, 0, 12, 0);
       final fileable = grouping.prefs.mode == GroupMode.manual;
+      // node.sessions holds roots only; the forks are drawn by the family they
+      // belong to, so the list's index space stays one entry per movable thing.
       slivers.add(
         SliverPadding(
           padding: padding,
           sliver: orderable == null
               ? SliverList.builder(
                   itemCount: node.sessions.length,
-                  itemBuilder: (context, index) => _buildSwipeableCard(
+                  itemBuilder: (context, index) => _buildFamily(
                     node.sessions[index],
                     hm,
+                    forks,
+                    grouping.hostId,
                     fileable: fileable,
                   ),
                 )
@@ -934,9 +956,11 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                   itemCount: node.sessions.length,
                   onReorder: (from, to) =>
                       _onNodeReorder(orderable, tree, node, from, to),
-                  itemBuilder: (context, index) => _buildSwipeableCard(
+                  itemBuilder: (context, index) => _buildFamily(
                     node.sessions[index],
                     hm,
+                    forks,
+                    grouping.hostId,
                     reorderIndex: index,
                     fileable: fileable,
                   ),
@@ -1194,11 +1218,60 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
   /// being moved.
   ///
   /// [fileable] adds the grip that drags the session onto a group.
+  /// A root and the forks hanging off it, drawn as one item.
+  ///
+  /// One reorderable index is one family. The alternative — fork rows as
+  /// siblings inside the list — puts undraggable rows into a reorderable index
+  /// space, and every `onReorder` then has to subtract them. This is the
+  /// arithmetic spec 62 avoided by giving each node its own list, and the same
+  /// answer applies here: make the unit of the list the thing that moves.
+  Widget _buildFamily(
+    Session root,
+    HostManager hm,
+    Map<String, List<Session>> forks,
+    String hostId, {
+    int? reorderIndex,
+    bool fileable = false,
+  }) {
+    final prefs = ref.watch(groupingProvider);
+    final rows = familyRows(
+      root,
+      forks,
+      (id) => prefs.isForkFolded(hostId, id),
+    );
+    if (rows.length == 1) {
+      return _buildSwipeableCard(
+        root,
+        hm,
+        reorderIndex: reorderIndex,
+        fileable: fileable,
+      );
+    }
+    return Column(
+      key: ValueKey('family-${root.sessionId}'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final row in rows)
+          _buildSwipeableCard(
+            row.session,
+            hm,
+            // Only the root carries the drag: the family moves as a unit
+            // because it is one item, and a handle on a fork would offer a
+            // move the daemon discards.
+            reorderIndex: row.depth == 0 ? reorderIndex : null,
+            fileable: fileable && row.depth == 0,
+            family: row,
+          ),
+      ],
+    );
+  }
+
   Widget _buildSwipeableCard(
     Session session,
     HostManager hm, {
     int? reorderIndex,
     bool fileable = false,
+    FamilyRow? family,
   }) {
     final theme = Theme.of(context);
     // Terminated is the archival state: putting a session away is ending it,
@@ -1298,6 +1371,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
         hm,
         reorderIndex: reorderIndex,
         fileable: fileable,
+        family: family,
       ),
     );
   }
@@ -1307,6 +1381,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     HostManager hm, {
     int? reorderIndex,
     bool fileable = false,
+    FamilyRow? family,
   }) {
     final theme = Theme.of(context);
     final statusColor = _statusColor(session.status, theme);
@@ -1354,6 +1429,18 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           child: Row(
             children: [
               Container(width: 2, color: hostColor.withValues(alpha: 0.4)),
+              // The tree's own lines, one column per level of indent. Columns
+              // rather than a margin: an indent alone leaves the reader to
+              // guess which row above a deep fork belongs to, and the trunk is
+              // what answers that. Each column is a line running through, blank
+              // where that ancestor's last child has already been drawn, or
+              // this row's own elbow.
+              if (family != null && family.trunk.isNotEmpty)
+                _ForkGuides(
+                  trunk: family.trunk,
+                  last: family.last,
+                  colour: theme.colorScheme.onSurfaceVariant,
+                ),
               Expanded(
                 child: Padding(
                   padding: compact
@@ -1368,6 +1455,25 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                           visualDensity: VisualDensity.compact,
                         ),
                         const SizedBox(width: 4),
+                      ],
+                      // The count and the fold in one control, as on the
+                      // desktop. A chevron on one side and a count on the other
+                      // were two affordances for one action, and on a phone the
+                      // chevron alone is too small to be a target.
+                      if (session.forkCount > 0) ...[
+                        _ForkToggle(
+                          count: session.forkCount,
+                          folded: ref
+                              .watch(groupingProvider)
+                              .isForkFolded(session.hostId, session.sessionId),
+                          onTap: () => ref
+                              .read(groupingPrefsProvider.notifier)
+                              .toggleForkFold(
+                                session.hostId,
+                                session.sessionId,
+                              ),
+                        ),
+                        const SizedBox(width: 6),
                       ],
                       if (compact)
                         Expanded(
@@ -1541,6 +1647,193 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
     );
   }
 
+  /// How this session should be branched.
+  ///
+  /// One field and a button is the whole ordinary path. A worktree of its own
+  /// is the default and needs no control: a fork exists to try a second answer
+  /// to the same question, and two agents editing one checkout is not a second
+  /// answer, it is a race. Sharing the parent's folder is behind a disclosure,
+  /// because on the face it invites a shared checkout by accident.
+  void _showForkSheet(Session session, HostManager hm) {
+    final branch = TextEditingController(text: _suggestBranch(session));
+    final prompt = TextEditingController();
+    var sameFolder = false;
+    var showMore = false;
+    var busy = false;
+    String? error;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          Future<void> submit() async {
+            setSheet(() {
+              busy = true;
+              error = null;
+            });
+            final service = hm.serviceFor(session.hostId);
+            if (service == null) {
+              setSheet(() {
+                busy = false;
+                error = 'That host is not connected.';
+              });
+              return;
+            }
+            final result = await service.forkSession(
+              session.sessionId,
+              workspace: sameFolder ? 'same' : 'worktree',
+              branch: sameFolder ? null : branch.text.trim(),
+              prompt: prompt.text.trim(),
+            );
+            if (!ctx.mounted) return;
+            if (!result.ok) {
+              // Stays open on failure: a 409 means this session has no
+              // conversation to fork yet, which the user has to read.
+              setSheet(() {
+                busy = false;
+                error = result.error ?? 'Failed to fork the session';
+              });
+              return;
+            }
+            Navigator.pop(ctx);
+            if (!mounted) return;
+            for (final warning in result.warnings) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(warning)));
+            }
+            await ref.refreshHost(session.hostId);
+          }
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              16 + MediaQuery.of(ctx).viewInsets.bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Fork "${session.displayTitle}"',
+                  style: Theme.of(ctx).textTheme.titleSmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  sameFolder
+                      ? 'The fork keeps everything said so far and shares this folder.'
+                      : 'The fork keeps everything said so far and gets a worktree of its own.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (!sameFolder)
+                  TextField(
+                    controller: branch,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Branch',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                if (!sameFolder) const SizedBox(height: 8),
+                TextField(
+                  controller: prompt,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'First message',
+                    hintText: 'Optional — what should the fork try instead?',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (!sameFolder) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'The fork starts from the last commit, so anything uncommitted here stays here.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(ctx).colorScheme.tertiary,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                TextButton(
+                  onPressed: () => setSheet(() => showMore = !showMore),
+                  child: Text(showMore ? 'Fewer options' : 'Other options'),
+                ),
+                if (showMore)
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: sameFolder,
+                    onChanged: (value) =>
+                        setSheet(() => sameFolder = value ?? false),
+                    title: const Text(
+                      "Work in this session's folder",
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    subtitle: const Text(
+                      'Both agents will edit the same files.',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+                if (error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    error!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(ctx).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: busy ? null : () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: busy ? null : submit,
+                      child: Text(busy ? 'Forking…' : 'Fork'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// The branch name the daemon would pick, so the field is filled rather than
+  /// empty. The daemon still has the last word: it walks past a name already
+  /// taken, which a client cannot know about.
+  String _suggestBranch(Session session) {
+    final slug = session.displayTitle
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9._-]+'), '-')
+        .replaceAll(RegExp(r'-{2,}'), '-')
+        .replaceAll(RegExp(r'^[-.]+|[-.]+$'), '');
+    if (slug.isEmpty) return 'fork';
+    final trimmed = slug.length > 40 ? slug.substring(0, 40) : slug;
+    return trimmed.replaceAll(RegExp(r'[-.]+$'), '');
+  }
+
   /// The card with everything but the answer to "which one is this?" removed.
   ///
   /// Which agent it runs and how it is doing are glyphs at the head of the
@@ -1645,6 +1938,18 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
                   Navigator.pop(ctx);
                   if (!mounted) return;
                   _showRenameDialog(session, hm);
+                },
+              ),
+              // Branching keeps everything said so far, so it sits with the
+              // actions that act on the conversation rather than the ones that
+              // end it.
+              ListTile(
+                leading: const Icon(Icons.call_split),
+                title: const Text('Fork…'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  _showForkSheet(session, hm);
                 },
               ),
               ListTile(
@@ -2055,4 +2360,148 @@ class _Grouping {
   final GroupCatalog catalog;
 
   const _Grouping(this.hostId, this.prefs, this.catalog);
+}
+
+/// The tree lines to the left of a forked row.
+///
+/// One column per level of indent, each 14 logical pixels wide with its line
+/// down the centre, so an elbow and the trunk below it land on the same pixel.
+/// Drawn rather than indented: a deep fork on its own leaves the reader
+/// counting whitespace to work out which row above it came from.
+class _ForkGuides extends StatelessWidget {
+  /// One entry per level, outermost first: whether that level's line keeps
+  /// running past this row. The last entry is this row's own column.
+  final List<bool> trunk;
+
+  /// Whether this row is its parent's last fork, so its elbow closes.
+  final bool last;
+
+  final Color colour;
+
+  const _ForkGuides({
+    required this.trunk,
+    required this.last,
+    required this.colour,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var level = 0; level < trunk.length; level++)
+          SizedBox(
+            width: 14,
+            child: CustomPaint(
+              painter: _ForkGuidePainter(
+                // The last column is this row's elbow; the ones before it are
+                // ancestors, drawn only while they still have a child to come.
+                elbow: level == trunk.length - 1,
+                closes: last,
+                running: trunk[level],
+                colour: colour.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ForkGuidePainter extends CustomPainter {
+  final bool elbow;
+  final bool closes;
+  final bool running;
+  final Color colour;
+
+  _ForkGuidePainter({
+    required this.elbow,
+    required this.closes,
+    required this.running,
+    required this.colour,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pen = Paint()
+      ..color = colour
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+
+    final x = size.width / 2;
+    final middle = size.height / 2;
+
+    if (elbow) {
+      // Down to the middle, then right into the row. A last fork stops at the
+      // turn; one with siblings below carries on so the next elbow meets the
+      // same line.
+      canvas.drawLine(Offset(x, 0), Offset(x, closes ? middle : size.height), pen);
+      canvas.drawLine(Offset(x, middle), Offset(size.width, middle), pen);
+      return;
+    }
+    // An ancestor with another child still to come. Blank once its last child
+    // has been drawn, but the column is still held so everything stays aligned.
+    if (running) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), pen);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ForkGuidePainter old) =>
+      old.elbow != elbow ||
+      old.closes != closes ||
+      old.running != running ||
+      old.colour != colour;
+}
+
+
+/// A session's fork count, and the control that shows or hides them.
+///
+/// Always visible, so a folded family cannot be mistaken for a session with
+/// nothing under it — folded, this is the only thing saying the branches are
+/// still there. Sized as a chip rather than a bare icon: it is the one target
+/// on the row that is not the row itself.
+class _ForkToggle extends StatelessWidget {
+  final int count;
+  final bool folded;
+  final VoidCallback onTap;
+
+  const _ForkToggle({
+    required this.count,
+    required this.folded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      button: true,
+      label: folded ? 'Show $count forks' : 'Hide $count forks',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                folded ? Icons.chevron_right : Icons.expand_more,
+                size: 16,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 2),
+              Text(
+                '$count \u2442',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

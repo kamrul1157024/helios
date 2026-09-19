@@ -42,6 +42,25 @@ class Session {
   /// was asked for with `grouped=1`, and empty for an unfiled session.
   final List<SessionGroup> groupPath;
 
+  /// The session this one's conversation was copied from, or empty for one
+  /// started from nothing. A fork of a fork names the fork, so the whole tree
+  /// is this one field.
+  ///
+  /// A fork is not an independent row: it draws under its parent, it has no
+  /// group or place in the order of its own, and no gesture separates the two.
+  /// See docs/specs/64-session-forking.md.
+  final String forkedFrom;
+
+  /// When the branch was taken. Orders siblings.
+  final String? forkedAt;
+
+  /// How many sessions name this one as their parent. Direct children only, so
+  /// a chain three deep still reads 1.
+  final int forkCount;
+
+  /// The top of this session's fork chain; itself when it is a root.
+  final String rootSessionId;
+
   Session({
     this.hostId = '',
     required this.sessionId,
@@ -65,6 +84,10 @@ class Session {
     this.sortOrder = 0,
     this.groupKey = '',
     this.groupPath = const [],
+    this.forkedFrom = '',
+    this.forkedAt,
+    this.forkCount = 0,
+    this.rootSessionId = '',
   });
 
   factory Session.fromJson(Map<String, dynamic> json, {String hostId = ''}) {
@@ -94,8 +117,15 @@ class Session {
         for (final g in (json['group_path'] as List? ?? const []))
           SessionGroup.fromJson(g as Map<String, dynamic>),
       ],
+      forkedFrom: json['forked_from'] as String? ?? '',
+      forkedAt: json['forked_at'] as String?,
+      forkCount: (json['fork_count'] as num?)?.toInt() ?? 0,
+      rootSessionId: json['root_session_id'] as String? ?? '',
     );
   }
+
+  /// Whether this session began as a copy of another's conversation.
+  bool get isFork => forkedFrom.isNotEmpty;
 
   bool get isStarting => status == 'starting';
   bool get isActive =>
@@ -156,6 +186,10 @@ class Session {
     String? terminal,
     String? groupKey,
     List<SessionGroup>? groupPath,
+    String? forkedFrom,
+    String? forkedAt,
+    int? forkCount,
+    String? rootSessionId,
   }) {
     return Session(
       hostId: hostId,
@@ -180,6 +214,10 @@ class Session {
       sortOrder: sortOrder ?? this.sortOrder,
       groupKey: groupKey ?? this.groupKey,
       groupPath: groupPath ?? this.groupPath,
+      forkedFrom: forkedFrom ?? this.forkedFrom,
+      forkedAt: forkedAt ?? this.forkedAt,
+      forkCount: forkCount ?? this.forkCount,
+      rootSessionId: rootSessionId ?? this.rootSessionId,
     );
   }
 

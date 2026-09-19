@@ -30,6 +30,88 @@ typedef PathOrder = Map<String, int>;
 
 const String kUngroupedName = 'Ungrouped';
 
+/// A fork whose parent is in the same list, and so draws under it.
+///
+/// The qualifier is not pedantry. A search, a status filter or the daemon's
+/// thousand-row limit can hand back a child without its parent, and a fork
+/// hanging off a session nobody has is a session that never draws. One that
+/// cannot find its parent is treated as a root.
+bool isNestedFork(Session session, Set<String> present) =>
+    session.forkedFrom.isNotEmpty && present.contains(session.forkedFrom);
+
+Set<String> idsOf(List<Session> sessions) =>
+    {for (final s in sessions) s.sessionId};
+
+/// Forks indexed by the session they came from, siblings oldest first.
+Map<String, List<Session>> forksByParent(List<Session> sessions) {
+  final byParent = <String, List<Session>>{};
+  for (final session in sessions) {
+    if (session.forkedFrom.isEmpty) continue;
+    byParent.putIfAbsent(session.forkedFrom, () => []).add(session);
+  }
+  for (final siblings in byParent.values) {
+    siblings.sort((a, b) => (a.forkedAt ?? '').compareTo(b.forkedAt ?? ''));
+  }
+  return byParent;
+}
+
+/// How deep the tree draws. Past this the rows stop moving right, or a chain
+/// of forks walks off the edge of a phone.
+const int kMaxForkDepth = 4;
+
+/// One drawn row of a family, with what the tree lines need.
+class FamilyRow {
+  final Session session;
+
+  /// 0 for the root; one deeper for each fork above this one.
+  final int depth;
+
+  /// One entry per level of indent, outermost first, saying whether that
+  /// level's line keeps running past this row. The last entry is this row's
+  /// own column, and is read as the elbow.
+  final List<bool> trunk;
+
+  /// Whether this is the last fork of its parent, so its elbow closes.
+  final bool last;
+
+  const FamilyRow({
+    required this.session,
+    required this.depth,
+    required this.trunk,
+    required this.last,
+  });
+}
+
+/// The visible rows of one family, depth-first, stopping at a folded row.
+List<FamilyRow> familyRows(
+  Session root,
+  Map<String, List<Session>> forks,
+  bool Function(String sessionId) isFolded,
+) {
+  final rows = <FamilyRow>[];
+  final seen = <String>{};
+
+  void walk(Session session, List<bool> trunk, bool last) {
+    if (!seen.add(session.sessionId)) return;
+    rows.add(
+      FamilyRow(session: session, depth: trunk.length, trunk: trunk, last: last),
+    );
+    if (isFolded(session.sessionId)) return;
+
+    final children = forks[session.sessionId] ?? const <Session>[];
+    for (var i = 0; i < children.length; i++) {
+      final youngest = i == children.length - 1;
+      // Capped by not growing: the deepest rows share a column rather than
+      // each claiming a new one.
+      final next = trunk.length >= kMaxForkDepth ? trunk : [...trunk, !youngest];
+      walk(children[i], next, youngest);
+    }
+  }
+
+  walk(root, const [], true);
+  return rows;
+}
+
 /// A session's place, as a vector: the position of each group it holds, its own
 /// order last, padded to the depth being rendered.
 List<int> rankOf(Session session, int depth) {
@@ -146,6 +228,7 @@ List<GroupNode> buildTree(
   }
 
   GroupNode? ungrouped;
+  final present = idsOf(sessions);
 
   for (final session in sessions) {
     var chain = chainOf(session.groupKey);
@@ -160,10 +243,18 @@ List<GroupNode> buildTree(
       chain = [ungrouped];
     }
 
-    chain.last.sessions.add(session);
+    // Counted either way: a family folded shut still contributes to the
+    // number on the header above it, or that number changes when nothing has
+    // left.
     for (final node in chain) {
       node.total += 1;
     }
+    // A fork is drawn by its parent, not filed beside it. The daemon already
+    // resolves a fork's group to its root's, so without this both would land
+    // in the same node and the fork would render twice.
+    if (isNestedFork(session, present)) continue;
+
+    chain.last.sessions.add(session);
   }
 
   _sortNodes(roots);
@@ -240,8 +331,27 @@ List<GroupNode> buildCwdTree(
   PathOrder placed = const {},
 ]) {
   final nodes = <String, GroupNode>{};
+  final present = idsOf(sessions);
+  final byId = {for (final s in sessions) s.sessionId: s};
+
+  // A fork in a worktree of its own runs in a different directory from its
+  // parent, so grouping by directory would tear the family in half and file
+  // the halves under two headers. The family goes where its root is: that is
+  // what "a fork moves with its parent" has to mean in a mode that never
+  // reads the group column.
+  String rootDirOf(Session session) {
+    final seen = <String>{};
+    var at = session;
+    while (at.forkedFrom.isNotEmpty &&
+        present.contains(at.forkedFrom) &&
+        seen.add(at.sessionId)) {
+      at = byId[at.forkedFrom]!;
+    }
+    return at.cwd;
+  }
+
   for (final session in sessions) {
-    final cwd = session.cwd;
+    final cwd = rootDirOf(session);
     final node = nodes.putIfAbsent(
       cwd,
       () => GroupNode(
@@ -251,8 +361,9 @@ List<GroupNode> buildCwdTree(
         path: [cwd],
       ),
     );
-    node.sessions.add(session);
     node.total += 1;
+    if (isNestedFork(session, present)) continue;
+    node.sessions.add(session);
   }
   return orderGroups(nodes.values.toList(), order, placed);
 }

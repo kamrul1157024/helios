@@ -376,8 +376,11 @@ Content-Type: application/json
 
 Every field is optional. `workspace` defaults to `worktree`. `branch` is derived
 from the parent's title when absent, per §2. `prompt` is delivered as the fork's
-first message. `title` defaults to the parent's title suffixed with the branch
-name — then the usual auto-title replaces it once the agent has said something.
+first message. `title` defaults to the parent's label suffixed with the branch,
+`[FEAT] Session forking ⑂ try-a-queue`, and that is the fork's name for good —
+not a placeholder. The automatic titler leaves a titled session alone, and a
+fork that has said nothing of its own draws SKIP from it anyway. Which is
+right: a fork's conversation *is* its parent's, so its name should be too.
 
 The minimum request is an empty body, and it does the right thing.
 
