@@ -1860,6 +1860,13 @@ func (s *PublicServer) handleForkSession(w http.ResponseWriter, r *http.Request)
 		ForkWorkspace: workspace,
 	})
 	if err != nil {
+		// The worktree is made before the fork can be refused, and a branch
+		// nobody asked for is not what a refused request should leave behind.
+		// Only when it is untouched: once the agent has written anything, that
+		// is the user's work and not ours to throw away.
+		if workspace == forkWorkspaceWorktree {
+			discardEmptyWorktree(parent.CWD, cwd)
+		}
 		jsonError(w, err.Error(), StatusOf(err))
 		return
 	}

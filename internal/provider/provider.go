@@ -13,6 +13,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/kamrul1157024/helios/internal/backend"
@@ -119,6 +120,29 @@ type Resumer interface {
 // the same as the provider being unable to fork at all.
 type Forker interface {
 	Fork(sessionID, parentSessionID, parentResumeID, mode string) (Launch, error)
+}
+
+// ErrNoConversation is what a ForkPreparer returns when the parent has no
+// conversation on disk to copy. The daemon answers 409: nothing failed, there
+// is simply nothing to fork yet.
+var ErrNoConversation = errors.New("the parent has no conversation to fork")
+
+// ForkPreparer puts the parent's conversation where the forked agent will look
+// for it, before the argv from Fork is run.
+//
+// This exists because an agent may scope its sessions by directory. Claude
+// resolves `--resume <id>` against the project its working directory names, so
+// a fork given a worktree of its own cannot see the parent's transcript and
+// starts empty — with no error the daemon can see, because the agent exits
+// before its first hook. An agent that keys conversations by id alone, as Codex
+// does, implements nothing here and the daemon skips the step.
+//
+// Both directories are passed because the answer is usually "nothing to do":
+// a fork sharing its parent's directory is already looking in the right place.
+//
+// Returns ErrNoConversation when the parent has nothing on disk yet.
+type ForkPreparer interface {
+	PrepareFork(parentCWD, forkCWD, parentSessionID, parentResumeID string) error
 }
 
 // HookHandler processes an incoming hook request and writes the response.
