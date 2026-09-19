@@ -922,6 +922,45 @@ class DaemonAPIService extends ChangeNotifier {
     return false;
   }
 
+  /// Branches a session: a new one holding this one's whole conversation, and
+  /// by default a git worktree of its own to work in.
+  ///
+  /// Returns the fork's id, or an error to show. The daemon's `warnings` are
+  /// carried back rather than logged — "the fork shares the parent's folder"
+  /// changes what the user should type next.
+  Future<ForkResult> forkSession(
+    String sessionId, {
+    String? workspace,
+    String? branch,
+    String? prompt,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (workspace != null) body['workspace'] = workspace;
+      if (branch != null && branch.isNotEmpty) body['branch'] = branch;
+      if (prompt != null && prompt.isNotEmpty) body['prompt'] = prompt;
+
+      final resp = await _api.post('/api/sessions/$sessionId/fork', body: body);
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (resp.statusCode == 200) {
+        _markStale('session_created');
+        return ForkResult(
+          sessionId: decoded['session_id'] as String? ?? '',
+          warnings: [
+            for (final w in (decoded['warnings'] as List? ?? const []))
+              '$w',
+          ],
+        );
+      }
+      return ForkResult(
+        error: decoded['message'] as String? ?? 'Failed to fork the session',
+      );
+    } catch (e) {
+      debugPrint('[$hostId] Failed to fork session: $e');
+      return const ForkResult(error: 'Failed to fork the session');
+    }
+  }
+
   /// Writes a session's pinned flag, title, or group. The painting is the
   /// cache's job.
   ///
@@ -2079,4 +2118,20 @@ List<Worktree> sortWorktreesByLastTouched(List<Worktree> worktrees) {
     return byDate != 0 ? byDate : order[a.path]!.compareTo(order[b.path]!);
   });
   return sorted;
+}
+
+
+/// What a fork attempt came back with: the new session, or why there is none.
+class ForkResult {
+  final String sessionId;
+  final List<String> warnings;
+  final String? error;
+
+  const ForkResult({
+    this.sessionId = '',
+    this.warnings = const [],
+    this.error,
+  });
+
+  bool get ok => error == null && sessionId.isNotEmpty;
 }

@@ -194,6 +194,26 @@ func forkLaunch(req NewSession, sessionID string) (provider.Launch, error) {
 		return provider.Launch{}, statusError(http.StatusConflict,
 			"session %s has no conversation to fork yet", req.ForkOf.SessionID)
 	}
+
+	// Some agents scope their conversations by directory, so a fork given a
+	// worktree of its own cannot see its parent until the transcript is put
+	// there.
+	//
+	// Before the terminal starts, not after: the agent resolves the resume on
+	// its first line, and when it cannot it exits without ever calling a hook.
+	// The daemon is then left holding a session that reads as idle and contains
+	// nothing, which is how this shipped broken the first time.
+	if prep := provider.ForkPreparerFor(req.Provider); prep != nil {
+		err := prep.PrepareFork(req.ForkOf.CWD, req.CWD, req.ForkOf.SessionID, resumeID)
+		if errors.Is(err, provider.ErrNoConversation) {
+			return provider.Launch{}, statusError(http.StatusConflict,
+				"session %s has no conversation to fork yet", req.ForkOf.SessionID)
+		}
+		if err != nil {
+			return provider.Launch{}, statusError(http.StatusInternalServerError,
+				"failed to prepare the fork: %v", err)
+		}
+	}
 	return launch, nil
 }
 

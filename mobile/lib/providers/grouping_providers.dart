@@ -135,11 +135,15 @@ class GroupingPrefs {
   /// The headers that are closed, as `"$hostId:$path"`.
   final Set<String> folded;
 
+  /// The sessions whose forks are hidden, as `"$hostId:$sessionId"`.
+  final Set<String> foldedForks;
+
   const GroupingPrefs({
     this.mode = GroupMode.off,
     this.order = GroupOrder.activity,
     this.dirOrder = const {},
     this.folded = const {},
+    this.foldedForks = const {},
   });
 
   GroupingPrefs copyWith({
@@ -147,15 +151,30 @@ class GroupingPrefs {
     GroupOrder? order,
     PathOrder? dirOrder,
     Set<String>? folded,
+    Set<String>? foldedForks,
   }) => GroupingPrefs(
     mode: mode ?? this.mode,
     order: order ?? this.order,
     dirOrder: dirOrder ?? this.dirOrder,
     folded: folded ?? this.folded,
+    foldedForks: foldedForks ?? this.foldedForks,
   );
 
   bool isFolded(String hostId, List<String> path) =>
       folded.contains(foldKey(hostId, path));
+
+  /// Whether this session's forks are hidden.
+  ///
+  /// Open by default. A fork exists because someone just made it, and a fork
+  /// that appears already hidden is a fork the user thinks failed.
+  bool isForkFolded(String hostId, String sessionId) =>
+      foldedForks.contains(forkFoldKey(hostId, sessionId));
+
+  /// A set of its own rather than a prefix inside [folded]: that one is keyed
+  /// by group path and this by session id, and one namespace holding two kinds
+  /// of key is a collision waiting for the first group whose path spells an id.
+  static String forkFoldKey(String hostId, String sessionId) =>
+      '$hostId:$sessionId';
 
   /// The same key the desktop computes, so the two read the same tree the same
   /// way: a group can be folded at one place in the tree and open at another.
@@ -169,6 +188,7 @@ class GroupingPrefsNotifier extends AsyncNotifier<GroupingPrefs> {
   static const _orderKey = 'helios.groupOrder';
   static const _dirOrderKey = 'helios.dirOrder';
   static const _foldedKey = 'helios.foldedGroups';
+  static const _foldedForksKey = 'helios.foldedForks';
 
   @override
   Future<GroupingPrefs> build() async {
@@ -184,6 +204,7 @@ class GroupingPrefsNotifier extends AsyncNotifier<GroupingPrefs> {
       ),
       dirOrder: _readDirOrder(store.getString(_dirOrderKey)),
       folded: (store.getStringList(_foldedKey) ?? const []).toSet(),
+      foldedForks: (store.getStringList(_foldedForksKey) ?? const []).toSet(),
     );
   }
 
@@ -242,6 +263,20 @@ class GroupingPrefsNotifier extends AsyncNotifier<GroupingPrefs> {
     await _put(
       held.copyWith(folded: next),
       (store) => store.setStringList(_foldedKey, next.toList()),
+    );
+  }
+
+  /// Shows or hides one session's forks. Persisted for the same reason the
+  /// group folds are: the OS kills a backgrounded app routinely, and a tree
+  /// that re-opens itself every time is a tree nobody collapses twice.
+  Future<void> toggleForkFold(String hostId, String sessionId) async {
+    final held = state.valueOrNull ?? const GroupingPrefs();
+    final key = GroupingPrefs.forkFoldKey(hostId, sessionId);
+    final next = {...held.foldedForks};
+    if (!next.remove(key)) next.add(key);
+    await _put(
+      held.copyWith(foldedForks: next),
+      (store) => store.setStringList(_foldedForksKey, next.toList()),
     );
   }
 }

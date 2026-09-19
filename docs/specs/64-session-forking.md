@@ -302,7 +302,8 @@ nowhere — alive in the process table, dead in the UI. This is the one rule a
 `Fork` implementation can break quietly, so it is the one the conformance test
 should be built around.
 
-Both current providers satisfy it, and neither needs new plumbing:
+Both current providers satisfy it, but Claude needs something staged first —
+see below:
 
 ```
 claude   claude --resume <parentSessionID> --fork-session \
@@ -317,6 +318,43 @@ written under the id Helios supplied. So a forked Claude session keeps
 (`register.go:70`) — which takes `sessionID` and ignores `resumeID` — stays
 correct as written. Codex is already in the second camp, and the env var its
 `Resume` sets (`codex.go:174`) is what ties its report back to the row.
+
+### `--resume` only looks in one project, and it is the wrong one
+
+This is the constraint the first implementation missed, and it broke the
+default outright.
+
+`claude --resume <id>` does not search for a conversation. It looks in the
+single project directory named by the process's working directory — the
+absolute path with every non-alphanumeric character replaced by a dash. A fork
+given a worktree of its own therefore launches into a directory that holds no
+transcript, answers `No conversation found with session ID`, and exits *before
+its first hook*. The daemon is left holding a session that reads as idle and
+contains nothing.
+
+The same-folder mode never hit it, which is exactly why the first round of
+verification missed it: the probe forked inside one directory.
+
+So the conversation has to be put where the agent will look, before the argv
+runs:
+
+```go
+// ForkPreparer stages whatever the agent needs before Fork's argv will work.
+type ForkPreparer interface {
+    PrepareFork(parentCWD, forkCWD, parentSessionID, parentResumeID string) error
+}
+```
+
+Claude copies the parent's transcript into the fork's project directory. A copy,
+not a move or a link: the parent stays resumable, and Claude writes the fork
+under its own id so the copy is read once and then left alone. Codex keys its
+rollouts by id rather than by directory, so it implements nothing and the daemon
+skips the step.
+
+`ErrNoConversation` from this call is the `409`. A parent that has never written
+a transcript cannot be forked, and finding that out *before* the terminal starts
+is the difference between an honest refusal and a session that looks alive and
+holds nothing.
 
 ---
 
@@ -338,8 +376,11 @@ Content-Type: application/json
 
 Every field is optional. `workspace` defaults to `worktree`. `branch` is derived
 from the parent's title when absent, per §2. `prompt` is delivered as the fork's
-first message. `title` defaults to the parent's title suffixed with the branch
-name — then the usual auto-title replaces it once the agent has said something.
+first message. `title` defaults to the parent's label suffixed with the branch,
+`[FEAT] Session forking ⑂ try-a-queue`, and that is the fork's name for good —
+not a placeholder. The automatic titler leaves a titled session alone, and a
+fork that has said nothing of its own draws SKIP from it anyway. Which is
+right: a fork's conversation *is* its parent's, so its name should be too.
 
 The minimum request is an empty body, and it does the right thing.
 

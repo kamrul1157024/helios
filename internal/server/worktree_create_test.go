@@ -125,3 +125,38 @@ func TestCreateWorktreeRejectsBadInput(t *testing.T) {
 		t.Errorf("not a repo: status %d, want 400", StatusOf(err))
 	}
 }
+
+// A fork that is refused after its worktree was made must not leave the branch
+// behind — but must never throw away work either.
+func TestDiscardEmptyWorktreeRemovesOnlyAnUntouchedOne(t *testing.T) {
+	root := realPath(t, gitRepo(t))
+
+	created, err := createWorktree(root, "abandoned")
+	if err != nil {
+		t.Fatalf("createWorktree: %v", err)
+	}
+	discardEmptyWorktree(root, created.Path)
+
+	if _, err := os.Stat(created.Path); !os.IsNotExist(err) {
+		t.Errorf("worktree %s survived", created.Path)
+	}
+	if _, err := gitCmd(root, "rev-parse", "--verify", "--quiet", "refs/heads/abandoned"); err == nil {
+		t.Error("branch abandoned survived")
+	}
+}
+
+func TestDiscardEmptyWorktreeKeepsOneWithWorkInIt(t *testing.T) {
+	root := realPath(t, gitRepo(t))
+
+	created, err := createWorktree(root, "has-work")
+	if err != nil {
+		t.Fatalf("createWorktree: %v", err)
+	}
+	write(t, filepath.Join(created.Path, "notes.txt"), "something the agent wrote\n")
+
+	discardEmptyWorktree(root, created.Path)
+
+	if _, err := os.Stat(created.Path); err != nil {
+		t.Errorf("a dirty worktree was thrown away: %v", err)
+	}
+}

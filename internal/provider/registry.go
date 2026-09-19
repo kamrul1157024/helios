@@ -23,6 +23,7 @@ type registration struct {
 	// Each is nil when the provider does not offer it.
 	resume      Resumer
 	forker      Forker
+	forkPrep    ForkPreparer
 	hooks       Hooker
 	installer   HookInstaller
 	actor       Actor
@@ -63,6 +64,7 @@ func Register(p Provider) error {
 	reg := &registration{p: p}
 	reg.resume, _ = p.(Resumer)
 	reg.forker, _ = p.(Forker)
+	reg.forkPrep, _ = p.(ForkPreparer)
 	reg.hooks, _ = p.(Hooker)
 	reg.installer, _ = p.(HookInstaller)
 	reg.actor, _ = p.(Actor)
@@ -162,6 +164,15 @@ func ResumerFor(id string) Resumer {
 func ForkerFor(id string) Forker {
 	if reg := lookup(id); reg != nil {
 		return reg.forker
+	}
+	return nil
+}
+
+// ForkPreparerFor returns nil when the provider needs nothing staged before a
+// fork runs, which is the common case.
+func ForkPreparerFor(id string) ForkPreparer {
+	if reg := lookup(id); reg != nil {
+		return reg.forkPrep
 	}
 	return nil
 }

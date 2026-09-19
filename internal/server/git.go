@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -323,6 +324,27 @@ func createWorktree(repo, branch string) (*worktreeEntry, error) {
 	}
 	describeWorktree(&entry)
 	return &entry, nil
+}
+
+// discardEmptyWorktree removes a worktree made for a fork that then failed to
+// start, and the branch cut for it.
+//
+// Best effort, and deliberately timid. `git worktree remove` refuses a dirty
+// tree and the branch delete is `-d` rather than `-D`, so anything actually
+// written or committed survives. The caller is already reporting the failure
+// that brought us here; a second error about the clean-up would only bury it.
+func discardEmptyWorktree(repo, path string) {
+	branch, err := gitCmd(path, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return
+	}
+	if _, err := gitCmd(repo, "worktree", "remove", path); err != nil {
+		log.Printf("fork: leaving worktree %s behind: %v", path, err)
+		return
+	}
+	if name := strings.TrimSpace(branch); name != "" && name != "HEAD" {
+		gitCmd(repo, "branch", "-d", name)
+	}
 }
 
 // findMainWorktree returns the repository's main worktree, given any worktree
