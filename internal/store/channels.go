@@ -513,11 +513,21 @@ func (s *Store) rootOf(channelID, target string) (string, error) {
 // reader's receipt to get what they have not seen.
 // The spine only: what is said to the channel, without the asides hanging off
 // it. A thread is read with ThreadMessages, by whoever cares about that thread.
+//
+// The limit takes the newest messages, not the oldest: a reader opens a channel
+// to see what was just said, so when the count runs past the cap it is the tail
+// that is kept. The query walks back from the end with `seq DESC`, then the
+// window is flipped to oldest-first for the caller.
 func (s *Store) Messages(channelID, after string, limit int) ([]ChannelMessage, error) {
-	return s.messagesWhere(
-		`channel_id = ? AND thread_root = '' AND id > ? ORDER BY seq LIMIT ?`,
+	msgs, err := s.messagesWhere(
+		`channel_id = ? AND thread_root = '' AND id > ? ORDER BY seq DESC LIMIT ?`,
 		channelID, after, messageLimit(limit),
 	)
+	if err != nil {
+		return nil, err
+	}
+	slices.Reverse(msgs)
+	return msgs, nil
 }
 
 // ThreadMessages is one thread, the message it hangs off first.
