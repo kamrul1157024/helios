@@ -545,9 +545,30 @@ class DaemonAPIService extends ChangeNotifier {
   }
 
   /// A channel's spine: what was said to it, without the threads hanging off.
-  /// Reading marks it read, which is what the unread count is counted against.
-  Future<List<ChannelMessage>> channelMessages(String id) async {
-    return _messages('/api/channels/${Uri.encodeComponent(id)}/messages');
+  ///
+  /// The newest page by default. [before] reaches back for the page older than a
+  /// message id, [after] forward for the one newer — the two directions a reader
+  /// pages a bounded window across. [limit] is the page size, capped by the
+  /// daemon. Reading the newest page marks the channel read, which is what the
+  /// unread count is counted against; a page fetched while scrolling passes
+  /// [markRead] false so scrolling back through history does not clear the badge.
+  Future<List<ChannelMessage>> channelMessages(
+    String id, {
+    String? before,
+    String? after,
+    int? limit,
+    bool markRead = true,
+  }) async {
+    final query = <String, String>{};
+    if (before != null && before.isNotEmpty) query['before'] = before;
+    if (after != null && after.isNotEmpty) query['after'] = after;
+    if (limit != null) query['limit'] = '$limit';
+    if (!markRead) query['mark_read'] = '0';
+    final path = '/api/channels/${Uri.encodeComponent(id)}/messages';
+    final uri = query.isEmpty
+        ? path
+        : Uri(path: path, queryParameters: query).toString();
+    return _messages(uri);
   }
 
   /// One thread: the message it hangs off, then its replies.
@@ -947,8 +968,7 @@ class DaemonAPIService extends ChangeNotifier {
         return ForkResult(
           sessionId: decoded['session_id'] as String? ?? '',
           warnings: [
-            for (final w in (decoded['warnings'] as List? ?? const []))
-              '$w',
+            for (final w in (decoded['warnings'] as List? ?? const [])) '$w',
           ],
         );
       }
@@ -2120,18 +2140,13 @@ List<Worktree> sortWorktreesByLastTouched(List<Worktree> worktrees) {
   return sorted;
 }
 
-
 /// What a fork attempt came back with: the new session, or why there is none.
 class ForkResult {
   final String sessionId;
   final List<String> warnings;
   final String? error;
 
-  const ForkResult({
-    this.sessionId = '',
-    this.warnings = const [],
-    this.error,
-  });
+  const ForkResult({this.sessionId = '', this.warnings = const [], this.error});
 
   bool get ok => error == null && sessionId.isNotEmpty;
 }

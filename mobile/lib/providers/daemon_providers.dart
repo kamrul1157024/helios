@@ -72,18 +72,8 @@ final channelsProvider = FutureProvider.family<List<Channel>, String>((
   return service.listChannels();
 });
 
-/// One channel's spine. Reading it marks it read on the daemon, which is what
-/// clears the badge, so this is asked for when the conversation opens.
-final channelMessagesProvider =
-    FutureProvider.family<List<ChannelMessage>, (String, String)>((
-      ref,
-      arg,
-    ) async {
-      final (hostId, channelId) = arg;
-      final service = ref.watch(serviceProvider(hostId));
-      if (service == null || channelId.isEmpty) return const [];
-      return service.channelMessages(channelId);
-    });
+// One channel's spine is a bounded, paged window: see channelMessagesProvider in
+// channel_messages.dart.
 
 /// One thread, read when its screen opens.
 final channelThreadProvider =

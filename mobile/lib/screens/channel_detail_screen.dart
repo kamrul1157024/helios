@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 
 import '../models/channel.dart';
+import '../providers/channel_messages.dart';
 import '../providers/daemon_providers.dart';
 import '../utils/author_colour.dart';
 
@@ -28,7 +29,6 @@ class ChannelDetailScreen extends rp.ConsumerWidget {
   Widget build(BuildContext context, rp.WidgetRef ref) {
     final channels = ref.watch(channelsProvider(hostId));
     final channel = channels.value?.where((c) => c.id == channelId).firstOrNull;
-    final messages = ref.watch(channelMessagesProvider((hostId, channelId)));
 
     return Scaffold(
       appBar: AppBar(
@@ -55,20 +55,16 @@ class ChannelDetailScreen extends rp.ConsumerWidget {
               'interrupts nobody — agents read it when they look.',
             ),
           Expanded(
-            child: messages.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, _) => Center(child: Text('$err')),
-              data: (list) => _Conversation(
-                hostId: hostId,
-                channel: channel,
-                messages: list,
-                onOpenThread: (root) => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChannelThreadScreen(
-                      hostId: hostId,
-                      channelId: channelId,
-                      root: root,
-                    ),
+            child: _WindowedConversation(
+              hostId: hostId,
+              channelId: channelId,
+              channel: channel,
+              onOpenThread: (root) => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ChannelThreadScreen(
+                    hostId: hostId,
+                    channelId: channelId,
+                    root: root,
                   ),
                 ),
               ),
@@ -144,17 +140,142 @@ class ChannelThreadScreen extends rp.ConsumerWidget {
   }
 }
 
+/// A channel's conversation as a bounded, paged window.
+///
+/// The newest page opens the channel; scrolling to the top pages older in, and
+/// scrolling back to the bottom pages newer back after the window slid past its
+/// cap. Prepending older is smooth in a reversed list on its own, but the trim
+/// that holds the window's size removes messages from the bottom, so the reader's
+/// place is held by hand: measure the extent the trim removed and step the offset
+/// back by it. See ChannelMessagesNotifier.
+class _WindowedConversation extends rp.ConsumerStatefulWidget {
+  final String hostId;
+  final String channelId;
+  final Channel? channel;
+  final void Function(String root)? onOpenThread;
+
+  const _WindowedConversation({
+    required this.hostId,
+    required this.channelId,
+    required this.channel,
+    required this.onOpenThread,
+  });
+
+  @override
+  rp.ConsumerState<_WindowedConversation> createState() =>
+      _WindowedConversationState();
+}
+
+class _WindowedConversationState
+    extends rp.ConsumerState<_WindowedConversation> {
+  final _controller = ScrollController();
+  bool _loadingOlder = false;
+  bool _loadingNewer = false;
+
+  (String, String) get _key => (widget.hostId, widget.channelId);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Pages older in, then trims the newest back to the cap without moving what
+  /// the reader is looking at. Prepending alone leaves the offset be — it is
+  /// measured from the bottom and the new messages land on top — so only the
+  /// trim, which cuts from the bottom, needs compensating.
+  Future<void> _loadOlder() async {
+    if (_loadingOlder) return;
+    _loadingOlder = true;
+    try {
+      final notifier = ref.read(channelMessagesProvider(_key).notifier);
+      final older = await notifier.fetchOlder();
+      if (older.isEmpty || !mounted) return;
+      notifier.applyOlder(older);
+
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_controller.hasClients) return;
+      final overflow = notifier.overflow;
+      if (overflow <= 0) return;
+
+      final before = _controller.position.maxScrollExtent;
+      final pixels = _controller.position.pixels;
+      notifier.trimNewest(overflow);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_controller.hasClients) return;
+      final after = _controller.position.maxScrollExtent;
+      _controller.jumpTo((pixels - (before - after)).clamp(0.0, after));
+    } finally {
+      _loadingOlder = false;
+    }
+  }
+
+  /// Pages newer back in. The reader is at the bottom to have reached for it, so
+  /// the new messages land under the eye where they belong and nothing is moved;
+  /// the oldest page falls off the top, which the offset never referenced.
+  Future<void> _loadNewer() async {
+    if (_loadingNewer) return;
+    _loadingNewer = true;
+    try {
+      final notifier = ref.read(channelMessagesProvider(_key).notifier);
+      final newer = await notifier.fetchNewer();
+      if (newer.isEmpty || !mounted) return;
+      notifier.applyNewer(newer);
+    } finally {
+      _loadingNewer = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final window = ref.watch(channelMessagesProvider(_key));
+    return window.when(
+      // A channel event refetches the newest page; holding the conversation on
+      // screen through that beats flashing a spinner over what was just read.
+      skipLoadingOnReload: true,
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, _) => Center(child: Text('$err')),
+      data: (data) => _Conversation(
+        hostId: widget.hostId,
+        channel: widget.channel,
+        messages: data.messages,
+        onOpenThread: widget.onOpenThread,
+        controller: _controller,
+        hasOlder: data.hasOlder,
+        hasNewer: data.hasNewer,
+        onReachOlder: _loadOlder,
+        onReachNewer: _loadNewer,
+      ),
+    );
+  }
+}
+
 class _Conversation extends StatelessWidget {
   final String hostId;
   final Channel? channel;
   final List<ChannelMessage> messages;
   final void Function(String root)? onOpenThread;
+  final ScrollController? controller;
+
+  /// Older messages exist above the top; a spinner sits there and, once built,
+  /// calls [onReachOlder]. [hasNewer]/[onReachNewer] are the mirror at the
+  /// bottom, for a window that slid past its newest. A thread passes neither: it
+  /// is read whole.
+  final bool hasOlder;
+  final bool hasNewer;
+  final Future<void> Function()? onReachOlder;
+  final Future<void> Function()? onReachNewer;
 
   const _Conversation({
     required this.hostId,
     required this.channel,
     required this.messages,
     required this.onOpenThread,
+    this.controller,
+    this.hasOlder = false,
+    this.hasNewer = false,
+    this.onReachOlder,
+    this.onReachNewer,
   });
 
   @override
@@ -164,12 +285,30 @@ class _Conversation extends StatelessWidget {
     }
     // reverse: true opens on the newest message and keeps it in view as more
     // arrive. The messages read oldest-first, so the index is counted back.
+    //
+    // A reversed list counts from the bottom: index 0 is the newest, so the
+    // newer-page spinner leads and the older-page one trails.
+    final leading = hasNewer ? 1 : 0;
+    final trailing = hasOlder ? 1 : 0;
     return ListView.builder(
+      controller: controller,
       reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 12),
-      itemCount: messages.length,
+      itemCount: messages.length + leading + trailing,
       itemBuilder: (context, at) {
-        final index = messages.length - 1 - at;
+        if (hasNewer && at == 0) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => onReachNewer?.call(),
+          );
+          return const _PageSpinner();
+        }
+        if (hasOlder && at == messages.length + leading + trailing - 1) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => onReachOlder?.call(),
+          );
+          return const _PageSpinner();
+        }
+        final index = messages.length - 1 - (at - leading);
         final message = messages[index];
         // A run from one author shares a header: four messages from one agent
         // repeating its title four times is noise, and the repetition says
@@ -222,7 +361,9 @@ class _MessageRow extends StatelessWidget {
         // A message that named the reader, so it can be found again on the
         // way back up.
         border: message.addressesUser
-            ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 2))
+            ? Border(
+                left: BorderSide(color: theme.colorScheme.primary, width: 2),
+              )
             : null,
       ),
       child: Column(
@@ -281,7 +422,9 @@ class _MessageRow extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.fromLTRB(12, opens ? 12 : 2, 12, 2),
       child: Row(
-        mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: mine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!mine) ...[
@@ -379,6 +522,25 @@ class _MessageBody extends StatelessWidget {
     }
 
     return SelectableText.rich(TextSpan(style: base, children: spans));
+  }
+}
+
+/// The marker at either end of the window while a page loads.
+class _PageSpinner extends StatelessWidget {
+  const _PageSpinner();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(12),
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
   }
 }
 
@@ -550,7 +712,13 @@ class _ChannelComposerState extends rp.ConsumerState<ChannelComposer> {
     final needle = (_picking ?? '').toLowerCase();
 
     final offered = (channel?.members ?? const <String>[])
-        .map((id) => (id: id, handle: channel!.handleFor(id), title: channel.titles[id] ?? id))
+        .map(
+          (id) => (
+            id: id,
+            handle: channel!.handleFor(id),
+            title: channel.titles[id] ?? id,
+          ),
+        )
         .where(
           (m) =>
               needle.isEmpty ||
@@ -683,7 +851,10 @@ Future<void> _showMembers(
                 subtitle: Text('@${channel.handleFor(id)}'),
               ),
             const ListTile(
-              leading: CircleAvatar(radius: 14, child: Text('you', style: TextStyle(fontSize: 9))),
+              leading: CircleAvatar(
+                radius: 14,
+                child: Text('you', style: TextStyle(fontSize: 9)),
+              ),
               title: Text('user'),
               subtitle: Text('@user'),
             ),
