@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -156,6 +157,35 @@ func TestMessagesComeBackInOrder(t *testing.T) {
 	}
 	if len(messages) != 3 || messages[0].Body != "first" || messages[2].Body != "third" {
 		t.Errorf("read %d messages, oldest %q", len(messages), messages[0].Body)
+	}
+}
+
+func TestMessagesKeepTheNewestWhenTheChannelRunsPastTheCap(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+
+	// 250 messages, past the 200 default cap. A reader opening the channel wants
+	// the tail — what was just said — not the 200 oldest with the recent ones cut.
+	const total = 250
+	for i := range total {
+		if _, err := s.PostMessage(ch.ID, AuthorUser, fmt.Sprintf("message %d", i), false, "", nil); err != nil {
+			t.Fatalf("post %d: %v", i, err)
+		}
+	}
+
+	messages, err := s.Messages(ch.ID, "", 0)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(messages) != 200 {
+		t.Fatalf("read %d messages, want the 200 cap", len(messages))
+	}
+	// The window is the newest 200 (50..249), returned oldest-first.
+	if messages[0].Body != "message 50" {
+		t.Errorf("oldest in the window %q, want %q", messages[0].Body, "message 50")
+	}
+	if messages[len(messages)-1].Body != "message 249" {
+		t.Errorf("newest in the window %q, want %q", messages[len(messages)-1].Body, "message 249")
 	}
 }
 
