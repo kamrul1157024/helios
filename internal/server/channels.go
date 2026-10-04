@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kamrul1157024/helios/internal/store"
@@ -214,21 +215,50 @@ func (sh *Shared) deleteChannel(w http.ResponseWriter, id string) {
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true})
 }
 
-func (sh *Shared) readMessages(w http.ResponseWriter, r *http.Request, id string) {
-	after := r.URL.Query().Get("after")
-	reader := readerOf(r)
-	// "Since I last looked" is the common ask, and doing it here saves every
-	// caller from holding a receipt of its own.
-	if r.URL.Query().Get("since_last") == "1" {
-		at, err := sh.DB.LastRead(id, reader)
-		if err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		after = at
+// parseLimit reads a page size off the query, falling back to 0 — which the
+// store reads as its default. A bad or negative number is not worth a 400: the
+// default is a safe answer to a malformed ask.
+func parseLimit(raw string) int {
+	if raw == "" {
+		return 0
 	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
 
-	messages, err := sh.DB.Messages(id, after, 0)
+func (sh *Shared) readMessages(w http.ResponseWriter, r *http.Request, id string) {
+	q := r.URL.Query()
+	before := q.Get("before")
+	after := q.Get("after")
+	limit := parseLimit(q.Get("limit"))
+	reader := readerOf(r)
+
+	// A bounded window paged over: `before` reaches back for older messages,
+	// `after` forward for newer, and neither asks for the newest page. Only one
+	// applies at a time — a reader is scrolling one way or the other.
+	var messages []store.ChannelMessage
+	var err error
+	switch {
+	case before != "":
+		messages, err = sh.DB.MessagesBefore(id, before, limit)
+	case after != "":
+		messages, err = sh.DB.MessagesAfter(id, after, limit)
+	default:
+		at := ""
+		// "Since I last looked" is the common ask, and doing it here saves every
+		// caller from holding a receipt of its own.
+		if q.Get("since_last") == "1" {
+			at, err = sh.DB.LastRead(id, reader)
+			if err != nil {
+				jsonError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		messages, err = sh.DB.Messages(id, at, limit)
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -605,11 +635,11 @@ func joiningPrompt(name string, others []string, withMessage string, missed int)
 }
 
 func (sh *Shared) missed(channelID string) int {
-	messages, err := sh.DB.Messages(channelID, "", 0)
+	n, err := sh.DB.CountMessages(channelID)
 	if err != nil {
 		return 0
 	}
-	return len(messages)
+	return n
 }
 
 // channelName is what the CLI would be given: the name where there is one, and

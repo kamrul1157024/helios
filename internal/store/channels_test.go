@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -156,6 +157,144 @@ func TestMessagesComeBackInOrder(t *testing.T) {
 	}
 	if len(messages) != 3 || messages[0].Body != "first" || messages[2].Body != "third" {
 		t.Errorf("read %d messages, oldest %q", len(messages), messages[0].Body)
+	}
+}
+
+func TestMessagesKeepTheNewestWhenTheChannelRunsPastTheCap(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+
+	// 250 messages, past the 200 default cap. A reader opening the channel wants
+	// the tail — what was just said — not the 200 oldest with the recent ones cut.
+	const total = 250
+	for i := range total {
+		if _, err := s.PostMessage(ch.ID, AuthorUser, fmt.Sprintf("message %d", i), false, "", nil); err != nil {
+			t.Fatalf("post %d: %v", i, err)
+		}
+	}
+
+	messages, err := s.Messages(ch.ID, "", 0)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(messages) != 200 {
+		t.Fatalf("read %d messages, want the 200 cap", len(messages))
+	}
+	// The window is the newest 200 (50..249), returned oldest-first.
+	if messages[0].Body != "message 50" {
+		t.Errorf("oldest in the window %q, want %q", messages[0].Body, "message 50")
+	}
+	if messages[len(messages)-1].Body != "message 249" {
+		t.Errorf("newest in the window %q, want %q", messages[len(messages)-1].Body, "message 249")
+	}
+}
+
+// seedMessages posts n numbered messages and returns their ids, oldest first.
+func seedMessages(t *testing.T, s *Store, channelID string, n int) []string {
+	t.Helper()
+	ids := make([]string, n)
+	for i := range n {
+		m, err := s.PostMessage(channelID, AuthorUser, fmt.Sprintf("message %d", i), false, "", nil)
+		if err != nil {
+			t.Fatalf("post %d: %v", i, err)
+		}
+		ids[i] = m.ID
+	}
+	return ids
+}
+
+func TestMessagesBeforePagesBackwards(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+	ids := seedMessages(t, s, ch.ID, 50)
+
+	// The page immediately older than message 20, twenty of them: 0..19.
+	older, err := s.MessagesBefore(ch.ID, ids[20], 20)
+	if err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	if len(older) != 20 {
+		t.Fatalf("read %d, want 20", len(older))
+	}
+	if older[0].Body != "message 0" || older[len(older)-1].Body != "message 19" {
+		t.Errorf(
+			"page is %q..%q, want message 0..message 19",
+			older[0].Body, older[len(older)-1].Body,
+		)
+	}
+}
+
+func TestMessagesBeforeStopsAtTheStart(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+	ids := seedMessages(t, s, ch.ID, 10)
+
+	// Only five messages sit before the sixth, so a page of twenty is short and
+	// the reader has hit the top.
+	older, err := s.MessagesBefore(ch.ID, ids[5], 20)
+	if err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	if len(older) != 5 {
+		t.Fatalf("read %d, want 5", len(older))
+	}
+	if older[0].Body != "message 0" {
+		t.Errorf("oldest is %q, want message 0", older[0].Body)
+	}
+}
+
+func TestMessagesAfterPagesForwards(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+	ids := seedMessages(t, s, ch.ID, 50)
+
+	// The page immediately newer than message 20, oldest of them first: 21..40 —
+	// contiguous with what a reader scrolling back down already holds, not the
+	// very newest.
+	newer, err := s.MessagesAfter(ch.ID, ids[20], 20)
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	if len(newer) != 20 {
+		t.Fatalf("read %d, want 20", len(newer))
+	}
+	if newer[0].Body != "message 21" || newer[len(newer)-1].Body != "message 40" {
+		t.Errorf(
+			"page is %q..%q, want message 21..message 40",
+			newer[0].Body, newer[len(newer)-1].Body,
+		)
+	}
+}
+
+func TestReadLimitIsCappedAtTheMaximum(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+	seedMessages(t, s, ch.ID, 250)
+
+	// A caller asking for more than the cap is held to it: the window is bounded
+	// in memory and on the wire.
+	messages, err := s.Messages(ch.ID, "", 500)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(messages) != 200 {
+		t.Errorf("read %d, want the %d cap", len(messages), 200)
+	}
+}
+
+func TestCountMessagesIsUncapped(t *testing.T) {
+	s := channelStore(t)
+	ch, _, _ := s.CreateChannel("", AuthorUser, []string{"s2"})
+	seedMessages(t, s, ch.ID, 250)
+
+	// The count a joiner is shown is the whole conversation, not what one read
+	// would hand back.
+	n, err := s.CountMessages(ch.ID)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 250 {
+		t.Errorf("count %d, want 250", n)
 	}
 }
 

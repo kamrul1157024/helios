@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,6 +179,64 @@ func TestSinceLastShowsOnlyWhatArrivedAfter(t *testing.T) {
 	first, _ := messages[0].(map[string]any)
 	if first["body"] != "after" {
 		t.Errorf("got %q, want \"after\"", first["body"])
+	}
+}
+
+// bodiesOf reads the message bodies off a /messages response, in order.
+func bodiesOf(out map[string]any) []string {
+	messages, _ := out["messages"].([]any)
+	bodies := make([]string, 0, len(messages))
+	for _, m := range messages {
+		row, _ := m.(map[string]any)
+		body, _ := row["body"].(string)
+		bodies = append(bodies, body)
+	}
+	return bodies
+}
+
+// idsOf reads the message ids off a /messages response, in order.
+func idsOf(out map[string]any) []string {
+	messages, _ := out["messages"].([]any)
+	ids := make([]string, 0, len(messages))
+	for _, m := range messages {
+		row, _ := m.(map[string]any)
+		id, _ := row["id"].(string)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// A bounded window paged over: the newest page by default, then back with
+// `before` and forward again with `after`, each returned oldest-first.
+func TestMessagesPageAcrossACursor(t *testing.T) {
+	shared, _ := liveChannelTest(t, "s2")
+	id := madeChannel(t, channelCall(t, shared, http.MethodPost, "",
+		`{"name":"api-redesign","members":["s2"]}`))
+
+	for i := range 5 {
+		channelCall(t, shared, http.MethodPost, "/"+id+"/messages",
+			`{"message":"m`+strconv.Itoa(i)+`"}`)
+	}
+	ids := idsOf(channelCall(t, shared, http.MethodGet, "/"+id+"/messages", ""))
+	if len(ids) != 5 {
+		t.Fatalf("seeded %d messages, want 5", len(ids))
+	}
+
+	newest := bodiesOf(channelCall(t, shared, http.MethodGet, "/"+id+"/messages?limit=2", ""))
+	if got := strings.Join(newest, ","); got != "m3,m4" {
+		t.Errorf("newest page = %q, want \"m3,m4\"", got)
+	}
+
+	older := bodiesOf(channelCall(t, shared, http.MethodGet,
+		"/"+id+"/messages?before="+ids[3]+"&limit=2", ""))
+	if got := strings.Join(older, ","); got != "m1,m2" {
+		t.Errorf("page before m3 = %q, want \"m1,m2\"", got)
+	}
+
+	newer := bodiesOf(channelCall(t, shared, http.MethodGet,
+		"/"+id+"/messages?after="+ids[1]+"&limit=2", ""))
+	if got := strings.Join(newer, ","); got != "m2,m3" {
+		t.Errorf("page after m1 = %q, want \"m2,m3\"", got)
 	}
 }
 

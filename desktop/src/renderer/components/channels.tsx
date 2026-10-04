@@ -1,7 +1,26 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../bridge.ts'
+import {
+  CHANNEL_PAGE_SIZE,
+  EMPTY_WINDOW,
+  openingWindow,
+  overflowOf,
+  trimmedNewest,
+  withNewer,
+  withOlder,
+  type ChannelWindow,
+} from '../channel-window.ts'
 import { clearDraft, loadDraft, saveDraft } from '../drafts.ts'
 import { statusOf } from '../errors.ts'
 import { keys } from '../keys.ts'
@@ -294,6 +313,130 @@ function ChannelAside(): JSX.Element | null {
   )
 }
 
+/** The marker at either end of the window while a page loads. */
+function PageSpinner(): JSX.Element {
+  return (
+    <div className="channel-page-spinner" aria-hidden="true">
+      <div className="spinner" />
+    </div>
+  )
+}
+
+/**
+ * A channel's conversation as a bounded, paged window.
+ *
+ * The newest page comes from React Query and resets the window whenever it
+ * changes — a post, or re-opening the channel. From there the reader pages: up
+ * for older, back down for newer once the window has slid past its newest. The
+ * cap holds memory flat however long the channel runs.
+ *
+ * Prepending older in a top-down list pushes everything down, so the reader's
+ * place is held by adding back the height that was inserted; the trim that keeps
+ * the window bounded cuts from the bottom, out of view, and needs no such care.
+ */
+function useChannelWindow(
+  hostId: string,
+  channelId: string,
+  newest: ChannelMessage[] | undefined,
+  scroller: RefObject<HTMLDivElement | null>,
+): [ChannelWindow, () => Promise<void>, () => Promise<void>] {
+  const [win, setWin] = useState<ChannelWindow>(EMPTY_WINDOW)
+  const winRef = useRef(win)
+  winRef.current = win
+
+  const pinnedToBottom = useRef(true)
+  // Scroll height captured before older messages are prepended, and the page to
+  // drop off the bottom once that prepend has been compensated for.
+  const anchor = useRef<number | null>(null)
+  const pendingTrim = useRef(0)
+  const busyOlder = useRef(false)
+  const busyNewer = useRef(false)
+
+  // The newest page resets the window: a post or a re-open lands the reader on
+  // the latest, not wherever they had scrolled back to. React Query's structural
+  // sharing keeps the reference stable when nothing changed, so an idle refetch
+  // does not throw a reader's place away.
+  useEffect(() => {
+    if (!newest) return
+    pinnedToBottom.current = true
+    anchor.current = null
+    pendingTrim.current = 0
+    setWin(openingWindow(newest))
+  }, [newest])
+
+  // Holds the reader's place across a prepend, applies any pending trim after,
+  // and otherwise keeps the newest in view.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    if (anchor.current !== null) {
+      el.scrollTop += el.scrollHeight - anchor.current
+      anchor.current = null
+      if (pendingTrim.current > 0) {
+        const count = pendingTrim.current
+        pendingTrim.current = 0
+        setWin((w) => trimmedNewest(w, count))
+      }
+      return
+    }
+    if (pinnedToBottom.current) el.scrollTop = el.scrollHeight
+  }, [win.messages, scroller])
+
+  const loadOlder = useCallback(async (): Promise<void> => {
+    const held = winRef.current
+    const oldest = held.messages[0]
+    if (busyOlder.current || !held.hasOlder || !oldest) return
+    busyOlder.current = true
+    try {
+      const older = await api(hostId).channelMessages(channelId, {
+        before: oldest.id,
+        limit: CHANNEL_PAGE_SIZE,
+        markRead: false,
+      })
+      if (older.length === 0) {
+        setWin((w) => ({ ...w, hasOlder: false }))
+        return
+      }
+      const grown = withOlder(winRef.current, older)
+      pendingTrim.current = overflowOf(grown)
+      const el = scroller.current
+      if (el) anchor.current = el.scrollHeight
+      setWin(grown)
+    } catch (err) {
+      store.fail(err)
+    } finally {
+      busyOlder.current = false
+    }
+  }, [hostId, channelId, scroller])
+
+  const loadNewer = useCallback(async (): Promise<void> => {
+    const held = winRef.current
+    const latest = held.messages[held.messages.length - 1]
+    if (busyNewer.current || !held.hasNewer || !latest) return
+    busyNewer.current = true
+    try {
+      const page = await api(hostId).channelMessages(channelId, {
+        after: latest.id,
+        limit: CHANNEL_PAGE_SIZE,
+        markRead: false,
+      })
+      if (page.length === 0) {
+        setWin((w) => ({ ...w, hasNewer: false }))
+        return
+      }
+      // Reaching down for newer: keep the eye on the new bottom.
+      pinnedToBottom.current = true
+      setWin(withNewer(winRef.current, page))
+    } catch (err) {
+      store.fail(err)
+    } finally {
+      busyNewer.current = false
+    }
+  }, [hostId, channelId])
+
+  return [win, loadOlder, loadNewer]
+}
+
 function ChannelConversation({
   hostId,
   channelId,
@@ -303,16 +446,22 @@ function ChannelConversation({
   channelId: string
 }): JSX.Element {
   const { data: channels = [] } = useQuery(channelsQuery(hostId))
-  const { data: messages = [] } = useQuery(channelMessagesQuery(hostId, channelId))
+  // The newest page. The window is extended with older and newer pages in state
+  // below; this refetches on a post or a re-open and resets the window to newest.
+  const { data: newest } = useQuery(channelMessagesQuery(hostId, channelId))
   const channel = channels.find((one) => one.id === channelId)
   const handles = useHandles(channel)
   const scroller = useRef<HTMLDivElement | null>(null)
 
-  // Newest last, and the reader wants the end of it.
-  useEffect(() => {
+  const [win, loadOlder, loadNewer] = useChannelWindow(hostId, channelId, newest, scroller)
+
+  const onScroll = useCallback(() => {
     const el = scroller.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length])
+    if (!el) return
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (el.scrollTop < 120) void loadOlder()
+    if (fromBottom < 120) void loadNewer()
+  }, [loadOlder, loadNewer])
 
   return (
     <div className="channel">
@@ -340,17 +489,19 @@ function ChannelConversation({
         </p>
       )}
 
-      <div className="channel-scroll" ref={scroller}>
-        {messages.length === 0 && <p className="empty-note">Nothing said yet.</p>}
-        {messages.map((message, at) => (
+      <div className="channel-scroll" ref={scroller} onScroll={onScroll}>
+        {win.hasOlder && <PageSpinner />}
+        {win.messages.length === 0 && <p className="empty-note">Nothing said yet.</p>}
+        {win.messages.map((message, at) => (
           <ChannelMessageRow
             key={message.id}
             message={message}
-            opens={messages[at - 1]?.author !== message.author}
+            opens={win.messages[at - 1]?.author !== message.author}
             handles={handles}
             onOpenThread={() => store.openThread(hostId, channelId, message.id)}
           />
         ))}
+        {win.hasNewer && <PageSpinner />}
       </div>
 
       {/* Closed is read-only, so the box goes rather than being disabled: a

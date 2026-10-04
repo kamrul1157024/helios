@@ -509,15 +509,69 @@ func (s *Store) rootOf(channelID, target string) (string, error) {
 	return target, nil
 }
 
-// Messages reads a channel, oldest first. `after` is a message id: pass the
-// reader's receipt to get what they have not seen.
+// Messages reads the newest page of a channel's spine, oldest first. `after` is
+// a message id: pass the reader's receipt to get what they have not seen.
 // The spine only: what is said to the channel, without the asides hanging off
 // it. A thread is read with ThreadMessages, by whoever cares about that thread.
+//
+// The limit takes the newest messages, not the oldest: a reader opens a channel
+// to see what was just said, so when the count runs past the cap it is the tail
+// that is kept. The query walks back from the end with `seq DESC`, then the
+// window is flipped to oldest-first for the caller. To page backwards from here
+// use MessagesBefore; to page forwards again use MessagesAfter.
 func (s *Store) Messages(channelID, after string, limit int) ([]ChannelMessage, error) {
+	msgs, err := s.messagesWhere(
+		`channel_id = ? AND thread_root = '' AND id > ? ORDER BY seq DESC LIMIT ?`,
+		channelID, after, messageLimit(limit),
+	)
+	if err != nil {
+		return nil, err
+	}
+	slices.Reverse(msgs)
+	return msgs, nil
+}
+
+// MessagesBefore reads the `limit` spine messages immediately older than
+// `before` (a message id, exclusive), oldest first. It is the page a reader
+// scrolling up reaches for. Like Messages it walks back from the cursor with
+// `seq DESC` and flips the window, so the result sits contiguously above what
+// the reader already holds.
+func (s *Store) MessagesBefore(channelID, before string, limit int) ([]ChannelMessage, error) {
+	msgs, err := s.messagesWhere(
+		`channel_id = ? AND thread_root = '' AND id < ? ORDER BY seq DESC LIMIT ?`,
+		channelID, before, messageLimit(limit),
+	)
+	if err != nil {
+		return nil, err
+	}
+	slices.Reverse(msgs)
+	return msgs, nil
+}
+
+// MessagesAfter reads the `limit` spine messages immediately newer than `after`
+// (a message id, exclusive), oldest first. It is the page a reader scrolling
+// back down reaches for after the newest were dropped from a bounded window.
+// Unlike Messages it takes the oldest of what is newer, so the page is
+// contiguous with what the reader holds rather than jumping to the very newest.
+func (s *Store) MessagesAfter(channelID, after string, limit int) ([]ChannelMessage, error) {
 	return s.messagesWhere(
 		`channel_id = ? AND thread_root = '' AND id > ? ORDER BY seq LIMIT ?`,
 		channelID, after, messageLimit(limit),
 	)
+}
+
+// CountMessages is how many spine messages a channel holds, uncapped: the count
+// a joiner is shown, which must not saturate at the read limit.
+func (s *Store) CountMessages(channelID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM channel_messages WHERE channel_id = ? AND thread_root = ''`,
+		channelID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count messages: %w", err)
+	}
+	return n, nil
 }
 
 // ThreadMessages is one thread, the message it hangs off first.
@@ -528,9 +582,13 @@ func (s *Store) ThreadMessages(channelID, root string) ([]ChannelMessage, error)
 	)
 }
 
+// maxMessages caps a single read, in memory and on the wire. The clients hold a
+// bounded window and page across it rather than pulling a whole channel.
+const maxMessages = 200
+
 func messageLimit(limit int) int {
-	if limit <= 0 {
-		return 200
+	if limit <= 0 || limit > maxMessages {
+		return maxMessages
 	}
 	return limit
 }

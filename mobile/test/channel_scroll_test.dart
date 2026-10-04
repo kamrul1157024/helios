@@ -3,11 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:helios/models/channel.dart';
+import 'package:helios/providers/channel_messages.dart';
 import 'package:helios/providers/daemon_providers.dart';
 import 'package:helios/screens/channel_detail_screen.dart';
 
-/// A channel opened on its first message, so the newest thing said was a scroll
-/// away — the one thing a reader opens a conversation for.
+/// A channel opened on its newest message, so the last thing said is in view —
+/// the one thing a reader opens a conversation for — not a scroll away.
 
 ChannelMessage _message(int n) => ChannelMessage(
   id: 'm$n',
@@ -17,15 +18,21 @@ ChannelMessage _message(int n) => ChannelMessage(
   createdAt: '2026-09-14T10:00:0${n % 10}Z',
 );
 
-Widget _app(List<ChannelMessage> messages) {
+/// Serves a fixed window, so the screen renders without a daemon.
+class _StubMessages extends ChannelMessagesNotifier {
+  _StubMessages(this.window);
+  final ChannelWindow window;
+
+  @override
+  Future<ChannelWindow> build((String, String) arg) async => window;
+}
+
+Widget _app(ChannelWindow window) {
   const channel = Channel(id: 'c1', name: 'testing', members: ['s1']);
   return rp.ProviderScope(
     overrides: [
       channelsProvider('h1').overrideWith((ref) async => [channel]),
-      channelMessagesProvider((
-        'h1',
-        'c1',
-      )).overrideWith((ref) async => messages),
+      channelMessagesProvider.overrideWith(() => _StubMessages(window)),
     ],
     child: const MaterialApp(
       home: ChannelDetailScreen(hostId: 'h1', channelId: 'c1'),
@@ -35,8 +42,10 @@ Widget _app(List<ChannelMessage> messages) {
 
 void main() {
   testWidgets('a channel opens on the newest message', (tester) async {
-    final messages = [for (var n = 0; n < 40; n++) _message(n)];
-    await tester.pumpWidget(_app(messages));
+    final window = ChannelWindow(
+      messages: [for (var n = 0; n < 40; n++) _message(n)],
+    );
+    await tester.pumpWidget(_app(window));
     await tester.pumpAndSettle();
 
     expect(find.text('message 39'), findsOneWidget);

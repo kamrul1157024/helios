@@ -1,6 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 
 import { api } from './bridge.ts'
+import { CHANNEL_PAGE_SIZE } from './channel-window.ts'
 import { keys, type SettingsDocument } from './keys.ts'
 
 export { appendDelta, transcriptMessages } from './keys.ts'
@@ -108,10 +109,16 @@ export function channelThreadQuery(hostId: string, channelId: string, root: stri
   })
 }
 
+/**
+ * A channel's newest page, which the conversation extends with older and newer
+ * pages in its own state. Reading it marks the channel read — which is what the
+ * unread count is counted against — so opening a channel is what clears its
+ * badge, and a post or a re-open refetches this and resets the window to newest.
+ */
 export function channelMessagesQuery(hostId: string, channelId: string) {
   return queryOptions({
     queryKey: keys.channelMessages(hostId, channelId),
-    queryFn: () => api(hostId).channelMessages(channelId),
+    queryFn: () => api(hostId).channelMessages(channelId, { limit: CHANNEL_PAGE_SIZE }),
     enabled: channelId !== '',
   })
 }
