@@ -1063,6 +1063,13 @@ small {
   padding: 12px 14px;
 }
 
+/* The marker at either end of the window while an older or newer page loads. */
+.channel-page-spinner {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
 /* A chat, read the way a chat is: an avatar, a bubble, and the person's own
    messages down the other side so a glance at the margin says who is talking
    before a single word is read. */

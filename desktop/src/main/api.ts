@@ -187,10 +187,27 @@ export class ApiClient {
     return this.request<{ channel: Channel; existing: boolean }>('POST', '/api/channels', spec)
   }
 
-  async channelMessages(id: string): Promise<ChannelMessage[]> {
+  /**
+   * A channel's spine. The newest page by default; {@link opts.before} reaches
+   * back for the page older than a message id and {@link opts.after} forward for
+   * the one newer — the two directions a reader pages a bounded window across.
+   * Reading the newest page marks the channel read; a page fetched while
+   * scrolling passes `markRead: false` so scrolling through history leaves the
+   * receipt be.
+   */
+  async channelMessages(
+    id: string,
+    opts: { before?: string; after?: string; limit?: number; markRead?: boolean } = {},
+  ): Promise<ChannelMessage[]> {
+    const query = queryString({
+      before: opts.before,
+      after: opts.after,
+      limit: opts.limit,
+      mark_read: opts.markRead === false ? '0' : undefined,
+    })
     const res = await this.request<{ messages?: ChannelMessage[] }>(
       'GET',
-      `/api/channels/${encodeURIComponent(id)}/messages`,
+      `/api/channels/${encodeURIComponent(id)}/messages${query}`,
     )
     return res.messages ?? []
   }
