@@ -7,6 +7,7 @@ import '../models/host_connection.dart';
 import '../models/notification.dart';
 import '../models/provider.dart';
 import '../models/channel.dart';
+import '../models/desktop.dart';
 import '../models/schedule.dart';
 import '../models/session.dart';
 import '../models/session_group.dart';
@@ -16,6 +17,7 @@ import '../utils/file_types.dart';
 import 'api_client.dart';
 import 'notification_service.dart';
 
+export '../models/desktop.dart';
 export '../models/file_error.dart';
 
 /// Callback fired when an SSE event arrives on this host.
@@ -1574,6 +1576,86 @@ class DaemonAPIService extends ChangeNotifier {
       debugPrint('[$hostId] Failed to get worktrees for $path: $e');
     }
     return [];
+  }
+
+  // ─── Remote desktop (spec 66) ──────────────────────────────────────────
+
+  /// The host's desktop, or null when the daemon predates it.
+  ///
+  /// A 404 is an answer, not a failure: it is what hides the entry points on a
+  /// host that cannot have a desktop yet.
+  Future<DesktopStatus?> desktopStatus() async {
+    final resp = await _api.get('/api/desktop');
+    if (resp.statusCode == 404) return null;
+    if (resp.statusCode != 200) {
+      throw HeliosApiException('desktop', resp.statusCode);
+    }
+    return DesktopStatus.fromJson(
+      jsonDecode(resp.body) as Map<String, dynamic>,
+    );
+  }
+
+  /// Starts the install. Progress arrives as `desktop_state` events.
+  Future<void> installDesktop() async {
+    final resp = await _api.post('/api/desktop/install');
+    if (resp.statusCode == 202 || resp.statusCode == 200) return;
+    throw _desktopRefusal(resp);
+  }
+
+  /// A single-use ticket for the tunnel, valid for 30 seconds.
+  Future<DesktopTicket> desktopTicket() async {
+    final resp = await _api.post('/api/desktop/ticket');
+    if (resp.statusCode != 200) throw _desktopRefusal(resp);
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    return DesktopTicket(
+      data['ticket'] as String? ?? '',
+      expiresAt: DateTime.tryParse(data['expires_at'] as String? ?? ''),
+    );
+  }
+
+  /// Sets the desktop session's DPI, live. Returns what the host applied.
+  Future<int> setDesktopDpi(int dpi) async {
+    final resp = await _api.put('/api/desktop/display', body: {'dpi': dpi});
+    if (resp.statusCode != 200) throw _desktopRefusal(resp);
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (data['dpi'] as num?)?.toInt() ?? dpi;
+  }
+
+  /// The page the WebView loads. The ticket rides in the fragment, which a
+  /// browser never sends to a server, so it stays out of every log on the way.
+  Uri desktopPageUri(
+    DesktopTicket ticket, {
+    required int width,
+    required int height,
+    required int dpi,
+  }) {
+    final base = serverUrl.endsWith('/')
+        ? serverUrl.substring(0, serverUrl.length - 1)
+        : serverUrl;
+    final fragment = Uri(
+      queryParameters: {
+        'ticket': ticket.ticket,
+        'width': '$width',
+        'height': '$height',
+        'dpi': '$dpi',
+      },
+    ).query;
+    return Uri.parse('$base/desktop/#$fragment');
+  }
+
+  DesktopActionException _desktopRefusal(http.Response resp) {
+    var code = '';
+    var message = '';
+    try {
+      final data = jsonDecode(resp.body);
+      if (data is Map) {
+        code = data['code'] as String? ?? '';
+        message = data['error'] as String? ?? '';
+      }
+    } catch (_) {
+      // A proxy's page rather than the daemon's JSON.
+    }
+    return DesktopActionException(resp.statusCode, code, message);
   }
 
   @override

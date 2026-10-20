@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'cache_effects.dart';
 import 'daemon_providers.dart';
+import 'desktop_providers.dart';
 import 'grouping_providers.dart';
 
 /// Subscribes the cache to the daemon's event stream.
@@ -34,6 +35,12 @@ void applyCacheEffects(Ref ref, List<CacheEffect> effects) {
         _invalidate(ref, effect);
       case InvalidateFiles():
         _invalidateFiles(ref, effect);
+      case SetDesktopState():
+        // Only a host somebody has asked about. Reading the notifier of one
+        // nobody has would start a fetch just to throw its answer away.
+        if (ref.exists(desktopProvider(effect.hostId))) {
+          ref.read(desktopProvider(effect.hostId).notifier).apply(effect.body);
+        }
     }
   }
 }
@@ -97,6 +104,8 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
     case CacheTarget.touched:
       final id = effect.sessionId;
       if (id != null) ref.invalidate(touchedProvider((host, id)));
+    case CacheTarget.desktop:
+      ref.invalidate(desktopProvider(host));
   }
 }
 

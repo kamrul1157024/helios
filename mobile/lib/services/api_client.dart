@@ -156,6 +156,25 @@ class ApiClient {
     return resp;
   }
 
+  Future<http.Response> put(String path, {Map<String, dynamic>? body}) async {
+    final encoded = body != null ? jsonEncode(body) : null;
+    final resp = await _http.put(
+      Uri.parse('$serverUrl$path'),
+      headers: await _authHeaders(json: true),
+      body: encoded,
+    );
+    if (resp.statusCode == 401) {
+      debugPrint('[ApiClient] 401 on PUT $path — refreshing token');
+      invalidateToken();
+      return _http.put(
+        Uri.parse('$serverUrl$path'),
+        headers: await _authHeaders(json: true),
+        body: encoded,
+      );
+    }
+    return resp;
+  }
+
   /// Posts files as multipart/form-data, each under the field `file`.
   ///
   /// A [http.MultipartRequest] is spent once sent, so the retry after a 401
