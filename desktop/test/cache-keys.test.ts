@@ -275,6 +275,14 @@ test('a reconnect refetches what the stream could have missed', () => {
     { kind: 'invalidate', queryKey: keys.files(HOST) },
     { kind: 'invalidate', queryKey: keys.git(HOST) },
     { kind: 'invalidate', queryKey: keys.touchedAll(HOST) },
+    { kind: 'invalidate', queryKey: keys.desktop(HOST) },
+  ])
+})
+
+test('a desktop_state event replaces the cached desktop with its body', () => {
+  const body = { state: 'installing', steps: [{ id: 'packages', label: 'Install', state: 'running', line: '' }] }
+  assert.deepEqual(effectsFor(HOST, { type: 'desktop_state', data: body }), [
+    { kind: 'set', queryKey: keys.desktop(HOST), data: body },
   ])
 })
 

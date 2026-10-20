@@ -103,6 +103,9 @@ await cp(resolve(root, 'src/renderer/index.html'), resolve(out, 'renderer/index.
 await cp(resolve(root, 'src/renderer/hud.html'), resolve(out, 'renderer/hud.html'))
 await cp(resolve(root, 'node_modules/@xterm/xterm/css/xterm.css'), resolve(out, 'renderer/xterm.css'))
 await cp(resolve(root, 'assets'), resolve(out, 'assets'), { recursive: true })
+// guacamole-common-js, vendored unchanged with its licence and notice, and
+// loaded by the Desktop view the first time one opens (spec 66, D7).
+await cp(resolve(root, 'src/renderer/vendor'), resolve(out, 'renderer/vendor'), { recursive: true })
 // Bundled colour themes live at the repo root so the Flutter app can pick them
 // up as an asset directory later without the files having to move.
 await cp(resolve(root, '../themes'), resolve(out, 'themes'), { recursive: true })

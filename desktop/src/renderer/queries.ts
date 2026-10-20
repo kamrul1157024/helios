@@ -391,3 +391,17 @@ export function grepQuery(hostId: string, root: string, q: string, opts: GrepOpt
     enabled: root !== '' && q !== '',
   })
 }
+
+// ─── Remote desktop ─────────────────────────────────────────────────────────
+
+/**
+ * The host's desktop, kept current by `desktop_state` events rather than by
+ * polling: an install reports every step, so the answer is pushed as it moves.
+ */
+export function desktopQuery(hostId: string) {
+  return queryOptions({
+    queryKey: keys.desktop(hostId),
+    queryFn: () => api(hostId).desktop(),
+    staleTime: NEVER_STALE,
+  })
+}

@@ -4,6 +4,7 @@ import type {
   ChannelMessage,
   CheckResult,
   CommandInfo,
+  DesktopState,
   DeviceInfo,
   DirectoryInfo,
   FileContent,
@@ -792,6 +793,29 @@ export class ApiClient {
 
   updateSettings(settings: Record<string, unknown>): Promise<unknown> {
     return this.request('POST', '/api/settings', settings)
+  }
+
+  // ─── Remote desktop (spec 66) ──────────────────────────────────────────
+
+  desktop(): Promise<DesktopState> {
+    return this.request('GET', '/api/desktop')
+  }
+
+  installDesktop(): Promise<{ started: boolean }> {
+    return this.request('POST', '/api/desktop/install')
+  }
+
+  /**
+   * A single-use pass for the tunnel. Not on the renderer's allow-list: the
+   * main process asks for one on each dial and spends it at once.
+   */
+  desktopTicket(): Promise<{ ticket: string; expires_at: string }> {
+    return this.request('POST', '/api/desktop/ticket')
+  }
+
+  /** Changes the session's text size live; the daemon answers with what it set. */
+  setDesktopDisplay(dpi: number): Promise<{ dpi: number }> {
+    return this.request('PUT', '/api/desktop/display', { dpi })
   }
 
   async devices(): Promise<DeviceInfo[]> {

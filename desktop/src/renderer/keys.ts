@@ -96,6 +96,8 @@ export const keys = {
    */
   touchedAll: (hostId: string) => ['host', hostId, 'touched'] as const,
   touched: (hostId: string, sessionId: string) => ['host', hostId, 'touched', sessionId] as const,
+  /** The host's remote desktop: its state, its install steps and its DPI. */
+  desktop: (hostId: string) => ['host', hostId, 'desktop'] as const,
 }
 
 // ─── The session list ───────────────────────────────────────────────────────
@@ -222,6 +224,8 @@ export type CacheEffect =
       refetchType?: 'none'
     }
   | { kind: 'patchSession'; sessionId: string; patch: Partial<Session> }
+  /** The event carries the whole answer, so it replaces the cached one. */
+  | { kind: 'set'; queryKey: readonly unknown[]; data: unknown }
 
 export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
   switch (event.type) {
@@ -301,6 +305,11 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
     case 'file_changed':
       return fileChangedEffects(hostId, event.data.paths)
 
+    // The same body GET /api/desktop answers, sent on every step of an install
+    // and on every DPI change, so there is nothing to refetch.
+    case 'desktop_state':
+      return [{ kind: 'set', queryKey: keys.desktop(hostId), data: event.data }]
+
     // The socket was down and the daemon keeps no replay buffer, so anything
     // that moved in the gap was announced to nobody. Files and git for a second
     // reason: a path whose watch expired while a tab sat open is not being
@@ -312,6 +321,7 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
         { kind: 'invalidate', queryKey: keys.files(hostId) },
         { kind: 'invalidate', queryKey: keys.git(hostId) },
         { kind: 'invalidate', queryKey: keys.touchedAll(hostId) },
+        { kind: 'invalidate', queryKey: keys.desktop(hostId) },
       ]
 
     // 'show' instructs the window, and the terminal events move connections:

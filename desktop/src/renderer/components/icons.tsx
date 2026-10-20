@@ -408,3 +408,35 @@ export function Close({ className = '' }: { className?: string }): JSX.Element {
     </svg>
   )
 }
+
+/** A screen on a stand: the host's remote desktop. */
+export function Monitor({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="4.5" width="18" height="12" rx="2" />
+      <path d="M9 20h6M12 16.5V20" />
+    </svg>
+  )
+}
+
+/** A box with an arrow leaving it: open in a window of its own. */
+export function PopOut({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M13.5 4.5h6v6M19.5 4.5L11 13" />
+      <path d="M17 13.5V18a1.5 1.5 0 01-1.5 1.5H6A1.5 1.5 0 014.5 18V8.5A1.5 1.5 0 016 7h4.5" />
+    </svg>
+  )
+}
+
+/** Three sliders: settings to adjust, not a mode to enter. */
+export function Sliders({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1" />
+      <circle cx="15" cy="7" r="2" />
+      <circle cx="9" cy="12" r="2" />
+      <circle cx="17" cy="17" r="2" />
+    </svg>
+  )
+}

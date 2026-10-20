@@ -313,6 +313,13 @@ export interface State {
    * itself.
    */
   forkDialog: { hostId: string; session: Session } | null
+  /**
+   * The host whose desktop covers the main area, if one is open.
+   *
+   * A desktop belongs to the host, not to a session, so it is not one of the
+   * session's panels (spec 66, D7). Picking a session puts it away again.
+   */
+  desktopHost: string | null
   /** The thread the side panel is showing, if one is open. */
   threadSelection: { hostId: string; channelId: string; root: string } | null
   /** Whether that same panel is showing who is in the channel instead. */
@@ -578,6 +585,7 @@ const initial: State = {
   channelSelection: null,
   channelPicker: null,
   forkDialog: null,
+  desktopHost: null,
   threadSelection: null,
   membersOpen: false,
   selectMode: false,
@@ -1185,6 +1193,10 @@ class Store {
         })
         continue
       }
+      if (effect.kind === 'set') {
+        queryClient.setQueryData(effect.queryKey, effect.data)
+        continue
+      }
       const was = this.sessionById(hostId, effect.sessionId)
       queryClient.setQueriesData<SessionListPage>({ queryKey: keys.allSessions(hostId) }, (page) =>
         patchSessionInPage(page, effect.sessionId, effect.patch),
@@ -1279,6 +1291,7 @@ class Store {
       // from a schedule means the reader has moved on to the run itself.
       sidebarMode: 'sessions' as SidebarMode,
       scheduleSelection: null,
+      desktopHost: null,
     }))
     this.touch(hostId, sessionId)
     // Asked again on the way in. The transcript never goes stale on its own —
@@ -1287,6 +1300,27 @@ class Store {
     // reset: what is held stays on screen and is replaced when the answer
     // arrives, so there is no spinner and no jump.
     void queryClient.invalidateQueries({ queryKey: keys.transcript(hostId, sessionId) })
+  }
+
+  // ─── Remote desktop ────────────────────────────────────────────────────
+
+  /** Shows a host's desktop over the session detail, in the sessions mode. */
+  openDesktop(hostId: string): void {
+    this.set({ desktopHost: hostId, sidebarMode: 'sessions' })
+  }
+
+  closeDesktop(): void {
+    this.set({ desktopHost: null })
+  }
+
+  /** Moves the desktop into a window of its own, so it can sit beside the session. */
+  async popOutDesktop(hostId: string): Promise<void> {
+    try {
+      await bridge.desktop.popOut(hostId)
+      if (this.state.desktopHost === hostId) this.closeDesktop()
+    } catch (err) {
+      this.fail(err)
+    }
   }
 
   // ─── Schedules ─────────────────────────────────────────────────────────

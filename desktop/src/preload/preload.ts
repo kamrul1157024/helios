@@ -136,6 +136,17 @@ const helios = {
     onExited: (fn: (payload: unknown) => void) => on('term:exited', fn),
     onClosed: (fn: (payload: unknown) => void) => on('term:closed', fn),
   },
+  desktop: {
+    open: (req: unknown) => call<void>('desktop:open', req),
+    send: (tunnelId: string, data: string) => ipcRenderer.send('desktop:send', tunnelId, data),
+    close: (tunnelId: string) => call<void>('desktop:close', tunnelId),
+    popOut: (hostId: string) => call<void>('desktop:popout', hostId),
+    readClipboard: () => call<string>('desktop:clipboardRead'),
+    writeClipboard: (text: string) => call<void>('desktop:clipboardWrite', text),
+    onOpen: (fn: (payload: unknown) => void) => on('desktop:open', fn),
+    onMessage: (fn: (payload: unknown) => void) => on('desktop:message', fn),
+    onClosed: (fn: (payload: unknown) => void) => on('desktop:closed', fn),
+  },
   preview: {
     /** Stages an HTML page and returns the URL to point a frame at. */
     stage: (html: string) => call<string>('preview:stage', html),

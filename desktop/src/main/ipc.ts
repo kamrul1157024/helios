@@ -1,6 +1,7 @@
-import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 
 import { type ApiClient } from './api.ts'
+import type { DesktopManager, OpenDesktopRequest } from './desktop.ts'
 import { stagePreview } from './main.ts'
 import type { HostRegistry } from './hosts.ts'
 import type { Notifier } from './notify.ts'
@@ -90,11 +91,15 @@ const API_METHODS = new Set<keyof ApiClient>([
   'updateSettings',
   'devices',
   'health',
+  'desktop',
+  'installDesktop',
+  'setDesktopDisplay',
 ])
 
 export interface IpcDeps {
   hosts: HostRegistry
   terminals: TerminalManager
+  desktop: DesktopManager
   notifier: Notifier
   prefs: PrefsStore
   themes: ThemeRegistry
@@ -116,12 +121,19 @@ export interface IpcDeps {
  * string otherwise.
  */
 export function registerIpc(deps: IpcDeps): void {
-  const { hosts, terminals, notifier, prefs, themes, updates, quit, glassSupported, onAppearanceChange } =
+  const { hosts, terminals, desktop, notifier, prefs, themes, updates, quit, glassSupported, onAppearanceChange } =
     deps
 
   const send = (channel: string, payload: unknown): void => {
     const window = deps.window()
     if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
+  }
+
+  // Host events reach the popped-out desktops too: each one follows its host's
+  // `desktop_state` on its own, with no main window in between.
+  const sendHostEvent = (payload: unknown): void => {
+    send('hosts:event', payload)
+    for (const win of desktop.windows()) win.webContents.send('hosts:event', payload)
   }
 
   // ─── Hosts ─────────────────────────────────────────────────────────────
@@ -132,6 +144,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle('hosts:pairURL', (_e, url: string, name?: string) => hosts.pairURL(url, name))
   handle('hosts:remove', async (_e, id: string) => {
     terminals.closeHost(id)
+    desktop.closeHost(id)
     notifier.clearHost(id)
     hosts.remove(id)
   })
@@ -160,11 +173,11 @@ export function registerIpc(deps: IpcDeps): void {
     // The renderer's cache missed the same window the tray did, and it hears
     // nothing from `reconcile`. A synthetic event is how it learns the socket
     // came back — there is no replay buffer to ask (spec 54).
-    send('hosts:event', { hostId: status.id, event: { type: 'stream_reconnected', data: {} } })
+    sendHostEvent({ hostId: status.id, event: { type: 'stream_reconnected', data: {} } })
   })
   hosts.on('event', ({ hostId, event }: { hostId: string; event: { type: string; data: Record<string, unknown> } }) => {
     notifier.handleEvent(hostId, event.type, event.data)
-    send('hosts:event', { hostId, event })
+    sendHostEvent({ hostId, event })
   })
 
   // ─── REST ──────────────────────────────────────────────────────────────
@@ -368,6 +381,21 @@ export function registerIpc(deps: IpcDeps): void {
   terminals.on('status', (payload) => send('term:status', payload))
   terminals.on('exited', (payload) => send('term:exited', payload))
   terminals.on('closed', (payload) => send('term:closed', payload))
+
+  // ─── Remote desktop ────────────────────────────────────────────────────
+
+  // Answered to the window that asked, not to the main one: a popped-out
+  // desktop holds its own tunnel.
+  handle('desktop:open', (event, req: OpenDesktopRequest) => desktop.open(event.sender, req))
+  handle('desktop:close', async (_e, tunnelId: string) => desktop.close(tunnelId))
+  handle('desktop:popout', async (_e, hostId: string) => desktop.popOut(hostId))
+  // Fire and forget: an acknowledged round trip per mouse move would
+  // queue the pointer behind its own acknowledgements.
+  ipcMain.on('desktop:send', (_e, tunnelId: string, data: string) => desktop.send(tunnelId, data))
+  // The renderer may not read the clipboard itself — the session grants only
+  // sanitised writes — and the desktop view asks only while it has focus.
+  handle('desktop:clipboardRead', async () => clipboard.readText())
+  handle('desktop:clipboardWrite', async (_e, text: string) => clipboard.writeText(text))
 }
 
 /**

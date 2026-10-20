@@ -30,6 +30,7 @@ import type {
   BackdropState,
   CommandInfo,
   Density,
+  DesktopState,
   DeviceInfo,
   DiffAt,
   DirectoryInfo,
@@ -125,6 +126,20 @@ interface RawBridge {
     onStatus(fn: (payload: { tabId: string; status: TabStatus }) => void): Unsubscribe
     onExited(fn: (payload: { tabId: string; code: number }) => void): Unsubscribe
     onClosed(fn: (payload: { tabId: string; reason: string }) => void): Unsubscribe
+  }
+  desktop: {
+    /** Gets a ticket and dials; every failure arrives later as `onClosed`. */
+    open(req: { tunnelId: string; hostId: string; width: number; height: number; dpi: number }): Promise<void>
+    /** One or more Guacamole instructions, already encoded. */
+    send(tunnelId: string, data: string): void
+    close(tunnelId: string): Promise<void>
+    /** Opens the host's desktop in a window of its own. */
+    popOut(hostId: string): Promise<void>
+    readClipboard(): Promise<string>
+    writeClipboard(text: string): Promise<void>
+    onOpen(fn: (payload: { tunnelId: string }) => void): Unsubscribe
+    onMessage(fn: (payload: { tunnelId: string; data: string }) => void): Unsubscribe
+    onClosed(fn: (payload: { tunnelId: string; code: number; reason: string }) => void): Unsubscribe
   }
   preview: {
     /** Stages an HTML page and returns the URL to point a frame at. */
@@ -450,6 +465,15 @@ export class HostApi {
   }
   devices(): Promise<DeviceInfo[]> {
     return this.call('devices')
+  }
+  desktop(): Promise<DesktopState> {
+    return this.call('desktop')
+  }
+  installDesktop(): Promise<{ started: boolean }> {
+    return this.call('installDesktop')
+  }
+  setDesktopDisplay(dpi: number): Promise<{ dpi: number }> {
+    return this.call('setDesktopDisplay', dpi)
   }
 }
 
