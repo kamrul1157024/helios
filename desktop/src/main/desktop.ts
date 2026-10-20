@@ -19,6 +19,10 @@ export interface OpenDesktopRequest {
  */
 const UPGRADE_CODES: Record<number, number> = { 401: 4401, 403: 4401, 409: 4503, 429: 4429, 503: 4503 }
 
+/** A ticket refused because the host has the desktop turned off. Never sent by
+ *  the daemon as a close code; the renderer reads it as the off switch. */
+const DISABLED = 4409
+
 /** No answer at all — a dropped network rather than a refusal. */
 const ABNORMAL = 1006
 const GUACD_FAILURE = 1011
@@ -88,8 +92,13 @@ export class DesktopManager {
     try {
       ticket = (await host.api.desktopTicket()).ticket
     } catch (err) {
-      const status = (err as { status?: unknown }).status
-      const code = typeof status === 'number' ? (UPGRADE_CODES[status] ?? GUACD_FAILURE) : ABNORMAL
+      const { status, code: reason } = err as { status?: unknown; code?: unknown }
+      const code =
+        reason === 'disabled'
+          ? DISABLED
+          : typeof status === 'number'
+            ? (UPGRADE_CODES[status] ?? GUACD_FAILURE)
+            : ABNORMAL
       emit(owner, 'desktop:closed', { tunnelId: req.tunnelId, code, reason: message(err) })
       return
     }

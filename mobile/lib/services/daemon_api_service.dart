@@ -1595,6 +1595,18 @@ class DaemonAPIService extends ChangeNotifier {
     );
   }
 
+  /// Turns remote desktop on for this host. Answers the whole new state.
+  Future<DesktopStatus> enableDesktop() async {
+    final resp = await _api.post(
+      '/api/desktop/enable',
+      body: {'enabled': true},
+    );
+    if (resp.statusCode != 200) throw _desktopRefusal(resp);
+    return DesktopStatus.fromJson(
+      jsonDecode(resp.body) as Map<String, dynamic>,
+    );
+  }
+
   /// Starts the install. Progress arrives as `desktop_state` events.
   Future<void> installDesktop() async {
     final resp = await _api.post('/api/desktop/install');

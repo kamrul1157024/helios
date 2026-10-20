@@ -228,15 +228,18 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
     ];
   }
 
-  static String _desktopSummary(DesktopStatus status) => switch (status.phase) {
-    DesktopPhase.ready =>
-      status.viewers == 0 ? 'Ready' : 'Ready · ${status.viewers} watching',
-    DesktopPhase.missing => 'Not installed',
-    DesktopPhase.installing => 'Installing…',
-    DesktopPhase.starting => 'Starting…',
-    DesktopPhase.failed => 'Could not start',
-    DesktopPhase.unsupported => 'Needs a Linux host',
-  };
+  static String _desktopSummary(DesktopStatus status) {
+    if (!status.enabled) return 'Turned off';
+    return switch (status.phase) {
+      DesktopPhase.ready =>
+        status.viewers == 0 ? 'Ready' : 'Ready · ${status.viewers} watching',
+      DesktopPhase.missing => 'Not installed',
+      DesktopPhase.installing => 'Installing…',
+      DesktopPhase.starting => 'Starting…',
+      DesktopPhase.failed => 'Could not start',
+      DesktopPhase.unsupported => 'Needs a Linux host',
+    };
+  }
 
   /// The host's own settings, not this device's. The daemon stores them, so
   /// they belong on the page for one host rather than on a settings screen

@@ -124,6 +124,7 @@ GET /api/desktop
 ```jsonc
 {
   "state": "missing",          // missing | installing | starting | ready | failed | unsupported
+  "enabled": true,             // false only when the host's off switch is set
   "missing": ["xrdp", "xfce", "guacd"],
   "can_install": true,         // `sudo -n true` works
   "install_command": "helios setup desktop",
@@ -145,6 +146,18 @@ GET /api/desktop
   size return to the same session.
 - **The display number** comes from the session's Xorg process, which runs as
   the user with `-xrdp`. The daemon also finds the matching `XAUTHORITY` file.
+- **The off switch.** The setting `desktop.enabled` defaults to `true`. On
+  costs nothing: nothing installs until a person asks for it, and agents get a
+  `DISPLAY` only when the desktop is `ready`. An explicit `false` turns the
+  desktop off for the host. The apps set it with:
+
+  ```
+  POST /api/desktop/enable        {"enabled": true | false}
+  ```
+
+  It needs the bearer token, writes the setting, sends `desktop_state`, and
+  answers with the full `GET /api/desktop` body. A bad body gets 400 with the
+  code `bad_request`.
 
 ### D4. Install on demand
 
@@ -162,6 +175,10 @@ its last output line.
 | 5. guacd | Downloads the guacd bundle (D5), checks its SHA-256, and unpacks it. | no |
 | 6. Start | Enables and starts xrdp, starts guacd, and warms the session (D3). | yes, for xrdp |
 
+- **The off switch wins.** While `desktop.enabled` is `false`,
+  `POST /api/desktop/install` and `POST /api/desktop/ticket` answer 409 with
+  the code `disabled` and the error "Remote desktop is turned off on this
+  host." The app offers to turn it on (D3) instead of a dead end.
 - **Root steps run through `sudo -n`.** When `sudo -n true` fails, the daemon
   cannot escalate. It stops before step 1 with `can_install: false`, and the
   app shows the one command to run in a terminal: `helios setup desktop`. That
@@ -211,6 +228,9 @@ already takes (`internal/terminal/spawn.go:23`).
 - **A setting turns it off:** `desktop.agent_display` (default `true`).
 - **No desktop, no change.** When the desktop is not `ready`, nothing is set,
   and agents behave as they do today.
+- **The off switch covers agents too.** While `desktop.enabled` is `false`,
+  new agent sessions get no `DISPLAY` or `XAUTHORITY`, even when the session
+  is still running. Viewers already connected may stay.
 - **The Helios skill** (`helios setup skill`) tells agents that a desktop
   exists, and that a person may be watching it.
 
@@ -330,13 +350,11 @@ controls do too.
 
 1. **D5.** The guacd bundle job in the release workflow, with a smoke test that
    starts guacd from the bundle on a clean container.
-2. **D3, D1 and D4.** The runtime, the auth and the install, behind the
-   setting `desktop.enabled` (default `false`) for one release.
+2. **D3, D1 and D4.** The runtime, the auth, the install, and the off switch.
 3. **D2.** The tunnel.
 4. **D7 and D9.** The desktop app view, with the display controls.
 5. **D6.** Agent `DISPLAY`.
 6. **D8.** The phone.
-7. Turn `desktop.enabled` on by default.
 
 ## Testing
 

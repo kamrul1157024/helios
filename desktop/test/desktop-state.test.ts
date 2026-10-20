@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CLOSE, closeAction, reconnectDelay, screenFor } from '../src/renderer/desktop-state.ts'
+import { CLOSE, closeAction, errorWords, isDisabled, reconnectDelay, screenFor } from '../src/renderer/desktop-state.ts'
 import type { DesktopState } from '../src/shared/models.ts'
 
 const base: DesktopState = {
@@ -18,8 +18,8 @@ const base: DesktopState = {
 
 const state = (patch: Partial<DesktopState>): DesktopState => ({ ...base, ...patch })
 
-function failure(status: number | undefined, message = 'boom'): Error {
-  return Object.assign(new Error(message), { status })
+function failure(status: number | undefined, message = 'boom', code?: string): Error {
+  return Object.assign(new Error(message), { status, code })
 }
 
 // ─── State to screen ────────────────────────────────────────────────────────
@@ -30,7 +30,10 @@ test('nothing yet is loading', () => {
 
 test('a daemon without the routes says so rather than failing', () => {
   assert.deepEqual(screenFor(undefined, failure(404)), { kind: 'absent' })
-  assert.deepEqual(screenFor(undefined, failure(undefined, 'offline')), { kind: 'unreachable', text: 'offline' })
+  assert.deepEqual(screenFor(undefined, failure(undefined, 'fetch failed')), {
+    kind: 'unreachable',
+    text: 'Could not reach the host. Check that it is online.',
+  })
 })
 
 test('missing with sudo offers the install', () => {
@@ -121,4 +124,50 @@ test('a dropped line reconnects', () => {
 
 test('the reconnect back-off grows and then holds', () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5, 50].map(reconnectDelay), [500, 1000, 2000, 4000, 8000, 8000, 8000])
+})
+
+// ─── Turned off ─────────────────────────────────────────────────────────────
+
+test('a host with the desktop off shows the switch, whatever else the state says', () => {
+  assert.deepEqual(screenFor(state({ enabled: false, state: 'missing' }), null), { kind: 'disabled' })
+  assert.deepEqual(screenFor(state({ enabled: false }), null), { kind: 'disabled' })
+  assert.deepEqual(screenFor(state({ enabled: true }), null), { kind: 'ready' })
+})
+
+test('a daemon from before the switch counts as on', () => {
+  const old = state({ state: 'missing' })
+  delete old.enabled
+  assert.equal(screenFor(old, null).kind, 'install')
+})
+
+test('a ticket refused as turned off is the switch, not an error', () => {
+  assert.deepEqual(closeAction(CLOSE.disabled, false), { kind: 'disabled' })
+})
+
+// ─── Errors in words ────────────────────────────────────────────────────────
+
+test('a 409 disabled is recognised by its code', () => {
+  assert.equal(isDisabled(failure(409, 'remote desktop is turned off (setting desktop.enabled)', 'disabled')), true)
+  assert.equal(isDisabled(failure(409, 'busy', 'busy')), false)
+})
+
+test('no daemon string reaches the words', () => {
+  const raw = 'remote desktop is turned off (setting desktop.enabled)'
+  for (const [status, code] of [
+    [409, 'disabled'],
+    [409, 'busy'],
+    [403, 'needs_root'],
+    [409, 'not_ready'],
+    [400, 'bad_dpi'],
+    [401, undefined],
+    [404, undefined],
+    [500, undefined],
+    [418, undefined],
+    [undefined, undefined],
+  ] as const) {
+    const words = errorWords(failure(status, raw, code))
+    assert.ok(words.length > 0)
+    assert.ok(!words.includes('desktop.enabled'), `${status} ${code}: ${words}`)
+  }
+  assert.equal(errorWords(failure(409, raw, 'disabled')), 'Remote desktop is turned off on this host.')
 })

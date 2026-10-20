@@ -59,7 +59,7 @@ func (s *PublicServer) handleDesktopInstall(w http.ResponseWriter, r *http.Reque
 	case errors.Is(err, desktop.ErrBusy):
 		jsonErrorCode(w, err.Error(), http.StatusConflict, "busy")
 	case errors.Is(err, desktop.ErrDisabled):
-		jsonErrorCode(w, err.Error(), http.StatusConflict, "disabled")
+		writeDesktopDisabled(w)
 	case errors.Is(err, desktop.ErrNeedsRoot):
 		jsonResponse(w, http.StatusForbidden, map[string]any{
 			"error":           http.StatusText(http.StatusForbidden),
@@ -83,6 +83,10 @@ func (s *PublicServer) handleDesktopTicket(w http.ResponseWriter, r *http.Reques
 		jsonErrorCode(w, "remote desktop needs a Linux host", http.StatusConflict, "unsupported")
 		return
 	}
+	if !m.Enabled() {
+		writeDesktopDisabled(w)
+		return
+	}
 	ticket, expires, err := m.Tickets.Issue(s.deviceName(r))
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -92,6 +96,41 @@ func (s *PublicServer) handleDesktopTicket(w http.ResponseWriter, r *http.Reques
 		"ticket":     ticket,
 		"expires_at": expires.UTC().Format(time.RFC3339),
 	})
+}
+
+// writeDesktopDisabled is the answer while the host's off switch is set. The
+// error is in words a client can show as they are.
+func writeDesktopDisabled(w http.ResponseWriter) {
+	jsonResponse(w, http.StatusConflict, map[string]any{
+		"error":   desktop.ErrDisabled.Error(),
+		"message": desktop.ErrDisabled.Error(),
+		"code":    "disabled",
+	})
+}
+
+// handleDesktopEnable turns the host's remote desktop on or off. Turning it
+// on installs nothing; it only lets a person press Install.
+//
+// POST /api/desktop/enable
+func (s *PublicServer) handleDesktopEnable(w http.ResponseWriter, r *http.Request) {
+	m := s.shared.Desktop
+	if m == nil {
+		jsonErrorCode(w, "remote desktop needs a Linux host", http.StatusConflict, "unsupported")
+		return
+	}
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Enabled == nil {
+		jsonErrorCode(w, `body must be {"enabled": true} or {"enabled": false}`, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if err := m.SetEnabled(*req.Enabled); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("desktop: turned %s by %s", map[bool]string{true: "on", false: "off"}[*req.Enabled], s.deviceName(r))
+	jsonResponse(w, http.StatusOK, m.Status())
 }
 
 // deviceName names the caller for the audit log: the device's name and its

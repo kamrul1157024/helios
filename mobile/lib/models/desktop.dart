@@ -53,6 +53,10 @@ class DesktopStep {
 class DesktopStatus {
   final DesktopPhase phase;
 
+  /// False when the host's owner has turned the desktop off. Absent on a
+  /// daemon from before the switch, which had it on whenever it answered.
+  final bool enabled;
+
   /// What the host still lacks: some of xrdp, xfce and guacd.
   final List<String> missing;
 
@@ -73,6 +77,7 @@ class DesktopStatus {
 
   const DesktopStatus({
     required this.phase,
+    this.enabled = true,
     this.missing = const [],
     this.canInstall = false,
     this.installCommand = 'helios setup desktop',
@@ -87,6 +92,7 @@ class DesktopStatus {
     final command = json['install_command'] as String? ?? '';
     return DesktopStatus(
       phase: DesktopPhase.parse(json['state'] as String? ?? ''),
+      enabled: json['enabled'] as bool? ?? true,
       missing: [
         for (final m in (json['missing'] as List?) ?? const [])
           if (m is String) m,
@@ -103,6 +109,21 @@ class DesktopStatus {
       ],
     );
   }
+
+  /// This state with the desktop turned off, for a refusal that says so
+  /// before the next read does.
+  DesktopStatus turnedOff() => DesktopStatus(
+    phase: phase,
+    enabled: false,
+    missing: missing,
+    canInstall: canInstall,
+    installCommand: installCommand,
+    display: display,
+    dpi: dpi,
+    viewers: viewers,
+    error: error,
+    steps: steps,
+  );
 }
 
 /// A single-use pass for the tunnel. It is what the page holds instead of the
@@ -122,6 +143,20 @@ class DesktopActionException implements Exception {
   final String message;
 
   const DesktopActionException(this.statusCode, this.code, this.message);
+
+  /// The host turned remote desktop off.
+  bool get disabled => code == 'disabled';
+
+  /// The refusal in the app's own words. The daemon's text is for logs: it
+  /// names settings and internals a person cannot act on from a phone.
+  String get words => switch (code) {
+    'disabled' => 'Remote desktop is turned off on this host.',
+    'needs_root' => 'Helios needs root once to install the desktop.',
+    'busy' => 'The desktop is already being installed.',
+    'not_ready' => 'The desktop is not ready yet.',
+    'bad_dpi' => 'The host takes a DPI from 72 to 288.',
+    _ => 'The host refused. Try again.',
+  };
 
   @override
   String toString() => message.isEmpty ? 'HTTP $statusCode' : message;

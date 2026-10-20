@@ -92,6 +92,7 @@ const API_METHODS = new Set<keyof ApiClient>([
   'devices',
   'health',
   'desktop',
+  'enableDesktop',
   'installDesktop',
   'setDesktopDisplay',
 ])

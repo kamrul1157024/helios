@@ -279,6 +279,7 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/reporter", s.handleReporter)
 	protectedMux.HandleFunc("GET /api/desktop", s.handleDesktopStatus)
 	protectedMux.HandleFunc("POST /api/desktop/install", s.handleDesktopInstall)
+	protectedMux.HandleFunc("POST /api/desktop/enable", s.handleDesktopEnable)
 	protectedMux.HandleFunc("POST /api/desktop/ticket", s.handleDesktopTicket)
 	protectedMux.HandleFunc("PUT /api/desktop/display", s.handleDesktopDisplay)
 	protectedMux.HandleFunc("GET /api/settings", s.handleGetSettings)

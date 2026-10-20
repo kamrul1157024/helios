@@ -29,6 +29,7 @@ const installSteps = [
 /// rest are pending.
 Map<String, dynamic> desktopBody(
   String state, {
+  bool enabled = true,
   List<String> missing = const [],
   bool canInstall = true,
   int dpi = 120,
@@ -37,6 +38,7 @@ Map<String, dynamic> desktopBody(
   String runningLine = '',
 }) => {
   'state': state,
+  'enabled': enabled,
   'missing': missing,
   'can_install': canInstall,
   'install_command': 'helios setup desktop',
@@ -66,6 +68,12 @@ class FakeDesktopDaemon {
   int tickets = 0;
   int installStatus = 202;
   String installCode = '';
+
+  /// The daemon's own sentence on a refusal: what the app must never show.
+  String refusalText = 'refused';
+
+  /// Refuse install and tickets as turned off, whatever the last read said.
+  bool refuseDisabled = false;
   int dpiStatus = 200;
   String dpiCode = '';
   final List<http.Request> requests = [];
@@ -80,13 +88,26 @@ class FakeDesktopDaemon {
         return body == null
             ? http.Response('404 page not found', 404)
             : http.Response(jsonEncode(body), 200);
+      case 'POST /api/desktop/enable':
+        status?['enabled'] = true;
+        refuseDisabled = false;
+        return http.Response(jsonEncode(status), 200);
+      case 'POST /api/desktop/install' || 'POST /api/desktop/ticket'
+          when refuseDisabled || status?['enabled'] == false:
+        return http.Response(
+          jsonEncode({
+            'error': 'remote desktop is turned off (setting desktop.enabled)',
+            'code': 'disabled',
+          }),
+          409,
+        );
       case 'POST /api/desktop/install':
         return http.Response(
           jsonEncode(
             installStatus == 202
                 ? {'started': true}
                 : {
-                    'error': 'refused',
+                    'error': refusalText,
                     'code': installCode,
                     'install_command': 'helios setup desktop',
                   },
@@ -105,7 +126,7 @@ class FakeDesktopDaemon {
       case 'PUT /api/desktop/display':
         if (dpiStatus != 200) {
           return http.Response(
-            jsonEncode({'error': 'refused', 'code': dpiCode}),
+            jsonEncode({'error': refusalText, 'code': dpiCode}),
             dpiStatus,
           );
         }

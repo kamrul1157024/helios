@@ -68,13 +68,13 @@ func setupDesktop(args []string) {
 	}
 	fmt.Println("\nThe desktop is installed. Open it from the Helios app; the daemon starts it on first use.")
 	if err := enableDesktop(); err != nil {
-		fmt.Printf("Could not turn on the setting desktop.enabled (%v). Start the daemon and run this again.\n", err)
+		fmt.Printf("Could not tell the daemon to turn the desktop on (%v). If it is off, turn it on in the app.\n", err)
 	}
 }
 
-// enableDesktop turns on desktop.enabled. Running the install is as clear a
-// request for the desktop as there is, so the setting that hides it for this
-// release should not need a second trip.
+// enableDesktop clears the host's off switch, if someone set it. Running the
+// install is as clear a request for the desktop as there is, so it should not
+// take a second trip to the app to turn it on.
 func enableDesktop() error {
 	cfg, err := daemon.LoadConfig()
 	if err != nil {

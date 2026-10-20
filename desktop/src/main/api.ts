@@ -801,6 +801,11 @@ export class ApiClient {
     return this.request('GET', '/api/desktop')
   }
 
+  /** Turns the host's remote desktop on or off; the daemon answers with its state. */
+  enableDesktop(enabled: boolean): Promise<DesktopState> {
+    return this.request('POST', '/api/desktop/enable', { enabled })
+  }
+
   installDesktop(): Promise<{ started: boolean }> {
     return this.request('POST', '/api/desktop/install')
   }

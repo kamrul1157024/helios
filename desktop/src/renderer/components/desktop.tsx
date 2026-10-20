@@ -19,7 +19,7 @@ import {
   type DisplayPrefs,
   type Size,
 } from '../desktop-geometry.ts'
-import { screenFor } from '../desktop-state.ts'
+import { errorWords, isDisabled, screenFor } from '../desktop-state.ts'
 import type { BridgeError } from '../errors.ts'
 import { loadGuacamole } from '../guacamole.ts'
 import { effectsFor, keys } from '../keys.ts'
@@ -82,10 +82,9 @@ export function DesktopView({
           </div>
         )}
         {screen.kind === 'absent' && (
-          <Notice title="This daemon has no remote desktop">
-            Update Helios on the host, then turn on <code>desktop.enabled</code> in its settings.
-          </Notice>
+          <Notice title="This host has no remote desktop">Update Helios on the host to get one.</Notice>
         )}
+        {screen.kind === 'disabled' && <TurnOn hostId={hostId} />}
         {screen.kind === 'unreachable' && (
           <Notice title="Could not reach the desktop">
             <p>{screen.text}</p>
@@ -162,6 +161,47 @@ export function DesktopWindow({ hostId }: { hostId: string }): JSX.Element {
 
 // ─── The states before the screen ───────────────────────────────────────────
 
+/**
+ * Marks the cached state as turned off.
+ *
+ * A refusal from install or the ticket outranks the state it was asked
+ * against, which may be minutes old; the turned-off screen is drawn from the
+ * state, so the state is what is corrected.
+ */
+function markDisabled(hostId: string): void {
+  queryClient.setQueryData<DesktopState>(keys.desktop(hostId), (held) => (held ? { ...held, enabled: false } : held))
+}
+
+/** The off switch, and the one button that turns it on. What follows is the ordinary flow. */
+function TurnOn({ hostId }: { hostId: string }): JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState('')
+
+  const turnOn = async (): Promise<void> => {
+    setBusy(true)
+    setFailure('')
+    try {
+      queryClient.setQueryData(keys.desktop(hostId), await api(hostId).enableDesktop(true))
+    } catch (err) {
+      setFailure(errorWords(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Notice title="Remote desktop is turned off on this host">
+      <p>Turn it on to install or open the desktop that agents on this host draw on.</p>
+      <div className="desktop-actions">
+        <button className="filled" disabled={busy} onClick={() => void turnOn()}>
+          Turn on
+        </button>
+        {failure && <span className="desktop-error">{failure}</span>}
+      </div>
+    </Notice>
+  )
+}
+
 function Notice({ title, busy = false, children }: { title: string; busy?: boolean; children: React.ReactNode }): JSX.Element {
   return (
     <div className="desktop-notice">
@@ -216,7 +256,8 @@ function InstallButton({
       const code = (err as BridgeError).code
       // Already running is what was asked for; the state says so.
       if (code === 'needs_root') onNeedsRoot?.()
-      else if (code !== 'busy') setFailure(err instanceof Error ? err.message : String(err))
+      else if (isDisabled(err)) markDisabled(hostId)
+      else if (code !== 'busy') setFailure(errorWords(err))
     } finally {
       setBusy(false)
       void queryClient.invalidateQueries({ queryKey: keys.desktop(hostId) })
@@ -294,6 +335,8 @@ function linkWords(link: LinkState): string {
       return `Connection lost — reconnecting (attempt ${link.attempt})…`
     case 'not-ready':
       return 'The desktop is not ready — waiting for it…'
+    case 'disabled':
+      return 'Remote desktop is turned off on this host.'
     case 'failed':
       return link.text
     case 'connected':
@@ -349,7 +392,7 @@ function DesktopScreen({ hostId, state, prefs }: { hostId: string; state: Deskto
         connection.current = opened
         opened.start()
       },
-      (err: unknown) => setLink({ kind: 'failed', text: err instanceof Error ? err.message : String(err) }),
+      () => setLink({ kind: 'failed', text: 'The desktop client could not be loaded. Restart Helios.' }),
     )
     return () => {
       cancelled = true
@@ -358,9 +401,11 @@ function DesktopScreen({ hostId, state, prefs }: { hostId: string; state: Deskto
     }
   }, [hostId, measured])
 
-  // A desktop that stopped being ready has a state worth reading again.
+  // A desktop that stopped being ready has a state worth reading again; one
+  // turned off says so on the screen the state draws.
   useEffect(() => {
     if (link.kind === 'not-ready') void queryClient.invalidateQueries({ queryKey: keys.desktop(hostId) })
+    if (link.kind === 'disabled') markDisabled(hostId)
   }, [hostId, link.kind])
 
   // Live resize over the open tunnel, once the view has settled: a window drag
@@ -621,7 +666,8 @@ function DpiControl({ hostId, dpi }: { hostId: string; dpi: number }): JSX.Eleme
       const answer = await api(hostId).setDesktopDisplay(next)
       queryClient.setQueryData<DesktopState>(keys.desktop(hostId), (held) => (held ? { ...held, dpi: answer.dpi } : held))
     } catch (err) {
-      setFailure(err instanceof Error ? err.message : String(err))
+      if (isDisabled(err)) markDisabled(hostId)
+      else setFailure(errorWords(err))
     } finally {
       setBusy(false)
     }

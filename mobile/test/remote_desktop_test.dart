@@ -144,6 +144,7 @@ void main() {
         find.text('Another install is running. Try again when it ends.'),
         findsOneWidget,
       );
+      expect(find.text('Install xrdp and XFCE'), findsOneWidget);
       await tester.tap(find.text('Retry'));
       await _settle(tester);
       expect(daemon.calls, contains('POST /api/desktop/install'));
@@ -230,7 +231,7 @@ void main() {
         await _settle(tester);
       }
       expect(daemon.tickets, 1 + DesktopLink.maxReticket);
-      expect(find.text(closeMessage(closeBadTicket, '')), findsOneWidget);
+      expect(find.text(closeMessage(closeBadTicket)), findsOneWidget);
       expect(find.text('Reconnect'), findsOneWidget);
     });
 
@@ -505,6 +506,90 @@ void main() {
     await _settle(tester);
     expect(sinkFocused(), isFalse, reason: 'the sheet hands focus to nothing');
     expect(bridge.keyboard, [true, false]);
+  });
+
+  group('turned off', () {
+    const off = 'Remote desktop is turned off on this host.';
+
+    testWidgets('says so, offers Turn on, and never Install', (tester) async {
+      final (daemon, _) = await _open(
+        tester,
+        desktopBody('missing', enabled: false),
+      );
+      expect(find.text(off), findsOneWidget);
+      expect(find.text('Install'), findsNothing);
+
+      await tester.tap(find.text('Turn on'));
+      await _settle(tester);
+      expect(daemon.calls, contains('POST /api/desktop/enable'));
+      expect(find.text('This host has no desktop yet.'), findsOneWidget);
+      expect(find.text('Install'), findsOneWidget);
+    });
+
+    testWidgets('Turn on on a ready desktop goes straight to it', (
+      tester,
+    ) async {
+      final (daemon, bridge) = await _open(
+        tester,
+        desktopBody('ready', enabled: false),
+      );
+      expect(daemon.tickets, 0);
+      await tester.tap(find.text('Turn on'));
+      await _settle(tester);
+      expect(daemon.tickets, 1);
+      expect(bridge.opened, hasLength(1));
+    });
+
+    testWidgets('an install refused as off shows the same screen', (
+      tester,
+    ) async {
+      _phone(tester);
+      final daemon = FakeDesktopDaemon(desktopBody('missing'))
+        ..refuseDisabled = true;
+      await tester.pumpWidget(desktopApp(daemon, FakeBridge()));
+      await _settle(tester);
+      await tester.tap(find.text('Install'));
+      await _settle(tester);
+      expect(find.text(off), findsOneWidget);
+      expect(find.textContaining('desktop.enabled'), findsNothing);
+    });
+
+    testWidgets('a ticket refused as off shows the same screen', (
+      tester,
+    ) async {
+      _phone(tester);
+      final daemon = FakeDesktopDaemon(desktopBody('ready'))
+        ..refuseDisabled = true;
+      await tester.pumpWidget(desktopApp(daemon, FakeBridge()));
+      await _settle(tester);
+      expect(find.text(off), findsOneWidget);
+      expect(find.text('Turn on'), findsOneWidget);
+      expect(find.textContaining('desktop.enabled'), findsNothing);
+    });
+
+    testWidgets('the host page says Turned off rather than hiding', (
+      tester,
+    ) async {
+      await _hostPage(tester, desktopBody('missing', enabled: false));
+      expect(find.text('Desktop'), findsOneWidget);
+      expect(find.text('Turned off'), findsOneWidget);
+    });
+  });
+
+  testWidgets('a refusal is put in the app\'s words, never the daemon\'s', (
+    tester,
+  ) async {
+    _phone(tester);
+    final daemon = FakeDesktopDaemon(desktopBody('missing'))
+      ..installStatus = 500
+      ..installCode = 'internal'
+      ..refusalText = 'exec: apt-get: permission denied';
+    await tester.pumpWidget(desktopApp(daemon, FakeBridge()));
+    await _settle(tester);
+    await tester.tap(find.text('Install'));
+    await _settle(tester);
+    expect(find.text('The host refused. Try again.'), findsOneWidget);
+    expect(find.textContaining('apt-get'), findsNothing);
   });
 
   group('entry points', () {
