@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 
 import { App } from './app.tsx'
+import { DesktopWindow } from './components/desktop.tsx'
 import { queryClient } from './query-client.ts'
 // The code theme first: the app's own sheet overrides pieces of it.
 import './hljs-vars.css'
@@ -29,12 +30,16 @@ setInterval(() => {
   document.documentElement.classList.toggle('dim-pulse')
 }, BLINK_INTERVAL)
 
+// A popped-out desktop is this same page, told which host it is for. It gets
+// the view and nothing else: no store, no sidebar, no terminals.
+const desktopHost = new URLSearchParams(window.location.search).get('desktop')
+
 // No StrictMode double-invoke in production, but in development it is what
 // catches an effect that leaks a terminal connection on remount.
 createRoot(container).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      {desktopHost ? <DesktopWindow hostId={desktopHost} /> : <App />}
     </QueryClientProvider>
   </StrictMode>,
 )

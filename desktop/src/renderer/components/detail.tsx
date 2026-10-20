@@ -14,8 +14,9 @@ import {
   type Tab,
 } from '../store.ts'
 import { ApprovalsPanel } from './approvals.tsx'
-import { Chevron } from './icons.tsx'
+import { Chevron, Monitor } from './icons.tsx'
 import { ChatPanel } from './chat.tsx'
+import { DesktopView } from './desktop.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
 import { ChannelPanel } from './channels.tsx'
@@ -102,6 +103,8 @@ export function Detail(): JSX.Element {
   const notifications = useHostNotifications()
   const layout = useStore(currentLayout)
   const tabs = useStore((s) => s.tabs)
+  const desktopHost = useStore((s) => s.desktopHost)
+  const hosts = useStore((s) => s.hosts)
 
   const hostId = selection?.hostId ?? null
   const listed =
@@ -208,6 +211,9 @@ export function Detail(): JSX.Element {
   const showingSchedules = sidebarMode === 'schedules'
   const showingChannels = sidebarMode === 'channels'
   const showingSettings = sidebarMode === 'settings'
+  // Over the session rather than instead of it, for the same reason as above:
+  // the terminals underneath keep their panes.
+  const showingDesktop = desktopHost !== null && sidebarMode === 'sessions'
 
   return (
     <>
@@ -232,9 +238,23 @@ export function Detail(): JSX.Element {
           </PanelBoundary>
         </div>
       )}
+      {showingDesktop && (
+        <div className="detail">
+          <PanelBoundary resetKey={`desktop:${desktopHost}`}>
+            <DesktopView
+              hostId={desktopHost}
+              hostName={hosts.find((host) => host.id === desktopHost)?.name ?? ''}
+              onClose={() => store.closeDesktop()}
+              onPopOut={() => void store.popOutDesktop(desktopHost)}
+            />
+          </PanelBoundary>
+        </div>
+      )}
       <div
         className="detail"
-        style={showingSchedules || showingChannels || showingSettings ? { display: 'none' } : undefined}
+        style={
+          showingSchedules || showingChannels || showingSettings || showingDesktop ? { display: 'none' } : undefined
+        }
       >
       {hostId && session && <ShowNoteStrip hostId={hostId} sessionId={session.session_id} />}
 
@@ -589,6 +609,19 @@ function GroupTabs({
           onClick={() => void store.openShell(hostId, session.session_id)}
         >
           +
+        </button>
+      )}
+
+      {/* The host's, not the session's: it opens over the panels rather than
+          as one of them, but this is where the reader already is. */}
+      {showAdd && (
+        <button
+          className="tab-desktop"
+          title="Open this host's desktop"
+          aria-label="Open the desktop"
+          onClick={() => store.openDesktop(hostId)}
+        >
+          <Monitor />
         </button>
       )}
 

@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
 import '../models/host_connection.dart';
 import '../providers/daemon_providers.dart';
+import '../providers/desktop_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../services/host_manager.dart';
+import 'desktop_screen.dart';
 
 class HostDetailScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
@@ -179,6 +181,7 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
               ),
               _infoRow('Paired', _formatDate(host.addedAt), theme),
 
+              ..._buildDesktop(theme),
               const SizedBox(height: 24),
               ..._buildHostSettings(hm.serviceFor(host.id), isConnected, theme),
 
@@ -202,6 +205,38 @@ class _HostDetailScreenState extends rp.ConsumerState<HostDetailScreen> {
       },
     );
   }
+
+  /// The machine's desktop (spec 66). Nothing at all on a daemon that has no
+  /// desktop routes, or before the host has answered.
+  List<Widget> _buildDesktop(ThemeData theme) {
+    final status = ref.watch(desktopProvider(widget.hostId)).valueOrNull;
+    if (status == null) return const [];
+    return [
+      const SizedBox(height: 16),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.desktop_windows_outlined),
+        title: const Text('Desktop'),
+        subtitle: Text(_desktopSummary(status)),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => DesktopScreen(hostId: widget.hostId),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  static String _desktopSummary(DesktopStatus status) => switch (status.phase) {
+    DesktopPhase.ready =>
+      status.viewers == 0 ? 'Ready' : 'Ready · ${status.viewers} watching',
+    DesktopPhase.missing => 'Not installed',
+    DesktopPhase.installing => 'Installing…',
+    DesktopPhase.starting => 'Starting…',
+    DesktopPhase.failed => 'Could not start',
+    DesktopPhase.unsupported => 'Needs a Linux host',
+  };
 
   /// The host's own settings, not this device's. The daemon stores them, so
   /// they belong on the page for one host rather than on a settings screen

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { DesktopManager } from './desktop.ts'
 import { HostRegistry } from './hosts.ts'
 import { Hud } from './hud.ts'
 import { Notifier, type NotifyTarget } from './notify.ts'
@@ -21,6 +22,7 @@ const appIcon = path.join(distDir, 'assets', 'icon.png')
 let window: BrowserWindow | null = null
 let hosts: HostRegistry | null = null
 let terminals: TerminalManager | null = null
+let desktop: DesktopManager | null = null
 let notifier: Notifier | null = null
 let hud: Hud | null = null
 let prefs: PrefsStore | null = null
@@ -102,6 +104,13 @@ async function start(): Promise<void> {
   updates = new UpdateChecker()
   themes = new ThemeRegistry(path.join(distDir, 'themes'))
   themes.load()
+  desktop = new DesktopManager(hosts, {
+    rendererDir,
+    preload: path.join(distDir, 'preload', 'preload.js'),
+    icon: appIcon,
+    background: () => themes?.active().vars['--surface'] ?? '#101014',
+    zoom: () => (themes?.getPrefs().uiScale ?? 100) / 100,
+  })
   hud = new Hud(rendererDir, path.join(distDir, 'preload', 'preload.js'), activateNotification)
   // Shared with the tray and the sidebar menu: closing the window leaves the
   // app resident, so quitting has to be something the user asks for by name.
@@ -114,6 +123,7 @@ async function start(): Promise<void> {
   registerIpc({
     hosts,
     terminals,
+    desktop,
     notifier,
     prefs,
     themes,
@@ -150,6 +160,7 @@ async function start(): Promise<void> {
   app.on('before-quit', () => {
     quitting = true
     terminals?.closeAll()
+    desktop?.closeAll()
     notifier?.destroy()
     hud?.destroy()
     globalShortcut.unregisterAll()

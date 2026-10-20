@@ -163,6 +163,14 @@ interface HeadMenu {
   y: number
 }
 
+/** A right-click on a host's header: what belongs to the machine, not to a session. */
+interface HostMenu {
+  kind: 'host'
+  hostId: string
+  x: number
+  y: number
+}
+
 /**
  * What a drag is carrying, said as a MIME type rather than as a prefix on the
  * payload.
@@ -250,7 +258,7 @@ export function Sidebar({
   // list rather than per row, so a second right-click moves the one menu
   // instead of opening another beside it — and one piece of state, so a header
   // menu and a row menu can never be open at once.
-  const [menu, setMenu] = useState<RowMenu | HeadMenu | null>(null)
+  const [menu, setMenu] = useState<RowMenu | HeadMenu | HostMenu | null>(null)
   // Only once a row menu is open, and never for a header one. The list is
   // shared with the new-session dialog and never goes stale, so this is usually
   // a cache hit — but a sidebar nobody has right-clicked should not pay for one
@@ -940,7 +948,13 @@ export function Sidebar({
 
           return (
             <section key={host.id} className="host-group">
-              <div className="host-head">
+              <div
+                className="host-head"
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setMenu({ kind: 'host', hostId: host.id, x: event.clientX, y: event.clientY })
+                }}
+              >
                 {showHost && (
                   <button
                     className="host-title"
@@ -966,6 +980,9 @@ export function Sidebar({
                     its own. */}
                 <Collapsible open={!isCollapsed} className="host-meta">
                   <HostMeter stats={stats[host.id]} />
+                  <button className="link" onClick={() => store.openDesktop(host.id)} title="This host's remote desktop">
+                    Desktop
+                  </button>
                   {groupMode === 'manual' && !groupsUnsupported[host.id] && (
                     <button
                       className="link"
@@ -1154,9 +1171,11 @@ export function Sidebar({
                   groupsUnsupported[menu.hostId] ? [] : (groupsByHost[menu.hostId] ?? []),
                   providers,
                 )
-              : groupActions(menu.hostId, menu.key, () =>
-                  setRenaming(`${menu.hostId}:${menu.key}`),
-                )
+              : menu.kind === 'host'
+                ? hostActions(menu.hostId)
+                : groupActions(menu.hostId, menu.key, () =>
+                    setRenaming(`${menu.hostId}:${menu.key}`),
+                  )
           }
           onClose={() => setMenu(null)}
         />
@@ -1177,6 +1196,14 @@ export function Sidebar({
       />
     </aside>
   )
+}
+
+/** What the right-click on a host's header offers: the machine's own desktop. */
+function hostActions(hostId: string): MenuAction[] {
+  return [
+    { label: 'Open desktop', run: () => store.openDesktop(hostId) },
+    { label: 'Open desktop in a window', run: () => void store.popOutDesktop(hostId) },
+  ]
 }
 
 /**

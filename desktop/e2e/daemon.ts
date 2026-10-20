@@ -7,6 +7,7 @@
 import http from 'node:http'
 import { AddressInfo } from 'node:net'
 
+import { desktopStub, type DesktopStub } from './desktop-stub.ts'
 import type { Commit, CommitFile, FileEntry, GitStatus, GrepMatch, Session, TouchedFile, Worktree } from '../src/shared/models.ts'
 
 /** The directory both sessions run in — the whole point, see session-state.spec.ts. */
@@ -72,6 +73,8 @@ export interface StubDaemon {
   listings(dir: string): number
   /** Makes a path answer 404, as a file the agent deleted does. */
   setMissing(path: string, missing: boolean): void
+  /** The remote desktop routes and the tunnel behind them (spec 66). */
+  desktop: DesktopStub
   close(): Promise<void>
 }
 
@@ -643,10 +646,18 @@ export async function startDaemon(): Promise<StubDaemon> {
 
   const writes: DaemonWrite[] = []
 
+  const broadcast = (type: string, data: unknown): void => {
+    const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
+    for (const stream of streams) stream.write(frame)
+  }
+  const desktop = desktopStub(broadcast)
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
     const q = (name: string): string => url.searchParams.get(name) ?? ''
+
+    if (path.startsWith('/api/desktop') && desktop.handle(req, res, path)) return
 
     // A daemon older than channels has no such route at all. The app has to
     // cope, because one out-of-date machine in the sidebar must not break the
@@ -768,15 +779,13 @@ export async function startDaemon(): Promise<StubDaemon> {
     res.end(JSON.stringify(answer(path, q, held, statusOf)))
   })
 
+  server.on('upgrade', desktop.upgrade)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
 
   return {
     url: `http://127.0.0.1:${port}`,
-    emit: (type, data) => {
-      const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
-      for (const stream of streams) stream.write(frame)
-    },
+    emit: broadcast,
     reads: (target) => readCount.get(target) ?? 0,
     greps: () => grepCount,
     grepQueries: () => [...grepAsked],
@@ -792,8 +801,10 @@ export async function startDaemon(): Promise<StubDaemon> {
       revision += 1
     },
     setStatus: (sessionId, status) => statuses.set(sessionId, status),
+    desktop: desktop.stub,
     close: () =>
       new Promise<void>((resolve) => {
+        desktop.close()
         for (const stream of streams) stream.end()
         server.close(() => resolve())
       }),

@@ -74,7 +74,25 @@ void main() {
       // a screen sat open is not being swept, and re-reading re-registers it.
       InvalidateTarget(CacheTarget.files, host),
       InvalidateTarget(CacheTarget.git, host),
+      // The desktop's steps may have moved while nobody was listening.
+      InvalidateTarget(CacheTarget.desktop, host),
     ]);
+  });
+
+  // The event carries the whole GET /api/desktop document, so it is painted
+  // as it arrives rather than turned into a refetch.
+  group('desktop_state', () {
+    test('paints the body it carries', () {
+      final body = <String, dynamic>{'state': 'installing', 'missing': []};
+      expect(effectsFor(host, 'desktop_state', body), [
+        SetDesktopState(host, body),
+      ]);
+    });
+
+    test('a body without a state touches nothing', () {
+      expect(effectsFor(host, 'desktop_state', const {}), isEmpty);
+      expect(effectsFor(host, 'desktop_state', 'nonsense'), isEmpty);
+    });
   });
 
   // Every path the daemon names has changed *content*, not merely a changed

@@ -178,9 +178,80 @@ jobs:
             desktop/release/*.deb
           if-no-files-found: error
 
+  # The guacd bundle the daemon installs for remote desktop
+  # (docs/specs/66-remote-desktop.md, D5). The daemon embeds each bundle's
+  # hash in internal/desktop/guacd.sha256, so what this release publishes must
+  # hash to exactly that.
+  #
+  # The newest release usually carries it already, and then it is reused: a
+  # build takes a quarter of an hour against snapshot.ubuntu.com, which is not
+  # always up. Otherwise the bundle is built. The build is pinned and
+  # reproducible, so it must land on the embedded hash; a different hash means
+  # the inputs moved, and the release stops rather than ship a bundle every
+  # daemon would refuse. An arch the manifest does not list yet is published
+  # anyway, with its hash in the run summary to commit.
+  guacd:
+    name: guacd bundle (${{ matrix.arch }})
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reuse the published bundle
+        id: reuse
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          asset="helios-guacd-1.6.0-linux-${{ matrix.arch }}.tar.zst"
+          want=$(awk -v a="$asset" '$2 == a { print $1 }' internal/desktop/guacd.sha256)
+          mkdir -p dist
+          if [ -n "$want" ] && gh release download --repo "${{ github.repository }}" --pattern "$asset" --dir dist 2> /dev/null; then
+            if [ "$(sha256sum "dist/$asset" | cut -d ' ' -f 1)" = "$want" ]; then
+              (cd dist && sha256sum "$asset" > "$asset.sha256")
+              echo "reused=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            rm -f "dist/$asset"
+          fi
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        if: steps.reuse.outputs.reused != 'true'
+        run: ./scripts/build-guacd.sh ${{ matrix.arch }}
+
+      - name: Check against the embedded hash
+        run: |
+          asset="helios-guacd-1.6.0-linux-${{ matrix.arch }}.tar.zst"
+          got=$(cut -d ' ' -f 1 "dist/$asset.sha256")
+          want=$(awk -v a="$asset" '$2 == a { print $1 }' internal/desktop/guacd.sha256)
+          if [ -z "$want" ]; then
+            echo "::warning::$asset is not in internal/desktop/guacd.sha256; daemons on ${{ matrix.arch }} will refuse it until it is"
+            echo "Add to \`internal/desktop/guacd.sha256\`: \`$got  $asset\`" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$got" != "$want" ]; then
+            echo "$asset hashes to $got, but the daemon expects $want." >&2
+            echo "The build is no longer reproducible from its pins, or a pin moved without the manifest." >&2
+            exit 1
+          fi
+
+      - name: Smoke test on a clean Ubuntu 26.04
+        run: ./scripts/smoke-guacd.sh "dist/helios-guacd-1.6.0-linux-${{ matrix.arch }}.tar.zst"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guacd-${{ matrix.arch }}
+          path: dist/helios-guacd-*
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [version, apk, desktop-mac, desktop-linux]
+    needs: [version, apk, desktop-mac, desktop-linux, guacd]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -212,6 +283,10 @@ jobs:
               *) echo "unexpected artifact: $file" >&2; exit 1 ;;
             esac
           done
+          # The guacd bundles keep their names: the daemon builds the URL from
+          # the guacd version, which the name carries, and checks the bytes
+          # against its own copy of the hash.
+          mv artifacts/guacd-*/helios-guacd-* dist/
 
       - name: Create GitHub release
         env:

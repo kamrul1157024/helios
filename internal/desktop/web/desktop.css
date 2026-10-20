@@ -1,0 +1,51 @@
+/* The phone's desktop page (spec 66, D8). The app draws everything around it. */
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #1e1e1e;
+  /* The page handles every touch itself; the WebView must not scroll or zoom. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+#stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* Where a tap lands. A finger covers what it touches, so this shows it. */
+#pointer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(66, 133, 244, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+#pointer.held {
+  background: rgba(234, 67, 53, 0.8);
+}
+
+#pointer[hidden] {
+  display: none;
+}

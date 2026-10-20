@@ -11,6 +11,7 @@ import '../models/notification.dart';
 import '../models/provider.dart';
 import '../providers/card_registry.dart' as registry;
 import '../providers/daemon_providers.dart';
+import '../providers/desktop_providers.dart';
 import '../providers/transcript.dart';
 import '../providers/notification_ext.dart';
 
@@ -21,6 +22,7 @@ import '../widgets/message_card.dart';
 import '../services/speech_input_service.dart';
 import '../utils/large_paste.dart';
 import '../widgets/skeleton.dart';
+import 'desktop_screen.dart';
 import 'file_browser_screen.dart';
 import 'terminal_screen.dart';
 import 'routes.dart';
@@ -881,6 +883,31 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
           icon: const Icon(Icons.play_arrow),
           tooltip: 'Resume',
           onPressed: _resume,
+        ),
+      );
+    }
+
+    // The host's desktop, where this session's agent draws its windows. In
+    // the overflow because it belongs to the host rather than to the session,
+    // and absent on a daemon that has no desktop to offer.
+    if (ref.watch(desktopAvailableProvider(session.hostId))) {
+      actions.add(
+        PopupMenuButton<void>(
+          tooltip: 'More',
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => DesktopScreen(hostId: session.hostId),
+                ),
+              ),
+              child: const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.desktop_windows_outlined),
+                title: Text('Desktop'),
+              ),
+            ),
+          ],
         ),
       );
     }

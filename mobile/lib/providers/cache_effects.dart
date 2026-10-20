@@ -7,7 +7,7 @@
 /// turns these into `ref.invalidate` calls.
 library;
 
-import 'package:flutter/foundation.dart' show setEquals;
+import 'package:flutter/foundation.dart' show mapEquals, setEquals;
 
 import '../models/session.dart';
 
@@ -68,6 +68,10 @@ enum CacheTarget {
   /// reason as schedules, and because a message moves both the list's unread
   /// count and the conversation it was said in.
   channels,
+
+  /// A host's remote desktop. Only a reconnect drops it: `desktop_state`
+  /// carries the whole document and arrives as [SetDesktopState].
+  desktop,
 }
 
 /// One thing to do to the cache.
@@ -192,6 +196,29 @@ class PatchSession extends CacheEffect {
   String toString() => 'PatchSession($hostId, $sessionId, $status, $terminal)';
 }
 
+/// Paint a host's desktop from the event's own body (spec 66).
+///
+/// The body is the same document `GET /api/desktop` answers, so taking it as
+/// is costs no round trip, and an install's steps tick over as they happen.
+class SetDesktopState extends CacheEffect {
+  final String hostId;
+  final Map<String, dynamic> body;
+
+  const SetDesktopState(this.hostId, this.body);
+
+  @override
+  bool operator ==(Object other) =>
+      other is SetDesktopState &&
+      other.hostId == hostId &&
+      mapEquals(other.body, body);
+
+  @override
+  int get hashCode => Object.hash(hostId, body.length);
+
+  @override
+  String toString() => 'SetDesktopState($hostId, ${body['state']})';
+}
+
 String _text(dynamic value) => value is String ? value : '';
 
 /// What one SSE event means for the cache.
@@ -269,7 +296,14 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
         InvalidateTarget(CacheTarget.notifications, hostId),
         InvalidateTarget(CacheTarget.files, hostId),
         InvalidateTarget(CacheTarget.git, hostId),
+        InvalidateTarget(CacheTarget.desktop, hostId),
       ];
+
+    case 'desktop_state':
+      if (data is! Map<String, dynamic> || data['state'] is! String) {
+        return const [];
+      }
+      return [SetDesktopState(hostId, data)];
 
     case 'channel_created':
     case 'channel_updated':

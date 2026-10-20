@@ -1092,7 +1092,7 @@ func handleHooks(args []string) {
 
 func handleSetup(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|tailscale|skill>")
+		fmt.Fprintln(os.Stderr, "Usage: helios setup <shell|tailscale|skill|desktop>")
 		os.Exit(1)
 	}
 
@@ -1122,6 +1122,9 @@ func handleSetup(args []string) {
 	// The manual an agent reads to drive this CLI. Installed rather than
 	// documented: the agent that needs it is one Helios itself starts, and it
 	// has to know `helios schedule add` before it is asked to write a schedule.
+	case "desktop":
+		setupDesktop(args[1:])
+
 	case "skill":
 		if len(args) > 1 && args[1] == "--remove" {
 			if err := skill.Remove(); err != nil {
@@ -1139,7 +1142,7 @@ func handleSetup(args []string) {
 		fmt.Printf("Helios skill installed to %s\n", path)
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|tailscale|skill>\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown setup target: %s\nUsage: helios setup <shell|tailscale|skill|desktop>\n", args[0])
 		os.Exit(1)
 	}
 }
@@ -1221,6 +1224,8 @@ Commands:
   setup shell           Install shell wrapper (agent commands → helios wrap)
   setup skill           Install the Helios skill, so agents can drive this CLI
   setup tailscale       Check Tailscale readiness for Serve and Funnel
+  setup desktop         Install the remote desktop (xrdp, XFCE, guacd)
+                        --uninstall  Revert what Helios changed
 
   auth init             Generate pairing QR (non-interactive)
   auth devices          List trusted devices

@@ -2733,6 +2733,38 @@ small {
   background: transparent;
 }
 
+/* The host's desktop, held at the right-hand end beside the ⋯ for the same
+   reason it is: the strip scrolls and these must not. It takes the auto
+   margin, so the ⋯ beside it does not, and sticks one ⋯-width from the edge. */
+.tab-desktop {
+  position: sticky;
+  right: 34px;
+  margin-left: auto;
+  flex: none;
+  padding: 0 8px;
+  color: var(--on-surface-variant);
+  background: var(--surface-low);
+}
+
+.tab-desktop:hover {
+  color: var(--on-surface);
+}
+
+.tab-desktop .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.tab-desktop + .tab-menu {
+  margin-left: 0;
+  width: 34px;
+  padding: 0;
+}
+
+[data-glass='on'] .tab-desktop {
+  background: transparent;
+}
+
 /* Renaming happens in place, at the size of the tab it replaces, so the strip
    does not jump while the user types. */
 .tab-rename {
@@ -7666,4 +7698,241 @@ hr {
 .tree-row.selected .file-icon,
 .quick-row.active .file-icon {
   color: inherit;
+}
+
+/* ─── Remote desktop (spec 66) ──────────────────────────────────────────── */
+
+.desktop-window {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-low);
+}
+
+.desktop-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.desktop-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--strip-h);
+  padding: 0 8px 0 14px;
+  box-shadow: inset 0 -1px 0 var(--outline-variant);
+  color: var(--on-surface-variant);
+}
+
+.desktop-title {
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.desktop-host,
+.desktop-meta {
+  font-size: 12px;
+}
+
+.desktop-meta {
+  font-family: var(--mono);
+}
+
+.desktop-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.desktop-notice {
+  margin: auto;
+  max-width: 560px;
+  padding: 24px;
+  color: var(--on-surface);
+}
+
+.desktop-notice h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.desktop-notice-body p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+}
+
+.desktop-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.desktop-error,
+.desktop-notice-body p.desktop-error {
+  color: var(--error);
+}
+
+.desktop-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.desktop-command code {
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-high);
+  user-select: all;
+}
+
+.desktop-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.desktop-step {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  column-gap: 8px;
+  color: var(--on-surface-variant);
+}
+
+.desktop-step.running,
+.desktop-step.failed {
+  color: var(--on-surface);
+}
+
+.desktop-step.done .desktop-step-mark {
+  color: var(--s-active, var(--primary));
+}
+
+.desktop-step.failed .desktop-step-mark {
+  color: var(--error);
+}
+
+.desktop-step-mark {
+  display: grid;
+  place-items: center;
+}
+
+.desktop-step-line {
+  grid-column: 2;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The screen. The view is the letterbox: the stage sits centred in it and the
+   rest is a dark fill in every theme, so the desktop reads as a screen rather
+   than as a picture pasted on the app. Focus is what hands it the keyboard,
+   so it says so. */
+.desktop-viewport {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #111;
+  outline: none;
+}
+
+.desktop-viewport.exact {
+  overflow: auto;
+}
+
+.desktop-viewport:focus-visible,
+.desktop-viewport:focus {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 60%, transparent);
+}
+
+.desktop-stage {
+  position: absolute;
+  overflow: hidden;
+}
+
+.desktop-overlay {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--on-surface);
+  background: var(--surface-high);
+  box-shadow: 0 4px 16px var(--shadow-soft);
+}
+
+.desktop-overlay.failed {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+}
+
+.desktop-menu {
+  position: relative;
+}
+
+.desktop-menu-body {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 6px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: max-content;
+  max-width: 420px;
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-high);
+  box-shadow: 0 8px 24px var(--shadow-soft);
+  color: var(--on-surface);
+}
+
+.desktop-menu-body section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.desktop-menu-body h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--on-surface-variant);
+}
+
+.desktop-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.desktop-custom input {
+  width: 84px;
 }

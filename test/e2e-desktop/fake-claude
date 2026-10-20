@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stands in for the claude CLI in the remote desktop e2e. The daemon starts it
+# as an agent session; it records what that session can see of the desktop,
+# then idles like an agent waiting for input.
+out=/tmp/helios-e2e-agent-display.txt
+{
+    echo "DISPLAY=${DISPLAY:-}"
+    echo "XAUTHORITY=${XAUTHORITY:-}"
+    xdpyinfo 2>&1 | head -n 5
+} > "$out.tmp"
+mv "$out.tmp" "$out"
+exec sleep infinity

@@ -845,3 +845,31 @@ export interface UpdateInfo {
    *  arrives on updating, rather than only the name of the last of them. */
   notes: ReleaseNote[]
 }
+
+/** Where a host's remote desktop stands (spec 66, D3). */
+export type DesktopPhase = 'missing' | 'installing' | 'starting' | 'ready' | 'failed' | 'unsupported'
+
+/** One step of the install, in the order the daemon runs them (spec 66, D4). */
+export interface DesktopStep {
+  id: string
+  label: string
+  state: 'pending' | 'running' | 'done' | 'skipped' | 'failed'
+  /** The last line of output, while the step runs or once it has failed. */
+  line: string
+}
+
+/** `GET /api/desktop`, and the body of every `desktop_state` event. */
+export interface DesktopState {
+  state: DesktopPhase
+  missing: string[]
+  /** `sudo -n true` works, so the daemon can install without asking. */
+  can_install: boolean
+  install_command: string
+  display: string
+  /** The session's Xft/DPI, 0 when unknown. */
+  dpi: number
+  viewers: number
+  /** Plain words, when the state is failed. */
+  error: string
+  steps: DesktopStep[]
+}
