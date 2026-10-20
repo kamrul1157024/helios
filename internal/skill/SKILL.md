@@ -159,6 +159,14 @@ helios attach <session-id>
 Sessions a schedule started are kept out of the ordinary list — they are the runs of
 that schedule, and the apps show them under it.
 
+## The desktop
+
+When the host has a Helios remote desktop running, your session's environment has
+`DISPLAY` (and `XAUTHORITY`) set to it. A GUI app you start — a browser, an Electron
+window, an emulator — opens on that desktop, and a person may be watching it live from
+the Helios app. Leave windows you open in a state worth seeing, and close the ones you
+are done with. No `DISPLAY` means no desktop: do not start one yourself.
+
 ## Group chat
 
 A channel is one conversation running through several sessions and the person. You are

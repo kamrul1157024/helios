@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/desktop"
 	"github.com/kamrul1157024/helios/internal/notifications"
 	"github.com/kamrul1157024/helios/internal/provider"
 	claude "github.com/kamrul1157024/helios/internal/provider/claude"
@@ -21,6 +22,7 @@ import (
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tunnel"
+	"github.com/kamrul1157024/helios/internal/version"
 )
 
 func Start(cfg *Config) (err error) {
@@ -114,6 +116,23 @@ func resumeLaunch(db *store.Store, sessionID string) ([]string, map[string]strin
 	return launch.Argv, launch.Env, nil
 }
 
+// withDesktopEnv adds the desktop's DISPLAY and XAUTHORITY to a new session's
+// environment (D6). A value the launch already set wins: the caller chose it
+// on purpose, and the desktop's is only a default.
+func withDesktopEnv(env, desktopEnv map[string]string) map[string]string {
+	if len(desktopEnv) == 0 {
+		return env
+	}
+	merged := make(map[string]string, len(env)+len(desktopEnv))
+	for k, v := range desktopEnv {
+		merged[k] = v
+	}
+	for k, v := range env {
+		merged[k] = v
+	}
+	return merged
+}
+
 func startDaemon(cfg *Config) error {
 	if err := os.MkdirAll(HeliosDir(), 0755); err != nil {
 		return fmt.Errorf("create helios dir: %w", err)
@@ -151,6 +170,10 @@ func startDaemon(cfg *Config) error {
 	// Terminal hosts are separate processes, so any that survived the last
 	// daemon are still serving; adopt them before anything else looks at
 	// session state.
+	//
+	// The desktop is created after the shared state below, so the spawn reads
+	// it through this variable at spawn time rather than capturing it now.
+	var desk *desktop.Manager
 	registry := terminal.NewRegistry(HeliosDir(), func(sessionID, cwd string, argv []string, env map[string]string) error {
 		if len(argv) == 0 {
 			resumed, resumeEnv, err := resumeLaunch(db, sessionID)
@@ -161,6 +184,9 @@ func startDaemon(cfg *Config) error {
 			if env == nil {
 				env = resumeEnv
 			}
+		}
+		if desk != nil {
+			env = withDesktopEnv(env, desk.AgentEnv())
 		}
 		return terminal.SpawnHost(HeliosDir(), sessionID, cwd, argv, env)
 	})
@@ -174,6 +200,21 @@ func startDaemon(cfg *Config) error {
 
 	// Shared state between both servers
 	shared := server.NewShared(db, mgr, term)
+
+	// The remote desktop: guacd as our child, the xrdp session found and kept
+	// warm. Behind desktop.enabled for this release; see
+	// docs/specs/66-remote-desktop.md.
+	desk = desktop.NewManager(desktop.Config{
+		HeliosDir: HeliosDir(),
+		Version:   version.Current,
+		Settings:  db,
+		OnChange: func(st desktop.Status) {
+			shared.SSE.Broadcast(server.SSEEvent{Type: "desktop_state", Data: st})
+		},
+	})
+	shared.Desktop = desk
+	desk.Start()
+	defer desk.Close()
 
 	// Give the claude action handlers access to session terminals
 	claude.SetBackend(term)

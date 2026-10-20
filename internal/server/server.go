@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kamrul1157024/helios/internal/backend"
+	"github.com/kamrul1157024/helios/internal/desktop"
 	"github.com/kamrul1157024/helios/internal/featureflag"
 	"github.com/kamrul1157024/helios/internal/hitl"
 	"github.com/kamrul1157024/helios/internal/mcp"
@@ -38,6 +39,10 @@ type Shared struct {
 	// Files reports when a path a client has read changes underneath it. See
 	// docs/specs/54-file-change-events.md.
 	Files *FileWatcher
+	// Desktop is the host's remote desktop. Nil when the daemon runs without
+	// one, as in tests; the routes then answer "unsupported". See
+	// docs/specs/66-remote-desktop.md.
+	Desktop *desktop.Manager
 }
 
 // overlayNotifier is implemented by backends that can report the keystrokes an
@@ -211,6 +216,11 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 
 	// Public endpoints (no auth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	// The desktop tunnel authenticates with a single-use ticket instead of the
+	// bearer header, which a browser WebSocket cannot send. The page the
+	// phone's WebView loads holds no secret, so it needs no auth either.
+	mux.HandleFunc("GET /api/desktop/tunnel", s.handleDesktopTunnel)
+	mux.Handle("GET /desktop/", http.StripPrefix("/desktop/", desktopPage()))
 	mux.Handle("POST /api/auth/pair", pairLimiter.middleware(http.HandlerFunc(s.handlePair)))
 
 	// Auth-protected API endpoints
@@ -267,6 +277,10 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("GET /api/hooks/health", s.handleHooksHealth)
 	protectedMux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	protectedMux.HandleFunc("GET /api/reporter", s.handleReporter)
+	protectedMux.HandleFunc("GET /api/desktop", s.handleDesktopStatus)
+	protectedMux.HandleFunc("POST /api/desktop/install", s.handleDesktopInstall)
+	protectedMux.HandleFunc("POST /api/desktop/ticket", s.handleDesktopTicket)
+	protectedMux.HandleFunc("PUT /api/desktop/display", s.handleDesktopDisplay)
 	protectedMux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	protectedMux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 
