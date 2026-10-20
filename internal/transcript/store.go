@@ -157,6 +157,27 @@ func (s *Store) Delta(parse LineParser, path, epoch string, afterSeq, limit int)
 	}, nil
 }
 
+// Each calls visit for every message of a transcript, oldest first.
+func Each(parse LineParser, path string, visit func(*Message)) error {
+	return shared.Each(parse, path, visit)
+}
+
+// Each calls visit for every message of a transcript, oldest first, with the
+// entry locked. It is for a reader that folds the whole conversation into a
+// small answer — which files a session touched — and would otherwise copy
+// every message to do it. visit must not keep the pointer.
+func (s *Store) Each(parse LineParser, path string, visit func(*Message)) error {
+	e, err := s.current(parse, path)
+	if err != nil {
+		return err
+	}
+	defer e.mu.Unlock()
+	for i := range e.messages {
+		visit(&e.messages[i])
+	}
+	return nil
+}
+
 // current returns the entry for path, up to date, with its mutex held. The
 // caller unlocks.
 func (s *Store) current(parse LineParser, path string) (*entry, error) {

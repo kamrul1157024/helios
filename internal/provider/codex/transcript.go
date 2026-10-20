@@ -35,8 +35,10 @@ type rolloutPayload struct {
 	Content json.RawMessage `json:"content,omitempty"`
 	Name    string          `json:"name,omitempty"`
 	Input   string          `json:"input,omitempty"`
-	Output  json.RawMessage `json:"output,omitempty"`
-	CallID  string          `json:"call_id,omitempty"`
+	// Arguments is a function call's input, as a JSON string.
+	Arguments string          `json:"arguments,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
+	CallID    string          `json:"call_id,omitempty"`
 }
 
 type contentBlock struct {
@@ -135,6 +137,7 @@ func messageFrom(entry *rolloutEntry, payload *rolloutPayload) *transcript.Messa
 		return &transcript.Message{
 			Seq: entry.Ordinal, Role: transcript.RoleToolUse,
 			Tool: payload.Name, Summary: summarizeToolInput(payload.Input),
+			Metadata:  patchMetadata(payload),
 			Timestamp: entry.Timestamp,
 		}
 
@@ -147,6 +150,20 @@ func messageFrom(entry *rolloutEntry, payload *rolloutPayload) *transcript.Messa
 	}
 	// "reasoning" among others. There is no role for it, and rendering raw
 	// reasoning ids would be noise.
+	return nil
+}
+
+// patchMetadata keeps an apply_patch body on its message, which is what the
+// touched route reads to say which files the session changed. Only a patch:
+// other calls' inputs are left off, as they always were, so the transcript a
+// client fetches grows by the patches and nothing else.
+func patchMetadata(payload *rolloutPayload) map[string]interface{} {
+	switch {
+	case strings.Contains(payload.Input, patchMarker):
+		return map[string]interface{}{"input": payload.Input}
+	case strings.Contains(payload.Arguments, patchMarker):
+		return map[string]interface{}{"arguments": payload.Arguments}
+	}
 	return nil
 }
 

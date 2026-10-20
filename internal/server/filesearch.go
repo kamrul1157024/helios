@@ -14,10 +14,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -66,6 +67,9 @@ type searchMatch struct {
 	Path  string `json:"path"`
 	Rel   string `json:"rel"`
 	Score int    `json:"score"`
+	// Positions are the matched characters, as UTF-16 offsets into Rel, one
+	// per query character, ascending. The client bolds them.
+	Positions []int `json:"positions"`
 }
 
 // handleSearchFiles ranks the file names under a root against a fuzzy query —
@@ -86,9 +90,14 @@ func (s *PublicServer) handleSearchFiles(w http.ResponseWriter, r *http.Request)
 
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
+	timing := timingFrom(r.Context())
 
+	started := time.Now()
 	index := fileIndexes.get(ctx, searchIn)
+	timing.since("index", started)
+	started = time.Now()
 	matches := rankEntries(index.entries, q, limit)
+	timing.since("rank", started)
 
 	// A directory that exists but does not hold the named file is usually an
 	// agent's path written from a working directory that is not this root. The
@@ -96,8 +105,12 @@ func (s *PublicServer) handleSearchFiles(w http.ResponseWriter, r *http.Request)
 	// panel is on rather than answering with nothing.
 	if resolvedFrom == "path" && len(matches) == 0 && q != "" {
 		searchIn, resolvedFrom = root, "query"
+		started = time.Now()
 		index = fileIndexes.get(ctx, searchIn)
+		timing.since("index", started)
+		started = time.Now()
 		matches = rankEntries(index.entries, q, limit)
+		timing.since("rank", started)
 	}
 
 	for i := range matches {
@@ -110,6 +123,11 @@ func (s *PublicServer) handleSearchFiles(w http.ResponseWriter, r *http.Request)
 		"matches":       matches,
 		"scanned":       len(index.entries),
 		"truncated":     index.partial,
+		// indexing says the list is still being built: the client asks again
+		// after a short back-off. watch says how the list keeps up with the
+		// disk, which a bug report needs to know.
+		"indexing": index.indexing,
+		"watch":    index.watch,
 	})
 }
 
@@ -153,11 +171,15 @@ type grepMatch struct {
 	Line   int    `json:"line"`
 	Column int    `json:"column"`
 	Text   string `json:"text"`
+	// Ranges are the matched spans of Text as [start, end) UTF-16 offsets, so
+	// the client can highlight them and scroll a long line to the first.
+	Ranges [][2]int `json:"ranges"`
 }
 
 // handleGrepFiles searches file contents under a root — find-in-files. The
 // query is a literal unless regex=true; matching is case-insensitive unless
-// case=true.
+// case=true. word=1 matches whole words only, and glob takes a comma-separated
+// list of path globs, a leading ! excluding.
 func (s *PublicServer) handleGrepFiles(w http.ResponseWriter, r *http.Request) {
 	root, ok := searchRoot(w, r)
 	if !ok {
@@ -173,6 +195,8 @@ func (s *PublicServer) handleGrepFiles(w http.ResponseWriter, r *http.Request) {
 		query:         query,
 		regex:         r.URL.Query().Get("regex") == "true",
 		caseSensitive: r.URL.Query().Get("case") == "true",
+		word:          truthy(r.URL.Query().Get("word")),
+		globs:         splitGlobs(r.URL.Query().Get("glob")),
 		limit:         limit,
 	}
 
@@ -187,10 +211,18 @@ func (s *PublicServer) handleGrepFiles(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
 
+	filter, err := compileGlobs(opts.globs)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	started := time.Now()
 	matches, truncated, ok := ripgrep(ctx, root, opts)
 	if !ok {
-		matches, truncated = scanFiles(ctx, root, matcher, limit)
+		matches, truncated = scanFiles(ctx, root, matcher, filter, limit)
 	}
+	timingFrom(r.Context()).since("grep", started)
 	for i := range matches {
 		matches[i].Path = filepath.Join(root, matches[i].Rel)
 	}
@@ -247,16 +279,43 @@ func (s *PublicServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	case statErr == nil:
 		mode = info.Mode().Perm()
-		if stale(req.BaseModTime, info) {
+		// If-Match is the exact check: nanosecond mtime and size. The
+		// base_mod_time check below stays for clients that predate it.
+		if match := r.Header.Get("If-Match"); match != "" && !etagMatches(match, fileETag(info)) {
 			jsonResponse(w, http.StatusConflict, map[string]interface{}{
-				"error":    "stale_write",
+				"error":    "Conflict",
 				"message":  "file changed on disk since it was read",
+				"code":     "conflict",
+				"etag":     fileETag(info),
 				"mod_time": info.ModTime().UTC().Format(time.RFC3339Nano),
 			})
 			return
 		}
+		if stale(req.BaseModTime, info) {
+			jsonResponse(w, http.StatusConflict, map[string]interface{}{
+				"error":    "stale_write",
+				"message":  "file changed on disk since it was read",
+				"code":     "conflict",
+				"etag":     fileETag(info),
+				"mod_time": info.ModTime().UTC().Format(time.RFC3339Nano),
+			})
+			return
+		}
+	case errors.Is(statErr, fs.ErrPermission):
+		jsonErrorCode(w, "permission denied", http.StatusForbidden, "permission_denied")
+		return
 	case !errors.Is(statErr, os.ErrNotExist):
 		jsonError(w, "failed to stat file", http.StatusInternalServerError)
+		return
+	case r.Header.Get("If-Match") != "" && r.Header.Get("If-Match") != "*":
+		// A precondition on a file that is gone cannot hold: somebody deleted
+		// what the editor was holding.
+		jsonResponse(w, http.StatusConflict, map[string]interface{}{
+			"error":   "Conflict",
+			"message": "file was deleted since it was read",
+			"code":    "conflict",
+			"etag":    "",
+		})
 		return
 	}
 
@@ -277,11 +336,17 @@ func (s *PublicServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	// broadcaster has no addressing, so this goes out to the writer as well;
 	// each client compares against what it holds and ignores its own echo.
 	s.files().Poke()
+	// The git status cache must not answer from before this write, and the
+	// fsnotify event that would say so is not guaranteed to land first.
+	fileIndexes.bump(clean)
 
+	tag := fileETag(written)
+	w.Header().Set("ETag", tag)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"path":     clean,
 		"size":     written.Size(),
 		"mod_time": written.ModTime().UTC().Format(time.RFC3339Nano),
+		"etag":     tag,
 	})
 }
 
@@ -401,47 +466,6 @@ func walkCandidates(ctx context.Context, root string) ([]string, bool) {
 	return files, truncated
 }
 
-// rankEntries keeps the best `limit` fuzzy matches for query, best first.
-func rankEntries(entries []indexEntry, query string, limit int) []searchMatch {
-	q := strings.ToLower(strings.Join(strings.Fields(query), ""))
-	var wanted uint64
-	for i := 0; i < len(q); i++ {
-		wanted |= charBit(q[i])
-	}
-
-	matches := make([]searchMatch, 0, limit)
-	for _, entry := range entries {
-		score := 0
-		if q != "" {
-			// One AND against the character mask before the scan, because most
-			// candidates are missing a letter outright and finding that out
-			// should not cost a walk over the path.
-			if entry.mask&wanted != wanted {
-				continue
-			}
-			var ok bool
-			score, ok = fuzzyScore(entry, q)
-			if !ok {
-				continue
-			}
-		}
-		matches = append(matches, searchMatch{Rel: entry.rel, Score: score})
-	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].Score != matches[j].Score {
-			return matches[i].Score > matches[j].Score
-		}
-		if len(matches[i].Rel) != len(matches[j].Rel) {
-			return len(matches[i].Rel) < len(matches[j].Rel)
-		}
-		return matches[i].Rel < matches[j].Rel
-	})
-	if len(matches) > limit {
-		matches = matches[:limit]
-	}
-	return matches
-}
-
 // fuzzyScore matches query as a subsequence of the entry's path, rewarding hits
 // in the file name, runs of adjacent characters, and matches at word
 // boundaries. query must already be lowercase.
@@ -487,12 +511,54 @@ type grepOptions struct {
 	query         string
 	regex         bool
 	caseSensitive bool
+	word          bool
+	globs         []string
 	limit         int
+}
+
+func truthy(v string) bool { return v == "1" || v == "true" }
+
+// splitGlobs reads the glob param: comma-separated, blanks dropped. A comma
+// inside braces belongs to the glob — `*.{ts,tsx}` is one glob, not two.
+func splitGlobs(raw string) []string {
+	var globs []string
+	depth, start := 0, 0
+	flush := func(end int) {
+		if g := strings.TrimSpace(raw[start:end]); g != "" && g != "!" {
+			globs = append(globs, g)
+		}
+		start = end + 1
+	}
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				flush(i)
+			}
+		}
+	}
+	flush(len(raw))
+	return globs
+}
+
+// grepMatcher is the fallback scan's pattern.
+type grepMatcher struct {
+	re *regexp.Regexp
+	// word keeps only matches with no letter, digit or underscore touching
+	// either end — rg -w. Checked by hand rather than with \b, which in Go's
+	// regexp knows only ASCII and would split "café" after the é.
+	word bool
 }
 
 // compileMatcher turns the request into a pattern the fallback scan can run,
 // and validates a user-supplied regex on the way.
-func compileMatcher(opts grepOptions) (*regexp.Regexp, error) {
+func compileMatcher(opts grepOptions) (*grepMatcher, error) {
 	pattern := opts.query
 	if !opts.regex {
 		pattern = regexp.QuoteMeta(pattern)
@@ -504,7 +570,41 @@ func compileMatcher(opts grepOptions) (*regexp.Regexp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
-	return re, nil
+	return &grepMatcher{re: re, word: opts.word}, nil
+}
+
+// spans returns the byte spans of every match in line.
+func (m *grepMatcher) spans(line []byte) [][2]int {
+	locs := m.re.FindAllIndex(line, -1)
+	spans := make([][2]int, 0, len(locs))
+	for _, loc := range locs {
+		if loc[1] == loc[0] {
+			continue
+		}
+		if m.word && !(wordEdge(line, loc[0], true) && wordEdge(line, loc[1], false)) {
+			continue
+		}
+		spans = append(spans, [2]int{loc[0], loc[1]})
+	}
+	return spans
+}
+
+// wordEdge reports whether the character just outside a match edge is not a
+// word character: the one before at a start, the one after at an end.
+func wordEdge(line []byte, at int, start bool) bool {
+	var r rune
+	if start {
+		if at == 0 {
+			return true
+		}
+		r, _ = utf8.DecodeLastRune(line[:at])
+	} else {
+		if at >= len(line) {
+			return true
+		}
+		r, _ = utf8.DecodeRune(line[at:])
+	}
+	return !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r))
 }
 
 // ripgrep runs rg when it is installed, reporting whether it could be used at
@@ -527,6 +627,12 @@ func ripgrep(ctx context.Context, root string, opts grepOptions) ([]grepMatch, b
 	}
 	if !opts.regex {
 		args = append(args, "--fixed-strings")
+	}
+	if opts.word {
+		args = append(args, "--word-regexp")
+	}
+	for _, g := range opts.globs {
+		args = append(args, "--glob", g)
 	}
 	args = append(args, "--regexp", opts.query, "--", ".")
 
@@ -564,6 +670,7 @@ type ripgrepEvent struct {
 		LineNumber int                   `json:"line_number"`
 		Submatches []struct {
 			Start int `json:"start"`
+			End   int `json:"end"`
 		} `json:"submatches"`
 	} `json:"data"`
 }
@@ -586,11 +693,17 @@ func readRipgrepJSON(src io.Reader, limit int) ([]grepMatch, bool) {
 		if len(event.Data.Submatches) > 0 {
 			column = event.Data.Submatches[0].Start + 1
 		}
+		spans := make([][2]int, 0, len(event.Data.Submatches))
+		for _, sub := range event.Data.Submatches {
+			spans = append(spans, [2]int{sub.Start, sub.End})
+		}
+		text := trimMatchLine(event.Data.Lines.Text)
 		matches = append(matches, grepMatch{
 			Rel:    strings.TrimPrefix(event.Data.Path.Text, "./"),
 			Line:   event.Data.LineNumber,
 			Column: column,
-			Text:   trimMatchLine(event.Data.Lines.Text),
+			Text:   text,
+			Ranges: byteRangesToUTF16(text, spans),
 		})
 		if len(matches) >= limit {
 			return matches, true
@@ -601,12 +714,15 @@ func readRipgrepJSON(src io.Reader, limit int) ([]grepMatch, bool) {
 
 // scanFiles is the search for hosts without ripgrep: the same walk quick open
 // uses, read line by line.
-func scanFiles(ctx context.Context, root string, re *regexp.Regexp, limit int) ([]grepMatch, bool) {
+func scanFiles(ctx context.Context, root string, re *grepMatcher, filter *globFilter, limit int) ([]grepMatch, bool) {
 	files, truncated := candidateFiles(ctx, root)
 	matches := make([]grepMatch, 0, limit)
 	for _, rel := range files {
 		if ctx.Err() != nil {
 			return matches, true
+		}
+		if !filter.allows(rel) {
+			continue
 		}
 		found, capped := scanFile(filepath.Join(root, rel), rel, re, limit-len(matches))
 		matches = append(matches, found...)
@@ -617,7 +733,7 @@ func scanFiles(ctx context.Context, root string, re *regexp.Regexp, limit int) (
 	return matches, truncated
 }
 
-func scanFile(path, rel string, re *regexp.Regexp, room int) ([]grepMatch, bool) {
+func scanFile(path, rel string, re *grepMatcher, room int) ([]grepMatch, bool) {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > maxGrepFileSize {
 		return nil, false
@@ -639,15 +755,17 @@ func scanFile(path, rel string, re *regexp.Regexp, room int) ([]grepMatch, bool)
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxGrepLineBytes)
 	for line := 1; scanner.Scan(); line++ {
-		loc := re.FindIndex(scanner.Bytes())
-		if loc == nil {
+		spans := re.spans(scanner.Bytes())
+		if len(spans) == 0 {
 			continue
 		}
+		text := trimMatchLine(scanner.Text())
 		matches = append(matches, grepMatch{
 			Rel:    rel,
 			Line:   line,
-			Column: loc[0] + 1,
-			Text:   trimMatchLine(scanner.Text()),
+			Column: spans[0][0] + 1,
+			Text:   text,
+			Ranges: byteRangesToUTF16(text, spans),
 		})
 		if len(matches) >= room {
 			return matches, true
@@ -656,11 +774,36 @@ func scanFile(path, rel string, re *regexp.Regexp, room int) ([]grepMatch, bool)
 	return matches, false
 }
 
-// trimMatchLine keeps a result row to something a list can show.
+// trimMatchLine keeps a result row to something a list can show. The cut
+// backs up to a rune boundary: half a character is invalid UTF-8, which the
+// JSON encoder turns into U+FFFD and which would shift every range after it.
 func trimMatchLine(text string) string {
 	text = strings.TrimRight(text, "\r\n")
-	if len(text) > 400 {
-		return text[:400]
+	if len(text) <= 400 {
+		return text
 	}
-	return text
+	cut := 400
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
+}
+
+// byteRangesToUTF16 converts byte spans in the untrimmed line into UTF-16
+// spans in text, dropping what the trim cut off and clamping what it cut
+// through. Spans arrive ascending and disjoint, from rg and from FindAllIndex.
+func byteRangesToUTF16(text string, spans [][2]int) [][2]int {
+	offsets := make([]int, 0, 2*len(spans))
+	for _, sp := range spans {
+		if sp[0] >= len(text) || sp[1] <= sp[0] {
+			continue
+		}
+		offsets = append(offsets, sp[0], min(sp[1], len(text)))
+	}
+	units := utf16Offsets(text, offsets)
+	ranges := make([][2]int, 0, len(units)/2)
+	for i := 0; i+1 < len(units); i += 2 {
+		ranges = append(ranges, [2]int{units[i], units[i+1]})
+	}
+	return ranges
 }

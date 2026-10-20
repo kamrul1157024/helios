@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -57,53 +58,174 @@ func (s *PublicServer) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 	// Reading a repo's status is what subscribes to it. See filewatch.go.
 	s.files().Watch(root, WatchRepo)
 
-	// Branch name.
-	branch, err := gitCmd(root, "rev-parse", "--abbrev-ref", "HEAD")
+	started := time.Now()
+	status, err := statusCache.get(root)
+	timingFrom(r.Context()).since("git", started)
 	if err != nil {
-		jsonError(w, "failed to get branch", http.StatusInternalServerError)
+		jsonError(w, "failed to get status", http.StatusInternalServerError)
 		return
 	}
-	branch = strings.TrimSpace(branch)
+	jsonResponse(w, http.StatusOK, status)
+}
 
-	// Ahead/behind upstream.
-	ahead, behind := 0, 0
-	if ab, err := gitCmd(root, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"); err == nil {
-		parts := strings.Fields(strings.TrimSpace(ab))
-		if len(parts) == 2 {
-			ahead, _ = strconv.Atoi(parts[0])
-			behind, _ = strconv.Atoi(parts[1])
+// gitStatus is the status route's answer. The field names are the API.
+type gitStatus struct {
+	Root      string      `json:"root"`
+	Branch    string      `json:"branch"`
+	Dirty     bool        `json:"dirty"`
+	Ahead     int         `json:"ahead"`
+	Behind    int         `json:"behind"`
+	Staged    []gitChange `json:"staged"`
+	Unstaged  []gitChange `json:"unstaged"`
+	Untracked []gitChange `json:"untracked"`
+}
+
+// gitStatusCache holds the last answer per repository with the index
+// generation it was computed at. See docs/specs/65-fast-files.md, 1.6.
+//
+// The generation moves on every raw event under a live root, on .git index
+// and HEAD changes, and on a write through PUT /api/file — everything that can
+// change the answer. A root that is not live has no such counter, and its
+// status is computed fresh every time, which is still one process, not six.
+type gitStatusCache struct {
+	mu      sync.Mutex
+	entries map[string]cachedStatus
+}
+
+type cachedStatus struct {
+	gen    uint64
+	status *gitStatus
+}
+
+var statusCache = &gitStatusCache{entries: map[string]cachedStatus{}}
+
+func (c *gitStatusCache) get(root string) (*gitStatus, error) {
+	// The index watcher is what makes a cached answer safe, so a repository
+	// someone asks the status of gets one, even if nobody has searched it.
+	fileIndexes.ensure(root)
+	gen, trusted := fileIndexes.generation(root)
+	if trusted {
+		c.mu.Lock()
+		hit, ok := c.entries[root]
+		c.mu.Unlock()
+		if ok && hit.gen == gen {
+			return hit.status, nil
 		}
 	}
 
-	// Staged changes.
-	staged := parseNameStatus(root, "--cached")
+	status, err := readGitStatus(root)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if trusted {
+		// Stored under the generation read before git ran: a change during
+		// the run moves the counter past it, so this answer is never served
+		// for a state it did not see.
+		c.entries[root] = cachedStatus{gen: gen, status: status}
+	} else {
+		delete(c.entries, root)
+	}
+	return status, nil
+}
 
-	// Unstaged changes.
-	unstaged := parseNameStatus(root)
+// readGitStatus asks git once for everything the route reports.
+//
+// --no-optional-locks stops status refreshing .git/index as a side effect.
+// Without it the daemon's own read would move the index, the index watcher
+// would bump the generation and rebuild the search list, and the next status
+// request would miss the cache it just filled.
+func readGitStatus(root string) (*gitStatus, error) {
+	out, err := gitCmd(root, "--no-optional-locks", "status",
+		"--porcelain=v2", "--branch", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	status := parsePorcelainV2(out)
+	status.Root = root
+	return status, nil
+}
 
-	// Untracked files.
-	untracked := []gitChange{}
-	if out, err := gitCmd(root, "ls-files", "--others", "--exclude-standard"); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line == "" {
-				continue
+// parsePorcelainV2 reads `git status --porcelain=v2 --branch -z` into the
+// shape the route has always returned.
+//
+// The old route ran rev-parse for the branch, rev-list for ahead and behind,
+// two `diff --name-status` for staged and unstaged, and ls-files for
+// untracked. Each translation below keeps that answer: the X column is what
+// `diff --cached` reported, Y what `diff` reported, a rename reports its
+// destination as "R", and a conflict reports "U" on both sides.
+func parsePorcelainV2(out string) *gitStatus {
+	status := &gitStatus{Staged: []gitChange{}, Unstaged: []gitChange{}, Untracked: []gitChange{}}
+	records := strings.Split(out, "\x00")
+	for i := 0; i < len(records); i++ {
+		rec := records[i]
+		switch {
+		case strings.HasPrefix(rec, "# branch.head "):
+			status.Branch = strings.TrimPrefix(rec, "# branch.head ")
+			if status.Branch == "(detached)" {
+				// What `rev-parse --abbrev-ref HEAD` says for a detached head.
+				status.Branch = "HEAD"
 			}
-			untracked = append(untracked, gitChange{Path: line, Status: "?"})
+		case strings.HasPrefix(rec, "# branch.ab "):
+			fmt.Sscanf(strings.TrimPrefix(rec, "# branch.ab "), "+%d -%d", &status.Ahead, &status.Behind)
+		case strings.HasPrefix(rec, "1 "):
+			addChange(status, rec, 8)
+		case strings.HasPrefix(rec, "2 "):
+			addChange(status, rec, 9)
+			// The rename's original path is the next record; the old route
+			// reported only the destination.
+			i++
+		case strings.HasPrefix(rec, "u "):
+			if path := field(rec, 10); path != "" {
+				status.Staged = append(status.Staged, gitChange{Path: path, Status: "U"})
+				status.Unstaged = append(status.Unstaged, gitChange{Path: path, Status: "U"})
+			}
+		case strings.HasPrefix(rec, "? "):
+			status.Untracked = append(status.Untracked, gitChange{Path: rec[2:], Status: "?"})
 		}
 	}
+	status.Dirty = len(status.Staged) > 0 || len(status.Unstaged) > 0 || len(status.Untracked) > 0
+	return status
+}
 
-	dirty := len(staged) > 0 || len(unstaged) > 0 || len(untracked) > 0
+// addChange records an ordinary (1) or renamed (2) entry. pathField is the
+// number of space-separated fields before the path, which may itself hold
+// spaces.
+func addChange(status *gitStatus, rec string, pathField int) {
+	path := field(rec, pathField)
+	if len(rec) < 4 || path == "" {
+		return
+	}
+	x, y := rec[2], rec[3]
+	if x != '.' {
+		status.Staged = append(status.Staged, gitChange{Path: path, Status: changeLetter(x)})
+	}
+	if y != '.' {
+		status.Unstaged = append(status.Unstaged, gitChange{Path: path, Status: changeLetter(y)})
+	}
+}
 
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"root":      root,
-		"branch":    branch,
-		"dirty":     dirty,
-		"ahead":     ahead,
-		"behind":    behind,
-		"staged":    staged,
-		"unstaged":  unstaged,
-		"untracked": untracked,
-	})
+func changeLetter(c byte) string {
+	if c == 'C' {
+		// diff --name-status never detected copies without -C, so the old
+		// route reported a copy as the new file it is.
+		return "A"
+	}
+	return string(c)
+}
+
+// field returns everything from the n-th space-separated field on — the path
+// of a porcelain record, spaces and all.
+func field(rec string, n int) string {
+	for ; n > 0; n-- {
+		cut := strings.IndexByte(rec, ' ')
+		if cut < 0 {
+			return ""
+		}
+		rec = rec[cut+1:]
+	}
+	return rec
 }
 
 // handleGitDiff returns the unified diff for a single file, in the working tree
@@ -562,34 +684,4 @@ func firstLine(text string) string {
 		return text[:idx]
 	}
 	return text
-}
-
-// parseNameStatus parses `git diff --name-status` output into gitChange slices.
-// Pass "--cached" for staged, or nothing for unstaged.
-func parseNameStatus(root string, extraArgs ...string) []gitChange {
-	args := []string{"diff", "--name-status"}
-	args = append(args, extraArgs...)
-	out, err := gitCmd(root, args...)
-	if err != nil {
-		return []gitChange{}
-	}
-	// Not nil: a nil slice marshals to JSON null, and clients expect a list.
-	changes := []gitChange{}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		status := parts[0]
-		p := parts[len(parts)-1]
-		// For renames (R100), use the destination path.
-		if strings.HasPrefix(status, "R") {
-			status = "R"
-		}
-		changes = append(changes, gitChange{Path: p, Status: status})
-	}
-	return changes
 }

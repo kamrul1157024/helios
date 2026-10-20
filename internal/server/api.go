@@ -1989,6 +1989,10 @@ func extractPathParam(path, prefix, suffix string) string {
 }
 
 func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
+	if fw, ok := w.(*fastWriter); ok {
+		writeJSON(fw, status, data)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
@@ -1998,6 +2002,17 @@ func jsonError(w http.ResponseWriter, message string, status int) {
 	jsonResponse(w, status, map[string]interface{}{
 		"error":   http.StatusText(status),
 		"message": message,
+	})
+}
+
+// jsonErrorCode is jsonError with a machine-readable code beside the prose, so
+// a client can say "Not found" or "Too large" in its own words instead of
+// guessing from the status alone.
+func jsonErrorCode(w http.ResponseWriter, message string, status int, code string) {
+	jsonResponse(w, status, map[string]interface{}{
+		"error":   http.StatusText(status),
+		"message": message,
+		"code":    code,
 	})
 }
 
