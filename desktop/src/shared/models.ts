@@ -454,6 +454,10 @@ export interface LogOpts {
 export interface GrepOpts {
   regex?: boolean
   caseSensitive?: boolean
+  /** Whole words only: `rg -w`. Ignored by a daemon older than spec 65. */
+  word?: boolean
+  /** Comma-separated globs, `!` in front to exclude: `rg -g` each. */
+  glob?: string
   limit?: number
 }
 
@@ -488,6 +492,11 @@ export interface FileEntry {
   is_dir: boolean
   size: number
   mod_time: string
+  /**
+   * Left out of the search index by .gitignore. Present only when the daemon's
+   * index for the root is warm, so absent means "not known", not "tracked".
+   */
+  ignored?: boolean
 }
 
 export interface FileContent {
@@ -502,7 +511,41 @@ export interface FileContent {
    * which case a file that is not UTF-8 has already lost its bytes to the JSON
    * encoder, and the NUL check is all a client has.
    */
-  encoding?: 'utf8' | 'base64'
+  encoding?: 'utf8' | 'base64' | 'binary'
+  /** The daemon's weak validator, `W/"<size>-<mtime>"`. Absent from older daemons. */
+  etag?: string
+  /**
+   * The file's own bytes, when it was read raw and is not text. `content` is
+   * empty then: a picture is drawn from these without a base64 round trip.
+   */
+  bytes?: ArrayBuffer
+}
+
+/**
+ * One raw read, as the main process hands it over.
+ *
+ * `body` crosses the bridge as an ArrayBuffer, which structured clone copies
+ * without parsing anything. A 304 carries no body: the caller already has it.
+ */
+export interface RawFile {
+  status: 200 | 304
+  etag?: string
+  modTime: string
+  size: number
+  contentType: string
+  encoding: 'utf8' | 'binary'
+  body: ArrayBuffer
+}
+
+/** One file a session's tool calls wrote. internal/server, spec 65 B6. */
+export interface TouchedFile {
+  path: string
+  last_at: string
+  tool: string
+  count: number
+  /** 1-based line of the last edit, when the daemon could find it. */
+  line?: number
+  deleted?: boolean
 }
 
 /**
@@ -553,6 +596,8 @@ export interface FileMatch {
   path: string
   rel: string
   score: number
+  /** UTF-16 offsets into `rel` of each matched query character. Spec 65. */
+  positions?: number[]
 }
 
 export interface FileSearchResult {
@@ -563,6 +608,8 @@ export interface FileSearchResult {
   matches: FileMatch[]
   scanned: number
   truncated: boolean
+  /** Served from an index still being built; ask again shortly. */
+  indexing?: boolean
 }
 
 /** internal/server/filesearch.go — one find-in-files hit. */
@@ -572,6 +619,8 @@ export interface GrepMatch {
   line: number
   column: number
   text: string
+  /** UTF-16 [start, end) offsets of each match in `text`. Spec 65. */
+  ranges?: [number, number][]
 }
 
 export interface GrepResult {
@@ -584,6 +633,7 @@ export interface WriteResult {
   path: string
   size: number
   mod_time: string
+  etag?: string
 }
 
 /** internal/provider/provider.go */

@@ -51,7 +51,19 @@ export function tabOf(item: ItemId): string | null {
  * attached and the attach button when there is not. Shells are `term:` items
  * of their own, because a session can have any number of them.
  */
-export const PANEL_ITEMS: ItemId[] = ['chat', 'terminal', 'approvals', 'git', 'files'].map(panelItem)
+export const PANEL_ITEMS: ItemId[] = ['chat', 'terminal', 'approvals', 'files'].map(panelItem)
+
+/**
+ * The Git panel, which is gone (spec 65, B8): its job is the Files panel's
+ * Changes mode now. Kept as a name only so a layout saved before can be read.
+ */
+const RETIRED_GIT = panelItem('git')
+
+/** Whether a saved layout had the Git panel in front of any group. */
+export function gitWasInFront(raw: unknown): boolean {
+  const groups = (raw as { groups?: unknown } | null)?.groups
+  return Array.isArray(groups) && groups.some((group) => (group as { active?: unknown } | null)?.active === RETIRED_GIT)
+}
 
 /**
  * One group, holding every panel, reading the transcript.
@@ -324,11 +336,20 @@ export function parseLayout(raw: unknown): Layout {
   if (!Array.isArray(value.groups) || value.groups.length === 0) return defaultLayout()
 
   const groups: Group[] = []
+  // A saved Git panel becomes the Files panel, where its job went — once: a
+  // layout that already holds Files keeps the one it has.
+  const seen = new Set<ItemId>()
   for (const entry of value.groups) {
     if (!entry || typeof entry !== 'object') return defaultLayout()
-    const { id, items, active, size } = entry as Partial<Group>
+    const { id, items: stored, active: storedActive, size } = entry as Partial<Group>
     if (typeof id !== 'string' || !id) return defaultLayout()
-    if (!Array.isArray(items) || items.some((item) => typeof item !== 'string')) return defaultLayout()
+    if (!Array.isArray(stored) || stored.some((item) => typeof item !== 'string')) return defaultLayout()
+    const items = stored.map((item) => (item === RETIRED_GIT ? panelItem('files') : item)).filter((item) => {
+      if (seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+    const active = storedActive === RETIRED_GIT ? panelItem('files') : storedActive
     const head = items[0]
     if (head === undefined) continue
     groups.push({

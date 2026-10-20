@@ -77,15 +77,25 @@ export const keys = {
     ['host', hostId, 'git', 'reviewed', cwd, base] as const,
 
   files: (hostId: string) => ['host', hostId, 'files'] as const,
+  /** Every folder listing on a host, for a checkout that can move any of them. */
+  fileDirs: (hostId: string) => ['host', hostId, 'files', 'dir'] as const,
   fileDir: (hostId: string, path: string) => ['host', hostId, 'files', 'dir', path] as const,
   fileContent: (hostId: string, path: string) => ['host', hostId, 'files', 'content', path] as const,
   /** A file a preview pulls in behind the one that was opened. Its own key
    *  rather than fileContent's, so a blob is not pinned for the session. */
   fileAsset: (hostId: string, path: string) => ['host', hostId, 'files', 'asset', path] as const,
+  /** Every quick-open answer on a host, whatever root and query. */
+  fileSearches: (hostId: string) => ['host', hostId, 'files', 'search'] as const,
   fileSearch: (hostId: string, root: string, q: string) =>
     ['host', hostId, 'files', 'search', root, q] as const,
   fileGrep: (hostId: string, root: string, q: string, opts: GrepOpts) =>
     ['host', hostId, 'files', 'grep', root, q, opts] as const,
+  /**
+   * What one session's tool calls wrote. Not under `files`: it moves when the
+   * transcript grows, which a session's status says, not when a file does.
+   */
+  touchedAll: (hostId: string) => ['host', hostId, 'touched'] as const,
+  touched: (hostId: string, sessionId: string) => ['host', hostId, 'touched', sessionId] as const,
 }
 
 // ─── The session list ───────────────────────────────────────────────────────
@@ -203,7 +213,14 @@ export function mergeSettings(
  * a QueryClient can only be tested through a stand-in for one.
  */
 export type CacheEffect =
-  | { kind: 'invalidate'; queryKey: readonly unknown[] }
+  | {
+      kind: 'invalidate'
+      queryKey: readonly unknown[]
+      /** This key alone, not everything under it as a prefix. */
+      exact?: boolean
+      /** Mark it stale and leave it: the next read refetches, nothing does now. */
+      refetchType?: 'none'
+    }
   | { kind: 'patchSession'; sessionId: string; patch: Partial<Session> }
 
 export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
@@ -231,6 +248,10 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
         { kind: 'invalidate', queryKey: keys.allSessions(hostId) },
         { kind: 'invalidate', queryKey: keys.jobSessions(hostId) },
         { kind: 'invalidate', queryKey: keys.session(hostId, sessionId) },
+        // The transcript moved, so the files it says were written may have too.
+        // Costs nothing for a session nobody is looking at: only an observed
+        // query refetches, and the Changes view and the tree are the observers.
+        { kind: 'invalidate', queryKey: keys.touched(hostId, sessionId) },
       ]
     }
 
@@ -272,21 +293,13 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
       return [{ kind: 'invalidate', queryKey: keys.host(hostId) }]
 
     // Every path named has changed *content*, not merely a changed mtime: the
-    // daemon compares digests before it says anything (spec 54). Which paths
-    // they are does not change the answer here — both prefixes go, and React
-    // Query refetches only what has an observer, so naming one costs the same
-    // as naming all of them.
-    //
-    // Git comes too. A working-tree write moves `git status`, and a repo entry
-    // is a commit or a checkout.
-    case 'file_changed': {
-      const named = event.data.paths
-      if (!Array.isArray(named) || named.length === 0) return []
-      return [
-        { kind: 'invalidate', queryKey: keys.files(hostId) },
-        { kind: 'invalidate', queryKey: keys.git(hostId) },
-      ]
-    }
+    // daemon compares digests before it says anything (spec 54). The paths are
+    // what keep the answer narrow (spec 65, 2.1): one agent write used to take
+    // out every read under `files` — the open folders, quick open, a whole
+    // ripgrep run — and with them the open tab, which is how a write next to a
+    // dirty buffer moved `saved` under it.
+    case 'file_changed':
+      return fileChangedEffects(hostId, event.data.paths)
 
     // The socket was down and the daemon keeps no replay buffer, so anything
     // that moved in the gap was announced to nobody. Files and git for a second
@@ -298,6 +311,7 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
         { kind: 'invalidate', queryKey: keys.notifications(hostId) },
         { kind: 'invalidate', queryKey: keys.files(hostId) },
         { kind: 'invalidate', queryKey: keys.git(hostId) },
+        { kind: 'invalidate', queryKey: keys.touchedAll(hostId) },
       ]
 
     // 'show' instructs the window, and the terminal events move connections:
@@ -311,6 +325,75 @@ export function effectsFor(hostId: string, event: SSEEvent): CacheEffect[] {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+/** One entry of a `file_changed` payload, as far as the cache cares. */
+interface ChangedPath {
+  path: string
+  kind: 'file' | 'dir' | 'repo'
+}
+
+/** The usable entries of a payload. An entry with no kind is read as a file. */
+export function changedPaths(named: unknown): ChangedPath[] {
+  if (!Array.isArray(named)) return []
+  const out: ChangedPath[] = []
+  for (const entry of named) {
+    const path = text((entry as { path?: unknown } | null)?.path)
+    if (!path) continue
+    const kind = text((entry as { kind?: unknown }).kind)
+    out.push({ path, kind: kind === 'dir' || kind === 'repo' ? kind : 'file' })
+  }
+  return out
+}
+
+/** The folder a path sits in. The root's parent is the root. */
+export function parentDir(path: string): string {
+  const cut = path.replace(/\/+$/, '').lastIndexOf('/')
+  return cut <= 0 ? '/' : path.slice(0, cut)
+}
+
+/**
+ * The narrow answer to a file event.
+ *
+ * - The listing of each named path's folder, and of the path itself when it is
+ *   a folder. A checkout (`repo`) can move any listing, so all of them go.
+ * - File contents are marked stale and never refetched from here. The open tabs
+ *   follow the disk through the panel's own sync, which knows whether a buffer
+ *   is dirty; a closed file simply reads fresh the next time it opens.
+ * - Quick-open answers are marked stale too. The next keystroke asks again, and
+ *   a list that is open does not flash under the reader.
+ * - Content search is not touched at all. The panel says its results may be out
+ *   of date and leaves the rerun to the reader.
+ * - Git once, as before. The daemon caches its status per generation.
+ */
+function fileChangedEffects(hostId: string, named: unknown): CacheEffect[] {
+  const changed = changedPaths(named)
+  if (changed.length === 0) return []
+
+  const effects: CacheEffect[] = []
+  const dirs = new Set<string>()
+  let everyListing = false
+  for (const { path, kind } of changed) {
+    if (kind === 'repo') {
+      everyListing = true
+      continue
+    }
+    dirs.add(parentDir(path))
+    if (kind === 'dir') dirs.add(path)
+  }
+  if (everyListing) effects.push({ kind: 'invalidate', queryKey: keys.fileDirs(hostId) })
+  else for (const dir of dirs) effects.push({ kind: 'invalidate', queryKey: keys.fileDir(hostId, dir), exact: true })
+
+  for (const { path, kind } of changed) {
+    if (kind !== 'file') continue
+    effects.push({ kind: 'invalidate', queryKey: keys.fileContent(hostId, path), exact: true, refetchType: 'none' })
+    // A picture or a stylesheet a preview pulled in. Only an observed one
+    // refetches, which is a preview showing it right now.
+    effects.push({ kind: 'invalidate', queryKey: keys.fileAsset(hostId, path), exact: true })
+  }
+  effects.push({ kind: 'invalidate', queryKey: keys.fileSearches(hostId), refetchType: 'none' })
+  effects.push({ kind: 'invalidate', queryKey: keys.git(hostId) })
+  return effects
 }
 
 // ─── What a file event does to one open tab ─────────────────────────────────

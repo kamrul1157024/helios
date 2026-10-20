@@ -73,6 +73,17 @@ const configs = [
     target: 'chrome128',
   },
   {
+    // highlight.js for diffs and markdown fences, in a worker of its own (spec
+    // 65, 2.6). A separate file because a worker is started from a URL, and the
+    // grammars come with it rather than with the window's bundle.
+    ...common,
+    entryPoints: [resolve(root, 'src/renderer/highlight-worker.ts')],
+    outfile: resolve(out, 'renderer/highlight-worker.js'),
+    platform: 'browser',
+    format: 'iife',
+    target: 'chrome128',
+  },
+  {
     // The approval HUD: its own window, its own bundle, same preload. Sharing
     // the renderer bundle would drag xterm and the whole app shell into a
     // window that shows two buttons.

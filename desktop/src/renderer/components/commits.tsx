@@ -1,12 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 
-import { gitChangesQuery, gitDiffQuery, gitLogPagesQuery } from '../queries.ts'
-import { useStore } from '../store.ts'
-import { languageForPath } from '../markdown.ts'
-import { DiffView } from './diff-view.tsx'
+import { gitLogPagesQuery, gitLogQuery } from '../queries.ts'
 import { Chevron } from './icons.tsx'
-import { PathLabel } from './path-label.tsx'
 import { timeAgo, type Commit, type GitStatus } from '../../shared/models.ts'
 
 /** A lone commit when `from` is null, otherwise everything from `from` to `to`. */
@@ -31,8 +27,89 @@ export interface ReviewScope {
   label: string
 }
 
-/** What the git panel is looking at: the working tree, or some history. */
+/** What the Changes view is looking at: the working tree, or some history. */
 export type Scope = { kind: 'working' } | CommitScope | ReviewScope
+
+/** How far back to look when deciding whether the branch has anything to review. */
+const SCOPE_PROBE = 50
+
+/**
+ * Which changes the Files panel's Changes mode shows, and how to change that.
+ *
+ * Moved here from the Git panel when that panel went (spec 65, B8), with its
+ * rules intact. The question the user has when they look at changes during a
+ * session is "what has the agent done to this branch", so the default is the
+ * review against the base when the branch has commits ahead of it — the
+ * uncommitted-only view answers a narrower question and was the wrong one to
+ * answer first. A choice made afterwards is remembered per session, under the
+ * key the Git panel used, so nobody's choice is lost by the move.
+ *
+ * `pick` is a person choosing, and is remembered. `adopt` is an agent pointing
+ * at something through helios_show, which is a visit rather than a preference.
+ * Null while the default is still being worked out: rendering the working tree
+ * meanwhile would flip the scope under the reader.
+ */
+export function useScope(
+  hostId: string,
+  root: string,
+  sessionId: string,
+  enabled: boolean,
+): { scope: Scope | null; pick: (scope: Scope) => void; adopt: (scope: Scope) => void } {
+  const scopeKey = `helios.git.scope.${hostId}.${sessionId || root}`
+  const stored = useMemo(() => readScope(scopeKey), [scopeKey])
+  const probing = !stored && root !== ''
+  const probe = useQuery({ ...gitLogQuery(hostId, root, { limit: SCOPE_PROBE }), enabled: probing && enabled })
+
+  const fallback = useMemo<Scope | null>(() => {
+    if (stored) return stored
+    if (probing && probe.isPending) return null
+    const log = probe.data
+    // No history, no base branch, not a repository — the working tree is the
+    // answer that needs nothing to be true.
+    if (!log || log.scope !== 'branch' || !log.base || log.commits.length === 0) return { kind: 'working' }
+    return { kind: 'review', base: log.base, span: log.commits.length, label: `Review vs ${log.base}` }
+  }, [stored, probing, probe.isPending, probe.data])
+
+  const [picked, setPicked] = useState<Scope | null>(null)
+  useEffect(() => setPicked(null), [scopeKey])
+
+  const pick = useCallback(
+    (next: Scope) => {
+      setPicked(next)
+      writeScope(scopeKey, next)
+    },
+    [scopeKey],
+  )
+  return { scope: picked ?? fallback, pick, adopt: setPicked }
+}
+
+/**
+ * The scope the user last chose for this session, if it still parses. Stored
+ * rather than derived because it is a preference, and dropped silently when it
+ * is not readable — a bad entry is not worth an error over a view that has a
+ * perfectly good default.
+ */
+function readScope(key: string): Scope | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Scope
+    if (parsed.kind === 'working') return parsed
+    if (parsed.kind === 'review' && typeof parsed.base === 'string') return parsed
+    if (parsed.kind === 'commit' && typeof parsed.to === 'string') return parsed
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeScope(key: string, scope: Scope): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(scope))
+  } catch {
+    // A full or disabled store costs the preference, nothing else.
+  }
+}
 
 /**
  * The control that chooses what the panel shows. Closed it is a one-line
@@ -119,7 +196,7 @@ const MARGIN = 12
 
 /**
  * The menu is `position: fixed` rather than absolute because `.panel-body`
- * clips its overflow, and the git panel is often shorter than the menu — an
+ * clips its overflow, and the explorer is often shorter than the menu — an
  * absolutely positioned popover loses its bottom half whenever the terminal is
  * open below it.
  */
@@ -307,125 +384,6 @@ function ScopeMenu({
   )
 }
 
-/**
- * The files a commit or a range touched, and the patch for whichever is open —
- * in the same files-left, diff-right shape the working tree uses.
- */
-export function CommitChanges({
-  hostId,
-  root,
-  scope,
-}: {
-  hostId: string
-  root: string
-  scope: CommitScope
-}): JSX.Element {
-  const wanted = useStore((s) => s.diffTarget)
-  const changesQuery = useQuery(gitChangesQuery(hostId, root, scope.to, scope.from ?? undefined))
-  const changes = changesQuery.data
-
-  // Which file the reader clicked, if they have. Cleared when the commit or the
-  // agent's request changes, so the default below gets to answer again.
-  const [picked, setPicked] = useState<string | null>(null)
-  useEffect(() => {
-    setPicked(null)
-  }, [hostId, root, scope.to, scope.from, wanted?.seq])
-
-  // An agent that named a file meant that file, not the first one in the
-  // commit. It says so absolutely; git lists paths from the repo root.
-  const fallback = useMemo(() => {
-    if (!changes) return null
-    const asked = wanted?.path && relativeToRoot(root, wanted.path)
-    if (asked && changes.files.some((f) => f.path === asked)) return asked
-    return changes.files[0]?.path ?? null
-  }, [changes, root, wanted?.path, wanted?.seq])
-
-  const file = picked ?? fallback
-  const diffQuery = useQuery(
-    gitDiffQuery(hostId, root, file ?? '', { from: scope.from ?? undefined, to: scope.to }),
-  )
-  const diff = diffQuery.data
-  const error = changesQuery.error ?? diffQuery.error
-
-  if (error) return <p className="empty-note">{error.message}</p>
-  if (!changes) return <p className="empty-note">Loading…</p>
-
-  return (
-    <>
-      <div className="git-substatus">
-        {changes.single ? (
-          <>
-            <span className="commit-sha">{short(changes.to)}</span>
-            {changes.author && <span className="muted">{changes.author}</span>}
-            {changes.date && <span className="muted">{timeAgo(changes.date)}</span>}
-          </>
-        ) : (
-          <span className="commit-sha">
-            {short(changes.from)}…{short(changes.to)}
-          </span>
-        )}
-        <span className="commit-counts">
-          <span className="d-add">+{changes.insertions}</span>
-          <span className="d-del">−{changes.deletions}</span>
-        </span>
-      </div>
-
-      {changes.body && <pre className="commit-body">{changes.body}</pre>}
-
-      <div className="git-body">
-        <div className="git-files">
-          {changes.files.map((entry) => (
-            <button
-              key={entry.path}
-              className={`git-file ${file === entry.path ? 'selected' : ''}`}
-              onClick={() => setPicked(entry.path)}
-              title={entry.from ? `${entry.from} → ${entry.path}` : entry.path}
-            >
-              <span className={`git-status s${entry.status}`}>{entry.status}</span>
-              <PathLabel path={entry.path} className="git-path" />
-              <span className="commit-counts">
-                {entry.insertions > 0 && <span className="d-add">+{entry.insertions}</span>}
-                {entry.deletions > 0 && <span className="d-del">−{entry.deletions}</span>}
-              </span>
-            </button>
-          ))}
-          {changes.files.length === 0 && <p className="empty-note">No files — a merge commit.</p>}
-          {changes.truncated && <p className="empty-note">Showing the first {changes.files.length} files.</p>}
-        </div>
-
-        <div className="git-diff">
-          {diff ? (
-            <>
-              <header>
-                <span>{diff.file}</span>
-                <span className="muted">{diff.stat}</span>
-              </header>
-              <DiffView
-                diff={diff.diff}
-                empty="No textual changes — binary, or a mode change."
-                language={languageForPath(diff.file)}
-                layout={wanted?.layout ?? 'split'}
-                line={wanted?.line}
-              />
-            </>
-          ) : (
-            <p className="empty-note">Pick a file.</p>
-          )}
-        </div>
-      </div>
-    </>
-  )
-}
-
-/**
- * An absolute path as git would list it, or null when it is outside the repo.
- * An agent names files absolutely; git lists them from the repository root.
- */
-function relativeToRoot(root: string, absolute: string): string | null {
-  const base = root.replace(/\/+$/, '')
-  return absolute.startsWith(`${base}/`) ? absolute.slice(base.length + 1) : null
-}
-
 /** Endpoints of a range are selected; what lies between them is merely in it. */
 function rowClass(sha: string, index: number, commits: Commit[], scope: Scope): string {
   if (scope.kind !== 'commit') return ''
@@ -442,6 +400,3 @@ function dirtyCount(status: GitStatus | null): number {
   return (status.staged?.length ?? 0) + (status.unstaged?.length ?? 0) + (status.untracked?.length ?? 0)
 }
 
-function short(sha: string): string {
-  return sha.slice(0, 7)
-}

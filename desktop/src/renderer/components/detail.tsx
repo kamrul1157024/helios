@@ -18,7 +18,6 @@ import { Chevron } from './icons.tsx'
 import { ChatPanel } from './chat.tsx'
 import { PanelBoundary } from './error-boundary.tsx'
 import { FilesPanel } from './files.tsx'
-import { GitPanel } from './git.tsx'
 import { ChannelPanel } from './channels.tsx'
 import { SchedulePanel } from './schedules.tsx'
 import { SelectionMenu } from './selection-menu.tsx'
@@ -41,7 +40,7 @@ import {
 import { TerminalPane, TerminalPlaceholder } from './terminal.tsx'
 import { canResume, type Session } from '../../shared/models.ts'
 
-const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'git', 'files']
+const PANELS: RightPanel[] = ['chat', 'terminal', 'approvals', 'files']
 
 // The transcript is the agent's side of the session, not a chat room, and not
 // the agent either — the agent is the thing running, of which this is the
@@ -50,7 +49,6 @@ const PANEL_LABELS: Record<RightPanel, string> = {
   chat: 'transcript',
   terminal: 'terminal',
   approvals: 'approvals',
-  git: 'git',
   files: 'files',
 }
 
@@ -70,7 +68,7 @@ const TAB_DRAG = 'application/x-helios-tab'
 /**
  * Which items the idle sweep may unmount.
  *
- * Git and files hold a place the user chose — the file they were reading, the
+ * Files holds a place the user chose — the file they were reading, the
  * diff they were working through — and losing it to a timer means finding it
  * again by hand. A terminal holds scrollback nothing can replay. What is left
  * is the transcript and the approvals list, both of which come back fetched.
@@ -483,18 +481,6 @@ function ItemContent({
   }
 
   if (panel === 'approvals') return <ApprovalsPanel hostId={hostId} sessionId={session.session_id} />
-
-  if (panel === 'git') {
-    return (
-      <GitPanel
-        hostId={hostId}
-        cwd={session.cwd}
-        revision={session.last_event_at}
-        sessionId={session.session_id}
-        active={visible}
-      />
-    )
-  }
 
   if (panel === 'files') {
     return (

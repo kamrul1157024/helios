@@ -18,10 +18,12 @@ import type {
   SessionGroup,
   Notification,
   ProviderInfo,
+  RawFile,
   Schedule,
   Session,
   Subagent,
   TerminalInfo,
+  TouchedFile,
   TranscriptPage,
   HostStats,
   Worktree,
@@ -73,6 +75,13 @@ export class ApiError extends Error {
 export class ApiClient {
   private token: string | null = null
   private tokenExpiry = 0
+  /**
+   * False once this daemon has shown it predates `/api/file/raw`. Remembered so
+   * an old daemon costs one wasted 404, not one per file opened.
+   */
+  private rawSupported = true
+  /** The content search in flight, aborted by the next one. See grepFiles. */
+  private grepInFlight: AbortController | null = null
 
   constructor(
     public baseUrl: string,
@@ -101,39 +110,65 @@ export class ApiClient {
     return `Bearer ${this.getToken()}`
   }
 
-  async request<T>(method: string, path: string, body?: unknown, timeout = REQUEST_TIMEOUT): Promise<T> {
-    let response = await this.send(method, path, body, timeout)
-    if (response.status === 401) {
-      this.invalidate()
-      response = await this.send(method, path, body, timeout)
-    }
+  async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeout = REQUEST_TIMEOUT,
+    extra: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+  ): Promise<T> {
+    const response = await this.sendAuthed(method, path, body, timeout, extra)
 
     if (response.status === 204) return undefined as T
 
     const text = await response.text()
     const parsed = text ? safeParse(text) : undefined
 
-    if (!response.ok) {
-      const detail = (parsed ?? {}) as { error?: string; message?: string }
-      throw new ApiError(
-        response.status,
-        detail.message ?? detail.error ?? `${method} ${path} failed with ${response.status}`,
-        detail.error,
-      )
-    }
+    if (!response.ok) throw failure(response.status, parsed, `${method} ${path}`)
     return parsed as T
   }
 
-  private async send(method: string, path: string, body?: unknown, timeout = REQUEST_TIMEOUT): Promise<Response> {
-    const headers: Record<string, string> = { Authorization: this.authHeader() }
-    if (body !== undefined) headers['Content-Type'] = 'application/json'
+  /** One attempt, and a second with a fresh token if the first was refused. */
+  private async sendAuthed(
+    method: string,
+    path: string,
+    body: unknown,
+    timeout: number,
+    extra: { headers?: Record<string, string>; signal?: AbortSignal },
+  ): Promise<Response> {
+    let response = await this.send(method, path, body, timeout, extra)
+    if (response.status === 401) {
+      this.invalidate()
+      response = await this.send(method, path, body, timeout, extra)
+    }
+    return response
+  }
 
-    return fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(timeout),
-    })
+  private async send(
+    method: string,
+    path: string,
+    body: unknown,
+    timeout: number,
+    extra: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+  ): Promise<Response> {
+    const headers: Record<string, string> = { Authorization: this.authHeader(), ...extra.headers }
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    const deadline = AbortSignal.timeout(timeout)
+
+    try {
+      return await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: extra.signal ? AbortSignal.any([deadline, extra.signal]) : deadline,
+      })
+    } catch (err) {
+      // Cancelled by a newer request, not lost: a status in the 4xx range is
+      // what keeps the renderer's retry policy from asking a third time for an
+      // answer nobody is waiting on any more.
+      if (extra.signal?.aborted) throw new ApiError(499, 'Superseded by a newer request', 'cancelled')
+      throw err
+    }
   }
 
   // ─── Sessions ──────────────────────────────────────────────────────────
@@ -617,33 +652,107 @@ export class ApiClient {
     return this.request('GET', `/api/file${queryString({ path, encoding: 'auto' })}`)
   }
 
+  /**
+   * The file's bytes, with no JSON around them (spec 65, 2.2).
+   *
+   * `etag` is what the caller already holds. A match comes back as a 304 with
+   * an empty body, after one stat on the daemon and no read at all, which is
+   * what makes reopening an unchanged file cost nothing.
+   *
+   * A daemon from before the route answers its 404 without a `code`, where a
+   * missing file on a newer one says `not_found`. That difference is the only
+   * way to tell the two apart, so the first one switches this client over to
+   * the JSON read for good.
+   */
+  async readFileRaw(path: string, etag?: string): Promise<RawFile> {
+    if (!this.rawSupported) return rawFromJson(await this.readFile(path))
+    const response = await this.sendAuthed('GET', `/api/file/raw${queryString({ path })}`, undefined, REQUEST_TIMEOUT, {
+      headers: etag ? { 'If-None-Match': etag } : {},
+    })
+    const header = (name: string): string => response.headers.get(name) ?? ''
+    const meta = {
+      etag: header('ETag') || etag,
+      modTime: header('X-Helios-Mod-Time'),
+      size: Number(header('X-Helios-Size')) || 0,
+      contentType: header('Content-Type'),
+    }
+    if (response.status === 304) {
+      return { ...meta, status: 304, encoding: 'utf8', body: new ArrayBuffer(0) }
+    }
+    if (!response.ok) {
+      const text = await response.text()
+      const parsed = (text ? safeParse(text) : undefined) as { code?: string } | undefined
+      if (response.status === 404 && !parsed?.code) {
+        this.rawSupported = false
+        return rawFromJson(await this.readFile(path))
+      }
+      throw failure(response.status, parsed, `GET /api/file/raw`)
+    }
+    const body = await response.arrayBuffer()
+    const encoding = header('X-Helios-Encoding') === 'binary' ? 'binary' : 'utf8'
+    return { ...meta, status: 200, encoding, size: meta.size || body.byteLength, body }
+  }
+
   searchFiles(path: string, q: string, limit?: number): Promise<FileSearchResult> {
     const query = queryString({ path, q, limit: limit ? String(limit) : undefined })
     return this.request('GET', `/api/files/search${query}`)
   }
 
-  grepFiles(
+  /**
+   * Content search. Each call aborts the one before it.
+   *
+   * The panel searches as the user types, so the search that was running a
+   * keystroke ago is one nobody will read. Aborting the fetch closes the
+   * request, and the daemon kills ripgrep when the request's context ends —
+   * so a stale search stops costing a core as well as a round trip.
+   */
+  async grepFiles(
     path: string,
     q: string,
-    opts: { regex?: boolean; caseSensitive?: boolean; limit?: number } = {},
+    opts: { regex?: boolean; caseSensitive?: boolean; word?: boolean; glob?: string; limit?: number } = {},
   ): Promise<GrepResult> {
+    this.grepInFlight?.abort()
+    const controller = new AbortController()
+    this.grepInFlight = controller
     const query = queryString({
       path,
       q,
       regex: opts.regex ? 'true' : undefined,
       case: opts.caseSensitive ? 'true' : undefined,
+      word: opts.word ? '1' : undefined,
+      glob: opts.glob?.trim() || undefined,
       limit: opts.limit ? String(opts.limit) : undefined,
     })
-    return this.request('GET', `/api/files/grep${query}`)
+    try {
+      return await this.request('GET', `/api/files/grep${query}`, undefined, REQUEST_TIMEOUT, {
+        signal: controller.signal,
+      })
+    } finally {
+      if (this.grepInFlight === controller) this.grepInFlight = null
+    }
   }
 
   /**
    * Saves a file. base_mod_time is what the editor last read; the daemon
    * refuses the write when the file has changed since, which is the common case
    * of the agent editing the same file mid-session.
+   *
+   * The ETag rides along when there is one. It closes the gap a whole-second
+   * mod time leaves open; a daemon that does not know the header ignores it.
    */
-  writeFile(path: string, content: string, baseModTime?: string): Promise<WriteResult> {
-    return this.request('PUT', '/api/file', { path, content, base_mod_time: baseModTime })
+  writeFile(path: string, content: string, baseModTime?: string, etag?: string): Promise<WriteResult> {
+    return this.request('PUT', '/api/file', { path, content, base_mod_time: baseModTime }, REQUEST_TIMEOUT, {
+      headers: etag ? { 'If-Match': etag } : {},
+    })
+  }
+
+  /** The files one session's tool calls wrote, newest first. Spec 65 B6. */
+  async touchedFiles(sessionId: string): Promise<TouchedFile[]> {
+    const res = await this.request<{ files?: TouchedFile[] }>(
+      'GET',
+      `/api/sessions/${encodeURIComponent(sessionId)}/touched`,
+    )
+    return res.files ?? []
   }
 
   // ─── Meta ──────────────────────────────────────────────────────────────
@@ -711,6 +820,45 @@ function queryString(params: Record<string, string | number | undefined>): strin
   const pairs = Object.entries(params).filter(([, v]) => v !== undefined && v !== '')
   if (pairs.length === 0) return ''
   return `?${pairs.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')}`
+}
+
+/**
+ * The error a refused request becomes.
+ *
+ * `code` is the daemon's machine-readable reason when it sent one. Older
+ * routes put a short token in `error` instead, so that stands in.
+ */
+function failure(status: number, parsed: unknown, what: string): ApiError {
+  const detail = (parsed ?? {}) as { error?: string; message?: string; code?: string; size?: number; limit?: number }
+  // A file over the limit says by how much, which is the one useful thing to
+  // tell somebody who cannot open it.
+  if (status === 413 && typeof detail.size === 'number' && typeof detail.limit === 'number') {
+    return new ApiError(status, `Too large (${megabytes(detail.size)}, the limit is ${megabytes(detail.limit)})`, 'too_large')
+  }
+  return new ApiError(
+    status,
+    detail.message ?? detail.error ?? `${what} failed with ${status}`,
+    detail.code ?? detail.error,
+  )
+}
+
+function megabytes(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`
+}
+
+/** The JSON read, reshaped as a raw one, for a daemon that has no raw route. */
+function rawFromJson(file: FileContent): RawFile {
+  const bytes = file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : Buffer.from(file.content, 'utf8')
+  const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  return {
+    status: 200,
+    etag: file.etag,
+    modTime: file.mod_time,
+    size: file.size,
+    contentType: '',
+    encoding: file.encoding === 'base64' ? 'binary' : 'utf8',
+    body,
+  }
 }
 
 function safeParse(text: string): unknown {

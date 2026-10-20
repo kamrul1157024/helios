@@ -50,7 +50,7 @@ export function StatusLine({ hostId, session }: { hostId: string; session: Sessi
       case 'cwd':
         return <PathLabel key={id} path={session.cwd} className="status-cwd" />
 
-      // Bare, as the Git panel and the worktree list already show it. A glyph
+      // Bare, as the Changes mode and the worktree list already show it. A glyph
       // in front reads as noise at 11px, and the branch is legible without one.
       case 'branch':
         if (!git?.branch) return null

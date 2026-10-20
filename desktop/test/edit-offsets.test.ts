@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { hunkHeader, lineOf } from '../src/renderer/components/edit-offsets.ts'
+import { firstLineOf, hunkHeader, lineOf } from '../src/renderer/components/edit-offsets.ts'
 
 const file = ['package main', '', 'func main() {', '\tprintln("hi")', '}', ''].join('\n')
 
@@ -34,4 +34,11 @@ test('the header counts the lines each side of the patch', () => {
 
 test('no start line means no header, so the patch stays unnumbered', () => {
   assert.equal(hunkHeader(' kept\n+added', null), '')
+})
+
+// Opening a tool row's file lands on the edit. Two matches are no reason to
+// land at the top instead, so the first one wins here.
+test('the open target is the first match, even when there are two', () => {
+  assert.equal(firstLineOf('a\nx\nb\nx\n', 'x'), 2)
+  assert.equal(firstLineOf('a\nb\n', 'zz'), null)
 })

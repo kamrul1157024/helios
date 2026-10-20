@@ -7,6 +7,8 @@
  * still got a speck. A path scales with its box instead.
  */
 
+import type { IconKind } from '../filetype.ts'
+
 /** Which way the chevron points. `open` is the disclosure shorthand for down. */
 export type ChevronDir = 'right' | 'down' | 'left' | 'up'
 
@@ -305,5 +307,104 @@ export function ProviderMark({ source, className = '' }: { source: string; class
     <span className="provider-mark" title={title} aria-label={title} role="img">
       {source === 'codex' ? <OpenAIMark className={className} /> : <AnthropicMark className={className} />}
     </span>
+  )
+}
+
+/* ── Files ───────────────────────────────────────────────────────────────────
+   The panel's own glyphs (spec 65, B2 and B5). Stroked like the rest, so they
+   take `ui-icon` and the size of whatever row they sit in. */
+
+/** A folder that is open: the front flap dropped. */
+export function FolderOpen({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3.5 17.5v-11A1.5 1.5 0 015 5h4l2 2.5h6.5A1.5 1.5 0 0119 9v1.5" />
+      <path d="M3.5 17.5l2.6-6A1.5 1.5 0 017.5 10.5h12.3a1 1 0 01.9 1.4l-2.4 5.9a1.5 1.5 0 01-1.4.7H5a1.5 1.5 0 01-1.5-1z" />
+    </svg>
+  )
+}
+
+/** The inner marks that tell one file family from another. */
+const FILE_MARKS: Record<IconKind, JSX.Element | null> = {
+  code: <path d="M10 11.5l-2 2 2 2M14 11.5l2 2-2 2" />,
+  markup: <path d="M9.5 11.5l-2 2 2 2M14.5 11.5l2 2-2 2M12.8 10.5l-1.6 6" />,
+  style: <path d="M9 16.5c1.5 0 2-1 2-2s1-1.5 2-1.5M15 11l-2.5 2.5" />,
+  data: <path d="M10 11c-1 0-1 .8-1 1.5s-.5 1-1 1c.5 0 1 .3 1 1s0 1.5 1 1.5M14 11c1 0 1 .8 1 1.5s.5 1 1 1c-.5 0-1 .3-1 1s0 1.5-1 1.5" />,
+  doc: <path d="M8.5 12h7M8.5 15h7M8.5 18h4.5" />,
+  image: (
+    <>
+      <circle cx="10" cy="12" r="1.2" />
+      <path d="M7.5 18l3-3 2 2 2.5-3 1.5 4" />
+    </>
+  ),
+  shell: <path d="M8.5 12.5l2 2-2 2M12.5 17h3" />,
+  config: (
+    <>
+      <circle cx="12" cy="14.5" r="1.6" />
+      <path d="M12 11v1.2M12 16.8V18M8.5 14.5h1.2M14.3 14.5h1.2" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="9" y="13" width="6" height="4.5" rx="1" />
+      <path d="M10.2 13v-1.2a1.8 1.8 0 013.6 0V13" />
+    </>
+  ),
+  archive: <path d="M12 9v1.5M12 12v1.5M12 15v1.5M11 17.5h2" />,
+  plain: null,
+}
+
+/** A page with its corner folded, marked by family, and tinted to match. */
+export function FileIcon({ kind, className = '' }: { kind: IconKind; className?: string }): JSX.Element {
+  return (
+    <svg
+      className={`ui-icon file-icon ft-${kind} ${className}`.trim()}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M6.5 3.5h7l4 4v12a1 1 0 01-1 1h-10a1 1 0 01-1-1v-15a1 1 0 011-1z" />
+      <path d="M13.5 3.5v4h4" />
+      {FILE_MARKS[kind]}
+    </svg>
+  )
+}
+
+/** Two arrows chasing each other round: read it again. */
+export function Reload({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M19 12a7 7 0 01-12.2 4.7M5 12a7 7 0 0112.2-4.7" />
+      <path d="M17.5 3.5v4h-4M6.5 20.5v-4h4" />
+    </svg>
+  )
+}
+
+/** One sheet over another: copy. */
+export function Copy({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="8.5" y="8.5" width="11" height="11" rx="1.5" />
+      <path d="M15.5 8.5V6a1.5 1.5 0 00-1.5-1.5H6A1.5 1.5 0 004.5 6v8A1.5 1.5 0 006 15.5h2.5" />
+    </svg>
+  )
+}
+
+/** A line that runs to the edge and comes back under itself: word wrap. */
+export function Wrap({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 6.5h16M4 17.5h6M4 12h13a3 3 0 010 6h-3.5" />
+      <path d="M15.5 16l-2 2 2 2" />
+    </svg>
+  )
+}
+
+/** A cross, for closing. */
+export function Close({ className = '' }: { className?: string }): JSX.Element {
+  return (
+    <svg className={`ui-icon ${className}`.trim()} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M7 7l10 10M17 7L7 17" />
+    </svg>
   )
 }

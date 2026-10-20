@@ -34,6 +34,23 @@ export function lineOf(content: string, needle: string): number | null {
 }
 
 /**
+ * The 1-based line the text first starts on, or null when it is not there.
+ *
+ * Unlike `lineOf`, a second match is no reason to give up: this is where to put
+ * the caret when a tool row is opened, and the first place the written text
+ * appears is a better place to land than the top of the file. The daemon's
+ * `touched` line is found the same way.
+ */
+export function firstLineOf(content: string, needle: string): number | null {
+  if (needle === '' || content === '') return null
+  const first = content.indexOf(needle)
+  if (first === -1) return null
+  let line = 1
+  for (let at = content.indexOf('\n'); at !== -1 && at < first; at = content.indexOf('\n', at + 1)) line++
+  return line
+}
+
+/**
  * The `@@` header a patch needs to carry numbers, or '' when there is none to
  * give it.
  *

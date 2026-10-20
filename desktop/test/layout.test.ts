@@ -10,6 +10,7 @@ import {
   panelItem,
   panelOf,
   PANEL_ITEMS,
+  gitWasInFront,
   parseLayout,
   placedItems,
   reconcile,
@@ -41,7 +42,6 @@ const CHAT = panelItem('chat')
 const TERMINAL = panelItem('terminal')
 const APPROVALS = panelItem('approvals')
 const FILES = panelItem('files')
-const GIT = panelItem('git')
 const TERM = termItem('h1:s1')
 const SHELL = termItem('h1:s1:sh2')
 
@@ -51,7 +51,7 @@ function split(): Layout {
 }
 
 /** What is left in the first group once `files` has been split out of it. */
-const REST = [CHAT, TERMINAL, APPROVALS, GIT]
+const REST = [CHAT, TERMINAL, APPROVALS]
 
 test('an item names either a panel or a terminal', () => {
   assert.equal(panelOf(FILES), 'files')
@@ -128,15 +128,15 @@ test('moving the last item out of a group collapses it and returns its weight', 
 
   assert.equal(merged.groups.length, 1)
   // Dropped at slot 1, which is where the pointer was — not appended.
-  assert.deepEqual(g(merged, 0).items, [CHAT, FILES, TERMINAL, APPROVALS, GIT])
+  assert.deepEqual(g(merged, 0).items, [CHAT, FILES, TERMINAL, APPROVALS])
   assert.equal(g(merged, 0).size, 1)
   assert.equal(groupOf(merged, FILES)?.id, left.id)
   assert.equal(merged.groups.some((group) => group.id === right.id), false)
 })
 
 test('moving within a group reorders rather than collapsing', () => {
-  const moved = moveItem(defaultLayout(), GIT, 'g1', 0)
-  assert.deepEqual(g(moved, 0).items, [GIT, CHAT, TERMINAL, APPROVALS, FILES])
+  const moved = moveItem(defaultLayout(), APPROVALS, 'g1', 0)
+  assert.deepEqual(g(moved, 0).items, [APPROVALS, CHAT, TERMINAL, FILES])
   assert.equal(moved.groups.length, 1)
 })
 
@@ -191,15 +191,15 @@ test('reconcile is idempotent for tabs already placed', () => {
 test('sweep spares an item that is visible in a group other than the focused one', () => {
   const layout = split()
   const old = Date.now() - 10 * 60 * 1000
-  const dead = sweep(layout, { [CHAT]: old, [FILES]: old, [GIT]: old }, Date.now(), 5 * 60 * 1000)
-  // chat and files are each in front of a group; only git is unseen.
-  assert.deepEqual(dead, [GIT])
+  const dead = sweep(layout, { [CHAT]: old, [FILES]: old, [APPROVALS]: old }, Date.now(), 5 * 60 * 1000)
+  // chat and files are each in front of a group; only approvals is unseen.
+  assert.deepEqual(dead, [APPROVALS])
 })
 
 test('sweep leaves items inside the window alone', () => {
   const layout = split()
   const now = Date.now()
-  assert.deepEqual(sweep(layout, { [GIT]: now - 1000 }, now, 5 * 60 * 1000), [])
+  assert.deepEqual(sweep(layout, { [APPROVALS]: now - 1000 }, now, 5 * 60 * 1000), [])
 })
 
 test('a sash moves weight between its two groups and keeps the total', () => {
@@ -260,4 +260,24 @@ test('a group id restored from disk is never handed out twice', () => {
   })
   const after = splitInto(saved, FILES, 'g9', 'after')
   assert.equal(new Set(after.groups.map((group) => group.id)).size, after.groups.length)
+})
+
+// The Git panel went (spec 65, B8). A layout saved with it reads back with the
+// Files panel in its place — once, however many groups named either.
+test('a saved Git panel becomes the Files panel, once', () => {
+  const saved = {
+    axis: 'row',
+    focused: 'g1',
+    groups: [
+      { id: 'g1', items: [CHAT, 'panel:git'], active: 'panel:git', size: 1 },
+      { id: 'g2', items: [FILES, TERMINAL], active: TERMINAL, size: 1 },
+    ],
+  }
+  assert.equal(gitWasInFront(saved), true)
+  const layout = parseLayout(saved)
+  assert.deepEqual(g(layout, 0).items, [CHAT, FILES])
+  assert.equal(g(layout, 0).active, FILES)
+  assert.deepEqual(g(layout, 1).items, [TERMINAL])
+  assert.equal(gitWasInFront(defaultLayout()), false)
+  assert.equal(placedItems(defaultLayout()).includes('panel:git'), false)
 })

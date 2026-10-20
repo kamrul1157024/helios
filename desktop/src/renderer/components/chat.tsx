@@ -918,7 +918,7 @@ function ToolUse({
             onClick={(event) => {
               // The row behind this expands; opening the file is not that.
               event.stopPropagation()
-              store.openFile(hostId, resolveFilePath(filePath, cwd))
+              store.openFile(hostId, resolveFilePath(filePath, cwd), editTarget(tool, input))
             }}
           >
             ↗
@@ -1051,7 +1051,7 @@ function ToolDiff({
   const numbered = useMemo(() => {
     if (whole) return `${hunkHeader(diff, 1)}
 ${diff}`
-    const content = file.data && file.data.encoding !== 'base64' ? file.data.content : ''
+    const content = file.data && file.data.encoding !== 'base64' && file.data.encoding !== 'binary' ? file.data.content : ''
     const header = hunkHeader(diff, content ? lineOf(content, written) : null)
     return header ? `${header}
 ${diff}` : diff
@@ -1069,6 +1069,23 @@ ${diff}` : diff
       />
     </div>
   )
+}
+
+/**
+ * Where in its file a tool call's write landed, for the arrow that opens it.
+ *
+ * A Write is the whole file, so the top. An Edit carries the text it wrote but
+ * not where, so the panel is handed the text and finds it once the file is
+ * read — the same search the patch's line numbers come from.
+ */
+function editTarget(tool: string, input: Record<string, unknown>): { line?: number; needle?: string } {
+  if (tool === 'Write') return { line: 1 }
+  if (tool === 'Edit') return { needle: str(input.new_string) || undefined }
+  if (tool === 'MultiEdit' && Array.isArray(input.edits)) {
+    const first = input.edits[0] as Record<string, unknown> | undefined
+    return { needle: str(first?.new_string) || undefined }
+  }
+  return {}
 }
 
 /** The patch a tool call implies, or "" for calls that changed no file. */

@@ -3,3 +3,4 @@ dist/
 release/
 test-results/
 playwright-report/
+e2e/screenshots/

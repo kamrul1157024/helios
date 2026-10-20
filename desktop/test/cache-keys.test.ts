@@ -3,10 +3,12 @@ import test from 'node:test'
 
 import {
   appendDelta,
+  changedPaths,
   effectsFor,
   fileEffectFor,
   keys,
   mergeSettings,
+  parentDir,
   patchSessionInPage,
   settingValues,
   sortModeOf,
@@ -128,6 +130,7 @@ test('session_status patches the row and invalidates every list holding it', () 
     { kind: 'invalidate', queryKey: keys.allSessions(HOST) },
     { kind: 'invalidate', queryKey: keys.jobSessions(HOST) },
     { kind: 'invalidate', queryKey: keys.session(HOST, 's1') },
+    { kind: 'invalidate', queryKey: keys.touched(HOST, 's1') },
   ])
 })
 
@@ -186,21 +189,74 @@ test('session_evicted takes out the whole host', () => {
 
 // Every path named has changed *content*: the daemon compares digests before it
 // says anything, so a formatter that rewrites a file with the bytes already in
-// it never reaches here. See docs/specs/54-file-change-events.md.
-test('file_changed takes out the files and the git reads', () => {
+// it never reaches here. See docs/specs/54-file-change-events.md. What it takes
+// out is narrow (spec 65, 2.1): the folder it sits in, never an open tab.
+test('file_changed takes out the folder, marks the file and quick open stale, and refetches git', () => {
   const named = { paths: [{ path: '/repo/a.go', kind: 'file', mod_time: '2026-09-01T04:03:11.204Z' }] }
   assert.deepEqual(effectsFor(HOST, { type: 'file_changed', data: named }), [
-    { kind: 'invalidate', queryKey: keys.files(HOST) },
+    { kind: 'invalidate', queryKey: keys.fileDir(HOST, '/repo'), exact: true },
+    { kind: 'invalidate', queryKey: keys.fileContent(HOST, '/repo/a.go'), exact: true, refetchType: 'none' },
+    { kind: 'invalidate', queryKey: keys.fileAsset(HOST, '/repo/a.go'), exact: true },
+    { kind: 'invalidate', queryKey: keys.fileSearches(HOST), refetchType: 'none' },
     { kind: 'invalidate', queryKey: keys.git(HOST) },
   ])
 })
 
-// A working-tree write moves `git status`, and a repo entry is a commit or a
-// checkout, so both kinds reach git the same way.
-test('a repo entry and a deletion take out the same keys', () => {
-  for (const entry of [{ path: '/repo', kind: 'repo' }, { path: '/repo/x.go', kind: 'file', gone: true }]) {
-    assert.equal(effectsFor(HOST, { type: 'file_changed', data: { paths: [entry] } }).length, 2)
+// The bug this rule exists for: an invalidation that refetches file contents
+// refetches the open tab, which is an active query, and moves `saved` under an
+// unsaved buffer. Nothing a file event does may refetch a file's contents.
+test('no file event ever refetches a file body, or the content search', () => {
+  const named = {
+    paths: [
+      { path: '/repo/a.go', kind: 'file' },
+      { path: '/repo/gone.go', kind: 'file', gone: true },
+      { path: '/repo/pkg', kind: 'dir' },
+      { path: '/repo', kind: 'repo' },
+    ],
   }
+  for (const effect of effectsFor(HOST, { type: 'file_changed', data: named })) {
+    if (effect.kind !== 'invalidate') continue
+    const [, , area, what] = effect.queryKey
+    if (area === 'files' && what === 'content') assert.equal(effect.refetchType, 'none')
+    assert.notDeepEqual(effect.queryKey, keys.files(HOST))
+    assert.notEqual(what, 'grep')
+  }
+})
+
+test('a folder entry takes out its own listing as well as its parent', () => {
+  const effects = effectsFor(HOST, { type: 'file_changed', data: { paths: [{ path: '/repo/pkg', kind: 'dir' }] } })
+  assert.deepEqual(
+    effects.filter((e) => e.kind === 'invalidate' && e.queryKey[3] === 'dir').map((e) => e.kind === 'invalidate' && e.queryKey),
+    [keys.fileDir(HOST, '/repo'), keys.fileDir(HOST, '/repo/pkg')],
+  )
+})
+
+// A checkout can move any folder, so every listing goes — but still no file
+// body and no search.
+test('a repo entry takes out every listing and git', () => {
+  assert.deepEqual(effectsFor(HOST, { type: 'file_changed', data: { paths: [{ path: '/repo', kind: 'repo' }] } }), [
+    { kind: 'invalidate', queryKey: keys.fileDirs(HOST) },
+    { kind: 'invalidate', queryKey: keys.fileSearches(HOST), refetchType: 'none' },
+    { kind: 'invalidate', queryKey: keys.git(HOST) },
+  ])
+})
+
+test('two files in one folder take its listing out once', () => {
+  const named = { paths: [{ path: '/repo/a.go', kind: 'file' }, { path: '/repo/b.go', kind: 'file' }] }
+  const listings = effectsFor(HOST, { type: 'file_changed', data: named }).filter(
+    (e) => e.kind === 'invalidate' && e.queryKey[3] === 'dir',
+  )
+  assert.equal(listings.length, 1)
+})
+
+test('a file at the top of the disk lists the root', () => {
+  assert.equal(parentDir('/a.go'), '/')
+  assert.equal(parentDir('/repo/a.go'), '/repo')
+  assert.equal(parentDir('/repo/pkg/'), '/repo')
+})
+
+test('an entry with no kind is a file, and one with no path is skipped', () => {
+  assert.deepEqual(changedPaths([{ path: '/x' }, { kind: 'file' }, null, 'nonsense']), [{ path: '/x', kind: 'file' }])
 })
 
 test('a file_changed naming nothing does nothing', () => {
@@ -218,6 +274,7 @@ test('a reconnect refetches what the stream could have missed', () => {
     { kind: 'invalidate', queryKey: keys.notifications(HOST) },
     { kind: 'invalidate', queryKey: keys.files(HOST) },
     { kind: 'invalidate', queryKey: keys.git(HOST) },
+    { kind: 'invalidate', queryKey: keys.touchedAll(HOST) },
   ])
 })
 
