@@ -1,0 +1,144 @@
+name: guacd bundle
+
+# Publishes the guacd bundle the daemon installs for remote desktop
+# (docs/specs/66-remote-desktop.md, D5) to one fixed release, guacd-<version>.
+#
+# The bundle belongs to a guacd version, not to a Helios release: one bundle
+# serves every daemon that embeds its hash, so it lives on its own tag and
+# Helios releases do not carry it. That release is a prerelease, which keeps
+# it out of releases/latest and out of the apps' update checks.
+#
+# Each arch is published once and never replaced. A run finds the asset
+# already there, checks it against internal/desktop/guacd.sha256 and stops; or
+# builds it, requires the build to hash to the manifest line (the build is
+# reproducible, see scripts/build-guacd.sh), smoke-tests it and uploads it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build-guacd.sh
+      - scripts/guacd-*
+      - scripts/guacd-patches/**
+      - internal/desktop/guacd.sha256
+
+permissions:
+  contents: write
+
+# Two pushes in a row must not race to create the release or upload the
+# same asset.
+concurrency:
+  group: guacd-bundle
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release guacd-<version>
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        run: |
+          v=$(sed -n 's/^GUACD_VERSION=//p' scripts/build-guacd.sh)
+          if [ -z "$v" ]; then
+            echo "No GUACD_VERSION in scripts/build-guacd.sh" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=guacd-$v" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release if it is missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG exists."
+            exit 0
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --prerelease --latest=false --target "$GITHUB_SHA" \
+            --title "guacd $VERSION bundle" \
+            --notes "The guacd bundle the Helios daemon downloads for remote desktop. Not a Helios release: the daemon checks each file against the SHA-256 it embeds. See docs/specs/66-remote-desktop.md."
+
+  bundle:
+    name: Bundle (${{ matrix.arch }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release.outputs.tag }}
+      ASSET: helios-guacd-${{ needs.release.outputs.version }}-linux-${{ matrix.arch }}.tar.zst
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the expected hash
+        id: want
+        run: |
+          want=$(awk -v a="$ASSET" '$2 == a { print $1 }' internal/desktop/guacd.sha256)
+          if [ -z "$want" ]; then
+            echo "$ASSET has no line in internal/desktop/guacd.sha256; add its hash before publishing it." >&2
+            exit 1
+          fi
+          echo "hash=$want" >> "$GITHUB_OUTPUT"
+
+      - name: Check the published asset
+        id: published
+        env:
+          WANT: ${{ steps.want.outputs.hash }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qxF "$ASSET"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          dir=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --dir "$dir"
+          got=$(sha256sum "$dir/$ASSET" | cut -d ' ' -f 1)
+          if [ "$got" != "$WANT" ]; then
+            echo "The published $ASSET hashes to $got, but the daemon expects $WANT." >&2
+            echo "Published assets are never replaced; fix the manifest or the release by hand." >&2
+            exit 1
+          fi
+          echo "$ASSET is published and matches the manifest." >> "$GITHUB_STEP_SUMMARY"
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        if: steps.published.outputs.exists != 'true'
+        run: ./scripts/build-guacd.sh ${{ matrix.arch }}
+
+      - name: Require the manifest hash
+        if: steps.published.outputs.exists != 'true'
+        env:
+          WANT: ${{ steps.want.outputs.hash }}
+        run: |
+          got=$(cut -d ' ' -f 1 "dist/$ASSET.sha256")
+          if [ "$got" != "$WANT" ]; then
+            echo "$ASSET built to $got, but the daemon expects $WANT." >&2
+            echo "The build is no longer reproducible from its pins, or a pin moved without the manifest." >&2
+            exit 1
+          fi
+
+      - name: Smoke test on a clean Ubuntu 26.04
+        if: steps.published.outputs.exists != 'true'
+        run: ./scripts/smoke-guacd.sh "dist/$ASSET"
+
+      - name: Upload
+        if: steps.published.outputs.exists != 'true'
+        # No --clobber: an asset that appeared since the check above is left
+        # alone, and the upload fails rather than replace it.
+        run: |
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "dist/$ASSET" "dist/$ASSET.sha256"
+          echo "Uploaded $ASSET to $TAG." >> "$GITHUB_STEP_SUMMARY"

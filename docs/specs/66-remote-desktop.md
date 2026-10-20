@@ -204,16 +204,39 @@ its last output line.
 
 Ubuntu no longer ships guacd, so Helios builds it.
 
-- **The release workflow gains a job.** It builds `guacamole-server` 1.6.0 with
-  FreeRDP 3, for `linux-amd64` and `linux-arm64`. It builds only the RDP
-  protocol: no VNC, SSH or telnet support.
+- **A workflow of its own builds it.** `.github/workflows/guacd.yml` builds
+  `guacamole-server` 1.6.0 with FreeRDP 3, for `linux-amd64` and
+  `linux-arm64`. It builds only the RDP protocol: no VNC, SSH or telnet
+  support. It runs by hand, and on a push to `main` that changes the build
+  scripts or the manifest.
 - **One folder, no system libraries.** The job copies every shared library
   that guacd needs, except glibc, into `lib/`. It sets the rpath to
   `$ORIGIN/../lib` with `patchelf`. The build runs on the oldest glibc that the
   daemon supports, so the bundle runs on newer distros too.
-- **The asset** is `helios-guacd-1.6.0-linux-<arch>.tar.zst`, published on the
-  same release as the daemon. The daemon binary embeds the expected SHA-256 of
-  each asset and refuses a mismatch.
+- **The asset** is `helios-guacd-1.6.0-linux-<arch>.tar.zst`, on one fixed
+  release with the tag `guacd-1.6.0`. Every daemon downloads from that tag,
+  whatever its own version:
+
+  ```
+  https://github.com/kamrul1157024/helios/releases/download/guacd-1.6.0/<asset>
+  ```
+
+  The bundle belongs to a guacd version, not to a Helios release, so Helios
+  releases do not carry it. A release that predates the bundle can then never
+  be the place a daemon looks for it.
+- **The tag is a prerelease.** The desktop app and the phone check
+  `releases/latest` for updates, and GitHub leaves prereleases out of it. So the
+  bundle's release never shows up as a new Helios version.
+- **The hash is the trust.** The daemon binary embeds the expected SHA-256 of
+  each asset (`internal/desktop/guacd.sha256`) and refuses a mismatch. The build
+  is pinned and reproducible, so the workflow builds each asset and requires
+  it to hash to the manifest line. An asset that is already on the release is
+  checked against the manifest and never replaced.
+- **Failures are sentences.** A failed download says "Could not download the
+  desktop service for this machine." A mismatch says "The desktop service did
+  not match its expected checksum, so Helios did not run it." The URL, the
+  HTTP status and the hashes go on the step's line, not in the state's error.
+  The same rule holds for every step.
 - **Updates.** A new guacd version means a new embedded hash. The daemon
   replaces the bundle on its next start.
 
@@ -341,15 +364,16 @@ controls do too.
 |---|---|
 | `sudo -n` fails | "Helios needs root once to install the desktop. Run: `helios setup desktop`", with Copy. |
 | apt is locked by another install | The step waits up to 2 minutes, then fails with "Another install is running. Try again when it ends." |
-| The guacd download fails or the hash does not match | "Could not get the desktop service", and Retry. The daemon never runs a bundle that fails the check. |
+| The guacd download fails | "Could not download the desktop service for this machine.", and Retry. The step's line has the URL and the status. |
+| The guacd hash does not match | "The desktop service did not match its expected checksum, so Helios did not run it." The daemon never runs a bundle that fails the check. |
 | xrdp does not start | The last lines of `journalctl -u xrdp`, and Retry. |
 | The XFCE session exits at once | A broken `~/.xsession` is the usual cause. The error names the file. |
 | The host is macOS or Windows | `state: unsupported`. The view says that remote desktop needs a Linux host. |
 
 ## Rollout
 
-1. **D5.** The guacd bundle job in the release workflow, with a smoke test that
-   starts guacd from the bundle on a clean container.
+1. **D5.** The guacd workflow and the `guacd-1.6.0` prerelease, with a smoke
+   test that starts guacd from the bundle on a clean container.
 2. **D3, D1 and D4.** The runtime, the auth, the install, and the off switch.
 3. **D2.** The tunnel.
 4. **D7 and D9.** The desktop app view, with the display controls.

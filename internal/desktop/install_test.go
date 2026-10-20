@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,7 +180,6 @@ func newTestInstaller(t *testing.T, sys *fakeSystem) (*Installer, *int) {
 		User:      "dev",
 		Home:      "/home/dev",
 		HeliosDir: filepath.Join(dir, "helios"),
-		Version:   "dev",
 		Start:     func(ctx context.Context) error { starts++; return nil },
 	}
 	return in, &starts
@@ -304,11 +305,11 @@ func TestAptLockIsReportedInWords(t *testing.T) {
 	sys.aptOutput = "E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 42 (apt)\n"
 	in, _ := newTestInstaller(t, sys)
 	err := in.Run(context.Background())
-	if !errors.Is(err, errAptLocked) {
-		t.Fatalf("Run = %v, want the apt lock error", err)
+	if err == nil || err.Error() != msgAptLocked {
+		t.Fatalf("Run = %v, want the apt lock sentence", err)
 	}
-	if s := in.Steps()[0]; s.State != StepFailed {
-		t.Fatalf("packages step = %s", s.State)
+	if s := in.Steps()[0]; s.State != StepFailed || !strings.Contains(s.Line, "Could not get lock") {
+		t.Fatalf("packages step = %s %q; the line keeps apt's own words", s.State, s.Line)
 	}
 }
 
@@ -351,8 +352,11 @@ func TestBundleRejectsHashMismatch(t *testing.T) {
 	writeBundle(t, bundle)
 	err := installBundle(context.Background(), bundleSource{path: bundle, want: strings.Repeat("0", 64)},
 		filepath.Join(dir, "guacd"), func(string) {})
-	if !errors.Is(err, errBundleUnavailable) {
-		t.Fatalf("installBundle = %v, want a refusal", err)
+	if err == nil || err.Error() != msgChecksum {
+		t.Fatalf("installBundle = %v, want the checksum sentence", err)
+	}
+	if _, detail := explain(err, ""); !strings.Contains(detail, "expected "+strings.Repeat("0", 64)) {
+		t.Errorf("detail = %q, want both hashes", detail)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "guacd")); !os.IsNotExist(err) {
 		t.Fatal("a bundle that failed the check was unpacked")
@@ -367,17 +371,16 @@ func TestManifestAndURL(t *testing.T) {
 	if _, ok := manifestHash(manifest, "helios-guacd-1.6.0-linux-arm64.tar.zst"); ok {
 		t.Fatal("found an arch the manifest does not list")
 	}
-	if got := bundleURL("3.12.0", "amd64"); got != releaseBase+"/download/v3.12.0/helios-guacd-1.6.0-linux-amd64.tar.zst" {
-		t.Errorf("release URL = %s", got)
-	}
-	if got := bundleURL("3.12.0-4-gabc", "arm64"); got != releaseBase+"/latest/download/helios-guacd-1.6.0-linux-arm64.tar.zst" {
-		t.Errorf("dev URL = %s", got)
+	// One fixed tag for every daemon, whatever release it came from.
+	want := "https://github.com/kamrul1157024/helios/releases/download/guacd-1.6.0/helios-guacd-1.6.0-linux-arm64.tar.zst"
+	if got := bundleURL("arm64"); got != want {
+		t.Errorf("bundleURL = %s, want %s", got, want)
 	}
 }
 
-// A missing line fails nothing on its own: the release job only warns, and
-// the daemon refuses the desktop on that one arch. So the embedded manifest
-// is checked here against the arches the release publishes.
+// A missing line would make the guacd workflow fail for that arch, and the
+// daemon refuse the desktop there. So the embedded manifest is checked here
+// against every arch the workflow builds.
 func TestEmbeddedManifestCoversEveryPublishedArch(t *testing.T) {
 	for _, arch := range []string{"amd64", "arm64"} {
 		asset := bundleAsset(arch)
@@ -433,5 +436,40 @@ func TestAgentEnvRespectsTheOffSwitch(t *testing.T) {
 	settings[SettingAgentDisplay] = "false"
 	if env := m.AgentEnv(); len(env) != 0 {
 		t.Fatalf("agent_display off, agents still get %v", env)
+	}
+}
+
+func TestDownloadFailureIsASentence(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	dir := t.TempDir()
+	err := installBundle(context.Background(), bundleSource{url: srv.URL + "/bundle.tar.zst", want: strings.Repeat("0", 64)},
+		filepath.Join(dir, "guacd"), func(string) {})
+	if err == nil || err.Error() != msgDownload {
+		t.Fatalf("installBundle = %v, want the download sentence", err)
+	}
+	if strings.Contains(err.Error(), "http") {
+		t.Fatalf("the sentence for people carries a URL: %q", err)
+	}
+	if _, detail := explain(err, ""); !strings.Contains(detail, srv.URL) || !strings.Contains(detail, "404") {
+		t.Errorf("detail = %q, want the URL and the status", detail)
+	}
+}
+
+func TestStepFailureKeepsDetailOnTheLine(t *testing.T) {
+	sys := newFakeSystem()
+	in, _ := newTestInstaller(t, sys)
+	t.Setenv(BundleEnv, filepath.Join(t.TempDir(), "missing.tar.zst"))
+	err := in.Run(context.Background())
+	if err == nil {
+		t.Fatal("Run succeeded without a bundle")
+	}
+	if strings.Contains(err.Error(), "missing.tar.zst") || strings.Count(err.Error(), ":") > 0 {
+		t.Fatalf("error %q is not a plain sentence", err)
+	}
+	for _, s := range in.Steps() {
+		if s.ID == "guacd" && (s.State != StepFailed || !strings.Contains(s.Line, "missing.tar.zst")) {
+			t.Fatalf("guacd step = %s %q; the line should name the file", s.State, s.Line)
+		}
 	}
 }

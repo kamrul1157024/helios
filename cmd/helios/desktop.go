@@ -12,7 +12,6 @@ import (
 
 	"github.com/kamrul1157024/helios/internal/daemon"
 	"github.com/kamrul1157024/helios/internal/desktop"
-	"github.com/kamrul1157024/helios/internal/version"
 )
 
 // setupDesktop runs the remote desktop install from a terminal, where sudo
@@ -30,7 +29,7 @@ func setupDesktop(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	inst := desktop.NewInstaller(desktop.NewHostSystem(true), daemon.HeliosDir(), version.Current)
+	inst := desktop.NewInstaller(desktop.NewHostSystem(true), daemon.HeliosDir())
 	if uninstall {
 		left, err := inst.Uninstall(ctx)
 		if err != nil {
