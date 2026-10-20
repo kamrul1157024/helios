@@ -149,8 +149,9 @@ GET /api/desktop
 ### D4. Install on demand
 
 The first open of a desktop that is `missing` starts the install. So does
-`POST /api/desktop/install`. Each step reports progress as an SSE event,
-`desktop_install`, with the step, the state, and the last output line.
+`POST /api/desktop/install`. Each step reports progress through the SSE event
+`desktop_state`, which carries the whole state: every step with its state and
+its last output line.
 
 | Step | What it does | Needs root |
 |---|---|---|
