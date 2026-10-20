@@ -70,6 +70,7 @@ what is merged. Some are superseded and stay here for the history.
 | [60-group-chat.md](60-group-chat.md) | Group Chat: Sessions in a Channel |
 | [62-groups-on-the-phone.md](62-groups-on-the-phone.md) | Groups on the Phone |
 | [64-session-forking.md](64-session-forking.md) | Session Forking: A Tree of Conversations, Rooted in One |
+| [65-fast-files.md](65-fast-files.md) | Fast Files: Send Less, Rebuild Less, Block Nothing, Show More |
 | [ai-narration.md](ai-narration.md) | AI Narration for Voice Mode |
 | [desktop-notification-handoff.md](desktop-notification-handoff.md) | Hand desktop notifications to the desktop app |
 | [desktop-notification-service.md](desktop-notification-service.md) | Desktop Notification Service |
