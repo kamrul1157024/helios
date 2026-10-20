@@ -197,7 +197,7 @@ each one, and it answers a fourth reason that those specs did not name.
 | Raw events become SSE broadcasts and evict `session_status` (spec 54). | Raw events **never** reach SSE. They change the index, and they poke the spec 54 sweep. The sweep still emits only for watched paths, so the output stays proportional to what a person looks at. |
 | `max_user_watches` is 8192 on some distributions. One `node_modules` uses all of it (spec 54). | The daemon watches **directories only**, and never ignored directories. It reads the kernel limit and uses at most half of it, across all roots. Over the budget, that root falls back. See below. |
 | macOS and Linux behave differently (spec 54, spec 58). | The index needs only one fact: "this directory's entries changed". It does not trust event types. Each event triggers a `ReadDir` of the named directory and a compare with the index. Both platforms get the same correctness argument. |
-| fsnotify on macOS uses kqueue. kqueue opens one descriptor for every *file* in a watched directory. | On macOS, the daemon uses FSEvents for the tree, not kqueue. See "macOS" below. |
+| fsnotify on macOS uses kqueue. kqueue opens one descriptor for every *file* in a watched directory. | The daemon never uses kqueue. macOS polls. See "macOS" below. |
 
 **What the watcher watches.**
 
@@ -236,11 +236,10 @@ the design that spec 58 proposed, so it is a proven fallback, not a new one.
 The search response reports `"watch": "live" | "polling"`, so a client and a
 bug report can tell the two modes apart.
 
-**macOS.** fsnotify v1 has no FSEvents backend. FSEvents is recursive, uses one
-stream for each root, and costs no descriptor for each file. The daemon uses
-`github.com/fsnotify/fsevents` behind a `darwin && cgo` build tag. A darwin
-binary that was built without cgo uses the fallback. Open question 1 asks
-whether the release builds the darwin daemon with cgo.
+**macOS.** fsnotify v1 has no FSEvents backend, and its kqueue backend costs a
+descriptor for every file. So every root on a platform other than Linux runs in
+the fallback, by build tag. FSEvents, which needs cgo, is a later change. The
+setting `files.watch` (`auto` | `polling`) forces the fallback on Linux too.
 
 **Linux budget.** Read `/proc/sys/fs/inotify/max_user_watches` at start-up.
 Give the index at most half. Other tools, for example editors and `tsc
@@ -448,7 +447,7 @@ Part A makes the bytes fast. This section makes the screen honest about it.
 - **Git state.** Each row joins the git status query that already exists. A
   changed file shows a letter badge on the right: M, A, D, U or R, with a
   tooltip such as "Modified". A folder that holds a change shows a small dot.
-  Colors come from the theme variables that the Git tab already uses.
+  Colors come from the theme variables that the git views already use.
 - **Ignored files.** `GET /api/files` adds `ignored: bool` to each entry. The
   daemon fills it from the warm index from 1.3: an entry under a git root that
   is not in the index is ignored. When the index is cold, the field is absent,
@@ -477,7 +476,8 @@ Part A makes the bytes fast. This section makes the screen honest about it.
   daemon ranking does not change, so spec 58's rule of "no frecency in the
   ranking" still holds.
 - **Match highlights.** Each match in `GET /api/files/search` gets
-  `positions: number[]`, the byte offsets of the matched characters in `path`.
+  `positions: number[]`, the UTF-16 offsets of the matched characters in `rel`.
+  Both clients index strings in UTF-16, so they use the offsets as they are.
   `fuzzyScore` already finds them, and now it returns them. The client shows the
   matched characters in bold, in the file name and in the folder.
 - **`file:line`.** `foo.go:42` and `foo.go:42:7` strip the suffix before the
@@ -617,7 +617,7 @@ two sections:
    same worktree, and the user's own edits.
 
 A file that the agent deleted shows struck through. A click opens its diff in
-the Git tab.
+the Files tab (B8).
 
 ### Marks everywhere else
 
@@ -709,6 +709,58 @@ the Git tab.
   `:842`, `:1081`). The HTML preview shows a dark backdrop around the page in
   dark mode.
 
+## B8. One place for files and changes: the Git tab goes away
+
+Today a person reads a file in one tab and its diff in another. The Git tab
+(`components/git.tsx`, `commits.tsx`, `worktrees.tsx`; mobile
+`git_status_screen.dart`) holds a scope picker, a list of changed files, the
+diffs, review comments and a worktree view. The Changes view from B6 already
+lists the changed files. Two lists of the same files, in two tabs, is one too
+many.
+
+### Desktop
+
+- **Changes is the git view.** The scope picker from the Git panel sits at the
+  top of the Changes mode. Its default is the same as today: "Review vs
+  `<base>`" when the branch has commits ahead of its base, else Uncommitted.
+  The choice is still kept for each session (`helios.git.scope.*`).
+- **The sections follow the scope.**
+  - Uncommitted: the two B6 sections, "Edited by this session" and "Other
+    uncommitted changes".
+  - Review, one commit, or a range: the files that the scope changed, with the
+    B6 agent mark on files that this session edited.
+- **History stays in the scope picker.** The scope menu lists recent commits,
+  as today. Picking a commit or a range changes the list. There is no extra
+  mode.
+- **A diff is a view of a file tab, not a tab of its own.** A file with changes
+  in the current scope gets a three-part toggle in its header: Source, Diff,
+  and Preview (Preview only for markdown and HTML). A click in Changes opens
+  the file with Diff on. One file has one tab.
+- **The diff view.** It is the existing `diff-view.tsx`, windowed as in 2.6,
+  with the split/unified choice saved, next and previous change keys (F7 and
+  ⇧F7), and the review comments that the Git panel offers today
+  (`ReviewView`). A deleted file opens as a diff with no Source view.
+- **Worktrees.** The worktree picker in the Files root row gains the worktree
+  list and actions from `worktrees.tsx`. The separate Worktrees view goes away.
+- **The tab goes away.** `git` leaves `PANELS` (`detail.tsx:44`). A saved panel
+  of `git` opens Files in Changes mode. Every link that opened the Git tab
+  opens the Changes mode or a diff in Files instead.
+
+### Mobile
+
+- The Git entry in the session screen goes away
+  (`session_detail_screen.dart:1163`). The Files screen's Changes chip opens
+  the same view, with the scope bar from `git_status_screen.dart` at its top.
+- A changed file opens in the file viewer with a Source / Diff toggle. The diff
+  is the existing `GitDiffScreen` body, with Ask AI, inside the viewer.
+- Commit detail stays reachable from the scope bar.
+
+### What stays the same
+
+- The git endpoints and their shapes.
+- The scope logic, the review comments, and the Ask AI on diffs. They move;
+  they do not change.
+
 ## Rollout
 
 Each phase is one or more PRs. Each PR posts numbers against the budget table.
@@ -723,14 +775,16 @@ Each UI PR posts before and after screenshots.
    status, top-k ranking, and the cold index. The daemon fields for Part B go
    here too: `positions` on search matches, `ranges` on grep matches, `ignored`
    on listings, and the whole-word and glob grep options.
-5. **Phase 1c.** fsnotify and FSEvents, with the fallback. Behind the setting
+5. **Phase 1c.** fsnotify on Linux, with the fallback everywhere else. Behind the setting
    `files.watch` (`auto` | `polling`) for one release, so a user can turn it off
    when a platform misbehaves.
 6. **Phase 2 with B1 to B5.** Desktop. Speed first, then the panel:
    2.2, 2.3, B1, 2.5 with B2, B3, B4, 2.4 with B5, 2.6.
 7. **B6.** The `touched` endpoint and the provider method, then the Changes
    view, the marks and the flash on desktop.
-8. **Phase 3 with B7.** Mobile: 3.1 and B7.1, 3.2, 3.3, B7.2, B7.3 (with the B6
+8. **B8.** Desktop, then mobile. After B6, because the Changes view is its
+   base.
+9. **Phase 3 with B7.** Mobile: 3.1 and B7.1, 3.2, 3.3, B7.2, B7.3 (with the B6
    marks), B7.4, B7.5, B7.6, 3.4.
 
 ## Testing
@@ -804,23 +858,18 @@ Each UI PR posts before and after screenshots.
 - **Folder sets from spec 58.** This spec keeps one root. It does not block
   spec 58, and the tree work in B2 carries over to top-level folders.
 
-## Open questions
+## Decisions on the open questions
 
-1. **cgo on the darwin daemon.** FSEvents needs cgo. Is the darwin daemon built
-   on macOS, where cgo is on by default, or cross-built with `CGO_ENABLED=0`? If
-   it is cross-built, macOS users get the polling fallback until the release
-   builds the daemon on a macOS runner.
-2. **Watch budget share.** Half of `max_user_watches` is a guess. Should it be
-   a setting?
-3. **Grep staleness.** 2.1 shows a "may be out of date" line instead of a
-   refetch. Is an explicit "Search again" acceptable, or must the results update
-   live?
-4. **Explorer shortcut.** F3 moves the explorer toggle to ⌘⇧E, so that ⌘B
-   belongs to the sidebar alone. Is that the right owner for ⌘B?
-5. **The agent mark across sessions.** B6 marks the files that *this* session
-   edited. Two sessions in one worktree each see only their own marks, and see
-   the other session's edits under "Other uncommitted changes". Should the tree
-   also name the other session?
+1. **macOS.** It uses the fallback in this change. FSEvents with cgo comes
+   later, after the release builds the darwin daemon on a macOS runner.
+2. **Watch budget.** Half of `max_user_watches`. It is not a setting.
+3. **Grep staleness.** The "Results may be out of date · Search again" line
+   stays. Search does not rerun on its own.
+4. **Explorer shortcut.** ⌘⇧E. ⌘B belongs to the sidebar alone.
+5. **Other sessions' edits.** Each session marks only its own edits. The others
+   show under "Other uncommitted changes".
+6. **The Git tab (B8).** It goes away on desktop and mobile. A diff is a toggle
+   in the file tab. History stays in the scope picker.
 
 ## Supersedes
 
