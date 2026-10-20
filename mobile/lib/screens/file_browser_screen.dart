@@ -1,20 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
-import 'package:flutter_highlight/themes/atom-one-dark.dart';
-import 'package:flutter_highlight/themes/atom-one-light.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:highlight/highlight.dart' show highlight;
-// Both packages export Provider, ChangeNotifierProvider and Consumer.
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
-import 'package:provider/provider.dart';
+
 import '../providers/daemon_providers.dart';
 import '../services/daemon_api_service.dart';
 import '../utils/file_types.dart';
-import '../widgets/html_preview.dart';
-import '../widgets/mermaid_diagram.dart';
-import '../services/host_manager.dart';
+import '../widgets/git_diff_view.dart';
+import '../widgets/git_scope.dart';
 import '../widgets/skeleton.dart';
+import 'commit_detail_screen.dart';
+import 'file_viewer_screen.dart';
+import 'routes.dart';
+
+export 'file_viewer_screen.dart';
 
 class FileBrowserScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
@@ -25,12 +22,17 @@ class FileBrowserScreen extends rp.ConsumerStatefulWidget {
   final String? startPath;
   final String? sessionId;
 
+  /// Open on the Changes view rather than the folder — the session screen's
+  /// git bar lands here, now that there is no Git screen (spec 65, B8).
+  final bool startInChanges;
+
   const FileBrowserScreen({
     super.key,
     required this.hostId,
     required this.rootPath,
     this.startPath,
     this.sessionId,
+    this.startInChanges = false,
   });
 
   @override
@@ -38,11 +40,34 @@ class FileBrowserScreen extends rp.ConsumerStatefulWidget {
       _FileBrowserScreenState();
 }
 
+/// One step back: the folder to return to, and the file to open again on top
+/// of it when the step was "show in folder" from that file.
+typedef _Step = ({String path, String? reopen});
+
 class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
     with WidgetsBindingObserver {
   late String _currentPath;
   late String _rootPath;
-  final List<String> _history = [];
+  final List<_Step> _history = [];
+
+  /// Whether the list shows the folder or the Changes view (spec 65, B6).
+  late bool _changes = widget.startInChanges;
+
+  /// The scope each session's Changes view was left on, for the life of the
+  /// app. Two sessions on two branches are two reviews, and one's scope means
+  /// nothing in the other. Absent means the default (`defaultScope`).
+  static final _scopes = <String, GitScope>{};
+
+  String get _scopeKey => '${widget.hostId}:${widget.sessionId ?? _rootPath}';
+
+  final _crumbs = ScrollController();
+
+  /// The folder the breadcrumb was last scrolled to the end for.
+  String? _crumbsShown;
+
+  FileMarks? _marks;
+  GitStatus? _marksGit;
+  List<TouchedFile>? _marksTouched;
 
   /// Whether the read that [didChangeDependencies] owes the first build is done.
   bool _readOnOpen = false;
@@ -76,6 +101,7 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _crumbs.dispose();
     super.dispose();
   }
 
@@ -91,12 +117,32 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
 
   /// Drops the held listing so the next build fetches.
   ///
-  /// Before the first build on purpose. The provider is not autoDispose, so
-  /// returning to a directory otherwise serves what it held on the way out —
-  /// and the read is also what re-registers the path with the daemon after its
-  /// watch expired. A cold key has no entry to drop, so this costs one fetch
-  /// rather than two either way. See docs/specs/54-file-change-events.md.
+  /// Before the first build on purpose. The entry outlives the screen by
+  /// [fileKeepAlive], so returning to a directory would otherwise serve what
+  /// it held on the way out — and the read is also what re-registers the path
+  /// with the daemon after its watch expired. A cold key has no entry to drop,
+  /// so this costs one fetch rather than two either way. See
+  /// docs/specs/54-file-change-events.md.
   void _reread() => ref.invalidate(listFilesProvider(_listingKey));
+
+  /// Pull to refresh: the listing, and the marks drawn on it.
+  Future<void> _refresh() async {
+    ref.invalidate(listFilesProvider(_listingKey));
+    ref.invalidate(gitStatusProvider((widget.hostId, _rootPath)));
+    // The Changes view's lists, whichever scope it is on. Only what is
+    // watched refetches.
+    ref.invalidate(gitChangesProvider);
+    ref.invalidate(gitLogProvider);
+    final session = widget.sessionId;
+    if (session != null) {
+      ref.invalidate(touchedProvider((widget.hostId, session)));
+    }
+    try {
+      await ref.read(listFilesProvider(_listingKey).future);
+    } on FileError {
+      // The list shows the error itself; the spinner only has to stop.
+    }
+  }
 
   /// The listing for wherever the browser currently is.
   ///
@@ -106,13 +152,11 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   /// is watching B's.
   (String, String) get _listingKey => (widget.hostId, _currentPath);
 
-  DaemonAPIService? get _svc =>
-      context.read<HostManager>().serviceFor(widget.hostId);
-
-  void _navigateTo(String path) {
+  void _navigateTo(String path, {String? reopen}) {
     setState(() {
-      _history.add(_currentPath);
+      _history.add((path: _currentPath, reopen: reopen));
       _currentPath = path;
+      _changes = false;
     });
   }
 
@@ -121,7 +165,7 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   /// Re-roots the browser on another worktree of the same repository. History is
   /// dropped: the paths in it belong to the worktree being left behind.
   Future<void> _pickRoot() async {
-    if (_svc == null) return;
+    if (ref.read(serviceProvider(widget.hostId)) == null) return;
     final worktrees = sortWorktreesByLastTouched(
       await ref.read(
         gitWorktreesProvider((widget.hostId, _currentPath)).future,
@@ -201,49 +245,151 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
     });
   }
 
-  bool _onBack() {
-    if (_history.isNotEmpty) {
-      final prev = _history.removeLast();
-      _goTo(prev);
-      return false; // handled — don't pop screen
-    }
-    return true; // let Navigator pop
+  void _onBack() {
+    if (_history.isEmpty) return;
+    final step = _history.removeLast();
+    _goTo(step.path);
+    final reopen = step.reopen;
+    if (reopen != null) _openFile(reopen);
   }
 
-  Future<void> _openFile(String path) async {
+  Future<void> _openFile(String path, {int? line, DiffTarget? diff}) async {
     if (!mounted) return;
     final reveal = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        settings: const RouteSettings(name: '/file-viewer'),
+        settings: const RouteSettings(name: fileViewerRoute),
         builder: (_) => FileViewerScreen(
           path: path,
           hostId: widget.hostId,
           sessionId: widget.sessionId,
           rootPath: _rootPath,
+          line: line,
+          diff: diff,
         ),
       ),
     );
     // "Show in folder" comes back as the directory to move to, rather than
-    // pushing a second browser on top of this one.
-    if (reveal != null && mounted) _goTo(reveal);
+    // pushing a second browser on top of this one. It is a step like any
+    // other, and Back from it opens the file again.
+    if (reveal != null && mounted) _navigateTo(reveal, reopen: path);
   }
 
-  List<_BreadcrumbSegment> _buildBreadcrumbs() {
-    final parts = _currentPath.split('/').where((p) => p.isNotEmpty).toList();
-    final segments = <_BreadcrumbSegment>[];
-    segments.add(_BreadcrumbSegment(label: '/', path: '/'));
-    String accumulated = '';
-    for (final part in parts) {
-      accumulated += '/$part';
-      segments.add(_BreadcrumbSegment(label: part, path: accumulated));
-    }
-    return segments;
+  Future<void> _pickScope(String gitRoot, GitScope current) async {
+    final picked = await showScopePicker(
+      context,
+      hostId: widget.hostId,
+      root: gitRoot,
+      current: current,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _scopes[_scopeKey] = picked);
   }
+
+  void _openCommitDetail(String gitRoot, GitScope scope) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CommitDetailScreen(
+          hostId: widget.hostId,
+          root: gitRoot,
+          to: scope.to ?? 'HEAD',
+          from: scope.from,
+          mergeBase: scope.kind == GitScopeKind.review,
+          title: scope.label,
+          sessionId: widget.sessionId,
+        ),
+      ),
+    );
+  }
+
+  /// The Changes view: the scope bar, and the files the scope changed.
+  Widget _buildChanges(
+    GitStatus? git,
+    List<TouchedFile> touched,
+    FileMarks marks,
+  ) {
+    final gitRoot = git != null && git.root.isNotEmpty ? git.root : _rootPath;
+    var scope = _scopes[_scopeKey];
+    GitLog? log;
+    if (scope == null) {
+      // The default depends on the branch, so it waits for the history
+      // rather than drawing the working tree and then flipping the scope
+      // under the reader.
+      final probe = ref.watch(
+        gitLogProvider(GitLogKey(widget.hostId, gitRoot)),
+      );
+      if (probe.isLoading && !probe.hasValue) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      log = probe.valueOrNull;
+      scope = defaultScope(log);
+    }
+    final picked = scope;
+    return Column(
+      children: [
+        GitScopeBar(
+          branch: git?.branch ?? log?.branch ?? '',
+          scope: picked,
+          onPick: () => _pickScope(gitRoot, picked),
+          onDetail: picked.isWorking
+              ? null
+              : () => _openCommitDetail(gitRoot, picked),
+        ),
+        Expanded(
+          child: picked.isWorking
+              ? ChangesView(
+                  root: _rootPath,
+                  git: git,
+                  touched: touched,
+                  showTouched: widget.sessionId != null,
+                  marks: marks,
+                  onOpen: _openChange,
+                  onRefresh: _refresh,
+                )
+              : ScopeChangesView(
+                  hostId: widget.hostId,
+                  gitRoot: gitRoot,
+                  root: _rootPath,
+                  scope: picked,
+                  marks: marks,
+                  onOpen: _openChange,
+                  onRefresh: _refresh,
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _openChange(String path, {int? line, DiffTarget? diff}) =>
+      _openFile(path, line: line, diff: diff);
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final crumbs = _buildBreadcrumbs();
+    final git = ref
+        .watch(gitStatusProvider((widget.hostId, _rootPath)))
+        .valueOrNull;
+    final session = widget.sessionId;
+    final touched = session == null
+        ? const <TouchedFile>[]
+        : ref.watch(touchedProvider((widget.hostId, session))).valueOrNull ??
+              const <TouchedFile>[];
+    // Built once per answer rather than per build: a status with thousands
+    // of changes is a lot of string work to redo on every frame.
+    if (!identical(git, _marksGit) || !identical(touched, _marksTouched)) {
+      _marks = null;
+    }
+    _marksGit = git;
+    _marksTouched = touched;
+    final marks = _marks ??= FileMarks.of(git, touched);
+
+    if (_crumbsShown != _currentPath) {
+      _crumbsShown = _currentPath;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_crumbs.hasClients) {
+          _crumbs.jumpTo(_crumbs.position.maxScrollExtent);
+        }
+      });
+    }
 
     return PopScope(
       canPop: _history.isEmpty,
@@ -252,7 +398,7 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Files'),
+          title: _BrowserTitle(root: _rootPath, branch: git?.branch),
           actions: [
             IconButton(
               icon: const Icon(Icons.account_tree_outlined),
@@ -262,60 +408,38 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
             IconButton(
               icon: const Icon(Icons.chat_bubble_outline),
               tooltip: 'Back to chat',
-              onPressed: () => Navigator.of(
-                context,
-              ).popUntil((route) => route.settings.name != '/file-browser'),
+              onPressed: () => popToSession(Navigator.of(context)),
             ),
           ],
           bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(36),
-            child: SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                itemCount: crumbs.length,
-                separatorBuilder: (_, i) => Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: Icon(
-                    Icons.chevron_right,
-                    size: 20,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                itemBuilder: (ctx, i) {
-                  final crumb = crumbs[i];
-                  final isLast = i == crumbs.length - 1;
-                  return GestureDetector(
-                    onTap: isLast ? null : () => _navigateTo(crumb.path),
-                    child: Text(
-                      crumb.label,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontFamily: 'monospace',
-                        color: isLast
-                            ? theme.colorScheme.onSurface
-                            : theme.colorScheme.primary,
-                        fontWeight: isLast
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  );
-                },
-              ),
+            preferredSize: const Size.fromHeight(48),
+            child: Breadcrumbs(
+              root: _rootPath,
+              path: _currentPath,
+              controller: _crumbs,
+              onTap: _navigateTo,
             ),
           ),
         ),
-        body: _buildBody(theme),
+        body: Column(
+          children: [
+            _FilterRow(
+              changes: _changes,
+              count: marks.changeCount,
+              onChanged: (on) => setState(() => _changes = on),
+            ),
+            Expanded(
+              child: _changes
+                  ? _buildChanges(git, touched, marks)
+                  : _buildListing(theme, marks),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildBody(ThemeData theme) {
+  Widget _buildListing(ThemeData theme, FileMarks marks) {
     final listing = ref.watch(listFilesProvider(_listingKey));
 
     // Not a bare isLoading: an invalidation keeps the previous value and still
@@ -323,1069 +447,815 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
     // reader is looking at and redraw it. The skeleton is a first-load
     // affordance. Same guard as the transcript's (spec 52,
     // session_detail_screen.dart:460).
-    if (listing.isLoading && !listing.hasValue)
+    if (listing.isLoading && !listing.hasValue) {
       return const _FileListSkeleton();
+    }
 
-    final failed = listing.hasError || listing.valueOrNull == null;
-    if (failed) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
-            const SizedBox(height: 12),
-            Text(
-              _svc == null ? 'Host not connected' : 'Failed to load directory',
-              style: TextStyle(color: theme.colorScheme.error),
+    final error = listing.error;
+    if (error != null && !listing.hasValue) {
+      return RefreshIndicator(
+        onRefresh: _refresh,
+        child: FileErrorView(
+          error: error,
+          path: _currentPath,
+          onRetry: () => ref.invalidate(listFilesProvider(_listingKey)),
+        ),
+      );
+    }
+    final entries = listing.valueOrNull?.entries ?? const <FileEntry>[];
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: entries.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                const SizedBox(height: 120),
+                Center(
+                  child: Text(
+                    'Empty directory',
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            )
+          : ListView.builder(
+              // One scroll position per folder: back out of a deep folder and
+              // the one above is where it was left.
+              key: PageStorageKey<String>('files:$_currentPath'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              itemCount: entries.length,
+              itemBuilder: (ctx, i) {
+                final entry = entries[i];
+                return FileEntryTile(
+                  entry: entry,
+                  marks: marks,
+                  onTap: entry.isDir
+                      ? () => _navigateTo(entry.path)
+                      : () => _openFile(entry.path),
+                );
+              },
             ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () => ref.invalidate(listFilesProvider(_listingKey)),
-              child: const Text('Retry'),
+    );
+  }
+}
+
+/// The root folder's name, and the branch checked out in it.
+class _BrowserTitle extends StatelessWidget {
+  final String root;
+  final String? branch;
+
+  const _BrowserTitle({required this.root, required this.branch});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = root == '/'
+        ? '/'
+        : root.split('/').where((p) => p.isNotEmpty).last;
+    final branch = this.branch;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          name,
+          style: const TextStyle(fontSize: 15),
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (branch != null && branch.isNotEmpty)
+          Row(
+            children: [
+              Icon(
+                Icons.fork_right,
+                size: 14,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 2),
+              Flexible(
+                child: Text(
+                  branch,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+/// The path from the session's root to where the browser is.
+///
+/// It starts at the root rather than at `/`: everything above the checkout is
+/// the same on every screen and pushes the part that changes off the right
+/// edge. A long press on the root crumb shows the full path. Outside the root
+/// — "show in folder" on a plan under `~/.claude` — it falls back to `/`.
+class Breadcrumbs extends StatelessWidget {
+  final String root;
+  final String path;
+  final ScrollController controller;
+  final ValueChanged<String> onTap;
+
+  const Breadcrumbs({
+    super.key,
+    required this.root,
+    required this.path,
+    required this.controller,
+    required this.onTap,
+  });
+
+  List<({String label, String path})> get segments {
+    final inside =
+        path == root || path.startsWith(root == '/' ? '/' : '$root/');
+    final base = inside ? root : '/';
+    final rest = path
+        .substring(base.length)
+        .split('/')
+        .where((p) => p.isNotEmpty);
+    final rootLabel = base == '/'
+        ? '/'
+        : base.split('/').where((p) => p.isNotEmpty).last;
+    final out = [(label: rootLabel, path: base)];
+    var at = base == '/' ? '' : base;
+    for (final part in rest) {
+      at = '$at/$part';
+      out.add((label: part, path: at));
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final crumbs = segments;
+    return SizedBox(
+      height: 48,
+      width: double.infinity,
+      // A row, not a lazy list: a lazy list only estimates its length until
+      // every crumb is built, so "scroll to the end" would stop short.
+      child: SingleChildScrollView(
+        controller: controller,
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            for (var i = 0; i < crumbs.length; i++) ...[
+              if (i > 0)
+                Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              _crumb(theme, crumbs, i),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _crumb(
+    ThemeData theme,
+    List<({String label, String path})> crumbs,
+    int i,
+  ) {
+    final crumb = crumbs[i];
+    final isLast = i == crumbs.length - 1;
+    Widget label = InkWell(
+      key: ValueKey('crumb:${crumb.path}'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: isLast ? null : () => onTap(crumb.path),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Center(
+            widthFactor: 1,
+            child: Text(
+              crumb.label,
+              style: TextStyle(
+                fontSize: 13,
+                fontFamily: 'monospace',
+                color: isLast
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.primary,
+                fontWeight: isLast ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (i == 0) {
+      label = Tooltip(
+        message: crumb.path,
+        triggerMode: TooltipTriggerMode.longPress,
+        child: label,
+      );
+    }
+    return label;
+  }
+}
+
+/// The chip that turns the folder into the Changes view.
+class _FilterRow extends StatelessWidget {
+  final bool changes;
+  final int count;
+  final ValueChanged<bool> onChanged;
+
+  const _FilterRow({
+    required this.changes,
+    required this.count,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          children: [
+            FilterChip(
+              label: Text(count > 0 ? 'Changes · $count' : 'Changes'),
+              avatar: changes
+                  ? null
+                  : const Icon(Icons.difference_outlined, size: 18),
+              selected: changes,
+              materialTapTargetSize: MaterialTapTargetSize.padded,
+              onSelected: onChanged,
             ),
           ],
         ),
-      );
-    }
-    final entries = listing.valueOrNull?.entries ?? [];
-    if (entries.isEmpty) {
-      return Center(
-        child: Text(
-          'Empty directory',
-          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-        ),
-      );
-    }
-    return ListView.builder(
-      itemCount: entries.length,
-      itemBuilder: (ctx, i) => _EntryTile(
-        entry: entries[i],
-        onTap: entries[i].isDir
-            ? () => _navigateTo(entries[i].path)
-            : () => _openFile(entries[i].path),
       ),
     );
   }
 }
 
-class _BreadcrumbSegment {
-  final String label;
-  final String path;
-  _BreadcrumbSegment({required this.label, required this.path});
+/// What git and the session's agent say about each path, ready to look up
+/// per row.
+class FileMarks {
+  /// Absolute path to its git letter: M, A, D, R or U.
+  final Map<String, String> status;
+
+  /// Folders that hold a change somewhere below them.
+  final Set<String> dirtyDirs;
+
+  /// Absolute path to the agent's last write of it.
+  final Map<String, TouchedFile> touched;
+
+  /// Folders that hold a file the agent wrote.
+  final Set<String> touchedDirs;
+
+  final int changeCount;
+
+  const FileMarks._(
+    this.status,
+    this.dirtyDirs,
+    this.touched,
+    this.touchedDirs,
+    this.changeCount,
+  );
+
+  factory FileMarks.of(GitStatus? git, List<TouchedFile> touched) {
+    final status = <String, String>{};
+    final dirtyDirs = <String>{};
+    final root = git?.root ?? '';
+    if (git != null && root.isNotEmpty) {
+      for (final change in [...git.unstaged, ...git.staged, ...git.untracked]) {
+        final path = '$root/${change.path}';
+        status.putIfAbsent(path, () => gitLetter(change.status));
+        _addParents(path, root, dirtyDirs);
+      }
+    }
+    final byPath = <String, TouchedFile>{};
+    final touchedDirs = <String>{};
+    for (final file in touched) {
+      byPath.putIfAbsent(file.path, () => file);
+      _addParents(file.path, '/', touchedDirs);
+    }
+    return FileMarks._(
+      status,
+      dirtyDirs,
+      byPath,
+      touchedDirs,
+      {...status.keys, ...byPath.keys}.length,
+    );
+  }
+
+  static void _addParents(String path, String stop, Set<String> into) {
+    var at = path;
+    while (true) {
+      final cut = at.lastIndexOf('/');
+      if (cut <= 0) return;
+      at = at.substring(0, cut);
+      if (!into.add(at)) return;
+      if (at == stop) return;
+    }
+  }
 }
 
-class _EntryTile extends StatelessWidget {
+/// Git's status as the one letter a row has room for.
+String gitLetter(String status) {
+  if (status == '?' || status == '??') return 'U';
+  return status.isEmpty ? '?' : status.substring(0, 1).toUpperCase();
+}
+
+String _gitWord(String letter) => switch (letter) {
+  'M' => 'Modified',
+  'A' => 'Added',
+  'D' => 'Deleted',
+  'R' => 'Renamed',
+  'U' => 'Untracked',
+  _ => 'Changed',
+};
+
+IconData _familyIcon(FileFamily family) => switch (family) {
+  FileFamily.code => Icons.code,
+  FileFamily.markdown => Icons.article_outlined,
+  FileFamily.text => Icons.description_outlined,
+  FileFamily.data => Icons.data_object,
+  FileFamily.image => Icons.image_outlined,
+  FileFamily.html => Icons.html,
+  FileFamily.style => Icons.palette_outlined,
+  FileFamily.shell => Icons.terminal,
+  FileFamily.pdf => Icons.picture_as_pdf_outlined,
+  FileFamily.archive => Icons.inventory_2_outlined,
+  FileFamily.other => Icons.insert_drive_file_outlined,
+};
+
+/// When a file last changed, in the fewest characters that still say it:
+/// `now`, `5m`, `3h`, `2d`, and a date past a week.
+String shortAgo(DateTime? at, {DateTime? now}) {
+  if (at == null) return '';
+  final since = (now ?? DateTime.now()).difference(at);
+  if (since.inMinutes < 1) return 'now';
+  if (since.inHours < 1) return '${since.inMinutes}m';
+  if (since.inDays < 1) return '${since.inHours}h';
+  if (since.inDays < 7) return '${since.inDays}d';
+  final local = at.toLocal();
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[local.month - 1]} ${local.day}, ${local.year}';
+}
+
+/// The agent's mark: filled for a file it wrote, hollow for a folder that
+/// holds one.
+class _AgentMark extends StatelessWidget {
+  final bool filled;
+  final String tooltip;
+
+  const _AgentMark({required this.filled, required this.tooltip});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: filled ? color : null,
+          border: Border.all(color: color, width: 1.5),
+        ),
+      ),
+    );
+  }
+}
+
+class _GitBadge extends StatelessWidget {
+  final String letter;
+
+  const _GitBadge(this.letter);
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: _gitWord(letter),
+      child: SizedBox(
+        width: 16,
+        child: Text(
+          letter,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            fontFamily: 'monospace',
+            color: gitStatusColor(letter),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One row of a folder.
+class FileEntryTile extends StatelessWidget {
   final FileEntry entry;
+  final FileMarks marks;
   final VoidCallback onTap;
 
-  const _EntryTile({required this.entry, required this.onTap});
+  const FileEntryTile({
+    super.key,
+    required this.entry,
+    required this.marks,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListTile(
+    final colors = theme.colorScheme;
+    final letter = entry.isDir ? null : marks.status[entry.path];
+    final dirty = entry.isDir && marks.dirtyDirs.contains(entry.path);
+    final touched = marks.touched[entry.path];
+    final holdsTouched = entry.isDir && marks.touchedDirs.contains(entry.path);
+    final modified = shortAgo(DateTime.tryParse(entry.modTime));
+    final subtitle = entry.isDir
+        ? modified
+        : [entry.formattedSize, if (modified.isNotEmpty) modified].join(' · ');
+
+    final tile = ListTile(
+      minTileHeight: 48,
       leading: Icon(
-        entry.isDir ? Icons.folder : _iconForFile(entry.name),
-        size: 28,
-        color: entry.isDir
-            ? Colors.amber.shade700
-            : theme.colorScheme.onSurfaceVariant,
+        entry.isDir ? Icons.folder : _familyIcon(familyOf(entry.name)),
+        size: 26,
+        color: entry.isDir ? colors.tertiary : colors.onSurfaceVariant,
       ),
       title: Text(
         entry.name,
         style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
+        overflow: TextOverflow.ellipsis,
       ),
-      trailing: entry.isDir
-          ? Icon(
-              Icons.chevron_right,
-              size: 24,
-              color: theme.colorScheme.onSurfaceVariant,
-            )
+      subtitle: subtitle.isEmpty
+          ? null
           : Text(
-              entry.formattedSize,
-              style: TextStyle(
-                fontSize: 12,
-                color: theme.colorScheme.onSurfaceVariant,
+              subtitle,
+              style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
+            ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (touched != null || holdsTouched) ...[
+            _AgentMark(
+              filled: touched != null,
+              tooltip: touched != null
+                  ? 'Edited by this session, ${shortAgo(touched.lastAt)} ago'
+                  : 'Holds a file this session edited',
+            ),
+            const SizedBox(width: 8),
+          ],
+          if (letter != null) _GitBadge(letter),
+          if (dirty)
+            Tooltip(
+              message: 'Holds uncommitted changes',
+              child: Container(
+                width: 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 5),
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.orange,
+                ),
               ),
             ),
+          if (entry.isDir)
+            Icon(Icons.chevron_right, size: 24, color: colors.onSurfaceVariant),
+        ],
+      ),
       onTap: onTap,
       dense: true,
     );
-  }
-
-  IconData _iconForFile(String name) {
-    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-    switch (ext) {
-      case 'dart':
-      case 'go':
-      case 'py':
-      case 'js':
-      case 'ts':
-      case 'tsx':
-      case 'jsx':
-      case 'java':
-      case 'kt':
-      case 'swift':
-      case 'rs':
-      case 'c':
-      case 'cpp':
-      case 'h':
-        return Icons.code;
-      case 'md':
-      case 'txt':
-      case 'rst':
-        return Icons.description;
-      case 'json':
-      case 'yaml':
-      case 'yml':
-      case 'toml':
-      case 'xml':
-        return Icons.data_object;
-      case 'png':
-      case 'jpg':
-      case 'jpeg':
-      case 'gif':
-      case 'svg':
-      case 'webp':
-        return Icons.image;
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      default:
-        return Icons.insert_drive_file;
-    }
+    if (entry.ignored != true) return tile;
+    return Tooltip(
+      message: 'Ignored by .gitignore. Search skips it.',
+      child: Opacity(opacity: 0.5, child: tile),
+    );
   }
 }
 
-/// The switch that lets an agent's page run its own scripts.
-///
-/// A labelled switch rather than an icon, because "is this page executing"
-/// should be readable at a glance rather than decoded from a glyph. It stays
-/// compact enough to sit in an app bar beside the other actions.
-class _ScriptsSwitch extends StatelessWidget {
-  final bool value;
-  final ValueChanged<bool> onChanged;
+/// Opens a changed file: at the line the agent last edited, and on its diff
+/// when it has one.
+typedef OpenChange = void Function(String path, {int? line, DiffTarget? diff});
 
-  const _ScriptsSwitch({required this.value, required this.onChanged});
+/// The working tree, in two parts (spec 65, B6): the files this session's
+/// agent wrote, newest first, and every other uncommitted change git sees —
+/// `Bash` writes, other sessions in the same worktree, the reader's own edits.
+class ChangesView extends StatelessWidget {
+  final String root;
+  final GitStatus? git;
+  final List<TouchedFile> touched;
+
+  /// Off when the browser was opened without a session: there is no agent to
+  /// attribute anything to, so only git's list shows.
+  final bool showTouched;
+  final FileMarks marks;
+  final OpenChange onOpen;
+  final Future<void> Function() onRefresh;
+
+  const ChangesView({
+    super.key,
+    required this.root,
+    required this.git,
+    required this.touched,
+    required this.showTouched,
+    required this.marks,
+    required this.onOpen,
+    required this.onRefresh,
+  });
+
+  /// Every uncommitted change, by absolute path, as the diff to open for it.
+  /// Unstaged first: that is what is on disk now.
+  Map<String, DiffTarget> _targets() {
+    final status = git;
+    final gitRoot = status?.root ?? '';
+    final targets = <String, DiffTarget>{};
+    if (status == null || gitRoot.isEmpty) return targets;
+    void add(GitChange change, {bool staged = false, bool untracked = false}) {
+      targets.putIfAbsent(
+        '$gitRoot/${change.path}',
+        () => DiffTarget(
+          root: gitRoot,
+          change: change,
+          staged: staged,
+          untracked: untracked,
+        ),
+      );
+    }
+
+    for (final change in status.unstaged) {
+      add(change);
+    }
+    for (final change in status.staged) {
+      add(change, staged: true);
+    }
+    for (final change in status.untracked) {
+      add(change, untracked: true);
+    }
+    return targets;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Tooltip(
-      message: "Run this page's scripts. It still cannot reach the network.",
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: () => onChanged(!value),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'JS',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: value ? FontWeight.w700 : FontWeight.w500,
-                  color: value
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.onSurfaceVariant,
+    final targets = _targets();
+    final mine = touched.map((t) => t.path).toSet();
+    final gitRoot = git?.root ?? '';
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          if (showTouched) ...[
+            const _SectionHeader('Edited by this session'),
+            if (touched.isEmpty)
+              const _EmptyLine('Nothing yet')
+            else
+              for (final file in touched)
+                _ChangeRow(
+                  path: file.path,
+                  root: root,
+                  letter: marks.status[file.path],
+                  when: shortAgo(file.lastAt),
+                  agent: true,
+                  deleted: file.deleted,
+                  onTap: () => onOpen(
+                    file.path,
+                    line: file.line,
+                    // A file the agent deleted that git no longer lists —
+                    // committed since — still opens on what went.
+                    diff:
+                        targets[file.path] ??
+                        (file.deleted && file.path.startsWith('$gitRoot/')
+                            ? DiffTarget(
+                                root: gitRoot,
+                                change: GitChange(
+                                  path: file.path.substring(gitRoot.length + 1),
+                                  status: 'D',
+                                ),
+                              )
+                            : null),
+                  ),
                 ),
-              ),
-              Transform.scale(
-                scale: 0.7,
-                child: Switch(value: value, onChanged: onChanged),
-              ),
-            ],
+          ],
+          _SectionHeader(
+            showTouched ? 'Other uncommitted changes' : 'Uncommitted changes',
           ),
-        ),
+          if (targets.keys.every(mine.contains))
+            _EmptyLine(git == null ? 'Not a git repository' : 'None')
+          else
+            for (final entry in targets.entries)
+              if (!mine.contains(entry.key))
+                _ChangeRow(
+                  path: entry.key,
+                  root: root,
+                  letter: gitLetter(entry.value.change.status),
+                  deleted: entry.value.deleted,
+                  onTap: () => onOpen(entry.key, diff: entry.value),
+                ),
+        ],
       ),
     );
   }
 }
 
-// ==================== File Viewer Screen ====================
-
-class FileViewerScreen extends rp.ConsumerStatefulWidget {
-  final String path;
+/// What a review, a commit or a range changed, with the agent's mark on the
+/// files this session wrote (spec 65, B8).
+class ScopeChangesView extends rp.ConsumerWidget {
   final String hostId;
-  final String? sessionId;
 
-  /// The checkout this file belongs to. A preview reads nothing outside it, and
-  /// "show in folder" browses from it. Absent means the file's own directory.
-  final String? rootPath;
+  /// The repository root the scope's paths are relative to.
+  final String gitRoot;
 
-  const FileViewerScreen({
+  /// The browser's root, which the rows show their folders from.
+  final String root;
+  final GitScope scope;
+  final FileMarks marks;
+  final OpenChange onOpen;
+  final Future<void> Function() onRefresh;
+
+  const ScopeChangesView({
     super.key,
-    required this.path,
     required this.hostId,
-    this.sessionId,
-    this.rootPath,
+    required this.gitRoot,
+    required this.root,
+    required this.scope,
+    required this.marks,
+    required this.onOpen,
+    required this.onRefresh,
   });
 
   @override
-  rp.ConsumerState<FileViewerScreen> createState() => _FileViewerScreenState();
-}
-
-class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
-    with WidgetsBindingObserver {
-  /// The last value `build` saw.
-  ///
-  /// Held in a field so the callbacks below — copy, ask-AI — read the same
-  /// answer the frame was drawn from. Watching from inside a callback would
-  /// subscribe outside a build, which Riverpod rejects.
-  rp.AsyncValue<FileReadResult?> _file = const rp.AsyncLoading();
-
-  /// An HTML file opens rendered, and can be turned back into source.
-  bool _htmlPreview = true;
-
-  /// Whether this page's scripts may run.
-  ///
-  /// Off every time a file is opened, and never remembered. Turning it on is a
-  /// decision about one page an agent wrote, not a setting to carry into the
-  /// next one without being asked again.
-  bool _runScripts = false;
-
-  FileReadResult? get _result => _file.valueOrNull;
-
-  /// Whether there is nothing to show yet.
-  ///
-  /// Not a bare `isLoading`: an agent editing this file invalidates the entry,
-  /// which reports loading while still holding the previous value. Drawing the
-  /// skeleton then would replace the text the reader is part-way through with
-  /// grey bars, and put it back a moment later. Same guard as the transcript's
-  /// (spec 52, `session_detail_screen.dart:460`).
-  bool get _loading => _file.isLoading && !_file.hasValue;
-
-  (String, String) get _fileKey => (widget.hostId, widget.path);
-
-  /// Whether the read that [didChangeDependencies] owes the first build is done.
-  bool _readOnOpen = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  /// Why the read waits for dependencies, and why it happens at all: see
-  /// `_FileBrowserScreenState.didChangeDependencies` and `_reread`.
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_readOnOpen) return;
-    _readOnOpen = true;
-    ref.invalidate(readFileProvider(_fileKey));
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed)
-      ref.invalidate(readFileProvider(_fileKey));
-  }
-
-  /// What a preview may read from, and what "show in folder" browses.
-  String get _root => widget.rootPath ?? _directory;
-
-  String get _directory =>
-      widget.path.substring(0, widget.path.lastIndexOf('/'));
-
-  /// Whether what is on screen is text the reader can point at.
-  bool get _showsText {
-    final file = _result;
-    if (file == null || file.content == null) return false;
-    if (file.isImage || file.isBinary) return false;
-    return !(isHtmlPath(widget.path) && _htmlPreview);
-  }
-
-  /// Hands the directory back to the listing underneath, if there is one, so
-  /// the stack does not grow a second browser every time.
-  void _showInFolder() {
-    final nav = Navigator.of(context);
-    if (nav.canPop() &&
-        ModalRoute.of(context)?.settings.name == '/file-viewer') {
-      nav.pop(_directory);
-      return;
+  Widget build(BuildContext context, rp.WidgetRef ref) {
+    final changes = ref.watch(
+      gitChangesProvider(scope.changesKey(hostId, gitRoot)),
+    );
+    if (changes.isLoading && !changes.hasValue) {
+      return const Center(child: CircularProgressIndicator());
     }
-    nav.push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/file-browser'),
-        builder: (_) => FileBrowserScreen(
-          hostId: widget.hostId,
-          rootPath: _root,
-          startPath: _directory,
-          sessionId: widget.sessionId,
-        ),
+    final value = changes.valueOrNull;
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          if (value == null)
+            const _EmptyLine('Could not read these changes')
+          else ...[
+            _SectionHeader(
+              '${value.files.length} ${value.files.length == 1 ? 'file' : 'files'}',
+            ),
+            if (value.files.isEmpty) const _EmptyLine('No files changed'),
+            for (final file in value.files)
+              _ChangeRow(
+                path: '$gitRoot/${file.path}',
+                root: root,
+                letter: gitLetter(file.status),
+                agent: marks.touched.containsKey('$gitRoot/${file.path}'),
+                deleted: file.status == 'D',
+                onTap: () => onOpen(
+                  '$gitRoot/${file.path}',
+                  diff: scope.target(gitRoot, file),
+                ),
+              ),
+            if (value.truncated)
+              _EmptyLine('Showing the first ${value.files.length} files.'),
+          ],
+        ],
       ),
     );
   }
+}
 
-  bool _userConfirmedLarge = false;
-  static const _softLimit = 1024 * 1024; // 1 MB
-  int? _selStart; // 1-based line number
-  int? _selEnd; // 1-based line number
+class _SectionHeader extends StatelessWidget {
+  final String text;
 
-  bool get _hasSelection => _selStart != null;
-  String get _selLabel {
-    if (_selStart == null) return '';
-    if (_selEnd == null || _selStart == _selEnd) return 'L$_selStart';
-    return 'L$_selStart-$_selEnd';
-  }
-
-  int get _selCount {
-    if (_selStart == null) return 0;
-    if (_selEnd == null) return 1;
-    return (_selEnd! - _selStart!).abs() + 1;
-  }
-
-  void _onLineTap(int lineNum) {
-    setState(() {
-      if (_selStart == null) {
-        _selStart = lineNum;
-        _selEnd = null;
-      } else if (_selEnd == null && lineNum == _selStart) {
-        _selStart = null; // clear
-      } else if (_selEnd == null) {
-        // Extend to range
-        final a = _selStart!;
-        _selStart = a < lineNum ? a : lineNum;
-        _selEnd = a < lineNum ? lineNum : a;
-      } else {
-        // New selection
-        _selStart = lineNum;
-        _selEnd = null;
-      }
-    });
-  }
-
-  bool _isLineSelected(int lineNum) {
-    if (_selStart == null) return false;
-    if (_selEnd == null) return lineNum == _selStart;
-    return lineNum >= _selStart! && lineNum <= _selEnd!;
-  }
-
-  /// A path that turns out to be a directory replaces this screen with a
-  /// browser rooted there.
-  ///
-  /// Driven from a listener rather than from the read itself: navigation is a
-  /// side effect, and a provider that navigated while producing its value
-  /// would do it again on every refresh.
-  void _redirectIfDirectory(rp.AsyncValue<FileReadResult?> file) {
-    if (file.valueOrNull?.isDirectory != true) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          settings: const RouteSettings(name: '/file-browser'),
-          builder: (_) => FileBrowserScreen(
-            hostId: widget.hostId,
-            rootPath: widget.rootPath ?? widget.path,
-            startPath: widget.path,
-          ),
-        ),
-      );
-    });
-  }
-
-  String get _fileName => widget.path.split('/').last;
+  const _SectionHeader(this.text);
 
   @override
   Widget build(BuildContext context) {
-    _file = ref.watch(readFileProvider(_fileKey));
-    ref.listen(
-      readFileProvider(_fileKey),
-      (_, next) => _redirectIfDirectory(next),
-    );
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _fileName,
-              style: const TextStyle(fontSize: 15),
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (_result != null)
-              Text(
-                _result!.formattedSize,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-          ],
-        ),
-        actions: [
-          // Back belongs to wherever the file was opened from — the transcript,
-          // or the listing. Getting to the folder is a thing you ask for, so it
-          // is a button rather than something the back gesture does for you.
-          IconButton(
-            icon: const Icon(Icons.folder_open_outlined),
-            tooltip: 'Show in folder',
-            onPressed: _showInFolder,
-          ),
-          // Labelled and switched, not an icon: whether an agent's page is
-          // executing is not something to leave the reader to infer.
-          if (isHtmlPath(widget.path) && _htmlPreview)
-            _ScriptsSwitch(
-              value: _runScripts,
-              onChanged: (on) => setState(() => _runScripts = on),
-            ),
-          if (isHtmlPath(widget.path))
-            IconButton(
-              icon: Icon(_htmlPreview ? Icons.code : Icons.article_outlined),
-              tooltip: _htmlPreview ? 'Show source' : 'Render the page',
-              onPressed: () => setState(() => _htmlPreview = !_htmlPreview),
-            ),
-          if (_result?.content != null && !_result!.isBinary)
-            IconButton(
-              icon: const Icon(Icons.copy),
-              tooltip: 'Copy content',
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: _result!.content!));
-                HapticFeedback.lightImpact();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Copied to clipboard'),
-                    duration: Duration(seconds: 1),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              },
-            ),
-        ],
-      ),
-      body: _buildContent(theme),
-      // Only over something with lines in it. A picture and a rendered page
-      // have none, so the bar would be offering a gesture that does nothing.
-      bottomNavigationBar: widget.sessionId != null && _showsText
-          ? _buildAskAIBar(theme)
-          : null,
-    );
-  }
-
-  Widget _buildAskAIBar(ThemeData theme) {
-    final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark
-        ? const Color(0xFF58A6FF)
-        : const Color(0xFF0969DA);
-    return Container(
-      padding: EdgeInsets.only(
-        left: 12,
-        right: 8,
-        top: 8,
-        bottom: MediaQuery.of(context).padding.bottom + 8,
-      ),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          top: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.code, size: 20, color: accentColor),
-          const SizedBox(width: 6),
-          if (_hasSelection) ...[
-            Text(
-              '$_selLabel · $_selCount ${_selCount == 1 ? 'line' : 'lines'}',
-              style: TextStyle(
-                fontSize: 12,
-                fontFamily: 'monospace',
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => setState(() {
-                _selStart = null;
-                _selEnd = null;
-              }),
-              child: Icon(
-                Icons.close,
-                size: 18,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ] else
-            Text(
-              'Tap lines to select',
-              style: TextStyle(
-                fontSize: 12,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          const Spacer(),
-          FilledButton.tonalIcon(
-            onPressed: () => _showAskAISheet(theme),
-            icon: const Icon(Icons.auto_awesome, size: 18),
-            label: const Text('Ask AI', style: TextStyle(fontSize: 12)),
-            style: FilledButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAskAISheet(ThemeData theme) {
-    final controller = TextEditingController();
-    final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark
-        ? const Color(0xFF58A6FF)
-        : const Color(0xFF0969DA);
-    final label = _hasSelection ? '$_fileName:$_selLabel' : widget.path;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          ),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.insert_drive_file,
-                        size: 20,
-                        color: accentColor,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w600,
-                            color: accentColor,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    minLines: 1,
-                    maxLines: 4,
-                    style: const TextStyle(fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: _hasSelection
-                          ? 'Ask about this code...'
-                          : 'Ask about this file...',
-                      hintStyle: TextStyle(
-                        fontSize: 14,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.send, size: 20),
-                        onPressed: () => _sendAskAI(ctx, controller.text),
-                      ),
-                    ),
-                    onSubmitted: (v) => _sendAskAI(ctx, v),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _sendAskAI(BuildContext ctx, String question) async {
-    if (question.trim().isEmpty) return;
-    final svc = context.read<HostManager>().serviceFor(widget.hostId);
-    if (svc == null || widget.sessionId == null) return;
-
-    String prompt;
-    if (_hasSelection) {
-      final content = _result?.content ?? '';
-      final lines = content.split('\n');
-      final start = (_selStart ?? 1) - 1;
-      final end = (_selEnd ?? _selStart ?? 1);
-      final selected = lines.sublist(
-        start.clamp(0, lines.length),
-        end.clamp(0, lines.length),
-      );
-      final ext = _fileName.contains('.') ? _fileName.split('.').last : '';
-      prompt =
-          'Regarding `${widget.path}` $_selLabel:\n```$ext\n${selected.join('\n')}\n```\n${question.trim()}';
-    } else {
-      prompt = 'Regarding file `${widget.path}`:\n${question.trim()}';
-    }
-
-    // Send first, then navigate
-    final nav = Navigator.of(context);
-    Navigator.pop(ctx); // close sheet
-    await svc.sendSessionPrompt(widget.sessionId!, prompt);
-    if (!mounted) return;
-    nav.popUntil(
-      (route) =>
-          route.settings.name != '/file-browser' &&
-          route.settings.name != '/git-status',
-    );
-  }
-
-  Widget _buildContent(ThemeData theme) {
-    if (_loading) {
-      return const _FileContentSkeleton();
-    }
-    if (_result == null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: 40, color: theme.colorScheme.error),
-            const SizedBox(height: 12),
-            const Text('Failed to load file'),
-          ],
-        ),
-      );
-    }
-
-    // Server hard limit exceeded
-    if (_result!.isTooLarge) {
-      return _buildTooLargeView(
-        theme,
-        '${_result!.formattedSize} — exceeds 10 MB server limit',
-      );
-    }
-
-    // Client soft limit: warn before showing large files
-    if (!_userConfirmedLarge && _result!.size > _softLimit) {
-      return _buildLargeFileWarning(theme, _result!.formattedSize);
-    }
-
-    // A picture is worth showing, and is binary, so it goes first.
-    if (_result!.isImage) {
-      final bytes = _result!.bytes;
-      if (bytes != null) return _buildImageView(theme, bytes);
-    }
-
-    // Binary detection
-    if (_result!.isBinary) {
-      return _buildBinaryView(theme);
-    }
-
-    if (isHtmlPath(widget.path) && _htmlPreview) {
-      return HtmlPreview(
-        hostId: widget.hostId,
-        html: _result!.content ?? '',
-        path: widget.path,
-        root: _root,
-        scripts: _runScripts,
-      );
-    }
-
-    final content = _result!.content ?? '';
-    final ext = _fileName.contains('.')
-        ? _fileName.split('.').last.toLowerCase()
-        : '';
-    final isDark = theme.brightness == Brightness.dark;
-
-    // Markdown files rendered with MarkdownBody
-    if (ext == 'md' || ext == 'markdown') {
-      return SingleChildScrollView(
-        controller: null,
-        padding: const EdgeInsets.all(16),
-        child: MarkdownBody(
-          data: content,
-          selectable: true,
-          builders: {'code': _SyntaxHighlightBuilder(isDark: isDark)},
-          styleSheet: MarkdownStyleSheet(
-            p: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-            code: TextStyle(
-              fontSize: 12,
-              fontFamily: 'monospace',
-              color: theme.colorScheme.onSurface,
-              backgroundColor: theme.colorScheme.surfaceContainerHigh,
-            ),
-            codeblockDecoration: BoxDecoration(
-              color: isDark ? const Color(0xFF282C34) : const Color(0xFFFAFAFA),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            codeblockPadding: const EdgeInsets.all(0),
-            h1: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: theme.colorScheme.onSurface,
-            ),
-            h2: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: theme.colorScheme.onSurface,
-            ),
-            h3: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface,
-            ),
-            listBullet: TextStyle(
-              fontSize: 14,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Code files — syntax highlighted, line-by-line for selection
-    final language = _languageForExt(ext);
-    final lines = content.split('\n');
-
-    return _buildLineListView(theme, lines, language, isDark);
-  }
-
-  Widget _buildLineListView(
-    ThemeData theme,
-    List<String> lines,
-    String? language,
-    bool isDark,
-  ) {
-    // Syntax highlight all lines together for context
-    List<List<TextSpan>>? highlightedLines;
-    if (language != null) {
-      highlightedLines = _highlightCodeLines(
-        lines.join('\n'),
-        language,
-        isDark,
-      );
-    }
-
-    final selectedBg = isDark
-        ? const Color(0xFF1A3A5C)
-        : const Color(0xFFD4E8FC);
-    final gutterColor = theme.colorScheme.onSurfaceVariant.withAlpha(120);
-
-    return ListView.builder(
-      itemCount: lines.length,
-      itemExtent: 20,
-      itemBuilder: (ctx, i) {
-        final lineNum = i + 1;
-        final selected = _isLineSelected(lineNum);
-
-        Widget textWidget;
-        if (highlightedLines != null && i < highlightedLines.length) {
-          textWidget = RichText(
-            text: TextSpan(children: highlightedLines[i]),
-            maxLines: 1,
-            overflow: TextOverflow.clip,
-          );
-        } else {
-          textWidget = Text(
-            lines[i],
-            style: TextStyle(
-              fontSize: 12,
-              fontFamily: 'monospace',
-              color: theme.colorScheme.onSurface,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.clip,
-          );
-        }
-
-        return GestureDetector(
-          onTap: widget.sessionId != null ? () => _onLineTap(lineNum) : null,
-          child: Container(
-            color: selected ? selectedBg : null,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 36,
-                  child: Text(
-                    '$lineNum',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: selected ? theme.colorScheme.primary : gutterColor,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(child: textWidget),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  List<List<TextSpan>> _highlightCodeLines(
-    String code,
-    String language,
-    bool isDark,
-  ) {
-    final themeMap = isDark ? atomOneDarkTheme : atomOneLightTheme;
-    final defaultStyle = TextStyle(
-      fontSize: 12,
-      fontFamily: 'monospace',
-      color: isDark ? Colors.white70 : Colors.black87,
-    );
-    try {
-      final result = highlight.parse(code, language: language);
-      final allSpans = <TextSpan>[];
-      _buildHighlightSpans(result.nodes!, themeMap, defaultStyle, allSpans);
-      final lines = <List<TextSpan>>[[]];
-      for (final span in allSpans) {
-        final text = span.text ?? '';
-        if (!text.contains('\n')) {
-          lines.last.add(span);
-          continue;
-        }
-        final parts = text.split('\n');
-        for (int i = 0; i < parts.length; i++) {
-          if (i > 0) lines.add([]);
-          if (parts[i].isNotEmpty) {
-            lines.last.add(TextSpan(text: parts[i], style: span.style));
-          }
-        }
-      }
-      return lines;
-    } catch (_) {
-      return code
-          .split('\n')
-          .map((l) => [TextSpan(text: l, style: defaultStyle)])
-          .toList();
-    }
-  }
-
-  void _buildHighlightSpans(
-    List<dynamic> nodes,
-    Map<String, TextStyle> themeMap,
-    TextStyle defaultStyle,
-    List<TextSpan> out,
-  ) {
-    for (final node in nodes) {
-      if (node.value != null) {
-        TextStyle style = defaultStyle;
-        if (node.className != null) {
-          final className = node.className as String;
-          style = themeMap[className] ?? themeMap['root'] ?? defaultStyle;
-          style = style.copyWith(fontSize: 12, fontFamily: 'monospace');
-        }
-        out.add(TextSpan(text: node.value as String, style: style));
-      } else if (node.children != null) {
-        _buildHighlightSpans(
-          node.children as List<dynamic>,
-          themeMap,
-          defaultStyle,
-          out,
-        );
-      }
-    }
-  }
-
-  String? _languageForExt(String ext) {
-    switch (ext) {
-      case 'dart':
-        return 'dart';
-      case 'go':
-        return 'go';
-      case 'py':
-        return 'python';
-      case 'js':
-        return 'javascript';
-      case 'ts':
-        return 'typescript';
-      case 'tsx':
-        return 'typescript';
-      case 'jsx':
-        return 'javascript';
-      case 'java':
-        return 'java';
-      case 'kt':
-        return 'kotlin';
-      case 'swift':
-        return 'swift';
-      case 'rs':
-        return 'rust';
-      case 'c':
-        return 'c';
-      case 'cpp':
-        return 'cpp';
-      case 'h':
-        return 'cpp';
-      case 'cs':
-        return 'cs';
-      case 'rb':
-        return 'ruby';
-      case 'sh':
-        return 'bash';
-      case 'bash':
-        return 'bash';
-      case 'zsh':
-        return 'bash';
-      case 'json':
-        return 'json';
-      case 'yaml':
-        return 'yaml';
-      case 'yml':
-        return 'yaml';
-      case 'toml':
-        return 'ini';
-      case 'xml':
-        return 'xml';
-      case 'html':
-        return 'html';
-      case 'css':
-        return 'css';
-      case 'scss':
-        return 'scss';
-      case 'sql':
-        return 'sql';
-      case 'dockerfile':
-        return 'dockerfile';
-      case 'tf':
-        return 'hcl';
-      case 'proto':
-        return 'protobuf';
-      default:
-        return null;
-    }
-  }
-
-  Widget _buildLargeFileWarning(ThemeData theme, String size) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.warning_amber, size: 48, color: Colors.amber.shade700),
-            const SizedBox(height: 16),
-            Text(
-              'File is large ($size)',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Loading may be slow or cause performance issues.',
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: () => setState(() => _userConfirmedLarge = true),
-              child: const Text('Load anyway'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTooLargeView(ThemeData theme, String detail) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.block, size: 48, color: theme.colorScheme.error),
-            const SizedBox(height: 16),
-            const Text(
-              'File too large',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              detail,
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// A picture, pinch-zoomable, on a surface that makes transparency legible.
-  Widget _buildImageView(ThemeData theme, Uint8List bytes) {
-    return Container(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: InteractiveViewer(
-        maxScale: 8,
-        child: Center(
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.contain,
-            // An SVG is not a raster format and Image.memory cannot decode it,
-            // so say so rather than showing a broken box.
-            errorBuilder: (context, error, stack) => _buildBinaryView(theme),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBinaryView(ThemeData theme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.do_not_disturb,
-              size: 48,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Binary file',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${_result!.formattedSize} — cannot display',
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        text.toUpperCase(),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
     );
   }
 }
 
-// ==================== Skeletons ====================
+class _EmptyLine extends StatelessWidget {
+  final String text;
+
+  const _EmptyLine(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 13,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
+class _ChangeRow extends StatelessWidget {
+  final String path;
+  final String root;
+  final String? letter;
+  final String when;
+  final bool agent;
+  final bool deleted;
+  final VoidCallback onTap;
+
+  const _ChangeRow({
+    required this.path,
+    required this.root,
+    required this.letter,
+    this.when = '',
+    this.agent = false,
+    this.deleted = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final name = path.split('/').last;
+    final relative = path.startsWith('$root/')
+        ? path.substring(root.length + 1)
+        : path;
+    final cut = relative.lastIndexOf('/');
+    final folder = cut < 0 ? '' : relative.substring(0, cut);
+    return ListTile(
+      minTileHeight: 48,
+      dense: true,
+      leading: Icon(
+        _familyIcon(familyOf(name)),
+        size: 22,
+        color: colors.onSurfaceVariant,
+      ),
+      title: Text(
+        name,
+        style: TextStyle(
+          fontSize: 14,
+          fontFamily: 'monospace',
+          decoration: deleted ? TextDecoration.lineThrough : null,
+        ),
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: folder.isEmpty && when.isEmpty
+          ? null
+          : Text(
+              [
+                if (folder.isNotEmpty) folder,
+                if (when.isNotEmpty) when,
+              ].join(' · '),
+              style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
+              overflow: TextOverflow.ellipsis,
+            ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (agent) ...[
+            const _AgentMark(filled: true, tooltip: 'Edited by this session'),
+            const SizedBox(width: 8),
+          ],
+          if (letter != null) _GitBadge(letter!),
+        ],
+      ),
+      onTap: onTap,
+    );
+  }
+}
 
 class _FileListSkeleton extends StatelessWidget {
   const _FileListSkeleton();
@@ -1415,71 +1285,5 @@ class _FileListSkeleton extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-class _FileContentSkeleton extends StatelessWidget {
-  const _FileContentSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (int i = 0; i < 20; i++) ...[
-            Skeleton(
-              width: 40.0 + (i * 47 % 250),
-              height: 14,
-              borderRadius: const BorderRadius.all(Radius.circular(2)),
-            ),
-            const SizedBox(height: 4),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// ==================== Markdown code block syntax highlighter ====================
-
-class _SyntaxHighlightBuilder extends MarkdownElementBuilder {
-  final bool isDark;
-  _SyntaxHighlightBuilder({required this.isDark});
-
-  @override
-  Widget? visitElementAfterWithContext(
-    BuildContext context,
-    dynamic element,
-    TextStyle? preferredStyle,
-    TextStyle? parentStyle,
-  ) {
-    final code = element.textContent as String? ?? '';
-    final rawLang = (element.attributes['class'] as String? ?? '');
-
-    // Inline code — no class, no newlines — let markdown render it normally.
-    if (rawLang.isEmpty && !code.contains('\n')) return null;
-
-    final lang = rawLang.replaceFirst('language-', '');
-    final block = HighlightView(
-      code.trimRight(),
-      language: lang.isNotEmpty ? lang : 'plaintext',
-      theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
-      padding: const EdgeInsets.all(12),
-      textStyle: const TextStyle(
-        fontSize: 12,
-        fontFamily: 'monospace',
-        height: 1.5,
-      ),
-    );
-    if (lang == 'mermaid') {
-      return MermaidDiagram(
-        source: code.trimRight(),
-        isDark: isDark,
-        fallback: block,
-      );
-    }
-    return block;
   }
 }

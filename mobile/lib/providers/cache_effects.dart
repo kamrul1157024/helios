@@ -7,6 +7,8 @@
 /// turns these into `ref.invalidate` calls.
 library;
 
+import 'package:flutter/foundation.dart' show setEquals;
+
 import '../models/session.dart';
 
 /// Replaces one row in a held list, leaving the rest and the order alone.
@@ -48,7 +50,15 @@ enum CacheTarget {
   /// Every git read for a host at once. A commit or a branch change moves all
   /// of them together, and none of the events name a path.
   git,
+
+  /// Every listing and every file a host holds. Only a reconnect takes these
+  /// out whole; `file_changed` names its paths, and [InvalidateFiles] takes out
+  /// just those.
   files,
+
+  /// The files one session's agent wrote. Per session, and moved by the
+  /// session's own `session_status` — that is when its transcript grows.
+  touched,
 
   /// A host's schedules. Host-wide: a fire changes one row and the list is
   /// short, so there is nothing to gain from narrowing it.
@@ -89,6 +99,62 @@ class InvalidateTarget extends CacheEffect {
   String toString() =>
       'InvalidateTarget(${target.name}, $hostId${sessionId == null ? '' : ', $sessionId'})';
 }
+
+/// Drop the reads a `file_changed` event named, and nothing else.
+///
+/// Before spec 65 one agent write refetched every open folder, every file and
+/// the whole git family. Now a write refetches the folder that holds it and the
+/// file itself — and the file only if a viewer is showing it, because Riverpod
+/// refetches only what something watches. The refetch sends the ETag, so a
+/// file the viewer already holds the current version of costs a 304.
+class InvalidateFiles extends CacheEffect {
+  final String hostId;
+
+  /// Folders whose listing moved: the parent of every path, and a named folder
+  /// itself.
+  final Set<String> listings;
+
+  /// Files whose content moved.
+  final Set<String> files;
+
+  const InvalidateFiles(
+    this.hostId, {
+    required this.listings,
+    required this.files,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is InvalidateFiles &&
+      other.hostId == hostId &&
+      setEquals(other.listings, listings) &&
+      setEquals(other.files, files);
+
+  @override
+  int get hashCode => Object.hash(
+    hostId,
+    Object.hashAllUnordered(listings),
+    Object.hashAllUnordered(files),
+  );
+
+  @override
+  String toString() =>
+      'InvalidateFiles($hostId, listings: $listings, files: $files)';
+}
+
+/// The folder that holds [path]. The root's parent is the root.
+String parentOf(String path) {
+  final trimmed = path.length > 1 && path.endsWith('/')
+      ? path.substring(0, path.length - 1)
+      : path;
+  final cut = trimmed.lastIndexOf('/');
+  if (cut <= 0) return '/';
+  return trimmed.substring(0, cut);
+}
+
+String _stripSlash(String path) => path.length > 1 && path.endsWith('/')
+    ? path.substring(0, path.length - 1)
+    : path;
 
 /// Paint one row from the event's own payload, before any refetch lands.
 ///
@@ -154,6 +220,10 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
         // it moved too — last_event_at above all, which is the only thing
         // telling the transcript there is more of it to read.
         InvalidateTarget(CacheTarget.sessions, hostId),
+        // The same growth may hold a write, so the files this session touched
+        // are read again — by whoever is watching them, which is usually no
+        // one.
+        InvalidateTarget(CacheTarget.touched, hostId, sessionId: sessionId),
       ];
 
     case 'session_updated':
@@ -162,17 +232,30 @@ List<CacheEffect> effectsFor(String hostId, String type, dynamic data) {
 
     case 'file_changed':
       // Every path named has changed *content*, not merely a changed mtime —
-      // the daemon compares digests before it says anything (spec 54). Which
-      // paths they are does not change the answer here: both families are
-      // invalidated whole, and Riverpod refetches only the entries something is
-      // watching, so naming one costs the same as naming all of them.
+      // the daemon compares digests before it says anything (spec 54).
       //
-      // Git comes too. A working-tree write moves `git status`, and a repo
-      // entry is a commit or a checkout.
+      // Narrow, as on the desktop (spec 65, 2.1 and 3.3): the folder holding
+      // each path, the folder itself when one is named, and the file. Git comes
+      // once: a working-tree write moves `git status`, and a repo entry is a
+      // commit or a checkout.
       final named = map['paths'];
       if (named is! List || named.isEmpty) return const [];
+      final listings = <String>{};
+      final files = <String>{};
+      for (final entry in named) {
+        final path = entry is Map ? _text(entry['path']) : _text(entry);
+        if (path.isEmpty) continue;
+        final kind = entry is Map ? _text(entry['kind']) : '';
+        listings.add(parentOf(path));
+        if (kind == 'dir' || kind == 'repo') {
+          listings.add(_stripSlash(path));
+        } else {
+          files.add(path);
+        }
+      }
       return [
-        InvalidateTarget(CacheTarget.files, hostId),
+        if (listings.isNotEmpty || files.isNotEmpty)
+          InvalidateFiles(hostId, listings: listings, files: files),
         InvalidateTarget(CacheTarget.git, hostId),
       ];
 

@@ -44,3 +44,95 @@ String mimeForPath(String path) {
   if (extension == 'css') return 'text/css';
   return 'application/octet-stream';
 }
+
+/// Which picture a row in the browser draws for a file.
+///
+/// A family rather than an icon, so this file stays free of Flutter: the
+/// browser and the Changes view both map a family to a glyph, and before this
+/// the browser kept a second extension map of its own that disagreed with the
+/// one above.
+enum FileFamily {
+  code,
+  markdown,
+  text,
+  data,
+  image,
+  html,
+  style,
+  shell,
+  pdf,
+  archive,
+  other,
+}
+
+const _families = <String, FileFamily>{
+  'dart': FileFamily.code,
+  'go': FileFamily.code,
+  'py': FileFamily.code,
+  'js': FileFamily.code,
+  'mjs': FileFamily.code,
+  'cjs': FileFamily.code,
+  'ts': FileFamily.code,
+  'tsx': FileFamily.code,
+  'jsx': FileFamily.code,
+  'java': FileFamily.code,
+  'kt': FileFamily.code,
+  'swift': FileFamily.code,
+  'rs': FileFamily.code,
+  'c': FileFamily.code,
+  'cc': FileFamily.code,
+  'cpp': FileFamily.code,
+  'h': FileFamily.code,
+  'hpp': FileFamily.code,
+  'cs': FileFamily.code,
+  'rb': FileFamily.code,
+  'php': FileFamily.code,
+  'lua': FileFamily.code,
+  'sql': FileFamily.code,
+  'proto': FileFamily.code,
+  'md': FileFamily.markdown,
+  'markdown': FileFamily.markdown,
+  'txt': FileFamily.text,
+  'rst': FileFamily.text,
+  'log': FileFamily.text,
+  'json': FileFamily.data,
+  'yaml': FileFamily.data,
+  'yml': FileFamily.data,
+  'toml': FileFamily.data,
+  'xml': FileFamily.data,
+  'csv': FileFamily.data,
+  'ini': FileFamily.data,
+  'lock': FileFamily.data,
+  'mod': FileFamily.data,
+  'sum': FileFamily.data,
+  'css': FileFamily.style,
+  'scss': FileFamily.style,
+  'sass': FileFamily.style,
+  'less': FileFamily.style,
+  'sh': FileFamily.shell,
+  'bash': FileFamily.shell,
+  'zsh': FileFamily.shell,
+  'fish': FileFamily.shell,
+  'pdf': FileFamily.pdf,
+  'zip': FileFamily.archive,
+  'gz': FileFamily.archive,
+  'tgz': FileFamily.archive,
+  'tar': FileFamily.archive,
+  'xz': FileFamily.archive,
+  'apk': FileFamily.archive,
+  'dmg': FileFamily.archive,
+};
+
+FileFamily familyOf(String path) {
+  final extension = extensionOf(path);
+  if (_imageMime.containsKey(extension)) return FileFamily.image;
+  if (_htmlExtensions.contains(extension)) return FileFamily.html;
+  final known = _families[extension];
+  if (known != null) return known;
+  // Names that are a language without saying so.
+  final name = path.substring(path.lastIndexOf('/') + 1);
+  if (name == 'Makefile' || name == 'Dockerfile') return FileFamily.code;
+  return FileFamily.other;
+}
+
+bool isMarkdownPath(String path) => familyOf(path) == FileFamily.markdown;

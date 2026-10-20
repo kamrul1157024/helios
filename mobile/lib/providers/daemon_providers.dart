@@ -594,6 +594,7 @@ class GitDiffKey {
   final String? from;
   final String? to;
   final bool untracked;
+  final bool mergeBase;
 
   const GitDiffKey(
     this.hostId,
@@ -603,6 +604,7 @@ class GitDiffKey {
     this.from,
     this.to,
     this.untracked = false,
+    this.mergeBase = false,
   });
 
   @override
@@ -614,11 +616,12 @@ class GitDiffKey {
       other.staged == staged &&
       other.from == from &&
       other.to == to &&
-      other.untracked == untracked;
+      other.untracked == untracked &&
+      other.mergeBase == mergeBase;
 
   @override
   int get hashCode =>
-      Object.hash(hostId, cwd, file, staged, from, to, untracked);
+      Object.hash(hostId, cwd, file, staged, from, to, untracked, mergeBase);
 }
 
 final gitDiffProvider = FutureProvider.family<GitDiff?, GitDiffKey>((
@@ -635,6 +638,7 @@ final gitDiffProvider = FutureProvider.family<GitDiff?, GitDiffKey>((
         from: key.from,
         to: key.to,
         untracked: key.untracked,
+        mergeBase: key.mergeBase,
       );
 });
 
@@ -643,8 +647,15 @@ class GitChangesKey {
   final String cwd;
   final String to;
   final String? from;
+  final bool mergeBase;
 
-  const GitChangesKey(this.hostId, this.cwd, this.to, {this.from});
+  const GitChangesKey(
+    this.hostId,
+    this.cwd,
+    this.to, {
+    this.from,
+    this.mergeBase = false,
+  });
 
   @override
   bool operator ==(Object other) =>
@@ -652,10 +663,11 @@ class GitChangesKey {
       other.hostId == hostId &&
       other.cwd == cwd &&
       other.to == to &&
-      other.from == from;
+      other.from == from &&
+      other.mergeBase == mergeBase;
 
   @override
-  int get hashCode => Object.hash(hostId, cwd, to, from);
+  int get hashCode => Object.hash(hostId, cwd, to, from, mergeBase);
 }
 
 final gitChangesProvider = FutureProvider.family<GitChanges?, GitChangesKey>((
@@ -665,18 +677,54 @@ final gitChangesProvider = FutureProvider.family<GitChanges?, GitChangesKey>((
   if (key.cwd.isEmpty || key.to.isEmpty) return null;
   return ref
       .watch(serviceProvider(key.hostId))
-      ?.gitChanges(key.cwd, key.to, from: key.from);
+      ?.gitChanges(key.cwd, key.to, from: key.from, mergeBase: key.mergeBase);
 });
 
 // ─── Files ──────────────────────────────────────────────────────────────────
 
-final listFilesProvider = FutureProvider.family<FileListing?, (String, String)>(
-  (ref, key) async {
-    final (hostId, path) = key;
-    if (path.isEmpty) return null;
-    return ref.watch(serviceProvider(hostId))?.listFiles(path);
-  },
-);
+/// How long a file or a folder stays held after the last screen lets go.
+///
+/// Long enough that going back and forth between a folder and a file is
+/// instant, short enough that files nobody is looking at do not pile up — each
+/// can be 10 MB, and before spec 65 every one ever opened stayed in memory.
+const fileKeepAlive = Duration(seconds: 30);
+
+/// Keeps an autoDispose entry for [duration] after its last listener goes.
+///
+/// The hold starts at once as well, not only on cancel: a `ref.read` of the
+/// future — the HTML preview's assets, the diff's full file — never listens,
+/// so it never cancels either, and a hold that waited for a cancel would keep
+/// that entry for the life of the app.
+void keepFor(Ref ref, Duration duration) {
+  KeepAliveLink? link;
+  Timer? timer;
+  void hold() {
+    timer?.cancel();
+    link ??= ref.keepAlive();
+    timer = Timer(duration, () {
+      link?.close();
+      link = null;
+    });
+  }
+
+  hold();
+  ref.onCancel(hold);
+  ref.onDispose(() => timer?.cancel());
+}
+
+/// A folder's entries.
+///
+/// A failure is a [FileError] in the `AsyncError`, never a null: the screen
+/// says what went wrong in words, and offers Retry.
+final listFilesProvider = FutureProvider.autoDispose
+    .family<FileListing?, (String, String)>((ref, key) async {
+      keepFor(ref, fileKeepAlive);
+      final (hostId, path) = key;
+      if (path.isEmpty) return null;
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) throw FileError(FileErrorKind.notConnected, path);
+      return service.listFiles(path);
+    });
 
 /// A file's contents.
 ///
@@ -684,11 +732,35 @@ final listFilesProvider = FutureProvider.family<FileListing?, (String, String)>(
 /// against it to decide whether the file is dirty, so a background refetch
 /// would move the thing the comparison is against. Freshness comes from an
 /// explicit reload.
-final readFileProvider =
-    FutureProvider.family<FileReadResult?, (String, String)>((ref, key) async {
+///
+/// A reload sends what the entry already holds, so an unchanged file costs a
+/// 304 and keeps the same object — and with it the same bytes and the same
+/// highlight. `ref.state` is the previous value here: Riverpod puts the entry
+/// into loading-with-previous before it calls this again.
+final readFileProvider = FutureProvider.autoDispose
+    .family<FileReadResult?, (String, String)>((ref, key) async {
+      keepFor(ref, fileKeepAlive);
+      final previous = ref.state.valueOrNull;
       final (hostId, path) = key;
       if (path.isEmpty) return null;
-      return ref.watch(serviceProvider(hostId))?.readFile(path);
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) throw FileError(FileErrorKind.notConnected, path);
+      return service.readFile(path, previous: previous);
+    });
+
+/// The files a session's agent wrote, newest first (spec 65, B6).
+///
+/// Observed only while the browser is open, so other sessions cost nothing.
+/// The answer moves when the transcript grows, which `session_status`
+/// announces; the invalidator takes this out on that event.
+final touchedProvider = FutureProvider.autoDispose
+    .family<List<TouchedFile>, (String, String)>((ref, key) async {
+      keepFor(ref, fileKeepAlive);
+      final (hostId, sessionId) = key;
+      if (sessionId.isEmpty) return const [];
+      final service = ref.watch(serviceProvider(hostId));
+      if (service == null) return const [];
+      return service.fetchTouched(sessionId);
     });
 
 // ─── Subagents ──────────────────────────────────────────────────────────────

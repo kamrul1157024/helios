@@ -17,6 +17,7 @@ import '../widgets/group_picker_sheet.dart';
 import '../widgets/provider_mark.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
+import 'routes.dart';
 
 enum SessionFilter { all, pinned, terminated }
 
@@ -1416,6 +1417,7 @@ class _SessionsScreenState extends rp.ConsumerState<SessionsScreen> {
           } else {
             Navigator.of(context).push(
               MaterialPageRoute(
+                settings: const RouteSettings(name: sessionRoute),
                 builder: (_) => SessionDetailScreen(session: session),
               ),
             );

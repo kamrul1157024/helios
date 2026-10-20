@@ -11,9 +11,12 @@ import '../models/schedule.dart';
 import '../models/session.dart';
 import '../models/session_group.dart';
 import '../models/message.dart';
+import '../models/file_error.dart';
 import '../utils/file_types.dart';
 import 'api_client.dart';
 import 'notification_service.dart';
+
+export '../models/file_error.dart';
 
 /// Callback fired when an SSE event arrives on this host.
 typedef SSEEventCallback = void Function(String hostId, SSEEvent event);
@@ -32,6 +35,23 @@ bool isStreamStale(DateTime? lastBytesAt, DateTime now) {
   if (lastBytesAt == null) return false;
   return now.difference(lastBytesAt) > streamSilenceThreshold;
 }
+
+/// Above this a body is decoded on another isolate.
+///
+/// A big folder listing or a busy `git status` is a few hundred kilobytes of
+/// JSON, and parsing that on the UI isolate is a dropped frame or two. Below it
+/// the hop to an isolate costs more than the parse does.
+const jsonIsolateThreshold = 64 * 1024;
+
+/// `jsonDecode`, off the UI isolate when the body is large enough to matter.
+Future<dynamic> decodeJsonBody(String body) {
+  if (body.length <= jsonIsolateThreshold) {
+    return Future.value(jsonDecode(body));
+  }
+  return compute(_decodeJson, body);
+}
+
+dynamic _decodeJson(String body) => jsonDecode(body);
 
 class DaemonAPIService extends ChangeNotifier {
   final String hostId;
@@ -1263,48 +1283,134 @@ class DaemonAPIService extends ChangeNotifier {
 
   // ==================== File Browser API ====================
 
-  Future<FileListing?> listFiles(String path) async {
+  /// A folder's entries.
+  ///
+  /// Throws a [FileError] rather than returning null, so the screen can say
+  /// which of not-found, permission and an unreachable host it was.
+  Future<FileListing> listFiles(String path) async {
+    final http.Response resp;
     try {
-      final resp = await _api.get(
-        '/api/files?path=${Uri.encodeComponent(path)}',
-      );
-      if (resp.statusCode == 200) {
-        return FileListing.fromJson(jsonDecode(resp.body));
-      }
+      resp = await _api.get('/api/files?path=${Uri.encodeComponent(path)}');
     } catch (e) {
       debugPrint('[$hostId] Failed to list files at $path: $e');
+      throw FileError(FileErrorKind.unreachable, path, detail: '$e');
     }
-    return null;
+    if (resp.statusCode != 200) {
+      throw FileError.fromResponse(resp.statusCode, resp.body, path);
+    }
+    return FileListing.fromJson(await decodeJsonBody(resp.body));
   }
 
-  Future<FileReadResult?> readFile(String path) async {
+  /// Set once this daemon has answered `/api/file/raw` with a route-level 404,
+  /// so every later read goes straight to the JSON endpoint instead of asking
+  /// twice.
+  bool _rawUnsupported = false;
+
+  /// A file's contents, as bytes.
+  ///
+  /// [previous] is what the caller already holds. Its ETag goes out as
+  /// `If-None-Match`, and a 304 hands the very same object back — the same
+  /// `Uint8List`, so an image already decoded is not decoded again, and the
+  /// same text, so a highlight keyed on it is still good.
+  ///
+  /// A daemon older than spec 65 has no raw endpoint; its 404 carries no
+  /// `code`, which is how it is told apart from a file that is not there.
+  Future<FileReadResult> readFile(
+    String path, {
+    FileReadResult? previous,
+  }) async {
+    if (_rawUnsupported) return _readFileJson(path);
+    final http.Response resp;
+    try {
+      resp = await _api.get(
+        '/api/file/raw?path=${Uri.encodeComponent(path)}',
+        headers: {
+          if (previous?.etag != null) 'If-None-Match': previous!.etag!,
+        },
+      );
+    } catch (e) {
+      debugPrint('[$hostId] Failed to read file $path: $e');
+      throw FileError(FileErrorKind.unreachable, path, detail: '$e');
+    }
+    switch (resp.statusCode) {
+      case 304 when previous != null:
+        return previous;
+      case 200:
+        return FileReadResult.fromRaw(path, resp);
+      case 404 when !_hasErrorCode(resp.body):
+        _rawUnsupported = true;
+        return _readFileJson(path);
+      case 413:
+        return _tooLarge(path, resp.body);
+    }
+    final error = FileError.fromResponse(resp.statusCode, resp.body, path);
+    if (error.kind == FileErrorKind.isDirectory) {
+      return FileReadResult.directory(path: path);
+    }
+    throw error;
+  }
+
+  static bool _hasErrorCode(String body) {
+    try {
+      final data = jsonDecode(body);
+      return data is Map && data['code'] is String;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  FileReadResult _tooLarge(String path, String body) {
+    final error = FileError.fromResponse(413, body, path);
+    return FileReadResult.tooLarge(path: path, size: error.size ?? 0);
+  }
+
+  /// The read as it was before the raw endpoint, for a daemon that lacks it.
+  Future<FileReadResult> _readFileJson(String path) async {
+    final http.Response resp;
     try {
       // encoding=auto asks the daemon to base64 a file that is not text.
       // Without it a PNG comes back as U+FFFD, because the bytes were put
       // through a JSON string on the way out.
-      final resp = await _api.get(
+      resp = await _api.get(
         '/api/file?path=${Uri.encodeComponent(path)}&encoding=auto',
       );
-      if (resp.statusCode == 413) {
-        final data = jsonDecode(resp.body);
-        return FileReadResult.tooLarge(
-          path: path,
-          size: data['size'] as int? ?? 0,
-        );
-      }
-      if (resp.statusCode == 400) {
-        final data = jsonDecode(resp.body);
-        if ((data['message'] as String? ?? '').contains('directory')) {
-          return FileReadResult.directory(path: path);
-        }
-      }
-      if (resp.statusCode == 200) {
-        return FileReadResult.fromJson(jsonDecode(resp.body));
-      }
     } catch (e) {
       debugPrint('[$hostId] Failed to read file $path: $e');
+      throw FileError(FileErrorKind.unreachable, path, detail: '$e');
     }
-    return null;
+    if (resp.statusCode == 200) {
+      return FileReadResult.fromJson(await decodeJsonBody(resp.body));
+    }
+    if (resp.statusCode == 413) return _tooLarge(path, resp.body);
+    final error = FileError.fromResponse(resp.statusCode, resp.body, path);
+    // The daemon before spec 65 said so in words rather than in a code.
+    if (error.kind == FileErrorKind.isDirectory ||
+        (resp.statusCode == 400 &&
+            (error.detail ?? '').contains('directory'))) {
+      return FileReadResult.directory(path: path);
+    }
+    throw error;
+  }
+
+  /// The files this session's agent wrote, newest first.
+  ///
+  /// Empty from a daemon older than spec 65, which has no such route: the
+  /// marks are extra information, and their absence is not an error worth
+  /// showing.
+  Future<List<TouchedFile>> fetchTouched(String sessionId) async {
+    try {
+      final resp = await _api.get('/api/sessions/$sessionId/touched');
+      if (resp.statusCode != 200) return const [];
+      final data = await decodeJsonBody(resp.body);
+      final files = (data is Map ? data['files'] as List? : null) ?? const [];
+      return files
+          .whereType<Map<String, dynamic>>()
+          .map(TouchedFile.fromJson)
+          .toList();
+    } catch (e) {
+      debugPrint('[$hostId] Failed to read touched files for $sessionId: $e');
+      return const [];
+    }
   }
 
   Future<bool> createSession({
@@ -1343,7 +1449,7 @@ class DaemonAPIService extends ChangeNotifier {
         '/api/git/status?path=${Uri.encodeComponent(path)}',
       );
       if (resp.statusCode == 200) {
-        return GitStatus.fromJson(jsonDecode(resp.body));
+        return GitStatus.fromJson(await decodeJsonBody(resp.body));
       }
     } catch (e) {
       debugPrint('[$hostId] Failed to get git status for $path: $e');
@@ -1360,6 +1466,7 @@ class DaemonAPIService extends ChangeNotifier {
     String? from,
     String? to,
     bool untracked = false,
+    bool mergeBase = false,
   }) async {
     try {
       final query = <String>[
@@ -1367,6 +1474,7 @@ class DaemonAPIService extends ChangeNotifier {
         'file=${Uri.encodeComponent(file)}',
         if (staged) 'staged=true',
         if (untracked) 'untracked=true',
+        if (mergeBase) 'merge_base=true',
         if (from != null && from.isNotEmpty)
           'from=${Uri.encodeComponent(from)}',
         if (to != null && to.isNotEmpty) 'to=${Uri.encodeComponent(to)}',
@@ -1410,13 +1518,22 @@ class DaemonAPIService extends ChangeNotifier {
   }
 
   /// The files one commit touched, or everything between two.
-  Future<GitChanges?> gitChanges(String path, String to, {String? from}) async {
+  /// The files a commit or a range changed. [mergeBase] diffs from where
+  /// [from] and [to] forked rather than from [from] itself — a review of a
+  /// branch against its base, which must not show what the base gained since.
+  Future<GitChanges?> gitChanges(
+    String path,
+    String to, {
+    String? from,
+    bool mergeBase = false,
+  }) async {
     try {
       final query = <String>[
         'path=${Uri.encodeComponent(path)}',
         'to=${Uri.encodeComponent(to)}',
         if (from != null && from.isNotEmpty)
           'from=${Uri.encodeComponent(from)}',
+        if (mergeBase) 'merge_base=true',
       ];
       final resp = await _api.get('/api/git/changes?${query.join('&')}');
       if (resp.statusCode == 200) {
@@ -1588,12 +1705,18 @@ class FileEntry {
   final int size;
   final String modTime;
 
+  /// Whether git ignores this entry. Null when the daemon did not say — an
+  /// older daemon, a cold index, or a folder outside any repository — and then
+  /// nothing is dimmed.
+  final bool? ignored;
+
   FileEntry({
     required this.name,
     required this.path,
     required this.isDir,
     required this.size,
     required this.modTime,
+    this.ignored,
   });
 
   factory FileEntry.fromJson(Map<String, dynamic> json) {
@@ -1603,6 +1726,7 @@ class FileEntry {
       isDir: json['is_dir'] as bool? ?? false,
       size: (json['size'] as num?)?.toInt() ?? 0,
       modTime: json['mod_time'] as String? ?? '',
+      ignored: json['ignored'] as bool?,
     );
   }
 
@@ -1636,13 +1760,32 @@ class FileListing {
 class FileReadResult {
   final String path;
   final int size;
+
+  /// The file's text. Null for a file that is not text, whose [bytes] are set
+  /// instead.
   final String? content;
 
-  /// 'base64' when [content] holds the file's bytes rather than its text.
-  /// Absent from a daemon older than the encoding parameter, where a file that
-  /// is not UTF-8 has already lost its bytes and the heuristic below is all
-  /// there is to go on.
+  /// How the daemon sent it: 'utf8' or 'binary' from the raw endpoint,
+  /// 'base64' from the JSON one when the file was not text. Absent from a
+  /// daemon older than the encoding parameter, where a file that is not UTF-8
+  /// has already lost its bytes and the heuristic below is all there is to go
+  /// on.
   final String? encoding;
+
+  /// The bytes of a file that is not text, decoded once.
+  ///
+  /// A field rather than a getter on purpose: `Image.memory` keys its cache on
+  /// the list's identity, so a getter that decoded afresh on every build would
+  /// decode the picture again on every frame.
+  final Uint8List? bytes;
+
+  /// The daemon's validator for this exact version, `W/"<size>-<mtime>"`.
+  /// Null from a daemon older than spec 65.
+  final String? etag;
+
+  /// RFC 3339, as the daemon formats `mod_time`.
+  final String? modTime;
+
   final bool isTooLarge;
   final bool isDirectory;
 
@@ -1651,16 +1794,60 @@ class FileReadResult {
     required this.size,
     this.content,
     this.encoding,
+    this.bytes,
+    this.etag,
+    this.modTime,
     this.isTooLarge = false,
     this.isDirectory = false,
   });
 
   factory FileReadResult.fromJson(Map<String, dynamic> json) {
+    final encoding = json['encoding'] as String?;
+    final content = json['content'] as String?;
+    Uint8List? bytes;
+    if (encoding == 'base64' && content != null) {
+      try {
+        bytes = base64Decode(content);
+      } catch (_) {
+        bytes = null;
+      }
+    }
     return FileReadResult(
       path: json['path'] as String,
       size: (json['size'] as num?)?.toInt() ?? 0,
-      content: json['content'] as String?,
-      encoding: json['encoding'] as String?,
+      content: encoding == 'base64' ? null : content,
+      encoding: encoding,
+      bytes: bytes,
+      etag: json['etag'] as String?,
+      modTime: json['mod_time'] as String?,
+    );
+  }
+
+  /// The body of `GET /api/file/raw`.
+  ///
+  /// Text is decoded here, once, with `utf8.decode`; the daemon has already
+  /// said whether it is text, so nothing on this side has to guess.
+  factory FileReadResult.fromRaw(String path, http.Response resp) {
+    final body = resp.bodyBytes;
+    final headers = resp.headers;
+    var encoding = headers['x-helios-encoding'];
+    String? text;
+    if (encoding != 'binary') {
+      try {
+        text = utf8.decode(body);
+        encoding = 'utf8';
+      } on FormatException {
+        encoding = 'binary';
+      }
+    }
+    return FileReadResult(
+      path: path,
+      size: int.tryParse(headers['x-helios-size'] ?? '') ?? body.length,
+      content: text,
+      encoding: encoding,
+      bytes: text == null ? body : null,
+      etag: headers['etag'],
+      modTime: headers['x-helios-mod-time'],
     );
   }
 
@@ -1672,25 +1859,17 @@ class FileReadResult {
     return FileReadResult(path: path, size: 0, isDirectory: true);
   }
 
-  /// The file's bytes, when the daemon sent them, and null otherwise.
-  Uint8List? get bytes {
-    if (encoding != 'base64') return null;
-    final c = content;
-    if (c == null) return null;
-    try {
-      return base64Decode(c);
-    } catch (_) {
-      return null;
-    }
-  }
+  /// Whether this is a raster picture this build can draw. SVG is text, and is
+  /// drawn by [isSvg]'s own path.
+  bool get isImage =>
+      bytes != null && isImagePath(path) && extensionOf(path) != 'svg';
 
-  /// Whether this is a picture, and one this build can actually draw. An image
-  /// read from an older daemon is binary but not showable, and falls through to
-  /// the notice that says so.
-  bool get isImage => encoding == 'base64' && isImagePath(path);
+  bool get isSvg => extensionOf(path) == 'svg' && content != null;
 
   bool get isBinary {
-    if (encoding == 'base64') return true;
+    if (bytes != null) return true;
+    if (encoding == 'base64' || encoding == 'binary') return true;
+    if (encoding == 'utf8') return false;
     final c = content;
     if (c == null || c.isEmpty) return false;
     // Sample first 8KB for binary detection
@@ -1708,6 +1887,43 @@ class FileReadResult {
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+}
+
+/// A file this session's agent wrote, from `GET /api/sessions/{id}/touched`.
+class TouchedFile {
+  final String path;
+
+  /// When the agent last wrote it.
+  final DateTime? lastAt;
+
+  /// The provider's own tool name — Edit, Write, apply_patch.
+  final String tool;
+
+  /// How many tool calls in the session touched it.
+  final int count;
+
+  /// The first changed line of the last edit, when the daemon found it.
+  final int? line;
+
+  final bool deleted;
+
+  const TouchedFile({
+    required this.path,
+    this.lastAt,
+    this.tool = '',
+    this.count = 1,
+    this.line,
+    this.deleted = false,
+  });
+
+  factory TouchedFile.fromJson(Map<String, dynamic> json) => TouchedFile(
+    path: json['path'] as String? ?? '',
+    lastAt: DateTime.tryParse(json['last_at'] as String? ?? ''),
+    tool: json['tool'] as String? ?? '',
+    count: (json['count'] as num?)?.toInt() ?? 1,
+    line: (json['line'] as num?)?.toInt(),
+    deleted: json['deleted'] as bool? ?? false,
+  );
 }
 
 /// One live terminal: a session's agent, or a shell opened beside it.
@@ -1767,7 +1983,7 @@ class GitChange {
   final String path;
   final String status;
 
-  GitChange({required this.path, required this.status});
+  const GitChange({required this.path, required this.status});
 
   factory GitChange.fromJson(Map<String, dynamic> json) {
     return GitChange(

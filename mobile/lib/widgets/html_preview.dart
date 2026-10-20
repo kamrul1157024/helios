@@ -138,13 +138,20 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
     final loaded = <String, FileReadResult>{};
     var spent = 0;
     for (final asset in planned) {
-      final file = await ref.read(
-        readFileProvider((widget.hostId, asset.path)).future,
-      );
+      FileReadResult? file;
+      try {
+        file = await ref.read(
+          readFileProvider((widget.hostId, asset.path)).future,
+        );
+      } on FileError {
+        file = null;
+      }
       // A page that names a file the agent has since deleted still renders;
       // the reference simply goes unresolved.
-      if (file?.content == null) continue;
-      spent += file!.content!.length;
+      if (file == null) continue;
+      final size = file.bytes?.length ?? file.content?.length;
+      if (size == null) continue;
+      spent += size;
       if (spent > maxTotalBytes) break;
       loaded['${asset.kind}:${asset.href}'] = file;
     }
@@ -157,9 +164,10 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
       if (matches.isEmpty) continue;
       final asset = matches.first;
 
-      if (file.encoding == 'base64') {
+      final bytes = file.bytes;
+      if (bytes != null) {
         el.attributes['src'] =
-            'data:${mimeForPath(asset.path)};base64,${file.content}';
+            'data:${mimeForPath(asset.path)};base64,${base64Encode(bytes)}';
       } else if (mimeForPath(asset.path) == 'image/svg+xml') {
         // An SVG is text and arrives as text; anything else that is not base64
         // came from a daemon too old to send bytes, and is already lost.
@@ -172,8 +180,9 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
     // has to be allowed to load, and this needs nothing allowed.
     for (final el in sheets) {
       final file = loaded['style:${el.attributes['href'] ?? ''}'];
-      if (file?.content == null || file!.encoding == 'base64') continue;
-      final style = dom.Element.tag('style')..text = file.content!;
+      final text = file?.content;
+      if (text == null) continue;
+      final style = dom.Element.tag('style')..text = text;
       el.replaceWith(style);
     }
 
@@ -181,8 +190,9 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
     // policy below allows 'unsafe-inline' and no source at all.
     for (final el in code) {
       final file = loaded['script:${el.attributes['src'] ?? ''}'];
-      if (file?.content == null || file!.encoding == 'base64') continue;
-      final inline = dom.Element.tag('script')..text = file.content!;
+      final text = file?.content;
+      if (text == null) continue;
+      final inline = dom.Element.tag('script')..text = text;
       el.replaceWith(inline);
     }
   }
@@ -269,10 +279,18 @@ class _HtmlPreviewState extends rp.ConsumerState<HtmlPreview> {
       return const Center(child: CircularProgressIndicator());
 
     // White behind it, because a document assumes paper. A dark app around a
-    // page written for a browser would misrepresent it.
-    return Container(
+    // page written for a browser would misrepresent it — but a white page
+    // edge to edge in a dark app is a flashbang, so in dark mode the page
+    // sits inset on a dark backdrop, like a sheet on a desk.
+    final page = Container(
       color: Colors.white,
       child: WebViewWidget(controller: controller),
+    );
+    if (theme.brightness != Brightness.dark) return page;
+    return Container(
+      color: theme.colorScheme.surfaceContainerLowest,
+      padding: const EdgeInsets.all(8),
+      child: ClipRRect(borderRadius: BorderRadius.circular(6), child: page),
     );
   }
 }

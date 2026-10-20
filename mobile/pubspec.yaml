@@ -38,8 +38,10 @@ dependencies:
   provider: ^6.1.4
   # Shared preferences
   shared_preferences: ^2.5.3
-  # Markdown rendering
+  # Markdown rendering. The parser is named as well because the file viewer
+  # walks its blocks itself, to build only the ones on screen (spec 65, 3.4).
   flutter_markdown: ^0.7.6
+  markdown: ^7.3.0
   # HTML preview: a webview to render the page, and a parser to rewrite it
   # before it gets there. See docs/specs/51-file-previews.md.
   webview_flutter: ^4.10.0

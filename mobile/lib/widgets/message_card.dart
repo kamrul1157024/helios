@@ -17,6 +17,10 @@ class MessageCard extends StatelessWidget {
   final String hostId;
   final String sessionCwd;
 
+  /// The session the message belongs to, handed to the file viewer a chip
+  /// opens so that "Ask AI" and line selection work from there too.
+  final String? sessionId;
+
   const MessageCard({
     super.key,
     required this.message,
@@ -25,6 +29,7 @@ class MessageCard extends StatelessWidget {
     this.toolGroup,
     this.hostId = '',
     this.sessionCwd = '',
+    this.sessionId,
   });
 
   @override
@@ -40,6 +45,7 @@ class MessageCard extends StatelessWidget {
           message: message,
           hostId: hostId,
           sessionCwd: sessionCwd,
+          sessionId: sessionId,
         );
       case 'tool_use':
         final bool? resultStatus =
@@ -221,10 +227,12 @@ class _AssistantMessageCard extends StatefulWidget {
   final Message message;
   final String hostId;
   final String sessionCwd;
+  final String? sessionId;
   const _AssistantMessageCard({
     required this.message,
     required this.hostId,
     required this.sessionCwd,
+    this.sessionId,
   });
 
   @override
@@ -273,6 +281,7 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
           hostId: widget.hostId,
           path: resolvedPath,
           rootPath: widget.sessionCwd,
+          sessionId: widget.sessionId,
         ),
       ),
     );
@@ -388,13 +397,16 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
               SelectionContainer.disabled(
                 child: Wrap(
                   spacing: 6,
-                  runSpacing: 4,
                   children: filePaths.map((path) {
                     final name = path.split('/').last;
                     final isDir = !name.contains('.');
+                    // The chip stays small; the margin around it is what
+                    // makes the target 48 dp tall, as a finger needs.
                     return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => _openFilePath(path),
                       child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 12),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
                           vertical: 4,
@@ -416,7 +428,7 @@ class _AssistantMessageCardState extends State<_AssistantMessageCard> {
                               isDir ? Icons.folder : Icons.insert_drive_file,
                               size: 12,
                               color: isDir
-                                  ? Colors.amber.shade700
+                                  ? theme.colorScheme.tertiary
                                   : theme.colorScheme.secondary,
                             ),
                             const SizedBox(width: 4),
