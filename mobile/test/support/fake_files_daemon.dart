@@ -50,8 +50,10 @@ class FakeFilesDaemon {
   /// When true, every request throws as a dropped connection would.
   bool unreachable = false;
 
-  /// How `/api/sessions/{id}/send` answers: null for accepted, or the error.
+  /// How `/api/sessions/{id}/send` answers: null for accepted, or the error
+  /// and the status it comes with.
   String? sendError;
+  int sendStatus = 409;
 
   /// Whether this daemon predates `/api/file/raw`.
   final bool oldDaemon;
@@ -84,11 +86,11 @@ class FakeFilesDaemon {
     if (unreachable) throw const SocketException('Network is unreachable');
     final path = request.url.path;
     final query = request.url.queryParameters['path'] ?? '';
-    if (path == '/api/sessions/s1/send') {
+    if (path.startsWith('/api/sessions/') && path.endsWith('/send')) {
       final error = sendError;
       return error == null
           ? http.Response('{}', 200)
-          : http.Response(jsonEncode({'error': error}), 409);
+          : http.Response(jsonEncode({'error': error}), sendStatus);
     }
     if (path.endsWith('/touched')) {
       return http.Response(jsonEncode({'files': touched}), 200);

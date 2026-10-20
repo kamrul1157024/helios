@@ -65,6 +65,32 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
   /// The folder the breadcrumb was last scrolled to the end for.
   String? _crumbsShown;
 
+  /// What the touched list held last time, to tell a new write from a
+  /// rebuild.
+  String? _touchedSeen;
+
+  /// Reads git again when the agent has written something since it was last
+  /// read.
+  ///
+  /// The touched list moves with the transcript, but git status only moves
+  /// with a `file_changed`, and the daemon names only paths someone watches.
+  /// A file the agent creates in a folder nobody has open — an untracked note
+  /// under `docs/` — announced nothing, so its row in "Edited by this
+  /// session" had no letter while the desktop, which reads git more often,
+  /// showed U.
+  void _refreshGitOnNewWrites(List<TouchedFile> touched) {
+    final seen = [
+      for (final file in touched) '${file.path}@${file.lastAt}',
+    ].join('|');
+    final before = _touchedSeen;
+    _touchedSeen = seen;
+    if (before == null || before == seen) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.invalidate(gitStatusProvider((widget.hostId, _rootPath)));
+    });
+  }
+
   FileMarks? _marks;
   GitStatus? _marksGit;
   List<TouchedFile>? _marksTouched;
@@ -369,10 +395,13 @@ class _FileBrowserScreenState extends rp.ConsumerState<FileBrowserScreen>
         .watch(gitStatusProvider((widget.hostId, _rootPath)))
         .valueOrNull;
     final session = widget.sessionId;
-    final touched = session == null
-        ? const <TouchedFile>[]
-        : ref.watch(touchedProvider((widget.hostId, session))).valueOrNull ??
-              const <TouchedFile>[];
+    final touchedRead = session == null
+        ? null
+        : ref.watch(touchedProvider((widget.hostId, session))).valueOrNull;
+    final touched = touchedRead ?? const <TouchedFile>[];
+    // Only an answer counts: the empty list drawn while the first read is out
+    // is not a write.
+    if (touchedRead != null) _refreshGitOnNewWrites(touchedRead);
     // Built once per answer rather than per build: a status with thousands
     // of changes is a lot of string work to redo on every frame.
     if (!identical(git, _marksGit) || !identical(touched, _marksTouched)) {

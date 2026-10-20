@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,7 +7,6 @@ import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
 
 import '../utils/code_highlight.dart';
-import 'scroll_to_index.dart';
 
 /// A run of lines the reader picked, 1-based and inclusive.
 class LineSelection {
@@ -132,12 +132,27 @@ class _CodeViewState extends State<CodeView> {
   final _horizontal = ScrollController();
 
   List<String> _lines = const [];
+
+  /// Each line's width in columns, a tab counted as four.
+  Int32List _columns = Int32List(0);
   int _longest = 0;
   HighlightedCode? _highlight;
   String? _highlightKey;
 
-  /// The row being scrolled to with wrap on, where rows have no fixed height.
-  ScrollTarget? _target;
+  /// With wrap on: how many columns fit on one visual line, set by the layout.
+  int _wrapColumns = 80;
+
+  /// With wrap on: where each row starts, for the [_wrapColumns] and font
+  /// size it was worked out for. One more entry than there are lines; the
+  /// last is the total.
+  ///
+  /// Wrap breaks at the column, not at a space, so a row's height follows
+  /// from its width alone — which is what lets the list know where row 12000
+  /// is without laying out the 11999 before it. A list that had to find out
+  /// by laying them out jumped in steps and took seconds.
+  Float64List? _offsets;
+  int _offsetsColumns = 0;
+  double _offsetsFont = 0;
 
   /// Where the pinch started: the size, and the line at the top.
   double _pinchBase = 0;
@@ -193,15 +208,19 @@ class _CodeViewState extends State<CodeView> {
   void _prepare() {
     final lines = widget.text.split('\n');
     var longest = 0;
+    final columns = Int32List(lines.length);
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
       // A file written on Windows: the carriage return is not something to
       // draw, and it sits past every span the highlighter reports.
       if (line.endsWith('\r')) lines[i] = line.substring(0, line.length - 1);
       final width = lines[i].length + 3 * '\t'.allMatches(lines[i]).length;
+      columns[i] = width;
       if (width > longest) longest = width;
     }
     _lines = lines;
+    _columns = columns;
+    _offsets = null;
     _longest = math.min(longest, _maxUnwrappedChars);
     _highlight = null;
     _highlightKey = null;
@@ -224,6 +243,56 @@ class _CodeViewState extends State<CodeView> {
   }
 
   double get _rowExtent => (widget.fontSize * 5 / 3).roundToDouble();
+
+  /// One visual line, with wrap on. The strut forces it, so the arithmetic
+  /// below and the text on screen agree.
+  double get _lineHeight => widget.fontSize * 1.25;
+
+  double get _wrapPadding => widget.fontSize / 6;
+
+  StrutStyle get _strut => StrutStyle(
+    fontFamily: 'monospace',
+    fontSize: widget.fontSize,
+    height: 1.25,
+    forceStrutHeight: true,
+  );
+
+  int _visualLines(int index) =>
+      math.max(1, (_columns[index] + _wrapColumns - 1) ~/ _wrapColumns);
+
+  Float64List _rowOffsets() {
+    final held = _offsets;
+    if (held != null &&
+        _offsetsColumns == _wrapColumns &&
+        _offsetsFont == widget.fontSize) {
+      return held;
+    }
+    final offsets = Float64List(_lines.length + 1);
+    final padding = 2 * _wrapPadding;
+    for (var i = 0; i < _lines.length; i++) {
+      offsets[i + 1] = offsets[i] + _visualLines(i) * _lineHeight + padding;
+    }
+    _offsetsColumns = _wrapColumns;
+    _offsetsFont = widget.fontSize;
+    return _offsets = offsets;
+  }
+
+  /// The row at [offset] down the list, in whichever mode is on.
+  double _rowAt(double offset) {
+    if (!widget.wrap) return offset / _rowExtent;
+    final offsets = _rowOffsets();
+    var low = 0;
+    var high = _lines.length - 1;
+    while (low < high) {
+      final mid = (low + high + 1) ~/ 2;
+      if (offsets[mid] <= offset) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return low.toDouble();
+  }
 
   TextStyle get _codeStyle => TextStyle(
     fontSize: widget.fontSize,
@@ -249,64 +318,36 @@ class _CodeViewState extends State<CodeView> {
   }
 
   /// Puts back the line that was at the top before the size or the wrap
-  /// changed. Exact with wrap off, where every row is the same height; with
-  /// wrap on the rows have no fixed height, so a size change scales the
-  /// offset, which is close enough to keep the reader's place.
+  /// changed. Exact in both modes: every row's height is known up front.
   void _keepTopLine(CodeView old) {
     if (!_vertical.hasClients) return;
-    if (old.wrap && widget.wrap) {
-      _jumpAfterFrame(_vertical.offset * widget.fontSize / old.fontSize);
-      return;
-    }
-    final oldExtent = (old.fontSize * 5 / 3).roundToDouble();
     final pinching = _pinchBase > 0 && old.fontSize != widget.fontSize;
-    final topLine = pinching && !old.wrap
-        ? _pinchTopLine
-        : _vertical.offset / oldExtent;
-    if (!widget.wrap) {
-      _jumpAfterFrame(topLine * _rowExtent);
-      return;
+    final double topLine;
+    if (pinching) {
+      topLine = _pinchTopLine;
+    } else if (old.wrap) {
+      // The offsets still describe the old layout until the next build.
+      topLine = _rowAt(_vertical.offset);
+    } else {
+      topLine = _vertical.offset / (old.fontSize * 5 / 3).roundToDouble();
     }
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _showIndex(topLine.floor(), alignment: 0),
     );
   }
 
-  void _jumpAfterFrame(double offset) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_vertical.hasClients) return;
-      final position = _vertical.position;
-      _vertical.jumpTo(
-        offset.clamp(position.minScrollExtent, position.maxScrollExtent),
-      );
-    });
-  }
-
   Future<void> _goToLine(int line) async {
     if (_lines.isEmpty) return;
-    await _showIndex((line - 1).clamp(0, _lines.length - 1), alignment: 0.3);
+    _showIndex((line - 1).clamp(0, _lines.length - 1), alignment: 0.3);
   }
 
-  Future<void> _showIndex(int index, {required double alignment}) async {
+  void _showIndex(int index, {required double alignment}) {
     if (!_vertical.hasClients || !mounted) return;
-    if (!widget.wrap) {
-      final position = _vertical.position;
-      final offset =
-          index * _rowExtent - position.viewportDimension * alignment;
-      _vertical.jumpTo(
-        offset.clamp(position.minScrollExtent, position.maxScrollExtent),
-      );
-      return;
-    }
-    final target = ScrollTarget(index);
-    setState(() => _target = target);
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
-    await scrollToTarget(
-      controller: _vertical,
-      target: target,
-      count: _lines.length,
-      alignment: alignment,
+    final position = _vertical.position;
+    final top = widget.wrap ? _rowOffsets()[index] : index * _rowExtent;
+    final offset = top - position.viewportDimension * alignment;
+    _vertical.jumpTo(
+      offset.clamp(position.minScrollExtent, position.maxScrollExtent),
     );
   }
 
@@ -333,7 +374,7 @@ class _CodeViewState extends State<CodeView> {
 
   void _onScaleStart(ScaleStartDetails details) {
     _pinchBase = widget.fontSize;
-    _pinchTopLine = _vertical.hasClients ? _vertical.offset / _rowExtent : 0;
+    _pinchTopLine = _vertical.hasClients ? _rowAt(_vertical.offset) : 0;
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
@@ -360,7 +401,45 @@ class _CodeViewState extends State<CodeView> {
       text.contains('\t') ? text.replaceAll('\t', '    ') : text;
 
   /// One line as spans. Built per visible row, which is a screenful at most.
-  TextSpan _lineSpan(int index, TextStyle base, {required bool cut}) {
+  ///
+  /// With [wrapAt], a line break goes in every [wrapAt] columns, so the row
+  /// is exactly as tall as `_visualLines` says.
+  TextSpan _lineSpan(
+    int index,
+    TextStyle base, {
+    required bool cut,
+    int? wrapAt,
+  }) {
+    final span = _plainOrHighlighted(index, base, cut: cut);
+    if (wrapAt == null || _columns[index] <= wrapAt) return span;
+    var column = 0;
+    String breakUp(String text) {
+      final out = StringBuffer();
+      for (final unit in text.codeUnits) {
+        if (column == wrapAt) {
+          out.write('\n');
+          column = 0;
+        }
+        out.writeCharCode(unit);
+        column++;
+      }
+      return out.toString();
+    }
+
+    final children = span.children;
+    if (children == null) {
+      return TextSpan(text: breakUp(span.text ?? ''), style: base);
+    }
+    return TextSpan(
+      style: base,
+      children: [
+        for (final child in children.cast<TextSpan>())
+          TextSpan(text: breakUp(child.text ?? ''), style: child.style),
+      ],
+    );
+  }
+
+  TextSpan _plainOrHighlighted(int index, TextStyle base, {required bool cut}) {
     var text = _lines[index];
     if (cut && text.length > _maxUnwrappedChars) {
       text = '${text.substring(0, _maxUnwrappedChars)}…';
@@ -536,62 +615,78 @@ class _CodeViewState extends State<CodeView> {
     );
   }
 
-  /// Wrap on: one list, each row as tall as its line needs.
+  /// Wrap on: one list, each row as tall as its line needs — and the list
+  /// told each height up front, from the line's width in columns.
   Widget _buildWrapped(
     TextStyle codeStyle,
     TextStyle gutterStyle,
     double gutterWidth,
     Color selectedColor,
   ) {
-    final target = _target;
-    return ListView.builder(
-      controller: _vertical,
-      physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: _lines.length,
-      itemBuilder: (_, i) {
-        target?.built.add(i);
-        final line = i + 1;
-        final selected = widget.selection?.contains(line) ?? false;
-        Widget row = GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _onTap(line),
-          onLongPress: () => _onLongPress(line),
-          child: Container(
-            color: selected ? selectedColor : null,
-            constraints: BoxConstraints(minHeight: _rowExtent),
-            padding: EdgeInsets.symmetric(vertical: widget.fontSize / 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: gutterWidth,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Text(
-                      '$line',
-                      textAlign: TextAlign.right,
-                      style: selected
-                          ? gutterStyle.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                            )
-                          : gutterStyle,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The code column: the row less the gutter and the padding.
+        final width = constraints.maxWidth - gutterWidth - 12;
+        _wrapColumns = math.max(8, (width / _charWidth(codeStyle)).floor());
+        final offsets = _rowOffsets();
+        final strut = _strut;
+        return ListView.builder(
+          controller: _vertical,
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: _lines.length,
+          itemExtentBuilder: (i, _) =>
+              i < _lines.length ? offsets[i + 1] - offsets[i] : null,
+          itemBuilder: (_, i) {
+            final line = i + 1;
+            final selected = widget.selection?.contains(line) ?? false;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _onTap(line),
+              onLongPress: () => _onLongPress(line),
+              child: Container(
+                color: selected ? selectedColor : null,
+                padding: EdgeInsets.symmetric(vertical: _wrapPadding),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: gutterWidth,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(
+                          '$line',
+                          textAlign: TextAlign.right,
+                          strutStyle: strut,
+                          style: selected
+                              ? gutterStyle.copyWith(
+                                  color: Theme.of(context).colorScheme.primary,
+                                )
+                              : gutterStyle,
+                        ),
+                      ),
                     ),
-                  ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 4, right: 8),
+                        child: RichText(
+                          text: _lineSpan(
+                            i,
+                            codeStyle,
+                            cut: false,
+                            wrapAt: _wrapColumns,
+                          ),
+                          strutStyle: strut,
+                          softWrap: false,
+                          overflow: TextOverflow.clip,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 4, right: 8),
-                    child: RichText(text: _lineSpan(i, codeStyle, cut: false)),
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
-        if (target != null && target.index == i) {
-          row = KeyedSubtree(key: target.key, child: row);
-        }
-        return row;
       },
     );
   }

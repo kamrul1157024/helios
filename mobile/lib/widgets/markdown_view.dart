@@ -418,6 +418,18 @@ class _DaemonImage extends rp.ConsumerWidget {
   }
 }
 
+/// A highlight theme with its root background taken out, so the code sits on
+/// whatever box it is drawn in.
+Map<String, TextStyle> _clearRoot(Map<String, TextStyle> theme) => {
+  ...theme,
+  'root': (theme['root'] ?? const TextStyle()).copyWith(
+    backgroundColor: Colors.transparent,
+  ),
+};
+
+final _darkCode = _clearRoot(atomOneDarkTheme);
+final _lightCode = _clearRoot(atomOneLightTheme);
+
 /// Fenced code in markdown: highlighted, and a Mermaid fence drawn as the
 /// diagram it describes.
 class MarkdownCodeBuilder extends MarkdownElementBuilder {
@@ -439,15 +451,22 @@ class MarkdownCodeBuilder extends MarkdownElementBuilder {
     if (rawLang.isEmpty && !code.contains('\n')) return null;
 
     final lang = rawLang.replaceFirst('language-', '');
-    final block = HighlightView(
-      code.trimRight(),
-      language: lang.isNotEmpty ? lang : 'plaintext',
-      theme: isDark ? atomOneDarkTheme : atomOneLightTheme,
-      padding: const EdgeInsets.all(12),
-      textStyle: const TextStyle(
-        fontSize: 12,
-        fontFamily: 'monospace',
-        height: 1.5,
+    // Full width, and without the highlight theme's own background: the
+    // style sheet's code-block box is the one background, in the app's
+    // colours. The theme's box hugged the code's width inside it, which drew
+    // two backgrounds in one row.
+    final block = SizedBox(
+      width: double.infinity,
+      child: HighlightView(
+        code.trimRight(),
+        language: lang.isNotEmpty ? lang : 'plaintext',
+        theme: isDark ? _darkCode : _lightCode,
+        padding: const EdgeInsets.all(12),
+        textStyle: const TextStyle(
+          fontSize: 12,
+          fontFamily: 'monospace',
+          height: 1.5,
+        ),
       ),
     );
     if (lang == 'mermaid') {

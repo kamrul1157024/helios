@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -304,16 +305,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      RichText longRow() => tester.widget<RichText>(
-        find.byWidgetPredicate(
-          (w) => w is RichText && w.text.toPlainText() == long,
-        ),
+      // With wrap on, the line carries the breaks it wraps at.
+      final longFinder = find.byWidgetPredicate(
+        (w) =>
+            w is RichText && w.text.toPlainText().replaceAll('\n', '') == long,
       );
-      Size longRowSize() => tester.getSize(
-        find.byWidgetPredicate(
-          (w) => w is RichText && w.text.toPlainText() == long,
-        ),
-      );
+      RichText longRow() => tester.widget<RichText>(longFinder);
+      Size longRowSize() => tester.getSize(longFinder);
 
       expect(find.byKey(const ValueKey('code-horizontal')), findsOneWidget);
       expect(longRow().softWrap, isFalse);
@@ -350,6 +348,32 @@ void main() {
       expect(find.text('Title'), findsOneWidget);
       expect(find.text('Ask AI'), findsOneWidget);
       expect(find.text('Tap lines to select'), findsNothing);
+    });
+
+    // One background for a fenced block: the style sheet's, full width. The
+    // highlight theme's own box used to hug the code inside it.
+    testWidgets('a code fence has one full-width background', (tester) async {
+      final daemon = FakeFilesDaemon(
+        files: {'/repo/README.md': '# T\n\n```go\nx := 1\n```\n'},
+      );
+      await tester.pumpWidget(
+        filesApp(
+          daemon,
+          home: const FileViewerScreen(
+            hostId: fakeHost,
+            path: '/repo/README.md',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final view = find.byType(HighlightView);
+      expect(view, findsOneWidget);
+      final box = tester.widget<Container>(
+        find.descendant(of: view, matching: find.byType(Container)).first,
+      );
+      expect(box.color, Colors.transparent);
+      final screen = tester.getSize(find.byType(Scaffold)).width;
+      expect(tester.getSize(view).width, greaterThan(screen - 40));
     });
   });
 
@@ -419,7 +443,112 @@ void main() {
       expect(find.byType(FileViewerScreen), findsOneWidget);
       expect(find.text('The session is busy'), findsOneWidget);
       expect(find.text('Edit'), findsOneWidget);
+
+      // It goes by itself rather than staying until dismissed.
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+      expect(find.text('The session is busy'), findsNothing);
     });
+
+    testWidgets('a second failure replaces the first, and leaving takes it '
+        'down', (tester) async {
+      final daemon = FakeFilesDaemon(files: {'/repo/a.dart': 'void main() {}'})
+        ..sendError = 'Gateway Timeout'
+        ..sendStatus = 504;
+      final nav = await openViewer(tester, daemon);
+      await ask(tester);
+      await ask(tester);
+      const timeout = 'The session did not take the prompt in time. Try again.';
+      expect(find.text(timeout), findsOneWidget);
+
+      nav.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(FileViewerScreen), findsNothing);
+      expect(find.text(timeout), findsNothing);
+    });
+  });
+
+  group('send errors', () {
+    test('say what to do rather than the HTTP reason', () {
+      expect(
+        sendErrorMessage(504, '{"error":"Gateway Timeout"}'),
+        'The session did not take the prompt in time. Try again.',
+      );
+      expect(
+        sendErrorMessage(409, '{"error":"session_busy"}'),
+        'The session is busy',
+      );
+      expect(
+        sendErrorMessage(409, '{"error":"session_terminated"}'),
+        'The session has ended',
+      );
+      expect(sendErrorMessage(500, 'oops'), 'Failed to send prompt');
+    });
+
+    test('a dropped connection is "Host unreachable"', () async {
+      final daemon = FakeFilesDaemon()..unreachable = true;
+      expect(
+        await daemon.service().sendSessionPrompt('s1', 'hi'),
+        'Host unreachable',
+      );
+    });
+  });
+
+  group('go to line', () {
+    // Every seventh line is long, so with wrap on the rows are not one height
+    // and the jump cannot be computed — it has to find the row.
+    final big = List.generate(
+      16001,
+      (i) => i % 7 == 0 ? 'var l$i = "${'x' * 300}"' : 'var l$i = $i',
+    ).join('\n');
+
+    for (final wrap in [false, true]) {
+      for (final viaButton in [false, true]) {
+        testWidgets('lands on line 12000 with wrap ${wrap ? 'on' : 'off'}, '
+            'submitted ${viaButton ? 'with Go' : 'from the keyboard'}', (
+          tester,
+        ) async {
+          SharedPreferences.setMockInitialValues({'file_viewer_wrap': wrap});
+          highlightRunner = (_) async => null;
+          final daemon = FakeFilesDaemon(files: {'/repo/big.go': big});
+          await tester.pumpWidget(
+            filesApp(
+              daemon,
+              home: const FileViewerScreen(
+                hostId: fakeHost,
+                path: '/repo/big.go',
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          // A file over 1 MB asks first.
+          if (find.text('Load anyway').evaluate().isNotEmpty) {
+            await tester.tap(find.text('Load anyway'));
+            await tester.pumpAndSettle();
+          }
+
+          await tester.tap(find.byTooltip('Go to line'));
+          await tester.pumpAndSettle();
+          await tester.enterText(find.byType(TextField), '12000');
+          if (viaButton) {
+            await tester.tap(find.text('Go'));
+          } else {
+            await tester.testTextInput.receiveAction(TextInputAction.done);
+          }
+          await tester.pumpAndSettle();
+
+          expect(tester.takeException(), isNull);
+          expect(find.byType(AlertDialog), findsNothing);
+          final line = find.text('12000');
+          expect(line, findsOneWidget);
+          final rect = tester.getRect(line);
+          final screen = tester.getRect(find.byType(Scaffold));
+          expect(rect.top, greaterThanOrEqualTo(screen.top));
+          expect(rect.bottom, lessThanOrEqualTo(screen.bottom));
+          expect(find.text('L12000 · 1 line'), findsOneWidget);
+        });
+      }
+    }
   });
 
   group('browser layout', () {

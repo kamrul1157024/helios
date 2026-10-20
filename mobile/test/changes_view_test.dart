@@ -156,6 +156,57 @@ void main() {
     expect(daemon.reads.where((r) => r.contains('gone.dart')), isEmpty);
   });
 
+  test('an untracked file is U, wherever it is listed', () {
+    final marks = FileMarks.of(
+      GitStatus(
+        root: '/repo',
+        branch: 'main',
+        dirty: true,
+        ahead: 0,
+        behind: 0,
+        staged: const [],
+        unstaged: const [GitChange(path: 'main.go', status: 'M')],
+        untracked: const [GitChange(path: 'docs/agent-notes.md', status: '?')],
+      ),
+      const [TouchedFile(path: '/repo/docs/agent-notes.md')],
+    );
+    expect(marks.status['/repo/docs/agent-notes.md'], 'U');
+    expect(marks.status['/repo/main.go'], 'M');
+  });
+
+  // The bug seen on a device: the agent wrote a new file in a folder nobody
+  // had open, so no file_changed came, git was never read again, and the row
+  // in "Edited by this session" had no letter.
+  testWidgets('a new write by the agent reads git again, so it shows U', (
+    tester,
+  ) async {
+    final changes = <String, String>{'main.go': 'M'};
+    final touched = <Map<String, dynamic>>[
+      {'path': '/repo/main.go', 'last_at': '2026-09-01T10:00:00Z'},
+    ];
+    final daemon = FakeFilesDaemon(
+      files: {'/repo/main.go': 'package main'},
+      gitChanges: changes,
+      touched: touched,
+    );
+    await tester.pumpWidget(filesApp(daemon, home: _browser(session: 's3')));
+    await tester.pumpAndSettle();
+    expect(find.text('M'), findsOneWidget);
+
+    changes['docs/agent-notes.md'] = '?';
+    touched.insert(0, {
+      'path': '/repo/docs/agent-notes.md',
+      'last_at': '2026-09-01T10:05:00Z',
+    });
+    rp.ProviderScope.containerOf(
+      tester.element(find.byType(FileBrowserScreen)),
+    ).invalidate(touchedProvider((fakeHost, 's3')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('agent-notes.md'), findsOneWidget);
+    expect(find.text('U'), findsOneWidget);
+  });
+
   group('session screen', () {
     final session = Session(
       hostId: fakeHost,

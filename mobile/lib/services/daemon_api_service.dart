@@ -53,6 +53,33 @@ Future<dynamic> decodeJsonBody(String body) {
 
 dynamic _decodeJson(String body) => jsonDecode(body);
 
+/// Why a prompt did not reach the session, in words a person acts on.
+///
+/// The daemon answers only once the agent has confirmed the prompt, and a
+/// 504 is the agent not confirming in time — its bare reason, "Gateway
+/// Timeout", says nothing about what to do next. The session's own refusals
+/// (busy, ended) keep their meaning; anything else falls back to the daemon's
+/// sentence, and to a plain one when there is none.
+String sendErrorMessage(int status, String body) {
+  if (status == 504 || status == 408) {
+    return 'The session did not take the prompt in time. Try again.';
+  }
+  var reason = '';
+  try {
+    final data = jsonDecode(body);
+    if (data is Map) reason = (data['error'] as String?) ?? '';
+  } catch (_) {
+    // A proxy's page rather than the daemon's JSON.
+  }
+  if (reason == 'session_busy') return 'The session is busy';
+  if (reason == 'session_terminated') return 'The session has ended';
+  if (status == 502 || status == 503) {
+    return 'The host could not reach the session. Try again.';
+  }
+  if (reason.isNotEmpty) return reason;
+  return 'Failed to send prompt';
+}
+
 class DaemonAPIService extends ChangeNotifier {
   final String hostId;
   final String serverUrl;
@@ -851,25 +878,14 @@ class DaemonAPIService extends ChangeNotifier {
         _markStale('session_updated');
         return null;
       }
-      return _sendErrorMessage(resp.body);
+      return sendErrorMessage(resp.statusCode, resp.body);
     } catch (e) {
       debugPrint('[$hostId] Failed to send prompt: $e');
       if (HostConnection.isTailnetUrl(serverUrl)) {
-        return 'Could not reach the daemon — switch Tailscale on';
+        return 'Host unreachable — switch Tailscale on';
       }
-      return 'Could not reach the daemon';
+      return 'Host unreachable';
     }
-  }
-
-  String _sendErrorMessage(String body) {
-    try {
-      final data = jsonDecode(body);
-      final reason = (data['error'] as String?) ?? '';
-      if (reason == 'session_busy') return 'The session is busy';
-      if (reason == 'session_terminated') return 'The session has ended';
-      if (reason.isNotEmpty) return reason;
-    } catch (_) {}
-    return 'Failed to send prompt';
   }
 
   Future<bool> stopSession(String sessionId) async {
@@ -967,8 +983,7 @@ class DaemonAPIService extends ChangeNotifier {
         return ForkResult(
           sessionId: decoded['session_id'] as String? ?? '',
           warnings: [
-            for (final w in (decoded['warnings'] as List? ?? const []))
-              '$w',
+            for (final w in (decoded['warnings'] as List? ?? const [])) '$w',
           ],
         );
       }
@@ -1324,9 +1339,7 @@ class DaemonAPIService extends ChangeNotifier {
     try {
       resp = await _api.get(
         '/api/file/raw?path=${Uri.encodeComponent(path)}',
-        headers: {
-          if (previous?.etag != null) 'If-None-Match': previous!.etag!,
-        },
+        headers: {if (previous?.etag != null) 'If-None-Match': previous!.etag!},
       );
     } catch (e) {
       debugPrint('[$hostId] Failed to read file $path: $e');
@@ -2336,18 +2349,13 @@ List<Worktree> sortWorktreesByLastTouched(List<Worktree> worktrees) {
   return sorted;
 }
 
-
 /// What a fork attempt came back with: the new session, or why there is none.
 class ForkResult {
   final String sessionId;
   final List<String> warnings;
   final String? error;
 
-  const ForkResult({
-    this.sessionId = '',
-    this.warnings = const [],
-    this.error,
-  });
+  const ForkResult({this.sessionId = '', this.warnings = const [], this.error});
 
   bool get ok => error == null && sessionId.isNotEmpty;
 }

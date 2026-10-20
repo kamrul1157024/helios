@@ -36,10 +36,19 @@ Future<void> showAskAISheet(
     onSent();
     return;
   }
-  messenger.showSnackBar(
+  // One failure on screen at a time: a second one replaces the first rather
+  // than queueing behind it.
+  dismissAskAIFailure();
+  messenger.hideCurrentSnackBar();
+  final shown = messenger.showSnackBar(
     SnackBar(
       content: Text(failure),
       behavior: SnackBarBehavior.floating,
+      // A snackbar with an action stays until dismissed on recent Flutter,
+      // and the messenger is the app's, so it would follow the reader from
+      // screen to screen. Six seconds is long enough to tap Edit.
+      duration: const Duration(seconds: 6),
+      persist: false,
       action: SnackBarAction(
         label: 'Edit',
         onPressed: () {
@@ -56,6 +65,26 @@ Future<void> showAskAISheet(
       ),
     ),
   );
+  _failure = (messenger: messenger, controller: shown);
+  shown.closed.then((_) {
+    if (_failure?.controller == shown) _failure = null;
+  });
+}
+
+/// The failure snackbar on screen, if any, and the messenger showing it.
+({
+  ScaffoldMessengerState messenger,
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> controller,
+})?
+_failure;
+
+/// Takes down the failure snackbar. The screens that offer Ask AI call this
+/// as they go, so a failure about one file is not still up over the next.
+void dismissAskAIFailure() {
+  final failure = _failure;
+  if (failure == null) return;
+  _failure = null;
+  if (failure.messenger.mounted) failure.messenger.hideCurrentSnackBar();
 }
 
 class _AskAISheet extends StatefulWidget {

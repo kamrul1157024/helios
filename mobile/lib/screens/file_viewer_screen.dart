@@ -127,6 +127,9 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // A failed Ask AI about this file — from the source or the diff — goes
+    // with it. After the frame: the tree is locked while it is torn down.
+    WidgetsBinding.instance.addPostFrameCallback((_) => dismissAskAIFailure());
     super.dispose();
   }
 
@@ -280,34 +283,11 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
   }
 
   Future<void> _goToLine() async {
-    final controller = TextEditingController();
     final count = '\n'.allMatches(_result?.content ?? '').length + 1;
     final line = await showDialog<int>(
       context: context,
-      builder: (ctx) {
-        void submit() =>
-            Navigator.of(ctx).pop(int.tryParse(controller.text.trim()));
-        return AlertDialog(
-          title: const Text('Go to line'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: InputDecoration(hintText: '1 – $count'),
-            onSubmitted: (_) => submit(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(onPressed: submit, child: const Text('Go')),
-          ],
-        );
-      },
+      builder: (_) => _GoToLineDialog(count: count),
     );
-    controller.dispose();
     if (line == null || line < 1 || !mounted) return;
     final target = line.clamp(1, count);
     setState(() => _selection = LineSelection(target, target));
@@ -757,6 +737,55 @@ class _FileViewerScreenState extends rp.ConsumerState<FileViewerScreen>
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Asks for a line number.
+///
+/// A widget of its own so that it owns its controller: the field is still
+/// drawn while the dialog animates away, so a controller disposed by the
+/// caller as soon as `showDialog` returns was used after its disposal.
+class _GoToLineDialog extends StatefulWidget {
+  final int count;
+
+  const _GoToLineDialog({required this.count});
+
+  @override
+  State<_GoToLineDialog> createState() => _GoToLineDialogState();
+}
+
+class _GoToLineDialogState extends State<_GoToLineDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() =>
+      Navigator.of(context).pop(int.tryParse(_controller.text.trim()));
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Go to line'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(hintText: '1 – ${widget.count}'),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Go')),
+      ],
     );
   }
 }
