@@ -36,6 +36,7 @@ function steps(state: DesktopStep['state']): DesktopStep[] {
 
 function readyState(): DesktopState {
   return {
+    enabled: true,
     state: 'ready',
     missing: [],
     can_install: true,
@@ -56,6 +57,11 @@ export interface DesktopStub {
   setMissing(): void
   /** Ends a running install: every step done, the desktop ready. */
   finishInstall(): void
+  /**
+   * Turns the desktop off without an event: a view that already read the
+   * state still holds "on", and install and ticket answer 409 "disabled".
+   */
+  turnOffQuietly(): void
   /** Ends the next tunnel with this close code as soon as it opens. */
   refuseNext(code: number): void
   /** Cuts every open tunnel without a close frame, as a dropped network does. */
@@ -76,6 +82,7 @@ export function desktopStub(emit: (type: string, data: unknown) => void) {
   let state = readyState()
   const issued = new Set<string>()
   let ticketCount = 0
+  let quietlyOff = false
   let installCount = 0
   const refusals: number[] = []
   const dialled: URLSearchParams[] = []
@@ -94,6 +101,9 @@ export function desktopStub(emit: (type: string, data: unknown) => void) {
       state = { ...readyState(), state: 'missing', missing: ['xrdp', 'xfce', 'guacd'], display: '', dpi: 0, steps: steps('pending') }
     },
     finishInstall: () => set({ state: 'ready', missing: [], display: ':10', dpi: 96, steps: steps('done') }),
+    turnOffQuietly: () => {
+      quietlyOff = true
+    },
     refuseNext: (code) => refusals.push(code),
     drop: () => {
       for (const client of wss.clients) client.terminate()
@@ -117,10 +127,26 @@ export function desktopStub(emit: (type: string, data: unknown) => void) {
     res.end(JSON.stringify(body))
   }
 
+  const off = (): boolean => quietlyOff || state.enabled === false
+  const refuseOff = (res: http.ServerResponse): void =>
+    json(res, 409, { code: 'disabled', error: 'Remote desktop is turned off on this host.' })
+
   /** Answers a desktop route. False for anything else. */
   const handle = (req: http.IncomingMessage, res: http.ServerResponse, path: string): boolean => {
     if (path === '/api/desktop' && req.method === 'GET') {
+      // A fresh read tells the truth; only the copy the view already holds is stale.
+      json(res, 200, { ...state, enabled: !off() })
+      return true
+    }
+    if (path === '/api/desktop/enable' && req.method === 'POST') {
+      quietlyOff = false
+      state = { ...state, enabled: true }
       json(res, 200, state)
+      emit('desktop_state', state)
+      return true
+    }
+    if ((path === '/api/desktop/install' || path === '/api/desktop/ticket') && req.method === 'POST' && off()) {
+      refuseOff(res)
       return true
     }
     if (path === '/api/desktop/install' && req.method === 'POST') {

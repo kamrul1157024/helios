@@ -61,7 +61,7 @@ type Status struct {
 
 // Errors the server maps to status codes.
 var (
-	ErrDisabled       = errors.New("remote desktop is turned off (setting desktop.enabled)")
+	ErrDisabled       = errors.New("Remote desktop is turned off on this host.")
 	ErrBusy           = errors.New("the desktop install is already running")
 	ErrNeedsRoot      = errors.New("Helios needs root once to install the desktop. Run: " + InstallCommand)
 	ErrNotReady       = errors.New("desktop not ready")
@@ -168,9 +168,25 @@ func (m *Manager) Close() {
 	m.sup.Stop()
 }
 
-// Enabled reports desktop.enabled.
+// Enabled reports desktop.enabled. It defaults to on: nothing installs until
+// someone asks for it, and agents get a DISPLAY only once the desktop is
+// ready, so on costs nothing. An explicit false is the host's off switch.
 func (m *Manager) Enabled() bool {
-	return m.boolSetting(SettingEnabled, false)
+	return m.boolSetting(SettingEnabled, true)
+}
+
+// SetEnabled flips the off switch, looks at the machine again, and reports
+// the new status to every client.
+func (m *Manager) SetEnabled(enabled bool) error {
+	if m.cfg.Settings == nil {
+		return errors.New("no settings store")
+	}
+	if err := m.cfg.Settings.SetSetting(SettingEnabled, strconv.FormatBool(enabled)); err != nil {
+		return fmt.Errorf("save %s: %w", SettingEnabled, err)
+	}
+	m.Refresh()
+	m.notify()
+	return nil
 }
 
 func (m *Manager) boolSetting(key string, def bool) bool {
@@ -505,13 +521,14 @@ func (m *Manager) SetDPI(ctx context.Context, dpi int) (int, error) {
 }
 
 // AgentEnv is what a new agent session adds to its environment so its GUI
-// apps draw on the desktop (D6). Empty unless the desktop is ready and
-// desktop.agent_display is on, so agents behave as before otherwise.
+// apps draw on the desktop (D6). Empty unless the desktop is ready, the host
+// has not turned it off, and desktop.agent_display is on, so agents behave as
+// before otherwise.
 func (m *Manager) AgentEnv() map[string]string {
 	m.mu.Lock()
 	ready, d := m.state == StateReady, m.display
 	m.mu.Unlock()
-	if !ready || !m.boolSetting(SettingAgentDisplay, true) {
+	if !ready || !m.Enabled() || !m.boolSetting(SettingAgentDisplay, true) {
 		return nil
 	}
 	env := map[string]string{"DISPLAY": d.Name}

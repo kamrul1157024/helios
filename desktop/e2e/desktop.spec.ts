@@ -234,3 +234,44 @@ test('clipboard text crosses both ways while the desktop has focus', async ({ ap
   daemon.desktop.copyRemote('from the desktop')
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('from the desktop')
 })
+
+test('a host with the desktop turned off offers to turn it on, then to install', async ({ window, daemon }) => {
+  daemon.desktop.setMissing()
+  daemon.desktop.set({ enabled: false })
+  await openDesktop(window)
+
+  await expect(window.getByText('Remote desktop is turned off on this host')).toBeVisible()
+  await expect(window.getByRole('button', { name: 'Install the desktop' })).toHaveCount(0)
+  await window.getByRole('button', { name: 'Turn on' }).click()
+
+  await expect(window.getByRole('button', { name: 'Install the desktop' })).toBeVisible()
+  await expect(window.locator('.desktop-error')).toHaveCount(0)
+})
+
+test('an install refused as turned off shows the switch, not the daemon’s words', async ({ window, daemon }) => {
+  daemon.desktop.setMissing()
+  await openDesktop(window)
+  await expect(window.getByRole('button', { name: 'Install the desktop' })).toBeVisible()
+
+  daemon.desktop.turnOffQuietly()
+  await window.getByRole('button', { name: 'Install the desktop' }).click()
+  await expect(window.getByRole('button', { name: 'Turn on' })).toBeVisible()
+  await expect(window.locator('.desktop-error')).toHaveCount(0)
+  expect(await window.locator('.desktop-view').innerText()).not.toContain('desktop.enabled')
+
+  await window.getByRole('button', { name: 'Turn on' }).click()
+  await window.getByRole('button', { name: 'Install the desktop' }).click()
+  await expect(window.getByText('Installing the desktop')).toBeVisible()
+})
+
+test('a ticket refused as turned off shows the switch too', async ({ window, daemon }) => {
+  await openDesktop(window)
+  await expectDrawn(window)
+
+  daemon.desktop.turnOffQuietly()
+  daemon.desktop.drop()
+  await expect(window.getByRole('button', { name: 'Turn on' })).toBeVisible()
+  await expect(window.locator('.desktop-error')).toHaveCount(0)
+  await window.getByRole('button', { name: 'Turn on' }).click()
+  await expectDrawn(window)
+})

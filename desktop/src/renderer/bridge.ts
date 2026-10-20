@@ -469,6 +469,9 @@ export class HostApi {
   desktop(): Promise<DesktopState> {
     return this.call('desktop')
   }
+  enableDesktop(enabled: boolean): Promise<DesktopState> {
+    return this.call('enableDesktop', enabled)
+  }
   installDesktop(): Promise<{ started: boolean }> {
     return this.call('installDesktop')
   }

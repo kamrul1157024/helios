@@ -37,6 +37,12 @@ class DesktopScreen extends rp.ConsumerWidget {
     final async = ref.watch(desktopProvider(hostId));
     final status = async.valueOrNull;
 
+    if (status != null && !status.enabled) {
+      return Scaffold(
+        appBar: AppBar(title: title),
+        body: DesktopTurnedOffView(hostId: hostId),
+      );
+    }
     if (status != null && status.phase == DesktopPhase.ready) {
       return DesktopViewer(hostId: hostId, status: status, title: title);
     }
@@ -102,8 +108,11 @@ class _DesktopSetupViewState extends rp.ConsumerState<DesktopSetupView> {
       if (!mounted) return;
       if (e.code == 'needs_root') {
         setState(() => _needsRoot = true);
+      } else if (e.disabled) {
+        ref.read(desktopProvider(widget.hostId).notifier).markTurnedOff();
+        return;
       } else if (e.code != 'busy') {
-        _say(e.message.isEmpty ? 'The host would not install.' : e.message);
+        _say(e.words);
       }
     } catch (_) {
       if (mounted) _say('Could not reach the host.');
@@ -208,6 +217,9 @@ class _DesktopSetupViewState extends rp.ConsumerState<DesktopSetupView> {
               Expanded(child: _heading(theme, 'The desktop could not start.')),
             ],
           ),
+          // The state's error is written for people (the contract says so),
+          // unlike an HTTP refusal's text. The failed step and its last line
+          // sit beneath it in the list, as the detail.
           if (s.error.isNotEmpty) ...[
             const SizedBox(height: 12),
             SelectableText(s.error, style: theme.textTheme.bodyMedium),
@@ -258,6 +270,53 @@ class _DesktopSetupViewState extends rp.ConsumerState<DesktopSetupView> {
     'guacd' => 'guacd',
     _ => id,
   };
+}
+
+/// The host's owner turned remote desktop off. One button turns it back on
+/// and the screen carries on from whatever state the host answers with.
+class DesktopTurnedOffView extends rp.ConsumerStatefulWidget {
+  final String hostId;
+
+  const DesktopTurnedOffView({super.key, required this.hostId});
+
+  @override
+  rp.ConsumerState<DesktopTurnedOffView> createState() =>
+      _DesktopTurnedOffViewState();
+}
+
+class _DesktopTurnedOffViewState
+    extends rp.ConsumerState<DesktopTurnedOffView> {
+  bool _busy = false;
+
+  Future<void> _turnOn() async {
+    setState(() => _busy = true);
+    String? failure;
+    try {
+      await ref.read(desktopProvider(widget.hostId).notifier).enable();
+    } on DesktopActionException catch (e) {
+      failure = e.words;
+    } catch (_) {
+      failure = 'Could not reach the host.';
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (failure != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(failure)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _Notice(
+    icon: Icons.desktop_access_disabled_outlined,
+    title: 'Remote desktop is turned off on this host.',
+    detail: 'Turn it on to install the desktop or to watch it from here.',
+    action: FilledButton(
+      onPressed: _busy ? null : _turnOn,
+      child: const Text('Turn on'),
+    ),
+  );
 }
 
 /// The install's steps, each with how far it got.
@@ -472,6 +531,8 @@ class _DesktopViewerState extends rp.ConsumerState<DesktopViewer> {
         dpi: p.dpi,
       ),
       onNotReady: () => ref.invalidate(desktopProvider(widget.hostId)),
+      onDisabled: () =>
+          ref.read(desktopProvider(widget.hostId).notifier).markTurnedOff(),
     );
     _keyboardFocus.addListener(_onKeyboardFocus);
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
@@ -591,7 +652,7 @@ class _DesktopViewerState extends rp.ConsumerState<DesktopViewer> {
       _say(switch (e.code) {
         'not_ready' => 'The desktop is not running, so its DPI cannot change.',
         'bad_dpi' => 'The host takes a DPI from 72 to 288.',
-        _ => e.message.isEmpty ? 'The host refused the DPI.' : e.message,
+        _ => e.words,
       });
     } catch (_) {
       _say('Could not reach the host.');

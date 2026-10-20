@@ -391,3 +391,47 @@ func TestEmbeddedManifestCoversEveryPublishedArch(t *testing.T) {
 		}
 	}
 }
+
+type mapSettings map[string]string
+
+func (m mapSettings) GetSetting(k string) (string, error) { return m[k], nil }
+func (m mapSettings) SetSetting(k, v string) error        { m[k] = v; return nil }
+
+func TestEnabledDefaultsOnAndFalseTurnsItOff(t *testing.T) {
+	settings := mapSettings{}
+	m := NewManager(Config{HeliosDir: t.TempDir(), Sys: newFakeSystem(), ProcRoot: t.TempDir(), Settings: settings})
+	defer m.Close()
+	if !m.Enabled() {
+		t.Fatal("desktop.enabled unset should mean on")
+	}
+	settings[SettingEnabled] = "false"
+	if m.Enabled() {
+		t.Fatal("an explicit false should turn it off")
+	}
+	if err := m.Install(); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("Install while off = %v", err)
+	}
+}
+
+func TestAgentEnvRespectsTheOffSwitch(t *testing.T) {
+	settings := mapSettings{}
+	m := NewManager(Config{HeliosDir: t.TempDir(), Sys: newFakeSystem(), ProcRoot: t.TempDir(), Settings: settings})
+	defer m.Close()
+	m.mu.Lock()
+	m.state = StateReady
+	m.display = Display{Name: ":10", XAuthority: "/home/dev/.Xauthority"}
+	m.mu.Unlock()
+
+	if env := m.AgentEnv(); env["DISPLAY"] != ":10" || env["XAUTHORITY"] != "/home/dev/.Xauthority" {
+		t.Fatalf("ready and on: %v", env)
+	}
+	settings[SettingEnabled] = "false"
+	if env := m.AgentEnv(); len(env) != 0 {
+		t.Fatalf("turned off, agents still get %v", env)
+	}
+	settings[SettingEnabled] = "true"
+	settings[SettingAgentDisplay] = "false"
+	if env := m.AgentEnv(); len(env) != 0 {
+		t.Fatalf("agent_display off, agents still get %v", env)
+	}
+}

@@ -860,6 +860,9 @@ export interface DesktopStep {
 
 /** `GET /api/desktop`, and the body of every `desktop_state` event. */
 export interface DesktopState {
+  /** False when the host has remote desktop turned off. Absent on daemons
+   *  from before the switch, which had it on whenever they had the routes. */
+  enabled?: boolean
   state: DesktopPhase
   missing: string[]
   /** `sudo -n true` works, so the daemon can install without asking. */

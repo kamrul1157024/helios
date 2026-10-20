@@ -200,6 +200,9 @@ class DesktopLink extends ChangeNotifier {
   /// re-read the state and show the install or start progress instead.
   final VoidCallback? onNotReady;
 
+  /// Called when the host refuses because remote desktop is turned off.
+  final VoidCallback? onDisabled;
+
   static const maxReticket = 3;
 
   DesktopLinkPhase _phase = DesktopLinkPhase.ticketing;
@@ -218,6 +221,7 @@ class DesktopLink extends ChangeNotifier {
     required this.ticket,
     required this.pageFor,
     this.onNotReady,
+    this.onDisabled,
   }) {
     _sub = bridge.events.listen(_onEvent);
   }
@@ -256,12 +260,12 @@ class DesktopLink extends ChangeNotifier {
     try {
       pass = await ticket();
     } on DesktopActionException catch (e) {
-      if (e.statusCode == 409 || e.code == 'not_ready') {
+      if (e.disabled) {
+        onDisabled?.call();
+      } else if (e.statusCode == 409 || e.code == 'not_ready') {
         onNotReady?.call();
       }
-      _fail(
-        e.message.isEmpty ? 'The host would not open the desktop.' : e.message,
-      );
+      _fail(e.words);
       return;
     } catch (_) {
       _fail('Could not reach the host.');
@@ -305,7 +309,7 @@ class DesktopLink extends ChangeNotifier {
       return;
     }
     if (event.code == closeNotReady) onNotReady?.call();
-    _fail(closeMessage(event.code, event.message));
+    _fail(closeMessage(event.code));
   }
 
   void _fail(String message) {
@@ -329,7 +333,10 @@ class DesktopLink extends ChangeNotifier {
 }
 
 /// A closed tunnel, in words a person can act on.
-String closeMessage(int code, String detail) {
+///
+/// Never the page's own detail: that is the library's or the daemon's text,
+/// and a person can do nothing with it.
+String closeMessage(int code) {
   switch (code) {
     case closeBadTicket:
       return 'The host did not accept this phone\'s pass to the desktop. '
@@ -345,7 +352,5 @@ String closeMessage(int code, String detail) {
     case 1005:
       return 'The desktop was disconnected.';
   }
-  return detail.isEmpty
-      ? 'The connection to the desktop was lost.'
-      : 'The connection to the desktop was lost: $detail';
+  return 'The connection to the desktop was lost.';
 }

@@ -7,13 +7,15 @@
  * draws the answer.
  */
 
-import { statusOf } from './errors.ts'
+import { statusOf, type BridgeError } from './errors.ts'
 import type { DesktopState, DesktopStep } from '../shared/models.ts'
 
 export type DesktopScreen =
   | { kind: 'loading' }
-  /** The daemon has no desktop routes: too old, or the feature is off. */
+  /** The daemon has no desktop routes: it predates them. */
   | { kind: 'absent' }
+  /** The host has remote desktop turned off; it can be turned on from here. */
+  | { kind: 'disabled' }
   | { kind: 'unreachable'; text: string }
   /** `command` is what to show instead if the daemon turns out to need root after all. */
   | { kind: 'install'; missing: string[]; command: string }
@@ -30,8 +32,11 @@ export function screenFor(state: DesktopState | undefined, error: unknown): Desk
   if (!state) {
     if (!error) return { kind: 'loading' }
     if (statusOf(error) === 404) return { kind: 'absent' }
-    return { kind: 'unreachable', text: error instanceof Error ? error.message : String(error) }
+    return { kind: 'unreachable', text: errorWords(error) }
   }
+  // Before anything about installing: a host that has the desktop off has
+  // nothing to install until someone turns it on.
+  if (state.enabled === false) return { kind: 'disabled' }
   switch (state.state) {
     case 'missing':
       return state.can_install
@@ -53,8 +58,40 @@ export function screenFor(state: DesktopState | undefined, error: unknown): Desk
       return { kind: 'unsupported' }
     default:
       // A state from a newer daemon. Saying so beats drawing nothing.
-      return { kind: 'unreachable', text: `The daemon reports a desktop state this app does not know: ${String(state.state)}` }
+      return { kind: 'unreachable', text: 'The host reports a desktop state this app does not know. Update Helios here.' }
   }
+}
+
+/** Whether a failed call was the host saying its desktop is turned off. */
+export function isDisabled(err: unknown): boolean {
+  return (err as BridgeError | undefined)?.code === 'disabled'
+}
+
+/**
+ * A failed desktop call, in words.
+ *
+ * The daemon's own strings are written for its log and name its settings, so
+ * none of them reach the view: the code and the status decide what is said.
+ */
+export function errorWords(err: unknown): string {
+  const { status, code } = (err ?? {}) as BridgeError
+  switch (code) {
+    case 'disabled':
+      return 'Remote desktop is turned off on this host.'
+    case 'needs_root':
+      return 'Helios needs root once to install the desktop.'
+    case 'busy':
+      return 'An install is already running on this host.'
+    case 'not_ready':
+      return 'The desktop is not running yet.'
+    case 'bad_dpi':
+      return 'The text size must be between 72 and 288 DPI.'
+  }
+  if (status === undefined) return 'Could not reach the host. Check that it is online.'
+  if (status === 401 || status === 403) return 'The host refused this device. Pair it again in Settings.'
+  if (status === 404) return 'This host has no remote desktop. Update Helios on it.'
+  if (status >= 500) return 'The host failed to answer. Try again in a moment.'
+  return 'The host refused the request.'
 }
 
 /** The close codes the tunnel uses (spec 66, D2). */
@@ -65,6 +102,9 @@ export const CLOSE = {
   ticket: 4401,
   tooMany: 4429,
   notReady: 4503,
+  /** Never on the wire: the main process's name for a ticket refused because
+   *  the host has the desktop turned off. */
+  disabled: 4409,
 } as const
 
 export type CloseAction =
@@ -72,6 +112,8 @@ export type CloseAction =
   | { kind: 'reticket' }
   /** The desktop stopped being ready: read the state again and show it. */
   | { kind: 'refresh' }
+  /** The host has the desktop turned off: show the switch, not an error. */
+  | { kind: 'disabled' }
   /** The line dropped: dial again after a pause. */
   | { kind: 'reconnect' }
   /** Something a second dial will not fix by itself. */
@@ -92,6 +134,8 @@ export function closeAction(code: number, reticketed: boolean): CloseAction {
         : { kind: 'reticket' }
     case CLOSE.notReady:
       return { kind: 'refresh' }
+    case CLOSE.disabled:
+      return { kind: 'disabled' }
     case CLOSE.tooMany:
       return { kind: 'fail', text: 'Too many viewers. The desktop takes four at a time — close one and try again.' }
     case CLOSE.guacd:

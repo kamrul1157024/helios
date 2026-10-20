@@ -10,6 +10,8 @@ export type LinkState =
   | { kind: 'reconnecting'; attempt: number }
   /** The desktop stopped being ready; the view should read its state again. */
   | { kind: 'not-ready' }
+  /** The host has the desktop turned off; the view should offer the switch. */
+  | { kind: 'disabled' }
   | { kind: 'failed'; text: string }
 
 export interface ConnectionOptions {
@@ -152,8 +154,8 @@ export class DesktopConnection {
       this.opts.onLink({ kind: 'connected' })
     }
     // guacd's own `error` instruction: RDP refused, the session would not
-    // start. Its words are the useful part.
-    client.onerror = (status) => this.fail(status.message || 'The desktop reported an error.')
+    // start. Its message is for the daemon's log, not for the reader.
+    client.onerror = () => this.fail('The desktop service reported an error. Try again, or check the host.')
     client.onclipboard = (stream, mimetype) => {
       if (!mimetype.startsWith('text/')) return
       const reader = new this.G.StringReader(stream)
@@ -197,6 +199,9 @@ export class DesktopConnection {
       // The view reads the state again on hearing this, and unmounts the
       // canvas if the desktop has gone back to installing. If it has not, the
       // dial after the pause is what finds out it is ready again.
+      case 'disabled':
+        this.opts.onLink({ kind: 'disabled' })
+        return
       case 'refresh':
         this.opts.onLink({ kind: 'not-ready' })
         this.redialLater()

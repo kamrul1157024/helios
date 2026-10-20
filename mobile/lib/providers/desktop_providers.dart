@@ -19,6 +19,19 @@ class DesktopNotifier extends FamilyAsyncNotifier<DesktopStatus?, String> {
     return service.desktopStatus();
   }
 
+  /// Turns the desktop on and takes the state the host answers with.
+  Future<void> enable() async {
+    final service = ref.read(serviceProvider(arg));
+    if (service == null) return;
+    state = AsyncData(await service.enableDesktop());
+  }
+
+  /// Shows the desktop as turned off, when a write was refused for it.
+  void markTurnedOff() {
+    final held = state.valueOrNull;
+    if (held != null) state = AsyncData(held.turnedOff());
+  }
+
   /// Takes the body of a `desktop_state` event as the new state.
   void apply(Map<String, dynamic> body) {
     state = AsyncData(DesktopStatus.fromJson(body));

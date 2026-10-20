@@ -214,6 +214,11 @@ void main() {
     await _snap(tester, 'failed');
   });
 
+  testWidgets('turned off', skip: !_enabled, (tester) async {
+    await _show(tester, desktopBody('missing', enabled: false));
+    await _snap(tester, 'turned_off');
+  });
+
   testWidgets('unsupported', skip: !_enabled, (tester) async {
     await _show(tester, desktopBody('unsupported'));
     await _snap(tester, 'unsupported');
