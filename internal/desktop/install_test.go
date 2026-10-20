@@ -374,3 +374,20 @@ func TestManifestAndURL(t *testing.T) {
 		t.Errorf("dev URL = %s", got)
 	}
 }
+
+// A missing line fails nothing on its own: the release job only warns, and
+// the daemon refuses the desktop on that one arch. So the embedded manifest
+// is checked here against the arches the release publishes.
+func TestEmbeddedManifestCoversEveryPublishedArch(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		asset := bundleAsset(arch)
+		hash, ok := manifestHash(guacdManifest, asset)
+		if !ok {
+			t.Errorf("%s is missing from guacd.sha256", asset)
+			continue
+		}
+		if len(hash) != 64 {
+			t.Errorf("%s hashes to %q, want 64 hex characters", asset, hash)
+		}
+	}
+}
