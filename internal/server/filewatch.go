@@ -71,6 +71,14 @@ type watchEntry struct {
 	size   int64
 	digest string
 	gone   bool
+	// dirMtime is a directory's own mtime at its last digest. While a live
+	// index watcher covers the directory, an unchanged mtime means no entry
+	// came or went, and a child's own change arrives as a notice instead.
+	dirMtime time.Time
+	// notices counts the raw events seen for this path or its children. A
+	// sweep that started before a notice must not store an mtime gate that
+	// the notice meant to clear.
+	notices uint64
 	// seen is false until the first look. It is what makes a new entry compute
 	// and stay quiet, and it is kept apart from an empty digest on purpose: a
 	// path that disappears clears its digest, and a file restored with the
@@ -81,10 +89,22 @@ type watchEntry struct {
 // FileWatcher holds the paths clients have read and reports the ones whose
 // content changes.
 type FileWatcher struct {
-	mu      sync.Mutex
-	entries map[string]*watchEntry
+	mu sync.Mutex
+	// entries is keyed by path and kind together. One folder is often both
+	// a listing and a repository — the Files panel lists a checkout's root and
+	// asks its git status — and keyed by path alone the first subscription
+	// would swallow the second, so the listing would never be digested.
+	entries map[watchKey]*watchEntry
 	sse     *SSEBroadcaster
 	poke    chan struct{}
+	nudge   chan struct{}
+	// sweeping serialises sweeps. The digests are taken outside mu, so two
+	// sweeps at once would both see the same change and both announce it.
+	sweeping sync.Mutex
+	// covered reports whether a live index watcher sees entries come and go
+	// in a directory. Nil means nothing is covered, and every directory is
+	// listed on every sweep.
+	covered func(dir string) bool
 	// now is swapped in tests so TTL and eviction can be driven without
 	// sleeping.
 	now func() time.Time
@@ -101,11 +121,17 @@ func (s *PublicServer) files() *FileWatcher {
 	return s.shared.Files
 }
 
+type watchKey struct {
+	path string
+	kind WatchKind
+}
+
 func NewFileWatcher(sse *SSEBroadcaster) *FileWatcher {
 	return &FileWatcher{
-		entries: make(map[string]*watchEntry),
+		entries: make(map[watchKey]*watchEntry),
 		sse:     sse,
 		poke:    make(chan struct{}, 1),
+		nudge:   make(chan struct{}, 1),
 		now:     time.Now,
 	}
 }
@@ -114,21 +140,70 @@ func NewFileWatcher(sse *SSEBroadcaster) *FileWatcher {
 //
 // A path new to the set is digested here and announces nothing. Otherwise every
 // read would report itself as a change.
+//
+// The first digest is taken outside the lock — it can hash a 10 MB file — so a
+// read never waits behind a sweep, nor a sweep behind a read. If a sweep or
+// another read registered the path meanwhile, that entry stands: it is at least
+// as new as this one.
 func (w *FileWatcher) Watch(path string, kind WatchKind) {
 	if w == nil || path == "" {
 		return
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if entry, ok := w.entries[path]; ok {
+	key := watchKey{path: path, kind: kind}
+	if entry, ok := w.entries[key]; ok {
 		entry.lastRead = w.now()
+		w.mu.Unlock()
 		return
 	}
+	covered := w.covered
+	w.mu.Unlock()
+
 	entry := &watchEntry{kind: kind, lastRead: w.now()}
-	w.entries[path] = entry
-	w.refresh(path, entry)
+	w.refresh(path, entry, covered)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if existing, ok := w.entries[key]; ok {
+		existing.lastRead = entry.lastRead
+		return
+	}
+	w.entries[key] = entry
 	w.evictLocked()
+}
+
+// Notice is the index watcher reporting a raw event at path. It clears the
+// mtime gate of the folder holding path, because a child whose content moved
+// changes that folder's listing without touching the folder's own mtime. It
+// reports whether path or its folder is watched — whether a sweep has anything
+// to look at.
+func (w *FileWatcher) Notice(path string) bool {
+	if w == nil {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	watched := false
+	for _, key := range []watchKey{{path, WatchFile}, {path, WatchDir}, {filepath.Dir(path), WatchDir}} {
+		if entry, ok := w.entries[key]; ok {
+			entry.notices++
+			entry.dirMtime = time.Time{}
+			watched = true
+		}
+	}
+	return watched
+}
+
+// Nudge asks for a sweep now, with no settle. The index watcher has already
+// debounced the burst, so waiting again would only add latency.
+func (w *FileWatcher) Nudge() {
+	if w == nil {
+		return
+	}
+	select {
+	case w.nudge <- struct{}{}:
+	default:
+	}
 }
 
 // Poke asks for a sweep now rather than on the next tick. It never blocks: a
@@ -159,6 +234,8 @@ func (w *FileWatcher) Run(ctx context.Context) {
 			// Restarting the timer on each poke is deliberate: the last call in
 			// a burst is the one whose writes we want to have landed.
 			settle = time.After(pokeSettle)
+		case <-w.nudge:
+			w.Sweep()
 		case <-settle:
 			settle = nil
 			w.Sweep()
@@ -179,32 +256,80 @@ func (w *FileWatcher) Sweep() []FileChange {
 	return changes
 }
 
+// collect takes a copy of the set under the lock, does the stats and hashes
+// with the lock released, and locks again only to write the results back. A
+// read that arrives mid-sweep is served at once instead of waiting for every
+// watched file to be looked at.
 func (w *FileWatcher) collect() []FileChange {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.sweeping.Lock()
+	defer w.sweeping.Unlock()
 
+	type work struct {
+		key   watchKey
+		live  *watchEntry
+		entry watchEntry
+	}
+	w.mu.Lock()
 	cutoff := w.now().Add(-watchTTL)
-	var changes []FileChange
-	for path, entry := range w.entries {
+	jobs := make([]work, 0, len(w.entries))
+	for key, entry := range w.entries {
 		if entry.lastRead.Before(cutoff) {
-			delete(w.entries, path)
+			delete(w.entries, key)
 			continue
 		}
-		if changed, change := w.refresh(path, entry); changed {
-			changes = append(changes, change)
+		jobs = append(jobs, work{key: key, live: entry, entry: *entry})
+	}
+	covered := w.covered
+	w.mu.Unlock()
+
+	var changes []FileChange
+	moved := make([]bool, len(jobs))
+	found := make([]FileChange, len(jobs))
+	for i := range jobs {
+		moved[i], found[i] = w.refresh(jobs[i].key.path, &jobs[i].entry, covered)
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i, job := range jobs {
+		if w.entries[job.key] != job.live {
+			// Evicted mid-sweep: nobody is listening for it any more.
+			continue
+		}
+		job.live.storeDigest(&job.entry)
+		if moved[i] {
+			changes = append(changes, found[i])
 		}
 	}
 	// Stable order so a test can assert one, and so a log reads the same twice.
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
+	sort.Slice(changes, func(i, j int) bool {
+		if changes[i].Path != changes[j].Path {
+			return changes[i].Path < changes[j].Path
+		}
+		return changes[i].Kind < changes[j].Kind
+	})
 	return changes
 }
 
-// refresh brings one entry up to date and says whether its content moved.
-// Callers hold the lock.
-func (w *FileWatcher) refresh(path string, entry *watchEntry) (bool, FileChange) {
+// storeDigest writes a sweep's result into the live entry, keeping what a read
+// changed meanwhile. A notice that landed during the sweep wins over the mtime
+// gate the sweep computed, so the next sweep lists the directory again.
+func (e *watchEntry) storeDigest(from *watchEntry) {
+	e.mtime, e.size, e.digest = from.mtime, from.size, from.digest
+	e.gone, e.seen = from.gone, from.seen
+	if e.notices == from.notices {
+		e.dirMtime = from.dirMtime
+	} else {
+		e.dirMtime = time.Time{}
+	}
+}
+
+// refresh brings one entry up to date and says whether its content moved. It
+// touches nothing but the entry, so callers need not hold the lock for it.
+func (w *FileWatcher) refresh(path string, entry *watchEntry, covered func(string) bool) (bool, FileChange) {
 	switch entry.kind {
 	case WatchDir:
-		return w.refreshDigest(path, entry, dirDigest)
+		return w.refreshDir(path, entry, covered)
 	case WatchRepo:
 		return w.refreshDigest(path, entry, repoDigest)
 	default:
@@ -245,6 +370,27 @@ func (w *FileWatcher) refreshFile(path string, entry *watchEntry) (bool, FileCha
 	return moved, changeOf(path, WatchFile, info)
 }
 
+// refreshDir skips the listing when the directory's own mtime has not moved
+// and a live index watcher covers it. A create, remove or rename moves the
+// mtime; a child's content change does not, but the watcher's notice clears
+// the gate for that. Without a watcher there is no notice, so every sweep
+// lists the directory, as it always has.
+func (w *FileWatcher) refreshDir(path string, entry *watchEntry, covered func(string) bool) (bool, FileChange) {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return w.markGone(path, entry, WatchDir)
+	}
+	if entry.seen && !entry.gone && !entry.dirMtime.IsZero() &&
+		info.ModTime().Equal(entry.dirMtime) && covered != nil && covered(path) {
+		return false, FileChange{}
+	}
+	moved, change := w.refreshDigest(path, entry, dirDigest)
+	if !entry.gone {
+		entry.dirMtime = info.ModTime()
+	}
+	return moved, change
+}
+
 // refreshDigest handles the kinds whose digest is cheap enough to take whole.
 func (w *FileWatcher) refreshDigest(
 	path string,
@@ -272,6 +418,7 @@ func (w *FileWatcher) markGone(path string, entry *watchEntry, kind WatchKind) (
 	entry.seen, entry.gone = true, true
 	entry.digest = ""
 	entry.mtime, entry.size = time.Time{}, 0
+	entry.dirMtime = time.Time{}
 	return moved, FileChange{Path: path, Kind: kind, Gone: true}
 }
 
@@ -287,11 +434,11 @@ func changeOf(path string, kind WatchKind, info os.FileInfo) FileChange {
 // cap. Callers hold the lock.
 func (w *FileWatcher) evictLocked() {
 	for len(w.entries) > maxWatched {
-		var oldest string
+		var oldest watchKey
 		var at time.Time
-		for path, entry := range w.entries {
-			if oldest == "" || entry.lastRead.Before(at) {
-				oldest, at = path, entry.lastRead
+		for key, entry := range w.entries {
+			if oldest.path == "" || entry.lastRead.Before(at) {
+				oldest, at = key, entry.lastRead
 			}
 		}
 		delete(w.entries, oldest)

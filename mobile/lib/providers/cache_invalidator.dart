@@ -32,6 +32,8 @@ void applyCacheEffects(Ref ref, List<CacheEffect> effects) {
         _patchSession(ref, effect);
       case InvalidateTarget():
         _invalidate(ref, effect);
+      case InvalidateFiles():
+        _invalidateFiles(ref, effect);
     }
   }
 }
@@ -82,6 +84,9 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
       ref.invalidate(gitChangesProvider);
       ref.invalidate(gitWorktreesProvider);
     case CacheTarget.files:
+      // The whole family, which only a reconnect asks for: the gap could have
+      // hidden any change. A `file_changed` event arrives as
+      // [InvalidateFiles] instead and takes out only what it names.
       ref.invalidate(listFilesProvider);
       // Content too, which the desktop cannot do: this client has no PUT at
       // all (`api_client.dart`), so no buffer here can be dirty and there is
@@ -89,6 +94,24 @@ void _invalidate(Ref ref, InvalidateTarget effect) {
       // desktop's rule instead — refetch, compare, and leave a dirty buffer
       // alone. See docs/specs/54-file-change-events.md.
       ref.invalidate(readFileProvider);
+    case CacheTarget.touched:
+      final id = effect.sessionId;
+      if (id != null) ref.invalidate(touchedProvider((host, id)));
+  }
+}
+
+/// The folders and files one `file_changed` named.
+///
+/// Riverpod refetches only the entries something watches, so a file is read
+/// again only while a viewer shows it, and that read carries the ETag
+/// (`readFileProvider`). An entry nothing watches is marked stale and read on
+/// the next visit, which is the desktop's `refetchType: 'none'`.
+void _invalidateFiles(Ref ref, InvalidateFiles effect) {
+  for (final dir in effect.listings) {
+    ref.invalidate(listFilesProvider((effect.hostId, dir)));
+  }
+  for (final file in effect.files) {
+    ref.invalidate(readFileProvider((effect.hostId, file)));
   }
 }
 

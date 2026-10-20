@@ -124,19 +124,60 @@ test('an event about another file leaves this tab alone', async ({ window, daemo
   await expect(shown(window).locator('.ws-stale-bar')).toHaveCount(0)
 })
 
-test('search results are replaced rather than emptied and filled', async ({ window, daemon }) => {
+// The bug spec 65 starts from: a file event used to invalidate every read
+// under `files`, the open tab included, and refetching an active query moved
+// `saved` — and the mod time a save sends as its base — under the buffer. The
+// sibling event below must change nothing about this tab: no re-read of it,
+// and the save still sends the mod time the buffer was read at.
+test('an event about a sibling file leaves a dirty tab exactly as it was', async ({ window, daemon }) => {
+  const editor = await openFile(window)
+  await editor.click()
+  await window.keyboard.type('// mine')
+  await expect(shown(window).locator('.ws-tab-close')).toHaveText('●')
+
+  const reads = daemon.reads(MAIN)
+  const listed = daemon.listings(REPO)
+  daemon.setFile(`${REPO}/README.md`, '# moved\n')
+  daemon.emit(...moved(`${REPO}/README.md`))
+  // The folder the sibling sits in is listed again: the event has landed.
+  await expect.poll(() => daemon.listings(REPO)).toBeGreaterThan(listed)
+
+  expect(daemon.reads(MAIN)).toBe(reads)
+  await expect(shown(window).locator('.ws-tab-close')).toHaveText('●')
+  await expect(shown(window).locator('.ws-stale-bar')).toHaveCount(0)
+
+  await window.keyboard.press('Control+s')
+  await expect.poll(() => daemon.writes().filter((w) => w.kind === 'save').length).toBe(1)
+  const [save] = daemon.writes().filter((w) => w.kind === 'save')
+  expect(save).toMatchObject({ path: MAIN, baseModTime: '2026-01-01T00:00:00Z' })
+})
+
+// The raw read sends the ETag it holds, so an event about bytes already on
+// screen is answered with a 304 and no body at all.
+test('re-reading an unchanged file costs a 304', async ({ window, daemon }) => {
+  await openFile(window)
+  const before = daemon.notModified()
+  daemon.emit(...moved(MAIN))
+  await expect.poll(() => daemon.notModified()).toBeGreaterThan(before)
+  await expect(shown(window).locator('.ws-stale-bar')).toHaveCount(0)
+})
+
+// An agent write no longer reruns the search (spec 65, 2.1): a full ripgrep per
+// write was the dearest thing a busy session did. The results stay exactly as
+// they were and say they may be old, and the rerun is the reader's to ask for.
+test('search results stay put after a write, and say they may be out of date', async ({ window, daemon }) => {
   await window.locator('.session-row', { hasText: ALPHA }).click()
   await window.locator('.panel-tabs button', { hasText: 'files' }).first().click()
   await shown(window).locator('.ws-view', { hasText: 'Search' }).click()
-  await shown(window).locator('.find-input').fill('needle')
-  await shown(window).locator('.find-input').press('Enter')
+  await shown(window).locator('.find-input').first().fill('needle')
+  await shown(window).locator('.find-input').first().press('Enter')
   await expect(shown(window).locator('.find-hit')).toHaveCount(2)
 
   // The count as React commits it, not as the test happens to look: a panel
   // that empties and fills within one turn of the event loop is back before
   // any assertion could catch it, and is exactly the flicker under test.
   await window.evaluate(() => {
-    const results = document.querySelector('.find-results')
+    const results = document.querySelector('.panel-keep:not([hidden]) .find-results')
     if (!results) throw new Error('no results container')
     const count = (): number => results.querySelectorAll('.find-hit').length
     const seen = { low: count() }
@@ -150,11 +191,13 @@ test('search results are replaced rather than emptied and filled', async ({ wind
   daemon.setFile(MAIN, 'package main // edited by the agent\n')
   daemon.emit(...moved(MAIN))
 
-  // The search is under the same `files` key the edit invalidates, so it is
-  // asked again. Waiting for that is what makes the assertion below mean
-  // something: before the refetch there is nothing it could have caught.
-  await expect.poll(() => daemon.greps()).toBeGreaterThan(before)
-
+  await expect(shown(window).locator('.find-stale')).toContainText('Results may be out of date')
+  expect(daemon.greps()).toBe(before)
   const low = await window.evaluate(() => (window as unknown as { __hits: { low: number } }).__hits.low)
   expect(low).toBe(2)
+
+  await shown(window).locator('.find-again').click()
+  await expect.poll(() => daemon.greps()).toBeGreaterThan(before)
+  await expect(shown(window).locator('.find-stale')).toHaveCount(0)
+  await expect(shown(window).locator('.find-hit')).toHaveCount(2)
 })

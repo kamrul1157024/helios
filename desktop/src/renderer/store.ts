@@ -19,6 +19,7 @@ import {
   moveItem,
   panelItem,
   panelOf,
+  gitWasInFront,
   parseLayout,
   reconcile,
   removeItem,
@@ -120,7 +121,7 @@ export function sessionKey(hostId: string, sessionId: string): string {
   return `${hostId}:${sessionId}`
 }
 
-export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'git' | 'files'
+export type RightPanel = 'chat' | 'terminal' | 'approvals' | 'files'
 
 export type { SortMode }
 
@@ -150,11 +151,18 @@ export interface FileTarget {
   mode: 'open' | 'find'
   /** Scroll here once the file is open. Absent means the top. */
   line?: number
+  /**
+   * Text the file was just written with, for a caller that knows what an edit
+   * wrote but not where. The panel finds it once the file is in hand.
+   */
+  needle?: string
 }
 
 /** A diff an agent asked the human to look at. No path means the whole change. */
 export interface DiffTarget {
   hostId: string
+  /** The session whose Files panel should show it. */
+  sessionId?: string
   path?: string
   /** Branch to diff against, for a whole-branch review. */
   base?: string
@@ -516,10 +524,19 @@ function layoutKey(hostId: string, sessionId: string): string {
   return `helios.layout.${hostId}.${sessionId}`
 }
 
+/**
+ * Sessions whose saved layout had the retired Git panel in front, by
+ * `sessionKey`. Their Files panel opens in Changes mode, which is where that
+ * panel's job went (spec 65, B8). Taken once, by the panel, as it mounts.
+ */
+const changesRequested = new Set<string>()
+
 function readLayout(hostId: string, sessionId: string): Layout {
   try {
     const raw = localStorage.getItem(layoutKey(hostId, sessionId))
-    return parseLayout(raw ? JSON.parse(raw) : null)
+    const parsed: unknown = raw ? JSON.parse(raw) : null
+    if (gitWasInFront(parsed)) changesRequested.add(sessionKey(hostId, sessionId))
+    return parseLayout(parsed)
   } catch {
     return defaultLayout()
   }
@@ -1161,7 +1178,11 @@ class Store {
   private applyToCache(hostId: string, event: SSEEvent): void {
     for (const effect of effectsFor(hostId, event)) {
       if (effect.kind === 'invalidate') {
-        void queryClient.invalidateQueries({ queryKey: effect.queryKey })
+        void queryClient.invalidateQueries({
+          queryKey: effect.queryKey,
+          exact: effect.exact,
+          refetchType: effect.refetchType,
+        })
         continue
       }
       const was = this.sessionById(hostId, effect.sessionId)
@@ -1628,12 +1649,30 @@ class Store {
     this.editLayout(target, (layout) => reconcile(layout, tabIds))
   }
 
-  /** Shows a file in the Files panel, switching to it. */
-  openFile(hostId: string, path: string): void {
+  /**
+   * Shows a file in the Files panel, switching to it — at a line when the
+   * caller knows one, or at the text an edit wrote when it knows only that.
+   */
+  openFile(hostId: string, path: string, at: { line?: number; needle?: string } = {}): void {
     this.revealItem(this.state.selection, panelItem('files'))
     this.set((s) => ({
-      fileTarget: { hostId, path, seq: (s.fileTarget?.seq ?? 0) + 1, mode: 'open' },
+      fileTarget: {
+        hostId,
+        path,
+        seq: (s.fileTarget?.seq ?? 0) + 1,
+        mode: 'open',
+        ...(at.line ? { line: at.line } : {}),
+        ...(at.needle ? { needle: at.needle } : {}),
+      },
     }))
+  }
+
+  /**
+   * Whether this session's Files panel was asked to open on Changes, because a
+   * layout saved before the Git panel went had it in front. True once.
+   */
+  takeChangesRequest(hostId: string, sessionId: string): boolean {
+    return changesRequested.delete(sessionKey(hostId, sessionId))
   }
 
   /**
@@ -1670,7 +1709,7 @@ class Store {
     const seq = (this.state.showNote?.seq ?? 0) + 1
 
     const panel: RightPanel | null =
-      view === 'file' ? 'files' : view === 'diff' ? 'git' : view === 'agent' ? 'chat' : null
+      view === 'file' || view === 'diff' ? 'files' : view === 'agent' ? 'chat' : null
 
     if (view === 'terminal') {
       const session = this.sessionById(hostId, sessionId)
@@ -1692,6 +1731,7 @@ class Store {
       this.set((s) => ({
         diffTarget: {
           hostId,
+          sessionId,
           path: str(data.path) || undefined,
           base: str(data.base) || undefined,
           commit: str(data.commit) || undefined,

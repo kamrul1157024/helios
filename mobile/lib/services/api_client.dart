@@ -100,17 +100,19 @@ class ApiClient {
 
   // ==================== HTTP verbs with 401 auto-refresh ====================
 
-  Future<http.Response> get(String path) async {
+  /// [headers] ride along with the auth header — a conditional read's
+  /// `If-None-Match`, for one.
+  Future<http.Response> get(String path, {Map<String, String>? headers}) async {
     final resp = await _http.get(
       Uri.parse('$serverUrl$path'),
-      headers: await _authHeaders(),
+      headers: {...await _authHeaders(), ...?headers},
     );
     if (resp.statusCode == 401) {
       debugPrint('[ApiClient] 401 on GET $path — refreshing token');
       invalidateToken();
       return _http.get(
         Uri.parse('$serverUrl$path'),
-        headers: await _authHeaders(),
+        headers: {...await _authHeaders(), ...?headers},
       );
     }
     return resp;

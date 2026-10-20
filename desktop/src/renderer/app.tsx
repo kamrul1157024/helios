@@ -16,6 +16,11 @@ function typingInto(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 }
 
+/** Whether a key event came from inside a Files panel, which owns ⌘W there. */
+function inFilesPanel(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('.workspace') !== null
+}
+
 export function App(): JSX.Element {
   const loading = useStore((s) => s.loading)
   const toast = useStore((s) => s.toast)
@@ -55,8 +60,10 @@ export function App(): JSX.Element {
         store.toggleSidebar()
       }
       // ⌘W closes the selected session's terminal, not the window: the
-      // terminal is the only thing in this layout that can be closed.
-      if ((event.metaKey || event.ctrlKey) && event.key === 'w') {
+      // terminal is the only thing in this layout that can be closed — except
+      // a file tab, so it steps aside for a press from inside the Files panel,
+      // which closes the tab in front instead.
+      if ((event.metaKey || event.ctrlKey) && event.key === 'w' && !inFilesPanel(event.target)) {
         const { selection, tabs } = store.getSnapshot()
         const id = selection ? terminalId(selection.hostId, selection.sessionId) : null
         if (id && tabs.some((t) => t.id === id)) {

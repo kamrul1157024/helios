@@ -248,6 +248,33 @@ type Transcriber interface {
 	ParseLine(line []byte, seq int) []transcript.Message
 }
 
+// Touch is one path a tool call wrote. See docs/specs/65-fast-files.md, B6.
+type Touch struct {
+	// Path is as the call named it: absolute, or relative to the session's
+	// working directory.
+	Path string
+	// Deleted is a call that removed the file.
+	Deleted bool
+	// Line is the 1-based line the change starts at, when the call alone says
+	// so — a whole-file write starts at 1. Zero when it does not.
+	Line int
+	// Anchor is text the call put into the file. The daemon finds it in the
+	// file on disk for the line, because only the disk knows where an edit
+	// landed.
+	Anchor string
+}
+
+// Toucher reads which files a tool call wrote, for attribution: the Changes
+// view lists what this session edited. It is not a freshness signal — writers
+// such as `sed -i` in a shell never show up here, and spec 54's sweep stays
+// the source of change events.
+type Toucher interface {
+	// TouchedPaths returns the files one tool call wrote, or nothing for a
+	// tool that writes none. input is the call's input as the transcript
+	// recorded it.
+	TouchedPaths(tool string, input map[string]any) []Touch
+}
+
 // Discoverer finds sessions the user started outside Helios.
 type Discoverer interface {
 	Discover(db *store.Store)

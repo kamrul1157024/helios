@@ -108,7 +108,7 @@ func TestIdenticalRewriteStoresTheNewMtime(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.mu.Lock()
-	stored := w.entries[file].mtime
+	stored := w.entries[watchKey{file, WatchFile}].mtime
 	w.mu.Unlock()
 	if !stored.Equal(info.ModTime()) {
 		t.Errorf("stored mtime %v, want %v", stored, info.ModTime())
@@ -304,7 +304,7 @@ func TestSetIsCappedOldestFirst(t *testing.T) {
 	}
 
 	w.mu.Lock()
-	_, stillThere := w.entries[first]
+	_, stillThere := w.entries[watchKey{first, WatchFile}]
 	size := len(w.entries)
 	w.mu.Unlock()
 	if stillThere {
@@ -393,4 +393,82 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// While a live index watcher covers a directory, an unchanged directory mtime
+// skips the listing; a child's content change arrives as a notice, which
+// clears the gate.
+func TestDirectoryMtimeGateWithNotices(t *testing.T) {
+	dir := t.TempDir()
+	child := filepath.Join(dir, "a.txt")
+	touch(t, child, "one")
+
+	w := newWatcher(t)
+	w.covered = func(string) bool { return true }
+	w.Watch(dir, WatchDir)
+
+	// The child grows; the directory's own mtime does not move. Covered and
+	// un-noticed, the sweep trusts the gate.
+	touch(t, child, "much longer")
+	if got := w.Sweep(); len(got) != 0 {
+		t.Fatalf("gate ignored: %v", paths(got))
+	}
+
+	if !w.Notice(child) {
+		t.Fatal("a watched folder's child was not reported as watched")
+	}
+	if got := w.Sweep(); len(got) != 1 || got[0].Path != dir {
+		t.Fatalf("after a notice got %v, want the folder", paths(got))
+	}
+
+	// A new entry moves the directory's mtime, which needs no notice at all.
+	touch(t, filepath.Join(dir, "b.txt"), "b")
+	if got := w.Sweep(); len(got) != 1 || got[0].Path != dir {
+		t.Fatalf("after a create got %v, want the folder", paths(got))
+	}
+}
+
+// Reads and sweeps no longer share the lock across file I/O; under -race this
+// is what proves the copies, not the live entries, are what get digested.
+func TestWatchAndSweepRunConcurrently(t *testing.T) {
+	dir := t.TempDir()
+	w := newWatcher(t)
+	files := make([]string, 20)
+	for i := range files {
+		files[i] = filepath.Join(dir, "f"+itoa(i))
+		touch(t, files[i], "x")
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			w.Sweep()
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		w.Watch(files[i%len(files)], WatchFile)
+		w.Notice(files[i%len(files)])
+	}
+	<-done
+
+	touch(t, files[3], "changed")
+	if got := w.Sweep(); len(got) != 1 || got[0].Path != files[3] {
+		t.Fatalf("got %v, want only the changed file", paths(got))
+	}
+}
+
+// A checkout's root is listed and asked for its status by the same panel. The
+// two subscriptions are different questions and both must be answered.
+func TestOneFolderAsListingAndRepo(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, filepath.Join(dir, "a.txt"), "one")
+	w := newWatcher(t)
+	w.Watch(dir, WatchRepo)
+	w.Watch(dir, WatchDir)
+
+	touch(t, filepath.Join(dir, "b.txt"), "two")
+	got := w.Sweep()
+	if len(got) != 1 || got[0].Path != dir || got[0].Kind != WatchDir {
+		t.Fatalf("got %+v, want the listing named", got)
+	}
 }

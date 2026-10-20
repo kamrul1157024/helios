@@ -30,6 +30,7 @@ type registration struct {
 	moder       Moder
 	models      ModelLister
 	transcriber Transcriber
+	toucher     Toucher
 	discoverer  Discoverer
 	titler      Titler
 	small       SmallModel
@@ -71,6 +72,7 @@ func Register(p Provider) error {
 	reg.moder, _ = p.(Moder)
 	reg.models, _ = p.(ModelLister)
 	reg.transcriber, _ = p.(Transcriber)
+	reg.toucher, _ = p.(Toucher)
 	reg.discoverer, _ = p.(Discoverer)
 	reg.titler, _ = p.(Titler)
 	reg.small, _ = p.(SmallModel)
@@ -215,6 +217,13 @@ func ModelListerFor(id string) ModelLister {
 func TranscriberFor(id string) Transcriber {
 	if reg := lookup(id); reg != nil {
 		return reg.transcriber
+	}
+	return nil
+}
+
+func ToucherFor(id string) Toucher {
+	if reg := lookup(id); reg != nil {
+		return reg.toucher
 	}
 	return nil
 }

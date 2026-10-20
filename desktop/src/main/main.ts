@@ -317,6 +317,8 @@ function hardenSession(): void {
             // preview be a document of its own rather than a srcdoc that has
             // to live under the policy above. `script-src` stays 'self'.
             `frame-src ${PREVIEW_SCHEME}:; ` +
+            // The highlighting worker, which is a file beside the bundle.
+            "worker-src 'self'; " +
             "object-src 'none'; base-uri 'none'; form-action 'none'",
         ],
       },

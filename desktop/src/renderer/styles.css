@@ -3820,22 +3820,6 @@ figure.mermaid svg {
 
 /* ─── Git and files ─────────────────────────────────────────────────────── */
 
-.git {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-}
-
-.git-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  box-shadow: inset 0 -1px 0 var(--outline-variant);
-}
-
 .branch {
   font-family: var(--mono);
   font-size: 12px;
@@ -3854,73 +3838,6 @@ figure.mermaid svg {
 .pill.clean {
   color: var(--s-active);
   background: color-mix(in srgb, var(--s-active) 14%, transparent);
-}
-
-.git-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.git-files {
-  /* A fixed 300px leaves the preview a sliver on a narrow window. */
-  width: clamp(180px, 38%, 300px);
-  flex: none;
-  overflow-y: auto;
-  padding: 8px;
-  background: color-mix(in srgb, var(--on-surface) 3%, transparent);
-}
-
-.git-group-head {
-  display: block;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--on-surface-variant);
-  padding: 10px 8px 4px;
-}
-
-.git-file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  text-align: left;
-  padding: 6px 8px;
-  border-radius: var(--r-sm);
-  color: var(--on-surface);
-  font-weight: 400;
-  font-size: 12.5px;
-}
-
-.git-file:hover {
-  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
-}
-
-.git-file.selected {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
-}
-
-.git-status {
-  width: 16px;
-  text-align: center;
-  font-family: var(--mono);
-  font-weight: 700;
-  color: var(--on-surface-variant);
-}
-
-.git-status.sM {
-  color: var(--s-waiting);
-}
-
-.git-status.sA {
-  color: var(--s-active);
-}
-
-.git-status.sD {
-  color: var(--error);
 }
 
 /* Spend the leading directories, keep the filename (see PathLabel). */
@@ -3942,26 +3859,6 @@ figure.mermaid svg {
   white-space: nowrap;
 }
 
-.git-path {
-  text-align: left;
-}
-
-.git-diff {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* In a pane of its own the patch owns the vertical scroll. In the transcript
-   it must not: there the messages around it are what scrolls. */
-.git-diff .diff-unified {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.git-diff header,
 .ws-file-head {
   display: flex;
   align-items: center;
@@ -4161,17 +4058,6 @@ figure.mermaid svg {
   margin-right: -4px;
 }
 
-.ws-plain {
-  flex: 1;
-  margin: 0;
-  overflow: auto;
-  padding: 10px 14px;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
-  tab-size: 4;
-}
-
 .d-add {
   color: var(--s-active);
 }
@@ -4195,6 +4081,12 @@ figure.mermaid svg {
   display: flex;
   min-height: 0;
   min-width: 0;
+}
+
+/* Focusable only so a click anywhere inside gives the panel the keyboard —
+   which is what its tab keys check for — not as a stop on the Tab order. */
+.workspace:focus {
+  outline: none;
 }
 
 .ws-side {
@@ -4350,21 +4242,30 @@ figure.mermaid svg {
 
 .tree {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 6px 6px 12px;
+  padding: 0 6px;
+  outline: none;
 }
 
+/* One fixed height for every row: the windowed list works out which rows are
+   on screen by dividing, and a row that grew would put every later one in the
+   wrong place. Keep in step with TREE_ROW_HEIGHT. */
 .tree-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   width: 100%;
-  text-align: left;
-  padding: 3px 8px;
+  height: 22px;
+  box-sizing: border-box;
+  padding-right: 6px;
   border-radius: var(--r-sm);
   font-size: 12.5px;
   font-weight: 400;
   color: var(--on-surface);
+  cursor: pointer;
+  user-select: none;
 }
 
 .tree-row:hover {
@@ -4374,6 +4275,128 @@ figure.mermaid svg {
 .tree-row.selected {
   background: var(--primary-container);
   color: var(--on-primary-container);
+}
+
+/* The keyboard's row, shown only while the tree has the keyboard: a ring that
+   followed the mouse around as well would be noise. */
+.tree:focus .tree-row.active {
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.tree-row.ignored {
+  opacity: 0.5;
+}
+
+/* One line per level, so the eye can follow a deep folder back up. */
+.tree-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--outline-variant);
+  pointer-events: none;
+}
+
+.tree-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.6;
+  color: var(--on-surface-variant);
+}
+
+.tree-icon.folder {
+  color: var(--syn-type);
+}
+
+.tree-row.selected .tree-icon {
+  color: inherit;
+}
+
+/* The letter git gives a changed file, in the theme's status colours. The name
+   takes the colour too, as it does in every editor's tree. */
+.tree-badge {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.g-M {
+  color: var(--s-waiting);
+}
+
+.g-A,
+.g-U {
+  color: var(--s-active);
+}
+
+.g-D {
+  color: var(--error);
+}
+
+.g-R {
+  color: var(--s-idle);
+}
+
+.tree-row.selected .tree-name[class*='g-'] {
+  color: inherit;
+}
+
+.tree-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--s-waiting);
+  opacity: 0.8;
+}
+
+/* What this session wrote: filled on the file, hollow on the folders above. */
+.agent-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.agent-mark.hollow {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+}
+
+.tree-error {
+  cursor: default;
+  gap: 8px;
+  color: var(--error);
+}
+
+.tree-error:hover {
+  background: transparent;
+}
+
+.tree-error-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.tree-retry {
+  flex: none;
+  padding: 0 8px;
+  height: 18px;
+  font-size: 11px;
+}
+
+.tree-loading {
+  display: grid;
+  place-items: center;
+  padding: 18px 0;
 }
 
 .tree-twist {
@@ -4405,6 +4428,58 @@ figure.mermaid svg {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Holds the search while another view is in front, mounted and hidden. */
+.find-host {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.find-host[hidden] {
+  display: none;
+}
+
+.find-word {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.find-glob {
+  padding-top: 0;
+}
+
+.find-summary,
+.find-stale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 6px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.find-stale {
+  color: var(--s-waiting);
+}
+
+.find-again {
+  padding: 0;
+  background: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.find-again:hover {
+  text-decoration: underline;
+}
+
+.find-searching {
+  display: grid;
+  place-items: center;
+  padding: 18px 0;
 }
 
 .find-head {
@@ -4448,15 +4523,34 @@ figure.mermaid svg {
 
 .find-file {
   display: flex;
-  gap: 6px;
-  padding: 6px 8px 2px;
-  font-size: 11px;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 6px 2px;
+  background: none;
+  border-radius: var(--r-sm);
+  text-align: left;
+  font-size: 11.5px;
   font-weight: 600;
+  color: var(--on-surface);
+}
+
+.find-file:hover {
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.find-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.6;
   color: var(--on-surface-variant);
+}
+
+.find-path {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: ltr;
 }
 
 .find-count {
@@ -4477,6 +4571,24 @@ figure.mermaid svg {
 
 .find-hit:hover {
   background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.find-hit.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+/* A match, in a search hit or a quick-open name: bold and tinted, never a
+   different size, so the line does not shift around it. */
+b.match {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.find-hit b.match {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--s-waiting) 28%, transparent);
+  color: var(--on-surface);
 }
 
 .find-line {
@@ -4501,17 +4613,24 @@ figure.mermaid svg {
   min-height: 0;
 }
 
+/* A thin bar rather than none: with many files open, a strip that scrolls
+   without saying so hides the tabs past its edge. */
 .ws-tabs {
   display: flex;
   gap: 2px;
   padding: 6px 8px 0;
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
   box-shadow: inset 0 -1px 0 var(--outline-variant);
 }
 
 .ws-tabs::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.ws-tabs::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--outline-variant);
 }
 
 .ws-tab {
@@ -4542,6 +4661,203 @@ figure.mermaid svg {
   border-radius: 999px;
   font-size: 10px;
   color: var(--on-surface-variant);
+}
+
+.ws-tab-close:hover {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+}
+
+/* The folder that tells two same-named tabs apart. */
+.ws-tab-suffix {
+  font-size: 11px;
+  color: var(--outline);
+}
+
+/* Shaped like the text it stands in for, so nothing jumps when it arrives. */
+.ws-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 16px;
+}
+
+.ws-skeleton .skeleton-line {
+  height: 9px;
+  min-height: 9px;
+}
+
+.ws-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px 16px;
+  font-size: 13px;
+  color: var(--on-surface);
+}
+
+.ws-error p {
+  margin: 0;
+}
+
+/* Source and Preview as one labelled control. */
+.seg-toggle {
+  display: flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface) 6%, transparent);
+}
+
+.seg-toggle button {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--on-surface-variant);
+}
+
+/* Filled with the accent, so which half is chosen is never a question of
+   which pale grey is paler. */
+.seg-toggle button.on {
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+}
+
+.ws-file-head .head-btn .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ws-file-head .head-btn.on {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.discard-text {
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.disk-diff {
+  max-height: 60vh;
+  overflow: auto;
+}
+
+/* ─── Changes: what this session wrote, and what else moved ─────────────── */
+
+.changes {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 6px 12px;
+}
+
+.changes-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 6px;
+}
+
+.changes-scope .scope {
+  min-width: 0;
+  flex: 1;
+}
+
+.changes .git-substatus {
+  padding: 4px 8px;
+  box-shadow: none;
+  font-size: 11.5px;
+}
+
+.changes .commit-body {
+  margin: 0 8px 6px;
+}
+
+/* A review's row, with its Viewed tick beside it. */
+.change-review {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.change-review .change-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.change-review.done .change-name {
+  color: var(--on-surface-variant);
+}
+
+.change-viewed {
+  flex: none;
+  margin: 0 6px 0 0;
+}
+
+.changes-section + .changes-section {
+  margin-top: 10px;
+}
+
+.changes-head {
+  display: flex;
+  gap: 6px;
+  margin: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: none;
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--on-surface);
+}
+
+.change-row:hover {
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.change-row.deleted .change-name {
+  text-decoration: line-through;
+  color: var(--on-surface-variant);
+}
+
+.change-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.change-when {
+  flex: none;
+  font-size: 11px;
+  color: var(--outline);
 }
 
 /* The path takes the width it needs and no more: sharing the row equally with
@@ -4652,7 +4968,16 @@ figure.mermaid svg {
   place-items: center;
 }
 
-/* CodeMirror fills what is left of the pane and scrolls inside it. */
+/* CodeMirror fills what is left of the pane and scrolls inside it, with the
+   status line under it. The size comes from the terminal's setting, inline. */
+.cm-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 12.5px;
+}
+
 .cm-host {
   flex: 1;
   min-height: 0;
@@ -4661,12 +4986,122 @@ figure.mermaid svg {
 
 .cm-host .cm-editor {
   height: 100%;
-  font-size: 12.5px;
+  font-size: inherit;
 }
 
+/* Ligatures off: a review tool has to show `!=` as the two characters it is,
+   not as the ≠ a font chose to draw instead. */
 .cm-host .cm-scroller {
   font-family: var(--mono);
+  font-variant-ligatures: none;
   line-height: 1.55;
+}
+
+.cm-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 2px 12px;
+  box-shadow: inset 0 1px 0 var(--outline-variant);
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.cm-status-flag {
+  color: var(--s-waiting);
+}
+
+/* The change bar against HEAD: a sliver left of the numbers. */
+.cm-host .cm-changes-gutter {
+  width: 3px;
+}
+
+.cm-change {
+  display: block;
+  width: 3px;
+  height: 100%;
+}
+
+.cm-change-added {
+  background: var(--s-active);
+}
+
+.cm-change-changed {
+  background: var(--s-idle);
+}
+
+.cm-change-removed {
+  height: 0;
+  border-top: 3px solid var(--error);
+}
+
+/* Lines an agent just wrote, or the line a search result opened at. The tint
+   fades on its own; the decoration goes once it has. */
+.cm-host .cm-flash {
+  animation: line-flash 1.5s ease-out forwards;
+}
+
+@keyframes line-flash {
+  from {
+    background-color: color-mix(in srgb, var(--s-waiting) 32%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+/* CodeMirror's find bar, in the app's own fields and buttons rather than the
+   browser defaults it ships with. */
+.cm-host .cm-panel.cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.cm-host .cm-panel.cm-search input.cm-textfield {
+  padding: 4px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--r-sm);
+  background: var(--surface-high);
+  color: var(--on-surface);
+  font-size: 12px;
+}
+
+.cm-host .cm-panel.cm-search .cm-button {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  background-image: none;
+  color: var(--on-surface);
+  font-size: 11.5px;
+}
+
+.cm-host .cm-panel.cm-search .cm-button:hover {
+  background: color-mix(in srgb, var(--on-surface) 14%, transparent);
+}
+
+.cm-host .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--on-surface-variant);
+}
+
+.cm-host .cm-panel.cm-search button[name='close'] {
+  position: static;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 16px;
 }
 
 .cm-host .cm-focused {
@@ -4686,6 +5121,9 @@ figure.mermaid svg {
 }
 
 .quick {
+  /* As tall as its rows, up to the cap: stretched by the backdrop, two
+     results sat in a dialog the height of sixty. */
+  align-self: flex-start;
   width: min(620px, 80vw);
   max-height: 60vh;
   display: flex;
@@ -4725,19 +5163,36 @@ figure.mermaid svg {
 }
 
 .quick-list {
+  min-height: 0;
   overflow: auto;
   padding: 6px;
 }
 
 .quick-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   width: 100%;
   text-align: left;
   padding: 5px 10px;
   border-radius: var(--r-sm);
+  background: none;
   font-weight: 400;
+  color: var(--on-surface);
+}
+
+.quick-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.6;
+  color: var(--on-surface-variant);
+}
+
+.quick-note {
+  margin-left: auto;
+  flex: none;
+  font-size: 10.5px;
+  color: var(--outline);
 }
 
 .quick-row.active {
@@ -4746,7 +5201,12 @@ figure.mermaid svg {
 }
 
 .quick-name {
+  flex: none;
   font-size: 13px;
+}
+
+.quick-row.active b.match {
+  color: inherit;
 }
 
 .quick-dir {
@@ -5392,12 +5852,6 @@ hr {
 
 /* ─── Git: commits and worktrees ────────────────────────────────────────── */
 
-/* The scope picker takes the header's spare width and the Worktrees toggle is
-   pushed to the far end, so the two controls never crowd each other. */
-.git-head .ws-view {
-  margin-left: auto;
-}
-
 .scope {
   position: relative;
   min-width: 0;
@@ -5618,41 +6072,13 @@ hr {
   font-family: var(--mono);
 }
 
-.worktrees {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
+/* A worktree in the root picker: its branch and state, its last commit, and
+   where it lives, stacked. */
+.worktree-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.worktree-search {
-  width: 100%;
-  padding: 6px 10px;
-  font-size: 12px;
-}
-
-.worktree {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-  width: 100%;
-  text-align: left;
-  padding: 10px 12px;
-  border-radius: var(--r-md);
-  background: var(--surface-high);
-  color: var(--on-surface);
-  font-weight: 400;
-}
-
-.worktree:hover {
-  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
-}
-
-.worktree.selected {
-  outline: 1px solid var(--primary);
+  gap: 2px;
+  min-width: 0;
 }
 
 .worktree-top {
@@ -5670,149 +6096,7 @@ hr {
   max-width: 100%;
 }
 
-.worktree-path {
-  display: flex;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--on-surface-variant);
-}
-
-/* ─── Branch review ─────────────────────────────────────────────────────── */
-
-.review {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-}
-
-.review-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  font-size: 12px;
-  box-shadow: inset 0 -1px 0 var(--outline-variant);
-}
-
-.review-count {
-  font-weight: 600;
-}
-
-.review-progress {
-  margin-left: auto;
-  color: var(--on-surface-variant);
-}
-
-.review-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.review-files {
-  width: clamp(180px, 32%, 280px);
-  flex: none;
-  overflow-y: auto;
-  padding: 8px;
-  background: color-mix(in srgb, var(--on-surface) 3%, transparent);
-}
-
-.review-file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  text-align: left;
-  color: var(--on-surface);
-}
-
-/* A file already read stays listed — it is still part of the change — but
-   stops competing for attention with the ones that are not. */
-.review-file.done {
-  opacity: 0.45;
-}
-
-.review-file-stat {
-  margin-left: auto;
-  display: flex;
-  gap: 6px;
-  font-size: 11px;
-}
-
-.review-diffs {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 16px 32px;
-  min-width: 0;
-}
-
-.review-card {
-  margin-bottom: 16px;
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--r-md);
-  overflow: hidden;
-}
-
-.review-card-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  font-size: 12px;
-  background: var(--surface-container);
-  box-shadow: inset 0 -1px 0 var(--outline-variant);
-}
-
-.review-status {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--on-surface) 10%, transparent);
-}
-
-.review-status.s-a {
-  color: var(--s-active);
-}
-
-.review-status.s-d {
-  color: var(--error);
-}
-
-.review-viewed {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--on-surface-variant);
-}
-
-.review-diff pre {
-  margin: 0;
-  padding: 8px 0;
-  overflow-x: auto;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.review-line {
-  display: block;
-  padding: 0 12px;
-  cursor: text;
-}
-
-.review-line:hover {
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
-}
-
-.review-line.picked {
-  background: color-mix(in srgb, var(--primary) 18%, transparent);
-}
+/* ─── Review comments ───────────────────────────────────────────────────── */
 
 /* Anchored to the file rather than the selection: a comment box that follows
    the cursor lands off-screen for a selection made at the bottom edge. */
@@ -6664,25 +6948,27 @@ hr {
 }
 
 /* Two columns need roughly 60 characters each to be worth having. Below that
-   one readable column beats two unreadable ones. */
+   one readable column beats two unreadable ones. A split the reader picked
+   by hand (`diff-split-fixed`) stays two columns: Unified is one press away
+   for anyone who wants one. */
 @container (max-width: 720px) {
-  .diff-row {
+  .diff-split:not(.diff-split-fixed) .diff-row {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .diff-cell-absent {
+  .diff-split:not(.diff-split-fixed) .diff-cell-absent {
     display: none;
   }
 
   /* Stacked, a context row would print the same line twice. Keep the new
      side, so the numbering matches the file as it now stands. */
-  .diff-row-context .diff-cell:first-child {
+  .diff-split:not(.diff-split-fixed) .diff-row-context .diff-cell:first-child {
     display: none;
   }
 
   /* Nothing sits beside a cell any more, so the divider is a stray rule down
      the middle of the text. */
-  .diff-cell {
+  .diff-split:not(.diff-split-fixed) .diff-cell {
     border-right: none;
   }
 }
@@ -6692,6 +6978,36 @@ hr {
   outline: 2px solid var(--primary);
   outline-offset: -2px;
   border-radius: 3px;
+}
+
+/* The run of changes F7 last landed on. A bar down the gutter rather than an
+   outline, so it reads as "here" without boxing every line of the run. */
+.diff-row-current {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+/* Lines picked for a review comment. */
+.diff-picked {
+  background: color-mix(in srgb, var(--primary) 22%, transparent) !important;
+}
+
+/* A file tab's Diff view: the patch scrolls, the comment box stays put. */
+.file-diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-diff-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.file-diff-body .diff-line,
+.file-diff-body .diff-cell {
+  cursor: pointer;
 }
 
 /* The arrange popover. Anchored to its button so it opens under it rather than
@@ -7307,4 +7623,47 @@ hr {
 .auto-head .auto-name {
   flex: 1;
   min-width: 0;
+}
+
+/* ─── File-type icons ───────────────────────────────────────────────────────
+   Tinted by family from the syntax palette, so they follow the theme. */
+
+.file-icon.ft-code {
+  color: var(--syn-function);
+}
+
+.file-icon.ft-markup {
+  color: var(--syn-tag);
+}
+
+.file-icon.ft-style {
+  color: var(--syn-keyword);
+}
+
+.file-icon.ft-data {
+  color: var(--syn-number);
+}
+
+.file-icon.ft-doc {
+  color: var(--syn-string);
+}
+
+.file-icon.ft-image {
+  color: var(--syn-type);
+}
+
+.file-icon.ft-shell {
+  color: var(--s-active);
+}
+
+.file-icon.ft-config,
+.file-icon.ft-lock,
+.file-icon.ft-archive,
+.file-icon.ft-plain {
+  color: var(--on-surface-variant);
+}
+
+.tree-row.selected .file-icon,
+.quick-row.active .file-icon {
+  color: inherit;
 }

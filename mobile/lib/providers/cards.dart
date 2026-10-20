@@ -497,6 +497,9 @@ class _PermissionCardState extends State<PermissionCard> {
           hostId: n.hostId,
           path: path,
           rootPath: cut > 0 ? path.substring(0, cut) : path,
+          // The session that asked, so a question about the plan goes back
+          // to the agent that wrote it.
+          sessionId: n.sourceSession.isEmpty ? null : n.sourceSession,
         ),
       ),
     );

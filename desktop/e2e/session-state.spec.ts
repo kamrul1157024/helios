@@ -82,16 +82,18 @@ test('an open file does not follow into the next session', async ({ window }) =>
 })
 
 test('a worktree picked in one session does not follow into the next', async ({ window }) => {
-  await bothOn(window, 'git')
+  await bothOn(window, 'files')
 
-  await shown(window).locator('.ws-view', { hasText: 'Worktrees' }).click()
-  await shown(window).locator('.worktree', { hasText: 'hotfix' }).click()
+  // The worktree list lives in the Files root picker now (spec 65, B8).
+  await shown(window).locator('.ws-root-more').click()
+  await window.locator('.quick-row', { hasText: 'hotfix' }).click()
   // The pill is the panel saying it is pointed somewhere other than the
   // session's own checkout.
-  await expect(shown(window).locator('.git-head .pill')).toHaveText(/repo-hotfix/)
+  await expect(shown(window).locator('.ws-crumb.here')).toHaveText('repo-hotfix')
+  await expect(shown(window).locator('.ws-root .pill')).toBeVisible()
 
   await open(window, BETA)
 
-  await expect(shown(window).locator('.git-head .pill')).toHaveCount(0)
-  await expect(shown(window).locator('.git-head .branch')).toHaveText('main')
+  await expect(shown(window).locator('.ws-root .pill')).toHaveCount(0)
+  await expect(shown(window).locator('.ws-crumb.here')).toHaveText('repo')
 })

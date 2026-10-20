@@ -88,7 +88,11 @@ func (s *InternalServer) hookContext() *provider.HookContext {
 		PromptSubmitted: func(sessionID string) {
 			s.shared.Signals.Fire(SignalPromptSubmitted, sessionID)
 		},
-		FilesTouched: s.shared.Files.Poke,
+		FilesTouched: func() {
+			s.shared.Files.Poke()
+			// A root that cannot watch the disk rebuilds on its next query.
+			fileIndexes.poke()
+		},
 		Report: func(event provider.ReportEvent) {
 			s.shared.Reporter.AddEvent(reporter.Event{
 				Type:      event.Type,

@@ -14,6 +14,7 @@ import '../models/schedule.dart';
 import '../providers/daemon_providers.dart';
 import 'schedules_screen.dart';
 import 'session_detail_screen.dart';
+import 'routes.dart';
 
 class ScheduleDetailScreen extends rp.ConsumerStatefulWidget {
   final String hostId;
@@ -339,6 +340,7 @@ class _Runs extends rp.ConsumerWidget {
               subtitle: Text('${run.status} · ${agoWords(run.createdAt)}'),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
+                  settings: const RouteSettings(name: sessionRoute),
                   builder: (_) => SessionDetailScreen(session: run),
                 ),
               ),

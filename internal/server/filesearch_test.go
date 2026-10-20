@@ -108,7 +108,7 @@ func TestScanFilesFindsMatchesAndSkipsBinaries(t *testing.T) {
 	write(t, filepath.Join(root, "a.go"), "package a\nconst Marker = 1\n")
 	write(t, filepath.Join(root, "b.bin"), "\x00\x01marker\x00")
 
-	matches, truncated := scanFiles(context.Background(), root, regexp.MustCompile("(?i)marker"), 10)
+	matches, truncated := scanFiles(context.Background(), root, &grepMatcher{re: regexp.MustCompile("(?i)marker")}, nil, 10)
 	if truncated {
 		t.Fatal("unexpected truncation")
 	}
@@ -127,7 +127,7 @@ func TestScanFilesStopsAtLimit(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "a.go"), "hit\nhit\nhit\n")
 
-	matches, truncated := scanFiles(context.Background(), root, regexp.MustCompile("hit"), 2)
+	matches, truncated := scanFiles(context.Background(), root, &grepMatcher{re: regexp.MustCompile("hit")}, nil, 2)
 	if len(matches) != 2 || !truncated {
 		t.Fatalf("expected 2 matches and truncation, got %d / %v", len(matches), truncated)
 	}

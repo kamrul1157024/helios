@@ -11,7 +11,7 @@ import path from 'node:path'
 
 import { _electron as electron, test as base, type ElectronApplication, type Page } from '@playwright/test'
 
-import { setChannelsUnsupported, startDaemon, type StubDaemon } from './daemon.ts'
+import { resetFiles, setChannelsUnsupported, setFastFiles, startDaemon, type StubDaemon } from './daemon.ts'
 import type { Density } from '../src/shared/models.ts'
 
 export const HOST_ID = 'e2e-host'
@@ -36,6 +36,13 @@ interface Options {
    * read at startup. Use it with `test.use({ density: 'comfortable' })`.
    */
   density: Density
+
+  /**
+   * Whether the daemon has spec 65's file routes and fields. Off, it is a
+   * daemon from before them, which the files panel has to keep working with.
+   * Use it with `test.use({ fastFiles: false })`.
+   */
+  fastFiles: boolean
 }
 
 interface Fixtures {
@@ -47,13 +54,17 @@ interface Fixtures {
 export const test = base.extend<Options & Fixtures>({
   channelsSupported: [true, { option: true }],
   density: ['compact', { option: true }],
+  fastFiles: [true, { option: true }],
 
-  daemon: async ({ channelsSupported }, use) => {
+  daemon: async ({ channelsSupported, fastFiles }, use) => {
     setChannelsUnsupported(!channelsSupported)
+    setFastFiles(fastFiles)
+    resetFiles()
     const daemon = await startDaemon()
     await use(daemon)
     await daemon.close()
     setChannelsUnsupported(false)
+    setFastFiles(true)
   },
 
   app: async ({ daemon, density }, use) => {

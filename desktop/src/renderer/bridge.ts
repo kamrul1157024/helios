@@ -50,6 +50,7 @@ import type {
   Notification,
   NotificationPrefs,
   ProviderInfo,
+  RawFile,
   SSEEvent,
   Session,
   CheckResult,
@@ -59,6 +60,7 @@ import type {
   TabStatus,
   TerminalInfo,
   ThemeSummary,
+  TouchedFile,
   TranscriptPage,
   UpdateInfo,
   Worktree,
@@ -127,6 +129,10 @@ interface RawBridge {
   preview: {
     /** Stages an HTML page and returns the URL to point a frame at. */
     stage(html: string): Promise<string>
+  }
+  shell: {
+    /** Shows a file in the system file manager. Refused for a remote host. */
+    reveal(hostId: string, path: string): Promise<void>
   }
   prefs: {
     get(): Promise<NotificationPrefs>
@@ -411,14 +417,21 @@ export class HostApi {
   readFile(path: string): Promise<FileContent> {
     return this.call('readFile', path)
   }
+  /** The bytes, as an ArrayBuffer. `etag` turns an unchanged file into a 304. */
+  readFileRaw(path: string, etag?: string): Promise<RawFile> {
+    return this.call('readFileRaw', path, etag)
+  }
+  touchedFiles(sessionId: string): Promise<TouchedFile[]> {
+    return this.call('touchedFiles', sessionId)
+  }
   searchFiles(path: string, q: string, limit?: number): Promise<FileSearchResult> {
     return this.call('searchFiles', path, q, limit)
   }
   grepFiles(path: string, q: string, opts: GrepOpts = {}): Promise<GrepResult> {
     return this.call('grepFiles', path, q, opts)
   }
-  writeFile(path: string, content: string, baseModTime?: string): Promise<WriteResult> {
-    return this.call('writeFile', path, content, baseModTime)
+  writeFile(path: string, content: string, baseModTime?: string, etag?: string): Promise<WriteResult> {
+    return this.call('writeFile', path, content, baseModTime, etag)
   }
   providers(): Promise<ProviderInfo[]> {
     return this.call('providers')

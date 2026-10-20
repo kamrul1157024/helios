@@ -65,3 +65,62 @@ export function mimeForPath(path: string): string {
 export function dataUrl(path: string, base64: string): string {
   return `data:${mimeForPath(path)};base64,${base64}`
 }
+
+/**
+ * Which icon a file wears in the tree, quick open and search (spec 65, B2).
+ *
+ * A handful of families rather than one picture per language: the icon is
+ * there to tell source from config from a picture at a glance, and the name
+ * beside it says the rest.
+ */
+export type IconKind =
+  | 'code'
+  | 'markup'
+  | 'style'
+  | 'data'
+  | 'doc'
+  | 'image'
+  | 'shell'
+  | 'config'
+  | 'lock'
+  | 'archive'
+  | 'plain'
+
+const ICON_BY_EXTENSION: Record<string, IconKind> = {
+  ...Object.fromEntries(
+    ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'go', 'py', 'rs', 'rb', 'java', 'kt', 'kts', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'dart', 'php', 'lua', 'sql', 'scala', 'zig', 'ex', 'exs', 'vue', 'svelte'].map(
+      (ext) => [ext, 'code' as const],
+    ),
+  ),
+  ...Object.fromEntries(['html', 'htm', 'xhtml', 'xml'].map((ext) => [ext, 'markup' as const])),
+  ...Object.fromEntries(['css', 'scss', 'sass', 'less'].map((ext) => [ext, 'style' as const])),
+  ...Object.fromEntries(['json', 'jsonc', 'yaml', 'yml', 'toml', 'csv', 'tsv', 'proto', 'graphql'].map((ext) => [ext, 'data' as const])),
+  ...Object.fromEntries(['md', 'markdown', 'mdx', 'txt', 'rst', 'adoc', 'pdf'].map((ext) => [ext, 'doc' as const])),
+  ...Object.fromEntries(['sh', 'bash', 'zsh', 'fish', 'ps1'].map((ext) => [ext, 'shell' as const])),
+  ...Object.fromEntries(['ini', 'cfg', 'conf', 'env', 'properties', 'editorconfig'].map((ext) => [ext, 'config' as const])),
+  ...Object.fromEntries(['lock', 'sum'].map((ext) => [ext, 'lock' as const])),
+  ...Object.fromEntries(['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'jar', 'whl'].map((ext) => [ext, 'archive' as const])),
+}
+
+/** Names that say what they are without an extension. */
+const ICON_BY_NAME: Record<string, IconKind> = {
+  makefile: 'shell',
+  dockerfile: 'config',
+  license: 'doc',
+  readme: 'doc',
+  'go.mod': 'lock',
+  'package-lock.json': 'lock',
+}
+
+export function iconKindOf(path: string): IconKind {
+  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
+  const named = ICON_BY_NAME[name]
+  if (named) return named
+  if (isImagePath(path)) return 'image'
+  const extension = extensionOf(path)
+  const byExtension = ICON_BY_EXTENSION[extension]
+  if (byExtension) return byExtension
+  // A dotfile with no extension of its own — .gitignore, .nvmrc — is config.
+  if (name.startsWith('.')) return 'config'
+  return 'plain'
+}

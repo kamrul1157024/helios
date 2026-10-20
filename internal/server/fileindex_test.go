@@ -10,7 +10,7 @@ import (
 )
 
 func TestIndexIsBuiltOnceAndReused(t *testing.T) {
-	cache := newIndexCache()
+	cache := newIndexCacheWith(false, 0)
 	root := t.TempDir()
 	write(t, filepath.Join(root, "a.go"), "package a")
 
@@ -19,8 +19,9 @@ func TestIndexIsBuiltOnceAndReused(t *testing.T) {
 		t.Fatalf("expected one entry, got %d", len(first.entries))
 	}
 
-	// A file appearing after the build is not visible until the list is
-	// refreshed. That is the deal the cache makes, and it should be explicit.
+	// On a polling root, a file appearing after the build is not visible until
+	// the list is refreshed. That is the deal polling makes, and it should be
+	// explicit.
 	write(t, filepath.Join(root, "b.go"), "package b")
 	second := cache.get(context.Background(), root)
 	if second != first {
@@ -29,7 +30,7 @@ func TestIndexIsBuiltOnceAndReused(t *testing.T) {
 }
 
 func TestIndexRefreshesInTheBackgroundOnceStale(t *testing.T) {
-	cache := newIndexCache()
+	cache := newIndexCacheWith(false, 0)
 	root := t.TempDir()
 	write(t, filepath.Join(root, "a.go"), "package a")
 
@@ -38,7 +39,9 @@ func TestIndexRefreshesInTheBackgroundOnceStale(t *testing.T) {
 
 	// Age the entry rather than sleeping for the real TTL.
 	cache.mu.Lock()
-	cache.roots[root].built = time.Now().Add(-2 * indexTTL)
+	aged := *cache.roots[root].idx
+	aged.built = time.Now().Add(-2 * indexTTL)
+	cache.roots[root].idx = &aged
 	cache.mu.Unlock()
 
 	// The stale answer comes back immediately: a search must not wait for a walk.
@@ -50,7 +53,7 @@ func TestIndexRefreshesInTheBackgroundOnceStale(t *testing.T) {
 }
 
 func TestIndexBuildsOnceForConcurrentCallers(t *testing.T) {
-	cache := newIndexCache()
+	cache := newIndexCacheWith(false, 0)
 	root := t.TempDir()
 	for i := 0; i < 20; i++ {
 		write(t, filepath.Join(root, fmt.Sprintf("f%d.go", i)), "package f")
@@ -75,7 +78,7 @@ func TestIndexBuildsOnceForConcurrentCallers(t *testing.T) {
 }
 
 func TestIndexEvictsTheLeastRecentlyUsedRoot(t *testing.T) {
-	cache := newIndexCache()
+	cache := newIndexCacheWith(false, 0)
 	roots := make([]string, maxIndexedRoots+1)
 	for i := range roots {
 		roots[i] = t.TempDir()
@@ -123,7 +126,10 @@ func waitForIndex(t *testing.T, cache *indexCache, root string, want int) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		cache.mu.Lock()
-		got := len(cache.roots[root].entries)
+		got := -1
+		if r := cache.roots[root]; r != nil && r.idx != nil && !r.idx.indexing {
+			got = len(r.idx.entries)
+		}
 		cache.mu.Unlock()
 		if got == want {
 			return

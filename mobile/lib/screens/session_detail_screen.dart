@@ -22,8 +22,8 @@ import '../services/speech_input_service.dart';
 import '../utils/large_paste.dart';
 import '../widgets/skeleton.dart';
 import 'file_browser_screen.dart';
-import 'git_status_screen.dart';
 import 'terminal_screen.dart';
+import 'routes.dart';
 
 class SessionDetailScreen extends rp.ConsumerStatefulWidget {
   final Session session;
@@ -176,8 +176,8 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       switch (saved.type) {
-        case _SubRouteType.gitStatus:
-          _openGitStatus(widget.session);
+        case _SubRouteType.changes:
+          _openChanges(widget.session);
           break;
         case _SubRouteType.fileBrowser:
           _openFileBrowser(widget.session);
@@ -778,7 +778,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     Navigator.of(context)
         .push(
           MaterialPageRoute(
-            settings: const RouteSettings(name: '/file-browser'),
+            settings: const RouteSettings(name: fileBrowserRoute),
             builder: (_) => FileBrowserScreen(
               hostId: session.hostId,
               rootPath: _effectiveCwd,
@@ -956,6 +956,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
               toolGroup: group.entries,
               hostId: widget.session.hostId,
               sessionCwd: widget.session.cwd,
+              sessionId: widget.session.sessionId,
             );
           }
           return const SizedBox.shrink();
@@ -972,6 +973,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
           isMergedToolResult: isMerged,
           hostId: widget.session.hostId,
           sessionCwd: widget.session.cwd,
+          sessionId: widget.session.sessionId,
         );
       },
     );
@@ -1158,18 +1160,19 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
     return ok ?? false;
   }
 
-  void _openGitStatus(Session session) {
-    _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.gitStatus);
-    // Use resolved git root so diffs work from any subdirectory
-    final gitRoot = _gitStatus?.root ?? _effectiveCwd;
+  /// The git bar's destination: the Files screen on its Changes view, which
+  /// is the git view now that there is no Git screen (spec 65, B8).
+  void _openChanges(Session session) {
+    _lastSubRoute[session.sessionId] = _SubRoute(_SubRouteType.changes);
     Navigator.of(context)
         .push(
           MaterialPageRoute(
-            settings: const RouteSettings(name: '/git-status'),
-            builder: (_) => GitStatusScreen(
+            settings: const RouteSettings(name: fileBrowserRoute),
+            builder: (_) => FileBrowserScreen(
               hostId: session.hostId,
-              cwd: gitRoot,
+              rootPath: _effectiveCwd,
               sessionId: session.sessionId,
+              startInChanges: true,
             ),
           ),
         )
@@ -1198,7 +1201,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
         : const Color(0xFF656D76);
 
     return GestureDetector(
-      onTap: () => _openGitStatus(session),
+      onTap: () => _openChanges(session),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
@@ -1214,7 +1217,7 @@ class _SessionDetailScreenState extends rp.ConsumerState<SessionDetailScreen>
             GestureDetector(
               onTap: hasWorktrees
                   ? () => _showWorktreePicker(session)
-                  : () => _openGitStatus(session),
+                  : () => _openChanges(session),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1777,7 +1780,10 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
   }
 }
 
-enum _SubRouteType { gitStatus, fileBrowser, terminal }
+/// Which screen a session had open on top, to put back on return. `changes`
+/// was the Git screen before spec 65 (B8); it is the Files screen's Changes
+/// view now.
+enum _SubRouteType { changes, fileBrowser, terminal }
 
 class _SubRoute {
   final _SubRouteType type;

@@ -7,7 +7,7 @@
 import http from 'node:http'
 import { AddressInfo } from 'node:net'
 
-import type { FileEntry, GrepMatch, Session, Worktree } from '../src/shared/models.ts'
+import type { Commit, CommitFile, FileEntry, GitStatus, GrepMatch, Session, TouchedFile, Worktree } from '../src/shared/models.ts'
 
 /** The directory both sessions run in — the whole point, see session-state.spec.ts. */
 export const REPO = '/repo'
@@ -56,6 +56,22 @@ export interface StubDaemon {
    * is the only thing that can.
    */
   writes(): DaemonWrite[]
+  /**
+   * The query string of every content search, in order. A toggle that reruns
+   * the search shows up here as a second search with the new flag, which is
+   * the only evidence of it when the stub's answer does not change.
+   */
+  grepQueries(): URLSearchParams[]
+  /** How many raw reads were answered 304, with no body. */
+  notModified(): number
+  /**
+   * How many times a folder has been listed. A narrow file event re-lists the
+   * folder the file sits in, so this is how a test knows the event has been
+   * dealt with when nothing about the open tab should change.
+   */
+  listings(dir: string): number
+  /** Makes a path answer 404, as a file the agent deleted does. */
+  setMissing(path: string, missing: boolean): void
   close(): Promise<void>
 }
 
@@ -100,6 +116,66 @@ export function resetChannels(): void {
  */
 export function setChannelsUnsupported(value: boolean): void {
   channelsUnsupported = value
+}
+
+/**
+ * Whether this daemon has spec 65's file routes and fields: the raw read, match
+ * positions and ranges, `ignored`, and `touched`. Off, it answers the way a
+ * daemon from before them does — a 404 with no code for the new routes, and
+ * the old shapes everywhere else — which is what the app has to survive.
+ */
+let fastFiles = true
+
+export function setFastFiles(value: boolean): void {
+  fastFiles = value
+}
+
+/** What each session's tool calls wrote, as `/touched` reports it. */
+const TOUCHED: Record<string, TouchedFile[]> = {}
+
+export function setTouched(sessionId: string, files: TouchedFile[]): void {
+  TOUCHED[sessionId] = files
+}
+
+/** The working tree's state, as `/api/git/status` reports it for the repo. */
+const GIT_CHANGES: Pick<GitStatus, 'staged' | 'unstaged' | 'untracked'> = { staged: [], unstaged: [], untracked: [] }
+
+export function setGitChanges(changes: Partial<Pick<GitStatus, 'staged' | 'unstaged' | 'untracked'>>): void {
+  Object.assign(GIT_CHANGES, { staged: [], unstaged: [], untracked: [] }, changes)
+}
+
+/** What `/api/git/diff` answers for a file, by its path from the repository top. */
+const GIT_DIFFS: Record<string, string> = {}
+
+export function setGitDiff(rel: string, diff: string): void {
+  GIT_DIFFS[rel] = diff
+}
+
+/** The history the scope picker lists, newest first, and what each commit changed. */
+const COMMITS: Commit[] = []
+const COMMIT_FILES: Record<string, CommitFile[]> = {}
+
+export function addCommit(commit: { sha: string; subject: string; files: CommitFile[] }): void {
+  COMMITS.push({
+    sha: commit.sha,
+    short: commit.sha.slice(0, 7),
+    author: 'dev',
+    date: '2026-01-02T00:00:00Z',
+    subject: commit.subject,
+    files: commit.files.length,
+    insertions: commit.files.reduce((sum, file) => sum + file.insertions, 0),
+    deletions: commit.files.reduce((sum, file) => sum + file.deletions, 0),
+  })
+  COMMIT_FILES[commit.sha] = commit.files
+}
+
+/** Back to a daemon with nothing touched, a clean tree and no history, for the next test. */
+export function resetFiles(): void {
+  for (const key of Object.keys(TOUCHED)) delete TOUCHED[key]
+  for (const key of Object.keys(GIT_DIFFS)) delete GIT_DIFFS[key]
+  for (const key of Object.keys(COMMIT_FILES)) delete COMMIT_FILES[key]
+  COMMITS.length = 0
+  setGitChanges({})
 }
 
 export function seedChannel(channel: {
@@ -161,6 +237,8 @@ export type DaemonWrite =
   | { kind: 'archive'; channelId: string; archived: boolean }
   | { kind: 'rename'; channelId: string; name: string }
   | { kind: 'patch'; sessionId: string; patch: Record<string, unknown> }
+  // A file saved from the editor.
+  | { kind: 'save'; path: string; content: string; baseModTime: string }
 
 /** The session every create in these tests hands back. */
 export const CREATED = 's-created'
@@ -436,7 +514,22 @@ export const WORKSPACE = `${HOME}/workspace`
 
 /** One file per worktree, named after it, so a wrong root is visible on sight. */
 const TREES: Record<string, FileEntry[]> = {
-  [REPO]: [dir(REPO, 'desktop'), dir(REPO, 'docs'), file(REPO, 'main.go'), file(REPO, 'README.md')],
+  [REPO]: [
+    dir(REPO, 'build'),
+    dir(REPO, 'desktop'),
+    dir(REPO, 'docs'),
+    file(REPO, 'main.go'),
+    file(REPO, 'README.md'),
+  ],
+  // Two `index.ts` in different folders, for the tabs that must tell them apart.
+  [`${REPO}/desktop`]: [dir(`${REPO}/desktop`, 'src'), file(`${REPO}/desktop`, 'index.ts')],
+  [`${REPO}/desktop/src`]: [file(`${REPO}/desktop/src`, 'app.tsx'), file(`${REPO}/desktop/src`, 'index.ts')],
+  [`${REPO}/docs`]: [dir(`${REPO}/docs`, 'many'), file(`${REPO}/docs`, 'guide.md')],
+  // Enough rows that a tree drawing all of them would be the bug.
+  [`${REPO}/docs/many`]: Array.from({ length: 400 }, (_, at) =>
+    file(`${REPO}/docs/many`, `note-${String(at).padStart(3, '0')}.md`),
+  ),
+  [`${REPO}/build`]: [file(`${REPO}/build`, 'helios')],
   [OTHER_WORKTREE]: [file(OTHER_WORKTREE, 'hotfix.go')],
   [HOME]: [dir(HOME, 'workspace'), dir(HOME, 'worktrees'), dir(HOME, '.config'), file(HOME, 'notes.md')],
   [WORKSPACE]: [dir(WORKSPACE, 'acme-api'), dir(WORKSPACE, 'acme-web')],
@@ -448,6 +541,50 @@ function file(root: string, name: string): FileEntry {
 
 function dir(root: string, name: string): FileEntry {
   return { ...file(root, name), is_dir: true, size: 0 }
+}
+
+/** Every file under a root, relative to it, as the daemon's index holds them. */
+function indexOf(root: string): { path: string; rel: string }[] {
+  const out: { path: string; rel: string }[] = []
+  const walk = (dir: string): void => {
+    for (const entry of TREES[dir] ?? []) {
+      if (entry.is_dir) walk(entry.path)
+      else out.push({ path: entry.path, rel: entry.path.slice(root.length + 1) })
+    }
+  }
+  walk(root)
+  return out
+}
+
+/**
+ * Quick open's fuzzy match, simply: every query character in order, case
+ * folded, with the offsets it matched at. Shorter paths first, as the daemon's
+ * ranking tends to put them.
+ */
+function searchMatches(root: string, query: string): { path: string; rel: string; score: number; positions?: number[] }[] {
+  const needle = query.toLowerCase()
+  const out: { path: string; rel: string; score: number; positions?: number[] }[] = []
+  for (const { path, rel } of indexOf(root)) {
+    const hay = rel.toLowerCase()
+    const positions: number[] = []
+    let from = 0
+    for (const char of needle) {
+      const at = hay.indexOf(char, from)
+      if (at === -1) break
+      positions.push(at)
+      from = at + 1
+    }
+    if (positions.length !== needle.length) continue
+    out.push({ path, rel, score: 1000 - rel.length, ...(fastFiles ? { positions } : {}) })
+  }
+  return out.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel)).slice(0, 50)
+}
+
+/** A weak validator from the bytes, standing in for the daemon's size and mtime. */
+function etagOf(content: string): string {
+  let hash = 0
+  for (let i = 0; i < content.length; i++) hash = (Math.imul(hash, 31) + content.charCodeAt(i)) | 0
+  return `W/"${Buffer.byteLength(content)}-${(hash >>> 0).toString(16)}"`
 }
 
 /** What the daemon's resolveSafePath does to a path before it reads it. */
@@ -464,6 +601,7 @@ function grepMatches(root: string, query: string): GrepMatch[] {
     line: index + 1,
     column: 1,
     text: `${query} in ${entry.name}`,
+    ...(fastFiles ? { ranges: [[0, query.length]] as [number, number][] } : {}),
   }))
 }
 
@@ -482,6 +620,10 @@ export async function startDaemon(): Promise<StubDaemon> {
   let revision = 0
   const readCount = new Map<string, number>()
   let grepCount = 0
+  const grepAsked: URLSearchParams[] = []
+  let notModified = 0
+  const missing = new Set<string>()
+  const listCount = new Map<string, number>()
   // Per daemon, not on the fixtures: SESSIONS is a module constant shared by
   // every test in the worker, and one test leaving a session busy would be the
   // next test's starting state.
@@ -555,7 +697,73 @@ export async function startDaemon(): Promise<StubDaemon> {
       return
     }
 
-    if (path === '/api/files/grep') grepCount += 1
+    // The raw read: bytes, an ETag, and a 304 when the caller already holds
+    // them. A daemon from before the route answers 404 with no code, which is
+    // how the app tells "no such route" from "no such file".
+    if (path === '/api/file/raw') {
+      const target = q('path')
+      if (!fastFiles) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' })
+        res.end('404 page not found')
+        return
+      }
+      if (missing.has(target)) {
+        readCount.set(target, (readCount.get(target) ?? 0) + 1)
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'no such file', code: 'not_found' }))
+        return
+      }
+      const { content, modTime } = held(target)
+      const etag = etagOf(content)
+      const headers = {
+        ETag: etag,
+        'X-Helios-Mod-Time': modTime,
+        'X-Helios-Size': String(Buffer.byteLength(content)),
+        'X-Helios-Encoding': 'utf8',
+        'Cache-Control': 'no-cache',
+      }
+      if (req.headers['if-none-match'] === etag) {
+        notModified += 1
+        res.writeHead(304, headers)
+        res.end()
+        return
+      }
+      res.writeHead(200, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end(content)
+      return
+    }
+
+    if (!fastFiles && path.startsWith('/api/sessions/') && path.endsWith('/touched')) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      res.end('404 page not found')
+      return
+    }
+
+    if (req.method === 'PUT' && path === '/api/file') {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString() || '{}') as {
+          path?: string
+          content?: string
+          base_mod_time?: string
+        }
+        const target = body.path ?? ''
+        writes.push({ kind: 'save', path: target, content: body.content ?? '', baseModTime: body.base_mod_time ?? '' })
+        contents.set(target, body.content ?? '')
+        revision += 1
+        const { content, modTime } = held(target)
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ path: target, size: content.length, mod_time: modTime, etag: etagOf(content) }))
+      })
+      return
+    }
+
+    if (path === '/api/files') listCount.set(q('path'), (listCount.get(q('path')) ?? 0) + 1)
+    if (path === '/api/files/grep') {
+      grepCount += 1
+      grepAsked.push(new URLSearchParams(url.searchParams))
+    }
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify(answer(path, q, held, statusOf)))
   })
@@ -571,6 +779,13 @@ export async function startDaemon(): Promise<StubDaemon> {
     },
     reads: (target) => readCount.get(target) ?? 0,
     greps: () => grepCount,
+    grepQueries: () => [...grepAsked],
+    notModified: () => notModified,
+    listings: (target) => listCount.get(target) ?? 0,
+    setMissing: (target, gone) => {
+      if (gone) missing.add(target)
+      else missing.delete(target)
+    },
     writes: () => [...writes],
     setFile: (target, content) => {
       contents.set(target, content)
@@ -788,26 +1003,51 @@ function answer(
       return { directories: [{ cwd: REPO, project: 'repo', session_count: 2, active_count: 2 }] }
     case '/api/git/worktrees':
       return { worktrees: WORKTREES }
-    case '/api/git/status':
+    case '/api/git/status': {
+      const repo = q('path') === OTHER_WORKTREE ? OTHER_WORKTREE : REPO
+      const changes = repo === REPO ? GIT_CHANGES : { staged: [], unstaged: [], untracked: [] }
       return {
-        root: q('path'),
-        branch: q('path') === OTHER_WORKTREE ? 'hotfix' : 'main',
-        dirty: false,
+        root: repo === REPO && q('path').startsWith(REPO) ? REPO : q('path'),
+        branch: repo === OTHER_WORKTREE ? 'hotfix' : 'main',
+        dirty: changes.staged.length + changes.unstaged.length + changes.untracked.length > 0,
         ahead: 0,
         behind: 0,
-        staged: [],
-        unstaged: [],
-        untracked: [],
+        ...changes,
       }
+    }
     case '/api/git/log':
-      // No base branch and no commits: the git panel then opens on the working
-      // tree, which is the view these tests drive.
-      return { root: q('path'), branch: 'main', base: '', scope: 'all', commits: [], has_more: false }
+      // No base branch: the Changes mode then opens on the working tree, which
+      // is the view most of these tests drive. The commits are whatever a test
+      // added, for the scope picker to list.
+      return { root: q('path'), branch: 'main', base: '', scope: 'all', commits: COMMITS, has_more: false }
+    case '/api/git/diff':
+      return { file: q('file'), language: '', diff: GIT_DIFFS[q('file')] ?? '', stat: '' }
+    case '/api/git/changes': {
+      const files = COMMIT_FILES[q('to')] ?? []
+      const commit = COMMITS.find((one) => one.sha === q('to'))
+      return {
+        from: q('from') || `${q('to')}^`,
+        to: q('to'),
+        single: !q('from'),
+        subject: commit?.subject,
+        author: commit?.author,
+        date: commit?.date,
+        files,
+        insertions: files.reduce((sum, file) => sum + file.insertions, 0),
+        deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+        truncated: false,
+      }
+    }
     case '/api/files': {
       // `~/` is expanded before the listing is read, and the answer says which
       // directory it turned out to be (internal/server/files.go).
       const root = resolveStubPath(q('path'))
-      return { path: root, entries: TREES[root] ?? [] }
+      // `ignored` only from a daemon that knows it, and only on what git
+      // ignores: the build output.
+      const entries = (TREES[root] ?? []).map((entry) =>
+        fastFiles ? { ...entry, ignored: entry.path === `${REPO}/build` || entry.path.startsWith(`${REPO}/build/`) } : entry,
+      )
+      return { path: root, entries }
     }
     case '/api/file': {
       const { content, modTime } = held(q('path'))
@@ -815,8 +1055,10 @@ function answer(
     }
     case '/api/files/grep':
       return { root: q('path'), matches: grepMatches(q('path'), q('q')), scanned: 2, truncated: false }
-    case '/api/files/search':
-      return { root: q('path'), matches: [], scanned: 0, truncated: false }
+    case '/api/files/search': {
+      const matches = searchMatches(q('path'), q('q'))
+      return { root: q('path'), resolved_from: 'query', matches, scanned: matches.length, truncated: false }
+    }
     case '/api/schedules':
       return { schedules: SCHEDULES }
     case '/api/channels':
@@ -872,6 +1114,11 @@ function answer(
       // if the two differ. It also answers the delta the panel asks for on the
       // live edge — after_seq — because appending what is already held is how
       // a transcript came to print itself twice.
+      // What one session wrote. A daemon from before the route has none.
+      if (path.startsWith('/api/sessions/') && path.endsWith('/touched')) {
+        const id = path.slice('/api/sessions/'.length, -'/touched'.length)
+        return { files: TOUCHED[id] ?? [] }
+      }
       // One session by id. A run is not in the ordinary list, so this is the
       // only way the detail panel can find the one the sidebar selected.
       {

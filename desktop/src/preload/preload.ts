@@ -140,6 +140,10 @@ const helios = {
     /** Stages an HTML page and returns the URL to point a frame at. */
     stage: (html: string) => call<string>('preview:stage', html),
   },
+  shell: {
+    /** Shows a file in the system file manager. Local hosts only. */
+    reveal: (hostId: string, path: string) => call<void>('shell:reveal', hostId, path),
+  },
   prefs: {
     get: () => call('prefs:get'),
     setSound: (enabled: boolean) => call('prefs:setSound', enabled),

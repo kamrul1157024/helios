@@ -23,6 +23,8 @@ void main() {
         const [
           PatchSession(hostId: host, sessionId: 's1', status: 'active'),
           InvalidateTarget(CacheTarget.sessions, host),
+          // The transcript grew, and it may have grown by a write.
+          InvalidateTarget(CacheTarget.touched, host, sessionId: 's1'),
         ],
       );
     });
@@ -88,11 +90,39 @@ void main() {
       ],
     };
 
-    test('takes out the files and the git reads', () {
+    // Narrow (spec 65, 3.3): the folder holding the file and the file
+    // itself, not every listing and every file the host holds.
+    test('takes out the parent listing, the file and git', () {
       expect(effectsFor(host, 'file_changed', named), const [
-        InvalidateTarget(CacheTarget.files, host),
+        InvalidateFiles(host, listings: {'/repo'}, files: {'/repo/a.go'}),
         InvalidateTarget(CacheTarget.git, host),
       ]);
+    });
+
+    test('a named folder takes out its own listing as well', () {
+      expect(
+        effectsFor(host, 'file_changed', const {
+          'paths': [
+            {'path': '/repo/internal/server/', 'kind': 'dir'},
+            {'path': '/repo/internal/server/files.go', 'kind': 'file'},
+            {'path': '/repo/README.md', 'kind': 'file'},
+          ],
+        }),
+        const [
+          InvalidateFiles(
+            host,
+            listings: {'/repo/internal', '/repo/internal/server', '/repo'},
+            files: {'/repo/internal/server/files.go', '/repo/README.md'},
+          ),
+          InvalidateTarget(CacheTarget.git, host),
+        ],
+      );
+    });
+
+    test('a file at the top of the disk lists the root', () {
+      expect(parentOf('/a.txt'), '/');
+      expect(parentOf('/'), '/');
+      expect(parentOf('/repo/dir/'), '/repo');
     });
 
     // A working-tree write moves `git status`, and a repo entry is a commit or
@@ -121,7 +151,7 @@ void main() {
 
     test('another host is not answered for', () {
       expect(effectsFor(other, 'file_changed', named), const [
-        InvalidateTarget(CacheTarget.files, other),
+        InvalidateFiles(other, listings: {'/repo'}, files: {'/repo/a.go'}),
         InvalidateTarget(CacheTarget.git, other),
       ]);
     });

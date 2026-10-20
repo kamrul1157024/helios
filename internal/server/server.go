@@ -111,6 +111,14 @@ func NewShared(db *store.Store, mgr *notifications.Manager, be backend.Backend) 
 		Reporter: reporter.New("claude", db),
 	}
 	sh.Files = NewFileWatcher(sh.SSE)
+	// The search index and the spec 54 watcher feed each other: raw events
+	// under a watched path sweep at once, and a directory the index watches
+	// live need not be listed on every sweep. See docs/specs/65-fast-files.md.
+	sh.Files.covered = fileIndexes.liveCovers
+	fileIndexes.useFiles(sh.Files)
+	if db != nil {
+		fileIndexes.usePollingSetting(func() bool { return db.FilesWatchPolling() })
+	}
 	// The manager owns notification state, so it announces its own writes. No
 	// caller has to remember to, and none can resolve one silently.
 	mgr.SetBroadcaster(func(eventType string, data interface{}) {
@@ -232,19 +240,22 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 	protectedMux.HandleFunc("POST /api/groups/order", s.handleSetGroupOrder)
 	protectedMux.HandleFunc("/api/groups/{key}", s.handleGroup)
 	protectedMux.HandleFunc("POST /api/uploads", s.handleUpload)
-	protectedMux.HandleFunc("GET /api/files", s.handleListFiles)
-	protectedMux.HandleFunc("GET /api/files/search", s.handleSearchFiles)
-	protectedMux.HandleFunc("GET /api/files/grep", s.handleGrepFiles)
-	protectedMux.HandleFunc("GET /api/file", s.handleReadFile)
-	protectedMux.HandleFunc("PUT /api/file", s.handleWriteFile)
-	protectedMux.HandleFunc("GET /api/git/status", s.handleGitStatus)
-	protectedMux.HandleFunc("GET /api/git/diff", s.handleGitDiff)
-	protectedMux.HandleFunc("GET /api/git/log", s.handleGitLog)
-	protectedMux.HandleFunc("GET /api/git/changes", s.handleGitChanges)
-	protectedMux.HandleFunc("GET /api/git/worktrees", s.handleGitWorktrees)
-	protectedMux.HandleFunc("POST /api/git/worktrees", s.handleCreateWorktree)
-	protectedMux.HandleFunc("GET /api/git/reviewed", s.handleGetReviewed)
-	protectedMux.HandleFunc("POST /api/git/reviewed", s.handleSetReviewed)
+	// The files and git routes carry Server-Timing and gzip. See
+	// docs/specs/65-fast-files.md and fastwriter.go.
+	protectedMux.Handle("GET /api/files", fastFilesFunc(s.handleListFiles))
+	protectedMux.Handle("GET /api/files/search", fastFilesFunc(s.handleSearchFiles))
+	protectedMux.Handle("GET /api/files/grep", fastFilesFunc(s.handleGrepFiles))
+	protectedMux.Handle("GET /api/file", fastFilesFunc(s.handleReadFile))
+	protectedMux.Handle("GET /api/file/raw", fastFilesFunc(s.handleReadRaw))
+	protectedMux.Handle("PUT /api/file", fastFilesFunc(s.handleWriteFile))
+	protectedMux.Handle("GET /api/git/status", fastFilesFunc(s.handleGitStatus))
+	protectedMux.Handle("GET /api/git/diff", fastFilesFunc(s.handleGitDiff))
+	protectedMux.Handle("GET /api/git/log", fastFilesFunc(s.handleGitLog))
+	protectedMux.Handle("GET /api/git/changes", fastFilesFunc(s.handleGitChanges))
+	protectedMux.Handle("GET /api/git/worktrees", fastFilesFunc(s.handleGitWorktrees))
+	protectedMux.Handle("POST /api/git/worktrees", fastFilesFunc(s.handleCreateWorktree))
+	protectedMux.Handle("GET /api/git/reviewed", fastFilesFunc(s.handleGetReviewed))
+	protectedMux.Handle("POST /api/git/reviewed", fastFilesFunc(s.handleSetReviewed))
 	protectedMux.HandleFunc("GET /api/notifications", s.handleListNotifications)
 	protectedMux.HandleFunc("POST /api/notifications/batch", s.handleBatchNotifications)
 	protectedMux.Handle("GET /api/events", shared.SSE)
@@ -294,6 +305,8 @@ func NewPublicServer(bind string, port int, shared *Shared) *PublicServer {
 			s.handleSessionTranscript(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/touch"):
 			s.handleSessionTouch(w, r)
+		case r.Method == "GET" && strings.HasSuffix(path, "/touched"):
+			fastFilesFunc(s.handleSessionTouched).ServeHTTP(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/send"):
 			s.handleSessionSend(w, r)
 		case r.Method == "POST" && strings.HasSuffix(path, "/stop"):

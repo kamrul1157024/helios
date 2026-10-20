@@ -4,8 +4,9 @@ import { api } from './bridge.ts'
 import { keys, type SettingsDocument } from './keys.ts'
 
 export { appendDelta, transcriptMessages } from './keys.ts'
-import { NEVER_STALE } from './query-client.ts'
-import type { DiffAt, GrepOpts, LogOpts } from '../shared/models.ts'
+import { NEVER_STALE, queryClient } from './query-client.ts'
+import { contentFromRaw } from './raw-file.ts'
+import type { DiffAt, FileContent, GrepOpts, LogOpts } from '../shared/models.ts'
 
 /**
  * One read per resource, as `queryOptions` rather than as hooks.
@@ -306,13 +307,54 @@ export function dirQuery(hostId: string, path: string) {
  * would move the thing the comparison is against, marking a dirty file clean.
  * Freshness comes from the reload button and from returning to the panel, both
  * of which refetch explicitly and both of which stand down for a dirty buffer.
+ *
+ * Nor does mounting refetch. A file event marks the entry stale (spec 65, 2.1)
+ * so that a closed file reads fresh when it is next opened — and opening goes
+ * through `fetchQuery`, which honours that. Switching to a tab that is already
+ * open remounts its view, and a refetch there would move `saved` under a dirty
+ * buffer by the back door.
+ *
+ * The read is raw, and sends the ETag of what is held: an unchanged file is a
+ * 304, which hands back the held entry untouched.
  */
 export function fileContentQuery(hostId: string, path: string) {
   return queryOptions({
     queryKey: keys.fileContent(hostId, path),
-    queryFn: () => api(hostId).readFile(path),
+    queryFn: () => readContent(hostId, path),
     enabled: path !== '',
     staleTime: NEVER_STALE,
+    refetchOnMount: false,
+  })
+}
+
+/** One raw read against what the cache holds for the path. */
+export async function readContent(hostId: string, path: string): Promise<FileContent> {
+  const held = queryClient.getQueryData<FileContent>(keys.fileContent(hostId, path))
+  const raw = await api(hostId).readFileRaw(path, held?.etag)
+  // A 304 against an entry that has since been dropped has nothing to stand
+  // for, so it asks once more for the bytes themselves.
+  if (raw.status === 304 && !held) return contentFromRaw(path, await api(hostId).readFileRaw(path))
+  return contentFromRaw(path, raw, held)
+}
+
+/**
+ * The files a session wrote, for the Changes view and the tree's marks.
+ *
+ * A daemon older than the route answers 404, which reads here as "nothing
+ * known" rather than as an error: the view still has git to show.
+ */
+export function touchedQuery(hostId: string, sessionId: string) {
+  return queryOptions({
+    queryKey: keys.touched(hostId, sessionId),
+    queryFn: async () => {
+      try {
+        return await api(hostId).touchedFiles(sessionId)
+      } catch (err) {
+        if ((err as { status?: number }).status === 404) return []
+        throw err
+      }
+    },
+    enabled: hostId !== '' && sessionId !== '',
   })
 }
 

@@ -17,6 +17,8 @@ interface Row {
   path: string
   label: string
   note: string
+  /** Set on a worktree's row, which says what state the checkout is in. */
+  worktree?: Worktree
 }
 
 /** Long enough that a fast typist makes one request, short enough to feel live. */
@@ -32,6 +34,11 @@ const NO_DIRS: FileEntry[] = []
  * Chooses what the Files panel is rooted at: one of the repository's worktrees,
  * or any directory on the host. Typing a path browses it — an agent's work is
  * not always inside a worktree, and neither is what the user wants to read.
+ *
+ * It is also the worktree list the Git panel's Worktrees view used to be (spec
+ * 65, B8): each checkout with its branch, how far it is ahead or behind, what
+ * is uncommitted in it, and the last commit — enough to tell parallel agents
+ * apart. Picking one rescopes the whole panel to it, the Changes mode included.
  */
 export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props): JSX.Element {
   const [query, setQuery] = useState('')
@@ -74,6 +81,7 @@ export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props):
           path: worktree.path,
           label: worktree.branch || '(detached)',
           note: worktree.date ? `${tail(worktree.path)} · ${timeAgo(worktree.date)}` : tail(worktree.path),
+          worktree,
         })
       }
       const parent = parentOf(root)
@@ -146,14 +154,55 @@ export function RootPicker({ hostId, root, worktrees, onPick, onClose }: Props):
                 onClose()
               }}
             >
-              <span className="quick-name">{row.label}</span>
-              <span className="quick-dir">{row.note}</span>
+              {row.worktree ? (
+                <WorktreeRow worktree={row.worktree} note={row.note} />
+              ) : (
+                <>
+                  <span className="quick-name">{row.label}</span>
+                  <span className="quick-dir">{row.note}</span>
+                </>
+              )}
             </button>
           ))}
           {rows.length === 0 && <p className="empty-note">No folder matches.</p>}
         </div>
       </div>
     </div>
+  )
+}
+
+/** One checkout: its branch and state on top, its last commit and place under. */
+function WorktreeRow({ worktree, note }: { worktree: Worktree; note: string }): JSX.Element {
+  return (
+    <span className="worktree-row" title={worktree.path}>
+      <span className="worktree-top">
+        <span className="quick-name">{worktree.branch || '(detached)'}</span>
+        {worktree.is_main && <span className="pill">main</span>}
+        {worktree.locked && <span className="pill">locked</span>}
+        {worktree.ahead > 0 && (
+          <span className="pill" title={`Ahead of ${worktree.base}`}>
+            ↑{worktree.ahead}
+          </span>
+        )}
+        {worktree.behind > 0 && (
+          <span className="pill" title={`Behind ${worktree.base}`}>
+            ↓{worktree.behind}
+          </span>
+        )}
+        {worktree.dirty > 0 ? (
+          <span className="pill" title={`${worktree.dirty} changed files`}>
+            ●{worktree.dirty}
+          </span>
+        ) : (
+          <span className="pill clean">clean</span>
+        )}
+      </span>
+      {worktree.subject && <span className="worktree-subject">{worktree.subject}</span>}
+      <span className="quick-dir">
+        {worktree.head && <span className="commit-sha">{worktree.head} </span>}
+        {note}
+      </span>
+    </span>
   )
 }
 

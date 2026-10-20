@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 
 import { type ApiClient } from './api.ts'
 import { stagePreview } from './main.ts'
@@ -78,6 +78,8 @@ const API_METHODS = new Set<keyof ApiClient>([
   'setReviewed',
   'listFiles',
   'readFile',
+  'readFileRaw',
+  'touchedFiles',
   'searchFiles',
   'grepFiles',
   'writeFile',
@@ -174,6 +176,16 @@ export function registerIpc(deps: IpcDeps): void {
     const api = hosts.require(hostId).api
     const fn = api[method as keyof ApiClient] as (...a: unknown[]) => Promise<unknown>
     return fn.apply(api, args ?? [])
+  })
+
+  // ─── The system file manager ───────────────────────────────────────────
+
+  // Only for a daemon on this machine. A remote host's path names a file on
+  // another computer, and showing whatever happens to sit at the same path here
+  // would be showing the wrong file with confidence.
+  handle('shell:reveal', async (_e, hostId: string, path: string) => {
+    if (!hosts.require(hostId).record.local) throw new Error('not a local host')
+    shell.showItemInFolder(path)
   })
 
   // ─── HTML previews ─────────────────────────────────────────────────────

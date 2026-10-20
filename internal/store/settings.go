@@ -115,3 +115,15 @@ func (s *Store) EvictionEnabled() bool {
 	}
 	return raw == "true"
 }
+
+// SettingFilesWatch chooses how the file search index keeps up with the disk:
+// "auto" watches directories where the platform allows it, "polling" never
+// does. See docs/specs/65-fast-files.md, Phase 1c.
+const SettingFilesWatch = "files.watch"
+
+// FilesWatchPolling reports whether the user turned the index watcher off.
+// Anything but "polling" — including no value — means auto.
+func (s *Store) FilesWatchPolling() bool {
+	raw, err := s.GetSetting(SettingFilesWatch)
+	return err == nil && raw == "polling"
+}

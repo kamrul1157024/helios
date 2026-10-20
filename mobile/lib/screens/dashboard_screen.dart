@@ -9,6 +9,7 @@ import '../providers/notification_ext.dart';
 import '../services/host_manager.dart';
 import '../widgets/skeleton.dart';
 import 'session_detail_screen.dart';
+import 'routes.dart';
 
 class DashboardScreen extends rp.ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -95,6 +96,7 @@ class _DashboardScreenState extends rp.ConsumerState<DashboardScreen> {
     if (match.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute(
+        settings: const RouteSettings(name: sessionRoute),
         builder: (_) => SessionDetailScreen(session: match.first),
       ),
     );
