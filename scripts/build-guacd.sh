@@ -11,8 +11,9 @@
 # The build is pinned end to end — the image digest, an apt snapshot, the
 # source tarball's hash, the patches in scripts/guacd-patches — and the
 # archive is written deterministically. That is what lets the daemon embed the
-# bundle's SHA-256: the release job rebuilds the bundle and gets the same
-# bytes, so a hash in the source tree can vouch for an asset built later.
+# bundle's SHA-256: the guacd workflow (.github/workflows/guacd.yml) builds the
+# bundle and gets the same bytes, so a hash in the source tree can vouch for
+# an asset built later.
 #
 #   ./scripts/build-guacd.sh            # the host's arch
 #   ./scripts/build-guacd.sh arm64      # needs an arm64 host or binfmt

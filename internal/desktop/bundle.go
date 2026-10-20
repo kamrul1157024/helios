@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -27,8 +26,8 @@ const GuacdVersion = "1.6.0"
 // guacdManifest holds the SHA-256 of each published bundle, in sha256sum
 // format. The daemon refuses a bundle that is not listed here, so a hash in
 // the source tree vouches for an asset that is downloaded later (D5). The
-// release job rebuilds each bundle and checks it against this file, which
-// works because the build is reproducible: see scripts/build-guacd.sh.
+// guacd workflow builds each bundle and requires it to hash to this file,
+// which works because the build is reproducible: see scripts/build-guacd.sh.
 //
 //go:embed guacd.sha256
 var guacdManifest string
@@ -46,19 +45,18 @@ func bundleAsset(arch string) string {
 	return fmt.Sprintf("helios-guacd-%s-linux-%s.tar.zst", GuacdVersion, arch)
 }
 
-var releaseVersion = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+// releaseTag is the GitHub release that carries the bundles. It is named for
+// the guacd version, not for a Helios release: a bundle outlives many daemon
+// releases, and a daemon must find it whichever release it came from. It is a
+// prerelease, so the apps' update checks and releases/latest never see it.
+func releaseTag() string {
+	return "guacd-" + GuacdVersion
+}
 
-// bundleURL is the download URL for the running build. A release build takes
-// the asset from its own release; a dev build, which belongs to no release,
-// takes it from the newest one. The asset name carries the guacd version, not
-// the Helios one, so the same name is right in both places — and the hash
-// check makes the source irrelevant to trust.
-func bundleURL(heliosVersion, arch string) string {
-	asset := bundleAsset(arch)
-	if releaseVersion.MatchString(heliosVersion) {
-		return fmt.Sprintf("%s/download/v%s/%s", releaseBase, heliosVersion, asset)
-	}
-	return fmt.Sprintf("%s/latest/download/%s", releaseBase, asset)
+// bundleURL is where the bundle for an arch is downloaded from. The source is
+// not what makes it trusted: the embedded hash is.
+func bundleURL(arch string) string {
+	return fmt.Sprintf("%s/download/%s/%s", releaseBase, releaseTag(), bundleAsset(arch))
 }
 
 // manifestHash looks an asset up in the embedded manifest.
@@ -81,16 +79,17 @@ type bundleSource struct {
 }
 
 // resolveBundle decides the bundle for this machine.
-func resolveBundle(heliosVersion string) (bundleSource, error) {
+func resolveBundle() (bundleSource, error) {
 	asset := bundleAsset(runtime.GOARCH)
 	want, listed := manifestHash(guacdManifest, asset)
 	if override := os.Getenv(BundleEnv); override != "" {
 		return bundleSource{path: override}, nil
 	}
 	if !listed {
-		return bundleSource{}, fmt.Errorf("this build of Helios has no desktop service for linux/%s", runtime.GOARCH)
+		return bundleSource{}, fail("This version of Helios has no desktop service for this machine's processor.",
+			fmt.Errorf("no %s in the embedded manifest", asset))
 	}
-	return bundleSource{url: bundleURL(heliosVersion, runtime.GOARCH), want: want}, nil
+	return bundleSource{url: bundleURL(runtime.GOARCH), want: want}, nil
 }
 
 // bundleMarker records which bundle a directory holds, so the next start can
@@ -132,9 +131,13 @@ func expectedBundleHash(src bundleSource) (string, error) {
 	return src.want, nil
 }
 
-// errBundleUnavailable is the failure the person sees for any download or
-// hash problem: "Could not get the desktop service", and Retry.
-var errBundleUnavailable = errors.New("could not get the desktop service")
+// The sentences a person sees when step 5 fails. The download and the hash
+// check each get their own, because Retry helps with one and not the other.
+const (
+	msgDownload = "Could not download the desktop service for this machine."
+	msgChecksum = "The desktop service did not match its expected checksum, so Helios did not run it."
+	msgUnpack   = "Could not unpack the desktop service."
+)
 
 // installBundle fetches, checks and unpacks the bundle into dir. The new
 // bundle is unpacked beside the old one and swapped in by rename, so a failed
@@ -144,36 +147,36 @@ func installBundle(ctx context.Context, src bundleSource, dir string, progress f
 	if archive == "" {
 		tmp, err := download(ctx, src.url, filepath.Dir(dir), progress)
 		if err != nil {
-			return fmt.Errorf("%w: %v", errBundleUnavailable, err)
+			return fail(msgDownload, err)
 		}
 		defer os.Remove(tmp)
 		archive = tmp
 	}
 	got, err := fileHash(archive)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errBundleUnavailable, err)
+		return fail(msgDownload, err)
 	}
 	if src.want != "" && got != src.want {
-		return fmt.Errorf("%w: the download's SHA-256 is %s, expected %s", errBundleUnavailable, got, src.want)
+		return fail(msgChecksum, fmt.Errorf("SHA-256 of %s is %s, expected %s", src.url, got, src.want))
 	}
 	progress("Unpacking the desktop service")
 	staging := dir + ".new"
 	os.RemoveAll(staging)
 	if err := extractTarZst(archive, staging); err != nil {
 		os.RemoveAll(staging)
-		return fmt.Errorf("unpack desktop service: %w", err)
+		return fail(msgUnpack, err)
 	}
 	if err := os.WriteFile(filepath.Join(staging, bundleMarker), []byte(got+"\n"), 0o644); err != nil {
 		os.RemoveAll(staging)
-		return fmt.Errorf("mark desktop service: %w", err)
+		return fail(msgUnpack, fmt.Errorf("mark %s: %w", staging, err))
 	}
 	old := dir + ".old"
 	os.RemoveAll(old)
 	if err := os.Rename(dir, old); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("move old desktop service: %w", err)
+		return fail(msgUnpack, fmt.Errorf("move %s aside: %w", dir, err))
 	}
 	if err := os.Rename(staging, dir); err != nil {
-		return fmt.Errorf("install desktop service: %w", err)
+		return fail(msgUnpack, fmt.Errorf("move %s into place: %w", staging, err))
 	}
 	os.RemoveAll(old)
 	return nil

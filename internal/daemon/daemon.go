@@ -22,7 +22,6 @@ import (
 	"github.com/kamrul1157024/helios/internal/store"
 	"github.com/kamrul1157024/helios/internal/terminal"
 	"github.com/kamrul1157024/helios/internal/tunnel"
-	"github.com/kamrul1157024/helios/internal/version"
 )
 
 func Start(cfg *Config) (err error) {
@@ -206,7 +205,6 @@ func startDaemon(cfg *Config) error {
 	// docs/specs/66-remote-desktop.md.
 	desk = desktop.NewManager(desktop.Config{
 		HeliosDir: HeliosDir(),
-		Version:   version.Current,
 		Settings:  db,
 		OnChange: func(st desktop.Status) {
 			shared.SSE.Broadcast(server.SSEEvent{Type: "desktop_state", Data: st})

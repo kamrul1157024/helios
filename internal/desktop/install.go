@@ -69,8 +69,8 @@ var (
 	desktopPackages = []string{"xfce4", "xfce4-terminal"}
 )
 
-// errAptLocked is the failure for an apt that another install holds.
-var errAptLocked = errors.New("another install is running. Try again when it ends")
+// msgAptLocked is the sentence for an apt that another install holds.
+const msgAptLocked = "Another install is running. Try again when it ends."
 
 // validUser keeps the user name safe to put in a file name and in the polkit
 // rule. It comes from the OS, not from a request, but the rule is code.
@@ -84,7 +84,6 @@ type Installer struct {
 	User      string
 	Home      string
 	HeliosDir string
-	Version   string
 	// Start runs the part of step 6 that belongs to the daemon: guacd and the
 	// warm-up. Nil in the CLI, which leaves both to the daemon.
 	Start func(ctx context.Context) error
@@ -100,6 +99,9 @@ type Installer struct {
 
 type stepDef struct {
 	id, label string
+	// failed is the sentence a person sees when the step fails for a reason
+	// that has no sentence of its own.
+	failed string
 	// check reports whether the step's work is already done.
 	check func(ctx context.Context) (bool, error)
 	// skip reports whether the step does not apply to this machine.
@@ -109,12 +111,18 @@ type stepDef struct {
 
 func (in *Installer) defs() []stepDef {
 	return []stepDef{
-		{id: "packages", label: "Install xrdp and XFCE", check: in.packagesDone, apply: in.installPackages},
-		{id: "xrdp-config", label: "Configure xrdp", check: in.xrdpConfigDone, apply: in.configureXRDP},
-		{id: "pam", label: "Set up Helios login", check: in.pamDone, apply: in.installPAM},
-		{id: "session", label: "Choose the desktop session", check: in.sessionDone, skip: in.otherSession, apply: in.writeSession},
-		{id: "guacd", label: "Get the desktop service", check: in.guacdDone, apply: in.installGuacd},
-		{id: "start", label: "Start the desktop", check: in.startDone, apply: in.start},
+		{id: "packages", label: "Install xrdp and XFCE", failed: "Could not install xrdp and XFCE.",
+			check: in.packagesDone, apply: in.installPackages},
+		{id: "xrdp-config", label: "Configure xrdp", failed: "Could not configure xrdp.",
+			check: in.xrdpConfigDone, apply: in.configureXRDP},
+		{id: "pam", label: "Set up Helios login", failed: "Could not set up the Helios login for xrdp.",
+			check: in.pamDone, apply: in.installPAM},
+		{id: "session", label: "Choose the desktop session", failed: "Could not write the desktop session file, ~/.xsession.",
+			check: in.sessionDone, skip: in.otherSession, apply: in.writeSession},
+		{id: "guacd", label: "Get the desktop service", failed: "Could not get the desktop service.",
+			check: in.guacdDone, apply: in.installGuacd},
+		{id: "start", label: "Start the desktop", failed: "Could not start the desktop.",
+			check: in.startDone, apply: in.start},
 	}
 }
 
@@ -166,11 +174,27 @@ func (in *Installer) line(text string) {
 	in.setStep(i, StepRunning, text)
 }
 
+// errUserName refuses a user name that cannot go in a file name or the polkit
+// rule.
+func errUserName(name string) error {
+	return fail("Helios cannot set up a desktop for this user name.", fmt.Errorf("user name %q", name))
+}
+
+// stepFailed marks step i failed. The technical detail goes on the step's
+// line; the returned error carries only the sentence for people.
+func (in *Installer) stepFailed(i int, d stepDef, err error) error {
+	plain, detail := explain(err, d.failed)
+	in.setStep(i, StepFailed, detail)
+	return fail(plain, err)
+}
+
 // Run walks the steps in order. A step whose work is done passes at once, so
-// an install that failed halfway can simply run again.
+// an install that failed halfway can simply run again. A failure's Error is a
+// sentence for people; the cause is on the failed step's line and unwraps
+// from the error.
 func (in *Installer) Run(ctx context.Context) error {
 	if !validUser.MatchString(in.User) {
-		return fmt.Errorf("user name %q is not one Helios can configure", in.User)
+		return errUserName(in.User)
 	}
 	defs := in.defs()
 	in.mu.Lock()
@@ -186,8 +210,7 @@ func (in *Installer) Run(ctx context.Context) error {
 		}
 		done, err := d.check(ctx)
 		if err != nil {
-			in.setStep(i, StepFailed, err.Error())
-			return fmt.Errorf("%s: %w", d.label, err)
+			return in.stepFailed(i, d, err)
 		}
 		if done && d.id != "start" {
 			in.setStep(i, StepDone, "")
@@ -200,8 +223,7 @@ func (in *Installer) Run(ctx context.Context) error {
 		err = d.apply(ctx)
 		in.Sys.SetOutput(nil)
 		if err != nil {
-			in.setStep(i, StepFailed, err.Error())
-			return fmt.Errorf("%s: %w", d.label, err)
+			return in.stepFailed(i, d, err)
 		}
 		in.setStep(i, StepDone, "")
 	}
@@ -287,7 +309,7 @@ func (in *Installer) installPackages(ctx context.Context) error {
 
 func aptError(out string, err error) error {
 	if strings.Contains(out, "Could not get lock") || strings.Contains(out, "Unable to acquire the dpkg frontend lock") {
-		return errAptLocked
+		return fail(msgAptLocked, fmt.Errorf("%w: %s", err, lastLine(out)))
 	}
 	return fmt.Errorf("%w: %s", err, lastLine(out))
 }
@@ -333,7 +355,7 @@ func (in *Installer) configureXRDP(ctx context.Context) error {
 		if _, ok := edited[e.path]; !ok {
 			raw, err := in.Sys.ReadFile(e.path)
 			if err != nil {
-				return fmt.Errorf("xrdp is not installed: %w", err)
+				return fail("xrdp is not installed, so Helios could not configure it.", err)
 			}
 			original[e.path] = string(raw)
 			edited[e.path] = string(raw)
@@ -420,7 +442,7 @@ func (in *Installer) installPAM(ctx context.Context) error {
 	}
 	pam, err := in.Sys.ReadFile(pamPath)
 	if err != nil {
-		return fmt.Errorf("xrdp's PAM file is missing: %w", err)
+		return fail("xrdp's login settings are missing, so Helios could not add its login.", err)
 	}
 	if updated := insertPAMLine(string(pam)); updated != string(pam) {
 		return in.Sys.WriteRootFile(ctx, pamPath, []byte(updated), 0o644)
@@ -464,19 +486,19 @@ func (in *Installer) bundleDir() string {
 }
 
 func (in *Installer) guacdDone(ctx context.Context) (bool, error) {
-	src, err := resolveBundle(in.Version)
+	src, err := resolveBundle()
 	if err != nil {
 		return false, err
 	}
 	want, err := expectedBundleHash(src)
 	if err != nil {
-		return false, fmt.Errorf("%w: %v", errBundleUnavailable, err)
+		return false, fail("Could not read the local desktop service file.", err)
 	}
 	return installedBundleHash(in.bundleDir()) == want, nil
 }
 
 func (in *Installer) installGuacd(ctx context.Context) error {
-	src, err := resolveBundle(in.Version)
+	src, err := resolveBundle()
 	if err != nil {
 		return err
 	}
@@ -510,7 +532,7 @@ func (in *Installer) start(ctx context.Context) error {
 		// a running xrdp only reads it at start.
 		if out, err := in.Sys.Root(ctx, "systemctl", "restart", "xrdp-sesman", "xrdp"); err != nil {
 			journal, _ := in.Sys.Run(ctx, "journalctl", "-u", "xrdp", "-n", "5", "--no-pager")
-			return fmt.Errorf("xrdp did not start: %w\n%s%s", err, out, journal)
+			return fail("xrdp did not start.", fmt.Errorf("%w\n%s%s", err, out, journal))
 		}
 		in.mu.Lock()
 		in.configChanged = false
@@ -533,7 +555,7 @@ func lastLine(out string) string {
 // returns the packages it left, so the caller can say so.
 func (in *Installer) Uninstall(ctx context.Context) ([]string, error) {
 	if !validUser.MatchString(in.User) {
-		return nil, fmt.Errorf("user name %q is not one Helios can configure", in.User)
+		return nil, errUserName(in.User)
 	}
 	if pam, err := in.Sys.ReadFile(pamPath); err == nil {
 		if updated := removePAMLine(string(pam)); updated != string(pam) {

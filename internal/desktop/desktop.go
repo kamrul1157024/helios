@@ -78,7 +78,6 @@ type Settings interface {
 // Config wires a Manager to the daemon.
 type Config struct {
 	HeliosDir string
-	Version   string
 	Settings  Settings
 	// OnChange receives the status after every change, for the SSE event.
 	OnChange func(Status)
@@ -134,7 +133,7 @@ func NewManager(cfg Config) *Manager {
 		state:   StateMissing,
 		uid:     os.Getuid(),
 	}
-	m.inst = NewInstaller(cfg.Sys, cfg.HeliosDir, cfg.Version)
+	m.inst = NewInstaller(cfg.Sys, cfg.HeliosDir)
 	m.inst.Start = m.startRuntime
 	m.inst.Progress = m.onProgress
 	m.steps = NewSteps(m.inst)
@@ -147,13 +146,13 @@ func NewManager(cfg Config) *Manager {
 }
 
 // NewInstaller returns an Installer for the current user.
-func NewInstaller(sys System, heliosDir, version string) *Installer {
+func NewInstaller(sys System, heliosDir string) *Installer {
 	name := ""
 	if u, err := user.Current(); err == nil {
 		name = u.Username
 	}
 	home, _ := os.UserHomeDir()
-	return &Installer{Sys: sys, User: name, Home: home, HeliosDir: heliosDir, Version: version}
+	return &Installer{Sys: sys, User: name, Home: home, HeliosDir: heliosDir}
 }
 
 // Start brings an installed desktop up in the background. Called once when
@@ -379,9 +378,10 @@ func (m *Manager) run(fn func(ctx context.Context) error) {
 	m.busy = false
 	m.missing = missing
 	if err != nil {
+		plain, detail := explain(err, "The desktop did not start.")
 		m.state = StateFailed
-		m.errMsg = err.Error()
-		log.Printf("desktop: %v", err)
+		m.errMsg = plain
+		log.Printf("desktop: %s %s", plain, detail)
 	}
 	m.mu.Unlock()
 	m.notify()
@@ -405,23 +405,23 @@ func (m *Manager) startRuntime(ctx context.Context) error {
 	}
 	if running, _ := m.inst.xrdpRunning(ctx); !running {
 		if !m.cfg.Sys.CanSudo(ctx) {
-			return fmt.Errorf("xrdp is not running, and starting it needs root. Run: %s", InstallCommand)
+			return fail("xrdp is not running, and starting it needs root. Run: "+InstallCommand, nil)
 		}
 		if _, err := m.cfg.Sys.Root(ctx, "systemctl", "start", "xrdp"); err != nil {
 			journal, _ := m.cfg.Sys.Run(ctx, "journalctl", "-u", "xrdp", "-n", "5", "--no-pager")
-			return fmt.Errorf("xrdp did not start: %w\n%s", err, journal)
+			return fail("xrdp did not start.", fmt.Errorf("%w\n%s", err, journal))
 		}
 	}
 	if err := m.sup.Start(ctx); err != nil {
-		return err
+		return fail("The desktop service did not start.", err)
 	}
 
 	d, ok := findDisplay(m.cfg.ProcRoot, m.uid)
 	if !ok {
 		var err error
 		if d, err = warmSession(ctx, m.sup.Addr(), m.credentials(), m.cfg.ProcRoot, m.uid); err != nil {
-			return fmt.Errorf("the desktop session did not start (%v). A broken %s is the usual cause",
-				err, filepath.Join(m.inst.Home, ".xsession"))
+			return fail(fmt.Sprintf("The desktop session did not start. A broken %s is the usual cause.",
+				filepath.Join(m.inst.Home, ".xsession")), err)
 		}
 	}
 	if !waitSessionBus(ctx, m.cfg.ProcRoot, m.uid, d, sessionBusTimeout) {
