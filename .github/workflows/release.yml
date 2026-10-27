@@ -68,7 +68,7 @@ jobs:
           fi
 
   apk:
-    name: Android APK
+    name: Android APK and App Bundle
     needs: version
     runs-on: ubuntu-latest
     env:
@@ -79,6 +79,13 @@ jobs:
           # `make apk-release` derives the Android build number from
           # `git rev-list --count HEAD`, which a shallow clone reports as 1.
           fetch-depth: 0
+
+      # Gradle 8.14 runs on Java 17 to 24. The runner's default moved to 25,
+      # which it refuses.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -100,10 +107,26 @@ jobs:
           KEYSTORE_PATH: helios-release.jks
         run: make apk-release
 
+      # The Google Play build: the same version, signed with the same key (the
+      # Play upload key), without the GitHub updater.
+      - name: Build release App Bundle for Google Play
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEYSTORE_PATH: helios-release.jks
+        run: make aab-release
+
       - uses: actions/upload-artifact@v4
         with:
           name: apk
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aab
+          path: mobile/build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
 
   desktop-mac:
@@ -203,6 +226,7 @@ jobs:
         run: |
           mkdir -p dist
           mv artifacts/apk/app-release.apk dist/helios.apk
+          mv artifacts/aab/app-release.aab dist/helios.aab
           for file in artifacts/desktop-mac/* artifacts/desktop-linux/*; do
             case "$file" in
               *arm64.dmg) mv "$file" dist/helios-desktop-macos-arm64.dmg ;;

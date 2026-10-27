@@ -466,6 +466,12 @@ class _HomeScreenState extends rp.ConsumerState<HomeScreen>
   /// gets none. The settings screen still offers the download to anybody who
   /// waved it away.
   Future<void> _checkForUpdate() async {
+    // Play shows its own update screen, and has no release notes to give.
+    if (isPlayBuild) {
+      final updates = UpdateService.instance;
+      if (await updates.playUpdateAvailable()) await updates.startPlayUpdate();
+      return;
+    }
     final info = await UpdateService.instance.checkForUpdate();
     if (info == null || !mounted) return;
     if (await UpdateService.instance.isDismissed(info.latestVersion)) return;

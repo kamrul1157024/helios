@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Play delivers its own updates and forbids an app installing APKs for
+         itself. The Play build turns the in-app updater off to match. -->
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove"/>
+    <!-- Play grants this only to calling and alarm apps. Without it, Android
+         shows the approval alerts as heads-up notifications instead. -->
+    <uses-permission
+        android:name="android.permission.USE_FULL_SCREEN_INTENT"
+        tools:node="remove"/>
+</manifest>

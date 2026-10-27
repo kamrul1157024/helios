@@ -76,7 +76,7 @@ git clone https://github.com/kamrul1157024/helios.git && cd helios
 
 make install           # daemon + CLI  → ~/.local/bin/helios                     (needs Go 1.26+)
 make desktop-install   # desktop app   → Applications, or apt (macOS/Linux, needs Node 22+)
-make apk-install       # Android app   → the device on adb                      (needs Flutter 3.32+)
+make apk-install       # Android app   → the device on adb                      (needs Flutter 3.44+)
 
 helios start           # the TUI checks your setup and walks you through the rest
 ```
@@ -217,7 +217,7 @@ Diagrams, endpoints and the on-disk layout: [docs/architecture.md](docs/architec
 - Go 1.26+ (the version in `go.mod`)
 - A headless coding harness — Claude Code or OpenAI Codex today
 - Node 22+ (only to build the desktop app from source)
-- Flutter 3.32+ (only to build the mobile app from source)
+- Flutter 3.44+ (only to build the mobile app from source)
 - Xcode 15+ and a cabled iPhone (only to install the iOS app; it is never prebuilt)
 
 ## Docs

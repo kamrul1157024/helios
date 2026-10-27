@@ -1,9 +1,23 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// `--dart-define=DISTRIBUTION=play` makes the Google Play build. Flutter hands
+// the defines to Gradle base64-encoded, so the one switch that turns the Dart
+// updater off also picks the Play application ID and manifest here — two knobs
+// would be two things to forget. Flavors were the other way to split it, and
+// they would have demanded matching Xcode schemes from the iOS build.
+val dartDefines: Map<String, String> = (project.findProperty("dart-defines") as String?)
+    ?.split(",")
+    ?.map { String(Base64.getDecoder().decode(it)) }
+    ?.associate { it.substringBefore("=") to it.substringAfter("=", "") }
+    ?: emptyMap()
+val isPlayBuild = dartDefines["DISTRIBUTION"] == "play"
 
 android {
     namespace = "com.helios.helios"
@@ -21,7 +35,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.helios.helios"
+        // The sideloaded APK keeps the ID every existing install was made
+        // with, or none of them could upgrade. Play was given its own.
+        applicationId = if (isPlayBuild) "com.helios.app" else "com.helios.helios"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -40,6 +56,14 @@ android {
                 keyPassword = System.getenv("KEY_PASSWORD")
             }
         }
+    }
+
+    // Overlaid on the main manifest, and only for Play: it strips what Play
+    // policy forbids an app like this one. Build-type source sets rather than
+    // main, because only an overlay can remove an entry.
+    if (isPlayBuild) {
+        sourceSets.getByName("debug").manifest.srcFile("src/play/AndroidManifest.xml")
+        sourceSets.getByName("release").manifest.srcFile("src/play/AndroidManifest.xml")
     }
 
     buildTypes {

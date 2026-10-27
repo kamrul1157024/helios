@@ -1,5 +1,5 @@
 .PHONY: build clean install install-dev uninstall test
-.PHONY: apk apk-release apk-install apk-run apk-debug apk-clean apk-device mobile
+.PHONY: apk apk-release aab-release apk-install apk-run apk-debug apk-clean apk-device mobile
 .PHONY: dmg dmg-dev changelog release release-publish
 .PHONY: desktop desktop-dev desktop-test desktop-app desktop-install desktop-install-dev desktop-clean
 
@@ -25,6 +25,7 @@ MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 UNAME_S := $(shell uname -s)
 APK_DEBUG = mobile/build/app/outputs/flutter-apk/app-debug.apk
 APK_RELEASE = mobile/build/app/outputs/flutter-apk/app-release.apk
+AAB_RELEASE = mobile/build/app/outputs/bundle/release/app-release.aab
 DMG_PATH = helios.dmg
 # Staging directory for release assets. The release job fills it from the
 # per-platform build jobs, which never share a runner.
@@ -138,6 +139,19 @@ apk-release:
 	cp $(APK_RELEASE) ~/.helios/helios.apk
 	@echo "APK: $(APK_RELEASE)"
 	@echo "Copied to ~/.helios/helios.apk"
+
+## Build the Google Play App Bundle
+# DISTRIBUTION=play gives it the Play application ID, strips the permissions
+# Play forbids and turns the in-app updater off — see docs/play-store/checklist.md.
+# Play refuses a bundle signed with the debug key, which is what Gradle falls
+# back to without a keystore, so that is caught here instead of at upload.
+aab-release:
+	@printf '%s' "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' || \
+		(echo "Error: aab-release needs a plain x.y.z — pass VERSION=\`./scripts/next-version.sh patch\`, or run make release." >&2 && exit 1)
+	@test -n "$$KEYSTORE_PATH" || \
+		(echo "Error: aab-release needs KEYSTORE_PATH, STORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD — Play refuses a debug-signed bundle." >&2 && exit 1)
+	cd mobile && flutter build appbundle --release --dart-define=DISTRIBUTION=play --build-name=$(VERSION) --build-number=$(shell git rev-list --count HEAD)
+	@echo "AAB: $(AAB_RELEASE)"
 
 ## Install APK on connected device (builds first if needed)
 apk-install: apk
