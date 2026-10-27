@@ -190,7 +190,7 @@ jobs:
   mobile:
     name: Mobile
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -212,3 +212,22 @@ jobs:
 
       - run: flutter test
         working-directory: mobile
+
+      # The Google Play build, checked for what Play would reject: the package
+      # name it is listed under, and no permission it forbids. A plugin that
+      # brings one of them back fails here rather than in review. Debug, for
+      # speed, so the package carries the .dev suffix.
+      - name: Check the Google Play build
+        working-directory: mobile
+        run: |
+          flutter build apk --debug --dart-define=DISTRIBUTION=play
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          "$aapt2" dump badging "$apk" | grep -q "^package: name='com.helios.app.dev'" || {
+            echo "the Play build is not com.helios.app"; exit 1; }
+          perms=$("$aapt2" dump permissions "$apk")
+          for p in REQUEST_INSTALL_PACKAGES USE_FULL_SCREEN_INTENT; do
+            if echo "$perms" | grep -q "android.permission.$p"; then
+              echo "the Play build asks for $p, which Play forbids"; exit 1
+            fi
+          done

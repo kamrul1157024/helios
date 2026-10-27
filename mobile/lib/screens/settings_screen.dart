@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 // Both packages export Provider, ChangeNotifierProvider and Consumer.
 import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/daemon_providers.dart';
 import '../models/host_connection.dart';
 import '../providers/theme_provider.dart';
@@ -83,6 +84,14 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
             children: [
               const _SectionHeader('App'),
               _buildUpdateTile(),
+              ListTile(
+                leading: const Icon(Icons.privacy_tip_outlined),
+                title: const Text('Privacy policy'),
+                onTap: () => launchUrl(
+                  Uri.parse(privacyPolicyUrl),
+                  mode: LaunchMode.externalApplication,
+                ),
+              ),
               const _SectionHeader('Hosts'),
               ...hm.hosts.map((host) => _buildHostTile(host, hm)),
               ListTile(
@@ -152,7 +161,38 @@ class _SettingsScreenState extends rp.ConsumerState<SettingsScreen> {
     );
   }
 
+  /// The Play build's update row: Play keeps the app current, so this only
+  /// asks it, and says so when there is nothing to fetch.
+  Future<void> _checkPlayUpdate() async {
+    final updates = UpdateService.instance;
+    if (await updates.playUpdateAvailable()) {
+      await updates.startPlayUpdate();
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('You have the latest version from Google Play.'),
+        ),
+      );
+  }
+
   Widget _buildUpdateTile() {
+    if (isPlayBuild) {
+      return ListTile(
+        leading: const Icon(Icons.system_update),
+        title: Text('helios v$_currentVersion'),
+        subtitle: Text(
+          'Updates come from Google Play  ·  Tap to check',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        onTap: _checkPlayUpdate,
+      );
+    }
     final hasUpdate = _updateInfo != null;
     final checking = _updateChecking;
     final downloading = _updateDownloading;

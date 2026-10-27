@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:in_app_update/in_app_update.dart';
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -15,6 +16,14 @@ const _repo = 'kamrul1157024/helios';
 // anyway. Thirty is a cap — twenty releases of history is not read on a phone.
 const _apiUrl = 'https://api.github.com/repos/$_repo/releases?per_page=30';
 const _releasesUrl = 'https://github.com/$_repo/releases/latest';
+
+/// Whether this is the Google Play build — `--dart-define=DISTRIBUTION=play`,
+/// which `make aab-release` passes. Play forbids an app installing its own
+/// updates, so that build never asks GitHub for a newer one: it asks Play.
+const isPlayBuild = String.fromEnvironment('DISTRIBUTION') == 'play';
+
+/// Docs/privacy.md. The Play listing links the same file.
+const privacyPolicyUrl = 'https://github.com/$_repo/blob/main/docs/privacy.md';
 
 /// One release, as its author wrote it up.
 class ReleaseNote {
@@ -77,6 +86,7 @@ class UpdateService {
 
   // Returns UpdateInfo if an update is available, null otherwise.
   Future<UpdateInfo?> checkForUpdate() async {
+    if (isPlayBuild) return null;
     try {
       final res = await http
           .get(
@@ -125,6 +135,31 @@ class UpdateService {
       // being up to date, and that is how a stale build goes unnoticed.
       debugPrint('[UpdateService] check failed: $e');
       return null;
+    }
+  }
+
+  /// Whether Google Play has a newer version of the Play build.
+  Future<bool> playUpdateAvailable() async {
+    try {
+      final info = await InAppUpdate.checkForUpdate();
+      return info.updateAvailability == UpdateAvailability.updateAvailable &&
+          info.flexibleUpdateAllowed;
+    } catch (e) {
+      // Not installed from Play — a locally built bundle, say.
+      debugPrint('[UpdateService] Play check failed: $e');
+      return false;
+    }
+  }
+
+  /// Downloads the Play update in the background, then has Play install it.
+  Future<void> startPlayUpdate() async {
+    try {
+      final result = await InAppUpdate.startFlexibleUpdate();
+      if (result == AppUpdateResult.success) {
+        await InAppUpdate.completeFlexibleUpdate();
+      }
+    } catch (e) {
+      debugPrint('[UpdateService] Play update failed: $e');
     }
   }
 

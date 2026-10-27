@@ -58,6 +58,7 @@ run's changelog lists every commit since the last tag — read it before you pic
 ## Procedures
 
 - [Install the iOS app on a cabled iPhone](docs/agents/ios-install.md) — no make target exists; read this before trying
+- [Publish the Android app on Google Play](docs/play-store/checklist.md) — `make aab-release` builds the Play bundle (`DISTRIBUTION=play`); the listing texts and graphics sit beside it
 
 ## Coding Conventions
 
