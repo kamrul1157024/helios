@@ -194,6 +194,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Gradle 8.14 runs on Java 17 to 24. The runner's default moved to 25,
+      # which it refuses.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
