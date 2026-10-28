@@ -11,7 +11,7 @@ FROM_REF="${1:-}"
 
 # If no from_ref, find the previous tag
 if [ -z "$FROM_REF" ]; then
-    FROM_REF=$(git describe --tags --abbrev=0 "$TO_REF" 2>/dev/null || true)
+    FROM_REF=$(git describe --tags --match 'v*' --abbrev=0 "$TO_REF" 2>/dev/null || true)
     if [ -z "$FROM_REF" ]; then
         FROM_REF=$(git rev-list --max-parents=0 HEAD)
     fi

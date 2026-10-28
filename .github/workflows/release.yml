@@ -55,7 +55,7 @@ jobs:
 
           # Pressing twice in a row would otherwise cut a second release with an
           # empty changelog behind it.
-          last=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          last=$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || true)
           if [ -n "$last" ]; then
             count=$(git rev-list "$last..HEAD" --count)
             if [ "$count" -eq 0 ]; then

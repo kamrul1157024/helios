@@ -162,7 +162,7 @@ latest_release() {
     sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1 | grep . || return 1
 }
 
-REF="${HELIOS_REF:-$(latest_release || git -C "$SRC" describe --tags --abbrev=0 origin/main 2> /dev/null || echo main)}"
+REF="${HELIOS_REF:-$(latest_release || git -C "$SRC" describe --tags --match 'v*' --abbrev=0 origin/main 2> /dev/null || echo main)}"
 git -C "$SRC" checkout --quiet --detach "$REF"
 note "building $REF"
 
@@ -172,7 +172,7 @@ step "Building the daemon"
 # Stamped, or the daemon reports "dev" and every client reads that as a build
 # nobody should be nagged about — including one that is genuinely years behind.
 # On a release it is the tag; on main it is tag-commits-sha, which is honest.
-STAMP=$(git -C "$SRC" describe --tags 2> /dev/null | sed 's/^v//')
+STAMP=$(git -C "$SRC" describe --tags --match 'v*' 2> /dev/null | sed 's/^v//')
 [ -n "$STAMP" ] || STAMP=dev
 (cd "$SRC" && go build -ldflags "-X github.com/kamrul1157024/helios/internal/version.Current=$STAMP" -o helios ./cmd/helios/)
 [ "$PLATFORM" = macos ] && codesign -s - -f "$SRC/helios" > /dev/null 2>&1
