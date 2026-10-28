@@ -19,13 +19,13 @@ Do these steps in order. The texts and files are in this folder:
 3. Type: **App**. Free.
 4. Accept the declarations.
 
-The package name `com.helios.app` comes from the first bundle that you upload. Play locks it after that upload.
+The package name `com.kamrul1157024.helios` comes from the first bundle that you upload. Play locks it after that upload.
 
 ## 3. Choose how Google signs the app (Play App Signing)
 
 Play App Signing is required. Google keeps the key that signs the app for users. You upload with an "upload key". The release workflow signs the bundle with `helios-release.jks` (the `KEYSTORE_BASE64` secret), so that key is the upload key.
 
-Choose **"Let Google create and manage the app signing key"**. The Play build has its own package name (`com.helios.app`), so it never upgrades the GitHub APK (`com.helios.helios`). Keeping one signature for both builds gains nothing. Decide before the first upload; you cannot change it later.
+Choose **"Let Google create and manage the app signing key"**. The Play build has its own package name (`com.kamrul1157024.helios`), so it never upgrades the GitHub APK (`com.helios.helios`). Keeping one signature for both builds gains nothing. Decide before the first upload; you cannot change it later.
 
 Keep a backup of `helios-release.jks` and its passwords. If you lose the upload key, Google can reset it, but that takes days.
 
