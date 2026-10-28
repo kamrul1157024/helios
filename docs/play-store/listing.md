@@ -6,7 +6,7 @@ Copy these texts into Play Console. The limits are Google's.
 
 | Field | Text |
 |---|---|
-| Package name | `com.helios.app` (the GitHub APK stays `com.helios.helios`) |
+| Package name | `com.kamrul1157024.helios` (the GitHub APK stays `com.helios.helios`) |
 | App name (30 characters at most) | Helios: AI Coding Agents |
 | Short description (80 characters at most) | Watch and approve your Claude Code and Codex sessions from your phone. |
 | Category | Tools |

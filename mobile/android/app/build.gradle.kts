@@ -36,8 +36,9 @@ android {
 
     defaultConfig {
         // The sideloaded APK keeps the ID every existing install was made
-        // with, or none of them could upgrade. Play was given its own.
-        applicationId = if (isPlayBuild) "com.helios.app" else "com.helios.helios"
+        // with, or none of them could upgrade. Play was given its own, under
+        // the owner's name: com.helios.app was already taken there.
+        applicationId = if (isPlayBuild) "com.kamrul1157024.helios" else "com.helios.helios"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
