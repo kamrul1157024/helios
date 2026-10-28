@@ -7,7 +7,7 @@
 # release checkout, and tag-commits-sha anywhere past one. The daemon reports
 # this over /api/health and the clients compare it with the newest release, so
 # a build carrying unreleased work must not answer with the release's number.
-VERSION ?= $(shell git describe --tags 2>/dev/null | sed 's/^v//')
+VERSION ?= $(shell git describe --tags --match 'v*' 2>/dev/null | sed 's/^v//')
 # Which part of the number `make release` moves. The repo holds no version —
 # `scripts/next-version.sh` reads the newest release and steps one past it, the
 # same way the Release workflow's dropdown does. See AGENTS.md.
